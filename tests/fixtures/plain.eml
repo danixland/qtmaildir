@@ -1,0 +1,12 @@
+From: Alice <alice@example.org>
+To: Bob <bob@example.net>
+Subject: Plain hello
+Date: Sat, 01 Aug 2026 10:00:00 +0000
+Message-ID: <plain-1@example.org>
+Content-Type: text/plain; charset=utf-8
+
+Hello Bob.
+
+> quoted line
+Regards,
+Alice

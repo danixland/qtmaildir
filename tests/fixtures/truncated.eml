@@ -1,0 +1,11 @@
+From: Alice <alice@example.org>
+Subject: Truncated
+Date: Sat, 01 Aug 2026 10:00:00 +0000
+Message-ID: <trunc-1@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="CUT"
+
+--CUT
+Content-Type: text/plain; charset=utf-8
+
+this part never closes

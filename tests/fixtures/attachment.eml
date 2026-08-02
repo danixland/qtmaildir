@@ -1,0 +1,18 @@
+From: Alice <alice@example.org>
+Subject: With attachment
+Date: Sat, 01 Aug 2026 10:00:00 +0000
+Message-ID: <att-1@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MIX"
+
+--MIX
+Content-Type: text/plain; charset=utf-8
+
+see attached
+--MIX
+Content-Type: text/plain; charset=utf-8; name="notes.txt"
+Content-Disposition: attachment; filename="notes.txt"
+Content-Transfer-Encoding: quoted-printable
+
+caf=C3=A9 notes
+--MIX--

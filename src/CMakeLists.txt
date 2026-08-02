@@ -1,6 +1,7 @@
 add_library(qtmaildir_lib STATIC
     keymap.cpp
     config.cpp
+    mimeparser.cpp
 )
 
 target_include_directories(qtmaildir_lib

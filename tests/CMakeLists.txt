@@ -7,3 +7,6 @@ endfunction()
 
 add_qtmaildir_test(keymap)
 add_qtmaildir_test(config)
+add_qtmaildir_test(mimeparser)
+target_compile_definitions(test_mimeparser PRIVATE
+    FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")

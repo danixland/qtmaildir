@@ -3,6 +3,8 @@ add_library(qtmaildir_lib STATIC
     config.cpp
     mimeparser.cpp
     requestinterceptor.cpp
+    htmlbuilder.cpp
+    cidschemehandler.cpp
 )
 
 target_include_directories(qtmaildir_lib

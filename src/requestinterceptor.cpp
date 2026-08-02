@@ -15,12 +15,20 @@ bool RequestInterceptor::shouldAllow(const QUrl &url)
     const QString scheme = url.scheme();
 
     // The document itself is loaded via setHtml() with a qtmaildir: base URL,
-    // so that scheme must pass or nothing renders at all. This is unconditional
-    // on any path/host because Task 11's scheme handler is the only thing that
-    // can ever originate a qtmaildir: navigation in the first place; the message
-    // body cannot cause a request with this scheme, only reference cid:/http(s):.
-    if (scheme == QLatin1String("qtmaildir"))
-        return true;
+    // so a request for exactly that URL must pass or nothing renders at all.
+    // This is the ONLY trusted qtmaildir: URL: everything else on this scheme
+    // is denied, including sub-paths of it. A hostile message body can put
+    // arbitrary qtmaildir: URLs in <img src>, <link href>, etc., so this
+    // cannot be a whole-scheme allow; it must be an exact match against the
+    // one URL the application itself chose. If setDocumentUrl() was never
+    // called, m_documentUrl is a default-constructed (invalid, empty) QUrl,
+    // which cannot equal any real request URL, so this fails closed.
+    if (scheme == QLatin1String("qtmaildir")) {
+        if (!m_documentUrl.isEmpty() && url == m_documentUrl)
+            return true;
+        m_blockedAnything = true;
+        return false;
+    }
 
     // Inline parts of the current message only.
     if (scheme == QLatin1String("cid")) {

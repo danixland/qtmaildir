@@ -17,6 +17,10 @@ private slots:
     // Adversarial additions.
     void schemeIsCaseInsensitiveAndStillBlocked();
     void qtmaildirSchemeIsCaseInsensitiveAllow();
+    void qtmaildirDocumentUrlIsAllowed();
+    void qtmaildirOtherPathIsBlocked();
+    void qtmaildirBlockedWhenNoDocumentUrlSet();
+    void resetForNewMessageDoesNotClearDocumentUrl();
     void cidUrlDoesNotParseAsUserinfo();
     void cidPercentEncodingDoesNotBypassAllowlist();
     void javascriptSchemeBlocked();
@@ -112,8 +116,69 @@ void TestInterceptor::schemeIsCaseInsensitiveAndStillBlocked()
 
 void TestInterceptor::qtmaildirSchemeIsCaseInsensitiveAllow()
 {
+    // QUrl normalizes scheme (and host, for authority-form URLs) to lowercase
+    // on parse, so a differently-cased spelling of the exact document URL
+    // still compares equal via QUrl::operator== (verified empirically:
+    // QUrl("qtmaildir://message") == QUrl("QTMAILDIR://message") is true).
     RequestInterceptor interceptor;
+    interceptor.setDocumentUrl(QUrl(QStringLiteral("qtmaildir://body/index.html")));
     QVERIFY(interceptor.shouldAllow(QUrl(QStringLiteral("QTMAILDIR://body/index.html"))));
+}
+
+void TestInterceptor::qtmaildirDocumentUrlIsAllowed()
+{
+    RequestInterceptor interceptor;
+    const QUrl doc(QStringLiteral("qtmaildir://message"));
+    interceptor.setDocumentUrl(doc);
+    QVERIFY(interceptor.shouldAllow(doc));
+}
+
+void TestInterceptor::qtmaildirOtherPathIsBlocked()
+{
+    // Defense in depth: the qtmaildir: scheme is trusted only for the exact
+    // document URL the application itself set, never for the whole scheme.
+    // A hostile message body can put any qtmaildir: URL in <img src> or
+    // <link href>; none of these variants may pass.
+    RequestInterceptor interceptor;
+    interceptor.setDocumentUrl(QUrl(QStringLiteral("qtmaildir://message")));
+
+    // Path traversal off the document URL.
+    QVERIFY(!interceptor.shouldAllow(QUrl(QStringLiteral("qtmaildir://message/../etc"))));
+    // A different qtmaildir origin entirely.
+    QVERIFY(!interceptor.shouldAllow(QUrl(QStringLiteral("qtmaildir://other"))));
+    // Opaque (non-authority) form of the scheme.
+    QVERIFY(!interceptor.shouldAllow(QUrl(QStringLiteral("qtmaildir:whatever"))));
+    // A sub-path of the document URL is still not the document URL itself.
+    QVERIFY(!interceptor.shouldAllow(QUrl(QStringLiteral("qtmaildir://message/cid/foo"))));
+
+    QVERIFY(interceptor.blockedAnything());
+}
+
+void TestInterceptor::qtmaildirBlockedWhenNoDocumentUrlSet()
+{
+    // Fail closed: if MessageView forgets to call setDocumentUrl(), nothing
+    // on the qtmaildir: scheme should be reachable, not even the URL that
+    // would otherwise be the legitimate document.
+    RequestInterceptor interceptor;
+    QVERIFY(!interceptor.shouldAllow(QUrl(QStringLiteral("qtmaildir://message"))));
+}
+
+void TestInterceptor::resetForNewMessageDoesNotClearDocumentUrl()
+{
+    // The document/base URL is a property of the view's current navigation,
+    // not of an individual message's content, so switching to a new message
+    // (resetForNewMessage) must not force MessageView to re-supply it.
+    RequestInterceptor interceptor;
+    const QUrl doc(QStringLiteral("qtmaildir://message"));
+    interceptor.setDocumentUrl(doc);
+    interceptor.shouldAllow(QUrl(QStringLiteral("http://tracker.example/p.gif")));
+    QVERIFY(interceptor.blockedAnything());
+
+    interceptor.resetForNewMessage();
+
+    QVERIFY(!interceptor.blockedAnything());
+    QCOMPARE(interceptor.documentUrl(), doc);
+    QVERIFY(interceptor.shouldAllow(doc));
 }
 
 void TestInterceptor::cidUrlDoesNotParseAsUserinfo()

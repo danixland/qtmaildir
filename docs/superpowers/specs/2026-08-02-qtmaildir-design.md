@@ -429,9 +429,13 @@ Qt Test, three targets, all runnable without a real mailbox.
 
 ## 14. Known gaps
 
-- `NotmuchWorker` is not unit-tested. Testing it requires a real notmuch
-  database; v1 tests pure logic and leaves the database layer to manual
-  verification.
+- ~~`NotmuchWorker` is not unit-tested.~~ **Resolved 2026-08-02.** It is
+  tested against a throwaway notmuch database built in a temporary directory
+  by the test fixture (`notmuch new` over a generated Maildir, with
+  `NOTMUCH_CONFIG` pointed at it). The original reasoning — that testing
+  requires a real database — was answered by building a fake one instead of
+  skipping the tests. This is the only code that writes to a notmuch index,
+  so it warranted the effort.
 - Large-message MIME parsing happens on the UI thread and could stutter on
   pathological messages. Opening a thread parses every message in it, so this
   is more likely to show on a long thread than on a single message. Deferred

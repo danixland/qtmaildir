@@ -2350,9 +2350,21 @@ git commit -S -m "feat: add cross-thread value types and notmuch RAII wrappers"
 - Create: `src/notmuchworker.h`, `src/notmuchworker.cpp`
 - Modify: `src/CMakeLists.txt`
 
-Per the spec, `NotmuchWorker` has no unit test: testing it requires a real
-notmuch database. It is verified manually in Task 13. Keep it thin so there is
-little untested logic.
+**Changed 2026-08-02, superseding the spec's "no unit test" position.**
+`NotmuchWorker` IS unit-tested, against a throwaway notmuch database built in
+a temporary directory. The spec deferred this to manual verification on the
+grounds that testing needs a real database; the answer is to build a fake one
+rather than to skip the tests. This matters more than for any other class,
+because `applyTags` is the only code in the project that WRITES to a notmuch
+index, and a bug there corrupts real mail state.
+
+The fixture creates a Maildir tree with a handful of messages, runs
+`notmuch new` against a generated config pointing at it, and sets
+`NOTMUCH_CONFIG` for the test process. Nothing touches the developer's own
+`~/Mail` or `~/.notmuch-config`.
+
+Task 13's manual checklist remains, but as confirmation against real data
+rather than as the only coverage.
 
 - [ ] **Step 1: Write src/notmuchworker.h**
 

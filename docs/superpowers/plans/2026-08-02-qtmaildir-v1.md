@@ -1000,6 +1000,7 @@ private slots:
     void missingFileIsReported();
     void hostileFilenameIsSanitised();
     void savedAttachmentMatchesBytes();
+    void safeFilenameStripsPathComponents();
 
 private:
     QString fixture(const QString &name) const
@@ -1384,12 +1385,26 @@ QString Attachment::saveTo(const QString &directory, QString *error) const
     const QDir dir(directory);
     const QString target = dir.absoluteFilePath(safeFilename());
 
-    // Belt and braces: confirm the resolved path really is inside directory,
-    // so a future change to safeFilename() cannot silently reintroduce escape.
-    const QString canonicalDir = QDir(directory).absolutePath();
-    if (!QFileInfo(target).absolutePath().startsWith(canonicalDir)) {
+    // Belt and braces, and currently UNREACHABLE through this function:
+    // safeFilename() above already reduces any name to a basename, so no
+    // caller-supplied filename can produce a target outside `directory`.
+    // The guard exists so that a future change which stops sanitising, or
+    // which lets a caller pass a subpath, still cannot escape. Do not write
+    // a test that drives saveTo() expecting a refusal: it cannot happen
+    // while safeFilename() runs first. Test safeFilename() instead, which
+    // is the control that actually stops traversal today.
+    //
+    // The comparison must be separator-aware. A bare startsWith() on the
+    // strings would accept "/tmp/safe-evil/x" as being inside "/tmp/safe",
+    // since one is a string prefix of the other with no path boundary
+    // between them. cleanPath() also resolves ".." before comparison rather
+    // than leaving it to be compared textually.
+    const QString cleanDir = QDir::cleanPath(QDir(directory).absolutePath());
+    const QString cleanTarget = QDir::cleanPath(target);
+    if (cleanTarget != cleanDir
+        && !cleanTarget.startsWith(cleanDir + QLatin1Char('/'))) {
         if (error)
-            *error = QStringLiteral("Refusing to write outside %1").arg(canonicalDir);
+            *error = QStringLiteral("Refusing to write outside %1").arg(cleanDir);
         return {};
     }
 

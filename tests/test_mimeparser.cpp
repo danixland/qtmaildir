@@ -19,6 +19,8 @@ private slots:
     void missingFileIsReported();
     void hostileFilenameIsSanitised();
     void savedAttachmentMatchesBytes();
+    void safeFilenameStripsPathComponents();
+    void pathInsideDirectoryRejectsSiblingPrefix();
 
 private:
     QString fixture(const QString &name) const
@@ -165,6 +167,62 @@ void TestMimeParser::savedAttachmentMatchesBytes()
     QFile f(written);
     QVERIFY(f.open(QIODevice::ReadOnly));
     QCOMPARE(f.readAll(), msg.attachments.first().data);
+}
+
+void TestMimeParser::safeFilenameStripsPathComponents()
+{
+    // This is the control that genuinely stops traversal: saveTo() always
+    // routes through safeFilename() first, so whatever this function
+    // guarantees is what actually protects a write to disk. Constructed by
+    // hand since these are adversarial names not tied to any fixture.
+    Attachment a;
+    a.mimeType = QStringLiteral("text/plain");
+    a.data = QByteArrayLiteral("x");
+
+    a.filename = QStringLiteral("../../../../tmp/pwned.txt");
+    QCOMPARE(a.safeFilename(), QStringLiteral("pwned.txt"));
+
+    a.filename = QStringLiteral("../xyz-evil/x.txt");
+    QCOMPARE(a.safeFilename(), QStringLiteral("x.txt"));
+
+    a.filename = QStringLiteral("..\\..\\windows\\evil.txt");
+    QCOMPARE(a.safeFilename(), QStringLiteral("evil.txt"));
+
+    a.filename = QStringLiteral("plain.txt");
+    QCOMPARE(a.safeFilename(), QStringLiteral("plain.txt"));
+
+    // Nothing usable remains: a generated name is produced instead. Assert
+    // its shape rather than an exact value, since it embeds a fresh UUID.
+    a.filename = QStringLiteral("..");
+    QString generated = a.safeFilename();
+    QVERIFY(!generated.isEmpty());
+    QVERIFY(generated != QStringLiteral(".."));
+    QVERIFY(!generated.contains(QLatin1Char('/')));
+
+    a.filename = QString();
+    generated = a.safeFilename();
+    QVERIFY(!generated.isEmpty());
+    QVERIFY(!generated.contains(QLatin1Char('/')));
+}
+
+void TestMimeParser::pathInsideDirectoryRejectsSiblingPrefix()
+{
+    // Direct test of the containment guard's own comparison, independent of
+    // safeFilename() (which always runs first inside saveTo() and would
+    // mask a broken guard, since it never produces an escaping path). This
+    // targets exactly the defect that was found: a plain string
+    // startsWith() incorrectly treats a sibling directory whose name merely
+    // extends the target's name (e.g. "/tmp/safe-evil") as contained within
+    // it (e.g. "/tmp/safe").
+    const QString base = QStringLiteral("/tmp/safe");
+
+    QVERIFY(Attachment::isPathInsideDirectory(base, base + QStringLiteral("/notes.txt")));
+    QVERIFY(Attachment::isPathInsideDirectory(base, base + QStringLiteral("/sub/notes.txt")));
+    QVERIFY(Attachment::isPathInsideDirectory(base, base));
+
+    QVERIFY(!Attachment::isPathInsideDirectory(base, QStringLiteral("/tmp/safe-evil/x")));
+    QVERIFY(!Attachment::isPathInsideDirectory(base, QStringLiteral("/tmp/safe/../etc/passwd")));
+    QVERIFY(!Attachment::isPathInsideDirectory(base, QStringLiteral("/etc/passwd")));
 }
 
 QTEST_MAIN(TestMimeParser)

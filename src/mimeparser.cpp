@@ -146,15 +146,34 @@ QString Attachment::safeFilename() const
     return name;
 }
 
+bool Attachment::isPathInsideDirectory(const QString &directory, const QString &candidatePath)
+{
+    // Compare candidatePath itself, not QFileInfo(candidatePath).absolutePath()
+    // (which would be its *parent* directory) -- candidatePath may itself be
+    // the directory being tested, as in the "is directory itself" case this
+    // function documents.
+    const QString canonicalDir = QDir::cleanPath(QDir(directory).absolutePath());
+    const QString canonicalTarget =
+        QDir::cleanPath(QFileInfo(candidatePath).absoluteFilePath());
+    return canonicalTarget == canonicalDir
+        || canonicalTarget.startsWith(canonicalDir + QLatin1Char('/'));
+}
+
 QString Attachment::saveTo(const QString &directory, QString *error) const
 {
     const QDir dir(directory);
     const QString target = dir.absoluteFilePath(safeFilename());
 
-    // Belt and braces: confirm the resolved path really is inside directory,
-    // so a future change to safeFilename() cannot silently reintroduce escape.
-    const QString canonicalDir = QDir(directory).absolutePath();
-    if (!QFileInfo(target).absolutePath().startsWith(canonicalDir)) {
+    // Defence-in-depth, not currently load-bearing: safeFilename() always
+    // reduces the name to a plain basename before target is built above, so
+    // this check cannot actually be failed via saveTo()'s public interface
+    // today (dir.absoluteFilePath(basename) can't escape dir). It exists so
+    // that a future change which stops sanitising the name, or which starts
+    // accepting a caller-supplied subpath instead of a bare filename, still
+    // cannot write outside directory. See Attachment::isPathInsideDirectory
+    // for the containment logic and its own direct tests.
+    if (!isPathInsideDirectory(directory, target)) {
+        const QString canonicalDir = QDir::cleanPath(QDir(directory).absolutePath());
         if (error)
             *error = QStringLiteral("Refusing to write outside %1").arg(canonicalDir);
         return {};

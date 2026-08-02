@@ -56,6 +56,19 @@ QString HtmlBuilder::namespaceCids(const QString &html, const QString &prefix)
     if (prefix.isEmpty())
         return html;
 
+    // The '!' separator is only unambiguous if prefix itself never contains
+    // one: the FIRST '!' in "cid:<prefix>!<id>" is always taken as the
+    // separator, so a hostile Content-ID containing '!' only extends the id
+    // half, never collides with a different prefix. This concatenation is
+    // performed independently in two places (here and
+    // CidSchemeHandler::namespacedKey); neither trusts the other to have
+    // checked it, so both assert it directly. Q_ASSERT is compiled out in
+    // release builds — the property that matters there is pinned by
+    // TestHtmlBuilder::namespacedKeyRejectsPrefixContainingSeparator instead.
+    Q_ASSERT_X(!prefix.contains(QLatin1Char('!')), "HtmlBuilder::namespaceCids",
+               "cidPrefix must never contain '!': it is the separator, and a "
+               "prefix containing one would make the split ambiguous");
+
     // This runs on the sender's raw, unescaped HTML markup (not on text that
     // has been through toHtmlEscaped()), so no double-escaping happens here;
     // it is purely a URL rewrite over the existing markup.

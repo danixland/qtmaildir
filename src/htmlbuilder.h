@@ -16,6 +16,15 @@ struct ThreadRenderItem
     /// use the same Content-ID (cid:logo@example.org), which would collide in
     /// a single document, so every reference is rewritten to
     /// cid:<prefix>!<id>.
+    ///
+    /// Requirement on whatever generates this value: it must never contain
+    /// '!'. The separator that makes cid:<prefix>!<id> unambiguous is the
+    /// FIRST '!' in the namespaced string; that only holds if the prefix
+    /// half is guaranteed free of the character, since the id half is
+    /// attacker-controlled and may legitimately contain '!' itself. The
+    /// documented "m<index>" form (e.g. "m0", "m1") satisfies this. Enforced
+    /// with Q_ASSERT at both places that perform this concatenation
+    /// (HtmlBuilder::namespaceCids and CidSchemeHandler::namespacedKey).
     QString cidPrefix;
 };
 

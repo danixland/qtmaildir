@@ -13,6 +13,7 @@ private slots:
     void chordSequenceParses();
     void unknownActionIsReported();
     void invalidSequenceIsReported();
+    void collidingOverridesAreReported();
 };
 
 void TestKeyMap::defaultsAreLoaded()
@@ -125,6 +126,52 @@ void TestKeyMap::invalidSequenceIsReported()
     map.loadOverrides(s);
 
     QCOMPARE(map.warnings().size(), 1);
+}
+
+void TestKeyMap::collidingOverridesAreReported()
+{
+    // "y" and "Y" both normalize to the same QKeySequence ("Y"), so binding
+    // both in [keys] is a genuine collision that must not silently drop one.
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("t.conf"));
+        {
+            QSettings s(path, QSettings::IniFormat);
+            s.beginGroup(QStringLiteral("keys"));
+            s.setValue(QStringLiteral("y"), QStringLiteral("archive"));
+            s.setValue(QStringLiteral("Y"), QStringLiteral("delete"));
+            s.endGroup();
+        }
+
+        KeyMap map;
+        QSettings s(path, QSettings::IniFormat);
+        map.loadOverrides(s);
+
+        QCOMPARE(map.warnings().size(), 1);
+        QVERIFY(map.warnings().first().contains(QStringLiteral("archive")));
+        QVERIFY(map.warnings().first().contains(QStringLiteral("delete")));
+    }
+
+    // Overriding a default is not a collision: loadDefaults() puts 'j' in
+    // the map first, then the override pass rebinds the same 'j'. That must
+    // stay silent (regression check for iniOverridesDefault's scenario).
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("t.conf"));
+        {
+            QSettings s(path, QSettings::IniFormat);
+            s.beginGroup(QStringLiteral("keys"));
+            s.setValue(QStringLiteral("j"), QStringLiteral("archive"));
+            s.endGroup();
+        }
+
+        KeyMap map;
+        map.loadDefaults();
+        QSettings s(path, QSettings::IniFormat);
+        map.loadOverrides(s);
+
+        QCOMPARE(map.warnings().size(), 0);
+    }
 }
 
 QTEST_MAIN(TestKeyMap)

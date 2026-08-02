@@ -48,6 +48,14 @@ void KeyMap::loadOverrides(QSettings &settings)
 {
     const QStringList known = knownActions();
 
+    // Sequences bound so far *within this override pass*. Defaults already
+    // sit in m_bindings before this runs, so a plain m_bindings.contains()
+    // check would misfire on every legitimate override of a default (e.g.
+    // "j=archive" overriding the default 'j' binding). Only a collision
+    // between two entries in this same pass (e.g. two INI keys that
+    // normalize to the same QKeySequence, such as "y" and "Y") is a bug.
+    QHash<QKeySequence, QString> seenThisPass;
+
     settings.beginGroup(QStringLiteral("keys"));
     const QStringList keys = settings.childKeys();
     for (const QString &key : keys) {
@@ -70,6 +78,16 @@ void KeyMap::loadOverrides(QSettings &settings)
                     .arg(action, key));
             continue;
         }
+
+        const auto previous = seenThisPass.constFind(sequence);
+        if (previous != seenThisPass.constEnd()) {
+            m_warnings.append(
+                QStringLiteral("Key sequence '%1' bound to both '%2' and '%3' "
+                                "in [keys]; keeping '%2'")
+                    .arg(key, previous.value(), action));
+            continue;
+        }
+        seenThisPass.insert(sequence, action);
 
         m_bindings.insert(sequence, action);
     }

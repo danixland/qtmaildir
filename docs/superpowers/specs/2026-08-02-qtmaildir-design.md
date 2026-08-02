@@ -273,6 +273,19 @@ messages expanded and unmatched ones collapsed to a one-line stub. Notmuch
 provides reply structure, but an indented tree is significant work that does
 not change what is readable.
 
+The whole thread renders as **one HTML document in one web view**, not one
+view per message. A newsletter thread can hold dozens of messages, and a
+`QWebEngineView` each would spawn a Chromium render process each.
+
+Sharing one document means `cid:` references from different messages collide:
+two newsletters both using `cid:logo@example.org` would resolve to whichever
+part won. Every reference is therefore rewritten to `cid:<prefix>!<id>` with a
+per-message prefix, and the scheme handler is keyed on that namespaced form.
+
+Determining which messages matched requires the query: `loadThread` intersects
+the user's current query with the thread, and each `MessageRef` carries a
+`matched` flag.
+
 ### Message to HTML
 
 `MimeParser` walks the MIME tree and produces a chosen body part, inline CID
@@ -333,11 +346,18 @@ All actions funnel through one `applyTags(msgIds, add, remove)` path:
 | Spam | `+spam -inbox` |
 | Custom | user-entered add/remove |
 
+Actions apply to **every selected thread**, not just the open one. The UI holds
+thread ids rather than message ids for rows it never opened, so the worker
+resolves them: `applyTagsToThreads` builds one combined `thread:a or thread:b`
+query rather than issuing one query per thread, which matters when archiving
+hundreds of rows.
+
 There is deliberately no dry-run and no destructive-action confirmation. Those
 gates exist in mailctl to restrain an agent that cannot see its own target.
 The GUI equivalent is **undo**: each applied mutation pushes its inverse onto
 a `QUndoStack`, so the last tag change can be reversed. For a human, undo is
-strictly better than a confirmation dialog.
+strictly better than a confirmation dialog. The undo entry stores thread ids
+and re-resolves them, so it stays correct after the selection moves.
 
 The UI updates optimistically and reverts with a status-bar error if the
 worker reports failure.
@@ -404,8 +424,11 @@ Qt Test, three targets, all runnable without a real mailbox.
   database; v1 tests pure logic and leaves the database layer to manual
   verification.
 - Large-message MIME parsing happens on the UI thread and could stutter on
-  pathological messages. Deferred until measured.
-- Threading structure is flattened for display.
+  pathological messages. Opening a thread parses every message in it, so this
+  is more likely to show on a long thread than on a single message. Deferred
+  until measured.
+- Threading structure is flattened for display: messages appear in date order
+  with no reply indentation.
 - The `QtWebEngineProcess` sandbox helper's installed location was not
   verified during design. CMake handles it, but it is unconfirmed.
 

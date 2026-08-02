@@ -1750,6 +1750,9 @@ private slots:
     void preservesHtmlBodyWhenHtmlRequested();
     void marksQuotedLines();
     void plainTextScriptTagIsNeutralised();
+    void buildsThreadWithAllMessages();
+    void collapsedMessageShowsStubOnly();
+    void threadNamespacesCidUrls();
 };
 
 void TestHtmlBuilder::escapesPlainText()
@@ -1795,6 +1798,76 @@ void TestHtmlBuilder::plainTextScriptTagIsNeutralised()
     QVERIFY(html.contains(QStringLiteral("&lt;script&gt;")));
 }
 
+void TestHtmlBuilder::buildsThreadWithAllMessages()
+{
+    ThreadRenderItem first;
+    first.message.ok = true;
+    first.message.subject = QStringLiteral("First");
+    first.message.from = QStringLiteral("Alice");
+    first.message.plainBody = QStringLiteral("first body");
+    first.expanded = true;
+
+    ThreadRenderItem second;
+    second.message.ok = true;
+    second.message.subject = QStringLiteral("Second");
+    second.message.from = QStringLiteral("Bob");
+    second.message.plainBody = QStringLiteral("second body");
+    second.expanded = true;
+
+    const QString html =
+        HtmlBuilder::buildThread({ first, second }, HtmlBuilder::ForcePlain);
+
+    QVERIFY(html.contains(QStringLiteral("first body")));
+    QVERIFY(html.contains(QStringLiteral("second body")));
+    // Each message is its own section, so per-message CSS and anchors work.
+    QCOMPARE(html.count(QStringLiteral("class=\"message\"")), 2);
+}
+
+void TestHtmlBuilder::collapsedMessageShowsStubOnly()
+{
+    ThreadRenderItem item;
+    item.message.ok = true;
+    item.message.from = QStringLiteral("Carol");
+    item.message.subject = QStringLiteral("Old news");
+    item.message.plainBody = QStringLiteral("secret body text");
+    item.expanded = false;
+
+    const QString html =
+        HtmlBuilder::buildThread({ item }, HtmlBuilder::ForcePlain);
+
+    // Unmatched messages collapse to a one-line stub; the body is not emitted.
+    QVERIFY(html.contains(QStringLiteral("Carol")));
+    QVERIFY(!html.contains(QStringLiteral("secret body text")));
+    QVERIFY(html.contains(QStringLiteral("class=\"stub\"")));
+}
+
+void TestHtmlBuilder::threadNamespacesCidUrls()
+{
+    // Two messages in one document may both reference cid:logo@x. Without
+    // namespacing, the second would show the first's image.
+    ThreadRenderItem first;
+    first.message.ok = true;
+    first.message.htmlBody =
+        QStringLiteral("<img src=\"cid:logo@example.org\">");
+    first.expanded = true;
+    first.cidPrefix = QStringLiteral("m0");
+
+    ThreadRenderItem second;
+    second.message.ok = true;
+    second.message.htmlBody =
+        QStringLiteral("<img src=\"cid:logo@example.org\">");
+    second.expanded = true;
+    second.cidPrefix = QStringLiteral("m1");
+
+    const QString html =
+        HtmlBuilder::buildThread({ first, second }, HtmlBuilder::PreferHtml);
+
+    QVERIFY(html.contains(QStringLiteral("cid:m0!logo@example.org")));
+    QVERIFY(html.contains(QStringLiteral("cid:m1!logo@example.org")));
+    // The bare form must not survive, or it would resolve ambiguously.
+    QVERIFY(!html.contains(QStringLiteral("\"cid:logo@example.org\"")));
+}
+
 QTEST_MAIN(TestHtmlBuilder)
 #include "test_htmlbuilder.moc"
 ```
@@ -1816,12 +1889,31 @@ Expected: FAIL, `htmlbuilder.h: No such file or directory`.
 
 #include <QString>
 
+#include <QList>
+
 #include "mimeparser.h"
 
-/// Turns a parsed message into the HTML string handed to the web view.
+/// One message's place in a rendered thread.
+struct ThreadRenderItem
+{
+    ParsedMessage message;
+
+    /// Matched messages render in full; unmatched collapse to a one-line stub.
+    bool expanded = true;
+
+    /// Disambiguates cid: references. Two newsletters in one thread commonly
+    /// use the same Content-ID (cid:logo@example.org), which would collide in
+    /// a single document, so every reference is rewritten to
+    /// cid:<prefix>!<id>.
+    QString cidPrefix;
+};
+
+/// Turns parsed messages into the HTML string handed to the web view.
 ///
 /// Plain text goes through the same path as HTML so the view has one render
-/// path rather than two.
+/// path rather than two. A whole thread renders as ONE document rather than one
+/// view per message: a thread of newsletters can hold dozens of messages, and a
+/// QWebEngineView each would spawn a Chromium render process each.
 class HtmlBuilder
 {
 public:
@@ -1830,10 +1922,20 @@ public:
         ForcePlain,  ///< Always render the plain part, escaped.
     };
 
+    /// Single message, used for the error card and for tests.
     static QString build(const ParsedMessage &message, Mode mode);
+
+    /// The whole thread, oldest first.
+    static QString buildThread(const QList<ThreadRenderItem> &items, Mode mode);
+
+    /// Rewrites cid: URLs in an HTML body to their namespaced form.
+    static QString namespaceCids(const QString &html, const QString &prefix);
 
 private:
     static QString renderPlain(const QString &text);
+    static QString renderBody(const ThreadRenderItem &item, Mode mode);
+    static QString renderStub(const ParsedMessage &message);
+    static QString document(const QString &bodyHtml);
 };
 ```
 
@@ -1842,6 +1944,8 @@ private:
 ```cpp
 #include "htmlbuilder.h"
 
+#include <QRegularExpression>
+
 namespace {
 
 const char *kStyle = R"CSS(
@@ -1849,6 +1953,12 @@ body { font-family: sans-serif; font-size: 10pt; margin: 12px; }
 pre.plain { white-space: pre-wrap; word-wrap: break-word;
             font-family: monospace; margin: 0; }
 span.quote { color: #4a6f8a; }
+.message { border-top: 1px solid #bbb; padding: 10px 0; }
+.message:first-child { border-top: none; }
+.msg-header { font-size: 9pt; color: #555; margin-bottom: 8px; }
+.msg-header .who { font-weight: bold; color: #000; }
+.stub { font-size: 9pt; color: #666; padding: 4px 0;
+        border-top: 1px solid #ddd; }
 )CSS";
 
 } // namespace
@@ -1877,18 +1987,85 @@ QString HtmlBuilder::renderPlain(const QString &text)
     return out;
 }
 
-QString HtmlBuilder::build(const ParsedMessage &message, Mode mode)
+QString HtmlBuilder::document(const QString &bodyHtml)
 {
-    QString body;
-    if (mode == PreferHtml && message.hasHtml())
-        body = message.htmlBody;
-    else
-        body = renderPlain(message.plainBody);
-
     return QStringLiteral(
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
         "<style>%1</style></head><body>%2</body></html>")
-        .arg(QString::fromUtf8(kStyle), body);
+        .arg(QString::fromUtf8(kStyle), bodyHtml);
+}
+
+QString HtmlBuilder::namespaceCids(const QString &html, const QString &prefix)
+{
+    if (prefix.isEmpty())
+        return html;
+
+    // Matches cid: in src/href attribute values, quoted either way.
+    static const QRegularExpression re(
+        QStringLiteral("(?<attr>src|href)\\s*=\\s*(?<q>[\"'])cid:(?<id>[^\"']+)\\k<q>"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    QString out;
+    qsizetype last = 0;
+    auto it = re.globalMatch(html);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch match = it.next();
+        out += html.mid(last, match.capturedStart() - last);
+        out += QStringLiteral("%1=%2cid:%3!%4%2")
+                   .arg(match.captured(QStringLiteral("attr")),
+                        match.captured(QStringLiteral("q")),
+                        prefix,
+                        match.captured(QStringLiteral("id")));
+        last = match.capturedEnd();
+    }
+    out += html.mid(last);
+    return out;
+}
+
+QString HtmlBuilder::renderBody(const ThreadRenderItem &item, Mode mode)
+{
+    if (mode == PreferHtml && item.message.hasHtml())
+        return namespaceCids(item.message.htmlBody, item.cidPrefix);
+    return renderPlain(item.message.plainBody);
+}
+
+QString HtmlBuilder::renderStub(const ParsedMessage &message)
+{
+    return QStringLiteral("<div class=\"stub\">%1 &mdash; %2</div>")
+        .arg(message.from.toHtmlEscaped(), message.subject.toHtmlEscaped());
+}
+
+QString HtmlBuilder::build(const ParsedMessage &message, Mode mode)
+{
+    ThreadRenderItem item;
+    item.message = message;
+    item.expanded = true;
+    return document(renderBody(item, mode));
+}
+
+QString HtmlBuilder::buildThread(const QList<ThreadRenderItem> &items, Mode mode)
+{
+    QString body;
+
+    for (int i = 0; i < items.size(); ++i) {
+        const ThreadRenderItem &item = items.at(i);
+
+        if (!item.expanded) {
+            body += renderStub(item.message);
+            continue;
+        }
+
+        body += QStringLiteral(
+            "<div class=\"message\" id=\"msg-%1\">"
+            "<div class=\"msg-header\"><span class=\"who\">%2</span><br>%3</div>"
+            "%4</div>")
+            .arg(QString::number(i),
+                 item.message.from.toHtmlEscaped(),
+                 item.message.date.toHtmlEscaped(),
+                 renderBody(item, mode));
+    }
+
+    return document(body);
 }
 ```
 
@@ -1902,10 +2079,12 @@ QString HtmlBuilder::build(const ParsedMessage &message, Mode mode)
 
 #include "mimeparser.h"
 
-/// Serves cid: URLs from the currently displayed message only.
+/// Serves cid: URLs from the currently displayed thread only.
 ///
-/// The map is replaced wholesale on every message change, so a message can
-/// never reference another message's parts.
+/// Keys are the namespaced form "<prefix>!<content-id>" produced by
+/// HtmlBuilder, so two messages in one thread that share a Content-ID do not
+/// collide. The map is replaced wholesale on every thread change, so a thread
+/// can never reference another thread's parts.
 class CidSchemeHandler : public QWebEngineUrlSchemeHandler
 {
     Q_OBJECT
@@ -1913,6 +2092,10 @@ public:
     explicit CidSchemeHandler(QObject *parent = nullptr);
 
     void setParts(const QHash<QString, InlinePart> &parts) { m_parts = parts; }
+
+    /// Builds the namespaced key HtmlBuilder's rewritten URLs will request.
+    static QString namespacedKey(const QString &prefix, const QString &contentId)
+    { return prefix + QLatin1Char('!') + contentId; }
 
     void requestStarted(QWebEngineUrlRequestJob *job) override;
 
@@ -2019,6 +2202,11 @@ struct MessageRef
     QString messageId;
     QString filePath;
     QStringList tags;
+
+    /// True when the message itself matched the user's query, as opposed to
+    /// being pulled in only because a sibling in its thread matched. Drives
+    /// whether it renders expanded or as a stub.
+    bool matched = true;
 };
 
 /// One tag mutation, kept so it can be inverted for undo.
@@ -2173,13 +2361,25 @@ public slots:
     /// query without the worker needing to know about cancellation.
     void runQuery(const QString &query, quint64 generation);
 
-    /// Loads the messages of one thread, oldest first.
-    void loadThread(const QString &threadId, quint64 generation);
+    /// Loads the messages of one thread, oldest first. matchQuery is the
+    /// user's current query; messages matching it render expanded, the rest
+    /// as stubs.
+    void loadThread(const QString &threadId, const QString &matchQuery,
+                    quint64 generation);
 
     /// Applies tag changes. Opens the database read-write, applies, and closes
     /// immediately: notmuch's write lock is exclusive process-wide, so holding
     /// it would block the user's cron `notmuch new`.
     void applyTags(const TagChange &change);
+
+    /// Batch tagging over whole threads. The UI holds thread ids, not message
+    /// ids, for rows it has not opened, so the resolution happens here where
+    /// the database handle lives. This is the path the archive/flag/delete
+    /// actions use on a multi-row selection.
+    void applyTagsToThreads(const QStringList &threadIds,
+                            const QStringList &add,
+                            const QStringList &remove,
+                            const QString &description);
 
 signals:
     void threadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
@@ -2203,6 +2403,8 @@ private:
 #include "notmuchworker.h"
 
 #include <notmuch.h>
+
+#include <QSet>
 
 #include "nmraii.h"
 
@@ -2330,10 +2532,37 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation)
     emit queryFinished(total, generation);
 }
 
-void NotmuchWorker::loadThread(const QString &threadId, quint64 generation)
+void NotmuchWorker::loadThread(const QString &threadId,
+                               const QString &matchQuery,
+                               quint64 generation)
 {
     if (!openReadOnly())
         return;
+
+    // Which messages of the thread matched the user's query. Running the query
+    // intersected with the thread is cheaper than testing each message.
+    QSet<QString> matchedIds;
+    if (!matchQuery.trimmed().isEmpty()) {
+        const QString intersect =
+            QStringLiteral("thread:%1 and (%2)").arg(threadId, matchQuery);
+        NmQuery matchQ(
+            notmuch_query_create(m_db, intersect.toUtf8().constData()));
+        if (matchQ) {
+            notmuch_messages_t *rawMatched = nullptr;
+            if (notmuch_query_search_messages(matchQ.get(), &rawMatched)
+                    == NOTMUCH_STATUS_SUCCESS) {
+                NmMessages matched(rawMatched);
+                for (; notmuch_messages_valid(matched.get());
+                       notmuch_messages_move_to_next(matched.get())) {
+                    NmMessage message(notmuch_messages_get(matched.get()));
+                    if (message) {
+                        matchedIds.insert(QString::fromUtf8(
+                            notmuch_message_get_message_id(message.get())));
+                    }
+                }
+            }
+        }
+    }
 
     const QString query = QStringLiteral("thread:%1").arg(threadId);
     NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
@@ -2363,14 +2592,72 @@ void NotmuchWorker::loadThread(const QString &threadId, quint64 generation)
         ref.messageId = QString::fromUtf8(notmuch_message_get_message_id(message.get()));
         ref.filePath = QString::fromUtf8(notmuch_message_get_filename(message.get()));
         ref.tags = tagsOf(message.get());
+        // With no query to intersect, everything counts as matched.
+        ref.matched = matchedIds.isEmpty() || matchedIds.contains(ref.messageId);
         result.append(ref);
     }
 
     emit threadLoaded(result, generation);
 }
 
+void NotmuchWorker::applyTagsToThreads(const QStringList &threadIds,
+                                       const QStringList &add,
+                                       const QStringList &remove,
+                                       const QString &description)
+{
+    if (threadIds.isEmpty())
+        return;
+
+    if (!openReadOnly())
+        return;
+
+    // Resolve every thread to its message ids in ONE query. Issuing a query per
+    // thread would reopen the same Xapian cursor hundreds of times on a large
+    // selection.
+    QStringList terms;
+    terms.reserve(threadIds.size());
+    for (const QString &id : threadIds)
+        terms.append(QStringLiteral("thread:%1").arg(id));
+
+    const QString query = terms.join(QStringLiteral(" or "));
+
+    NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+    if (!nmQuery) {
+        emit errorOccurred(QStringLiteral("Cannot resolve selected threads"));
+        return;
+    }
+
+    notmuch_messages_t *rawMessages = nullptr;
+    if (notmuch_query_search_messages(nmQuery.get(), &rawMessages)
+            != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(QStringLiteral("Cannot resolve selected threads"));
+        return;
+    }
+    NmMessages messages(rawMessages);
+
+    QStringList messageIds;
+    for (; notmuch_messages_valid(messages.get());
+           notmuch_messages_move_to_next(messages.get())) {
+        NmMessage message(notmuch_messages_get(messages.get()));
+        if (message) {
+            messageIds.append(
+                QString::fromUtf8(notmuch_message_get_message_id(message.get())));
+        }
+    }
+
+    if (messageIds.isEmpty()) {
+        emit errorOccurred(QStringLiteral("Selected threads contain no messages"));
+        return;
+    }
+
+    applyTags(TagChange{ messageIds, add, remove, description });
+}
+
 void NotmuchWorker::applyTags(const TagChange &change)
 {
+    if (change.messageIds.isEmpty())
+        return;
+
     // The read-only handle must be closed first: notmuch allows only one open
     // handle per process.
     close();
@@ -3012,8 +3299,10 @@ Task 13.
 ```cpp
 #pragma once
 
+#include <QList>
 #include <QWidget>
 
+#include "htmlbuilder.h"
 #include "mimeparser.h"
 
 class QLabel;
@@ -3023,7 +3312,11 @@ class QWebEngineProfile;
 class CidSchemeHandler;
 class RequestInterceptor;
 
-/// The message pane: headers, body, attachment bar.
+/// The message pane: thread header, body, attachment bar.
+///
+/// A whole thread renders into one web view. A newsletter thread can hold
+/// dozens of messages, and one view per message would spawn one Chromium
+/// render process per message.
 class MessageView : public QWidget
 {
     Q_OBJECT
@@ -3031,7 +3324,10 @@ public:
     explicit MessageView(QWidget *parent = nullptr);
     ~MessageView() override;
 
-    void showMessage(const ParsedMessage &message);
+    /// Renders a whole thread, oldest first. Items whose expanded flag is
+    /// false collapse to a one-line stub.
+    void showThread(const QList<ThreadRenderItem> &items);
+
     void showError(const QString &text, const QString &filePath);
     void clear();
 
@@ -3046,7 +3342,7 @@ private:
     void render();
     void updateHeader();
 
-    ParsedMessage m_message;
+    QList<ThreadRenderItem> m_items;
     bool m_preferHtml = true;
 
     QWebEngineProfile *m_profile = nullptr;
@@ -3078,6 +3374,8 @@ private:
 #include <QWebEngineSettings>
 #include <QWebEngineView>
 #include <QWebEnginePage>
+
+#include <algorithm>
 
 #include "cidschemehandler.h"
 #include "htmlbuilder.h"
@@ -3164,28 +3462,38 @@ MessageView::~MessageView() = default;
 
 void MessageView::clear()
 {
-    m_message = {};
+    m_items.clear();
     m_view->setHtml(QString());
     m_headerLabel->clear();
     m_blockedLabel->hide();
     m_loadRemoteButton->hide();
 }
 
-void MessageView::showMessage(const ParsedMessage &message)
+void MessageView::showThread(const QList<ThreadRenderItem> &items)
 {
-    m_message = message;
+    m_items = items;
     m_preferHtml = true;
 
-    // Every message starts from a clean policy: no remote grant carries over.
+    // Every thread starts from a clean policy: no remote grant carries over.
     m_interceptor->resetForNewMessage();
 
+    // Flatten every message's inline parts into one namespaced map, so two
+    // messages sharing a Content-ID resolve to different parts.
+    QHash<QString, InlinePart> allParts;
     QSet<QString> cids;
-    for (auto it = message.inlineParts.cbegin();
-         it != message.inlineParts.cend(); ++it) {
-        cids.insert(it.key());
+
+    for (const ThreadRenderItem &item : m_items) {
+        for (auto it = item.message.inlineParts.cbegin();
+             it != item.message.inlineParts.cend(); ++it) {
+            const QString key =
+                CidSchemeHandler::namespacedKey(item.cidPrefix, it.key());
+            allParts.insert(key, it.value());
+            cids.insert(key);
+        }
     }
+
     m_interceptor->setAllowedCids(cids);
-    m_cidHandler->setParts(message.inlineParts);
+    m_cidHandler->setParts(allParts);
 
     updateHeader();
     render();
@@ -3193,7 +3501,7 @@ void MessageView::showMessage(const ParsedMessage &message)
 
 void MessageView::showError(const QString &text, const QString &filePath)
 {
-    m_message = {};
+    m_items.clear();
     m_headerLabel->setText(tr("<b>Cannot display message</b>"));
     m_blockedLabel->hide();
     m_loadRemoteButton->hide();
@@ -3206,11 +3514,19 @@ void MessageView::showError(const QString &text, const QString &filePath)
 
 void MessageView::updateHeader()
 {
+    if (m_items.isEmpty()) {
+        m_headerLabel->clear();
+        return;
+    }
+
+    // The thread's subject comes from its first message; later replies carry
+    // Re: prefixes that add nothing.
+    const QString subject = m_items.first().message.subject;
+
     m_headerLabel->setText(
-        QStringLiteral("<b>%1</b><br>%2<br><small>%3</small>")
-            .arg(m_message.subject.toHtmlEscaped(),
-                 m_message.from.toHtmlEscaped(),
-                 m_message.date.toHtmlEscaped()));
+        QStringLiteral("<b>%1</b><br><small>%2</small>")
+            .arg(subject.toHtmlEscaped(),
+                 tr("%n message(s) in thread", "", m_items.size())));
 }
 
 void MessageView::render()
@@ -3220,7 +3536,7 @@ void MessageView::render()
 
     // The base URL uses a scheme the interceptor recognises, so the document
     // itself loads while everything it references is still filtered.
-    m_view->setHtml(HtmlBuilder::build(m_message, mode),
+    m_view->setHtml(HtmlBuilder::buildThread(m_items, mode),
                     QUrl(QStringLiteral("qtmaildir://message")));
 
     // Blocking is discovered during load, so check shortly afterwards.
@@ -3234,8 +3550,12 @@ void MessageView::render()
 
 void MessageView::toggleHtml()
 {
-    if (!m_message.hasHtml()) {
-        emit statusMessage(tr("This message has no HTML part"));
+    const bool anyHtml = std::any_of(
+        m_items.cbegin(), m_items.cend(),
+        [](const ThreadRenderItem &item) { return item.message.hasHtml(); });
+
+    if (!anyHtml) {
+        emit statusMessage(tr("No message in this thread has an HTML part"));
         return;
     }
     m_preferHtml = !m_preferHtml;
@@ -3244,7 +3564,7 @@ void MessageView::toggleHtml()
 
 void MessageView::loadRemoteContent()
 {
-    // Applies to this message only and is cleared by the next showMessage().
+    // Applies to this thread only and is cleared by the next showThread().
     m_interceptor->setAllowRemote(true);
     m_blockedLabel->hide();
     m_loadRemoteButton->hide();
@@ -3295,6 +3615,7 @@ git commit -S -m "feat: add MessageView with locked-down web engine profile"
 #include <QHash>
 #include <QMainWindow>
 #include <QThread>
+#include <QUndoCommand>
 #include <QUndoStack>
 
 #include <functional>
@@ -3343,6 +3664,15 @@ private:
     void tagSelected(const QStringList &add, const QStringList &remove,
                      const QString &description);
 
+    /// Sends a tag change for a set of threads without touching the undo stack.
+    /// Both tagSelected() and ThreadTagCommand route through this.
+    void sendThreadTagChange(const QStringList &threadIds,
+                             const QStringList &add,
+                             const QStringList &remove,
+                             const QString &description);
+
+    friend class ThreadTagCommand;
+
     Config m_config;
     KeyMap m_keyMap;
 
@@ -3363,8 +3693,50 @@ private:
 
     QHash<QString, std::function<void()>> m_actions;
     quint64 m_generation = 0;
+    QString m_lastQuery;
     QString m_currentThreadId;
     QVector<MessageRef> m_currentMessages;
+};
+
+/// Undo entry for a tag change over a set of threads.
+///
+/// Stores thread ids rather than message ids, so undo re-resolves them on the
+/// worker and stays correct even if the selection has moved on.
+class ThreadTagCommand : public QUndoCommand
+{
+public:
+    ThreadTagCommand(MainWindow *window, const QStringList &threadIds,
+                     const QStringList &add, const QStringList &remove,
+                     const QString &description)
+        : QUndoCommand(description), m_window(window), m_threadIds(threadIds),
+          m_add(add), m_remove(remove), m_description(description) {}
+
+    /// The stack calls redo() when the command is pushed. The change has
+    /// already been sent by that point, so the first call is skipped.
+    void redo() override
+    {
+        if (m_firstRedo) {
+            m_firstRedo = false;
+            return;
+        }
+        m_window->sendThreadTagChange(m_threadIds, m_add, m_remove,
+                                      m_description);
+    }
+
+    void undo() override
+    {
+        // Inverted: what was added is removed and vice versa.
+        m_window->sendThreadTagChange(m_threadIds, m_remove, m_add,
+                                      QStringLiteral("Undo %1").arg(m_description));
+    }
+
+private:
+    MainWindow *m_window;
+    QStringList m_threadIds;
+    QStringList m_add;
+    QStringList m_remove;
+    QString m_description;
+    bool m_firstRedo = true;
 };
 ```
 
@@ -3624,6 +3996,9 @@ void MainWindow::runCurrentQuery()
     if (query.isEmpty())
         return;
 
+    // Kept so loadThread() can work out which messages of a thread matched.
+    m_lastQuery = query;
+
     ++m_generation;
     m_model->clear();
     m_messageView->clear();
@@ -3658,6 +4033,7 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     m_currentThreadId = m_model->threadAt(current.row()).threadId;
     QMetaObject::invokeMethod(m_worker, "loadThread", Qt::QueuedConnection,
                               Q_ARG(QString, m_currentThreadId),
+                              Q_ARG(QString, m_lastQuery),
                               Q_ARG(quint64, m_generation));
 }
 
@@ -3669,17 +4045,38 @@ void MainWindow::onThreadLoaded(const QVector<MessageRef> &messages,
 
     m_currentMessages = messages;
 
-    // v1 shows the newest message of the thread; the flat-list rendering of a
-    // whole thread is a later refinement.
     MimeParser parser;
-    const MessageRef &ref = messages.last();
-    const ParsedMessage parsed = parser.parse(ref.filePath);
+    QList<ThreadRenderItem> items;
+    items.reserve(messages.size());
 
-    if (!parsed.ok) {
-        m_messageView->showError(parsed.error, ref.filePath);
-        return;
+    for (int i = 0; i < messages.size(); ++i) {
+        const MessageRef &ref = messages.at(i);
+
+        ThreadRenderItem item;
+        item.message = parser.parse(ref.filePath);
+
+        if (!item.message.ok) {
+            // One unreadable message must not lose the rest of the thread, so
+            // it becomes an inline note rather than replacing the whole pane.
+            item.message = {};
+            item.message.ok = true;
+            item.message.from = tr("(unreadable message)");
+            item.message.subject = ref.filePath;
+            item.message.plainBody =
+                tr("This message could not be parsed.\n%1").arg(ref.filePath);
+        }
+
+        // Namespace prefix keeps cid: references distinct across the thread.
+        item.cidPrefix = QStringLiteral("m%1").arg(i);
+
+        // Matched messages open; the rest collapse to a stub. The last message
+        // always opens, so a thread never renders as nothing but stubs.
+        item.expanded = ref.matched || i == messages.size() - 1;
+
+        items.append(item);
     }
-    m_messageView->showMessage(parsed);
+
+    m_messageView->showThread(items);
 }
 
 void MainWindow::onWorkerError(const QString &message)
@@ -3706,34 +4103,40 @@ void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,
     if (rows.isEmpty())
         return;
 
-    QStringList messageIds;
     QStringList threadIds;
-    for (const QModelIndex &index : rows) {
-        const ThreadSummary thread = m_model->threadAt(index.row());
-        threadIds.append(thread.threadId);
-    }
+    threadIds.reserve(rows.size());
+    for (const QModelIndex &index : rows)
+        threadIds.append(m_model->threadAt(index.row()).threadId);
 
-    // Tagging operates on the messages of the selected threads. The currently
-    // loaded thread's messages are known; others are resolved by the worker
-    // from the thread id.
-    for (const MessageRef &ref : m_currentMessages)
-        messageIds.append(ref.messageId);
+    sendThreadTagChange(threadIds, add, remove, description);
 
-    if (messageIds.isEmpty()) {
-        m_statusLabel->setText(tr("Select a thread first"));
-        return;
-    }
+    // Pushed for undo. The inverse re-resolves the same threads, so it works
+    // whether or not those rows are still selected.
+    m_undoStack.push(new ThreadTagCommand(this, threadIds, add, remove,
+                                          description));
 
-    TagChange change{ messageIds, add, remove, description };
+    m_statusLabel->setText(
+        tr("%1: %n thread(s)", "", threadIds.size()).arg(description));
+}
 
-    // Optimistic: update now, revert if the worker reports failure.
+void MainWindow::sendThreadTagChange(const QStringList &threadIds,
+                                     const QStringList &add,
+                                     const QStringList &remove,
+                                     const QString &description)
+{
+    // Optimistic: the rows change now, so a bulk archive of hundreds of threads
+    // feels instant. onWorkerError() reverts if the write fails.
     for (const QString &threadId : threadIds)
         m_model->applyTagChange(threadId, add, remove);
 
-    QMetaObject::invokeMethod(m_worker, "applyTags", Qt::QueuedConnection,
-                              Q_ARG(TagChange, change));
-
-    m_statusLabel->setText(description);
+    // The worker resolves thread ids to message ids: the UI does not hold
+    // message ids for rows it never opened.
+    QMetaObject::invokeMethod(m_worker, "applyTagsToThreads",
+                              Qt::QueuedConnection,
+                              Q_ARG(QStringList, threadIds),
+                              Q_ARG(QStringList, add),
+                              Q_ARG(QStringList, remove),
+                              Q_ARG(QString, description));
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
@@ -3873,18 +4276,28 @@ Create `docs/manual-verification.md` and record pass/fail for each:
 3. A large query (`*`) paints the first rows within a second and keeps filling.
 4. Typing a new query while one is running discards the old results.
 5. A malformed query (`tag:`) reports an error and does not crash.
-6. Selecting a thread renders its newest message.
-7. An HTML newsletter renders with layout, and shows "Remote content blocked".
-8. Clicking "Load remote content" re-renders with images.
-9. Selecting a different message clears the remote grant (banner returns).
-10. A message with an inline image displays it without any remote load.
-11. `h` toggles to the plain-text version and back.
-12. Clicking a link in a message opens the system browser, and the pane does
+6. Selecting a thread renders every message in it, oldest first.
+7. In a thread where only some messages matched the query, the rest appear as
+   one-line stubs.
+8. A thread with many messages (find one with `notmuch search --output=threads`
+   sorted by message count) renders without a noticeable stall, and
+   `pgrep -c QtWebEngineProcess` does not grow with the message count.
+9. An HTML newsletter renders with layout, and shows "Remote content blocked".
+10. Clicking "Load remote content" re-renders with images.
+11. Selecting a different thread clears the remote grant (banner returns).
+12. A message with an inline image displays it without any remote load.
+13. A thread containing two messages that use the same Content-ID shows each
+    message its own image, not the same one twice. (Two newsletters from the
+    same sender is the usual way to hit this.)
+14. `h` toggles the whole thread to plain text and back.
+15. Clicking a link in a message opens the system browser, and the pane does
     not navigate.
-13. `a` archives the selected thread; `notmuch search` confirms `inbox` is gone.
-14. `u` restores it.
-15. Sync runs, the log fills, and the query refreshes on completion.
-16. Sync while `notmuch new` runs from cron reports a lock error rather than
+16. `a` archives the selected thread; `notmuch search` confirms `inbox` is gone.
+17. Selecting several threads and pressing `a` archives all of them; confirm the
+    count with `notmuch count`.
+18. `u` after a bulk archive restores every thread it touched.
+19. Sync runs, the log fills, and the query refreshes on completion.
+20. Sync while `notmuch new` runs from cron reports a lock error rather than
     corrupting anything.
 
 - [ ] **Step 4: Commit the results**
@@ -3973,16 +4386,32 @@ Checked against the spec on 2026-08-02:
 - Spec §14 known gaps are preserved: `NotmuchWorker` has no unit test, and
   Task 13 is the compensating manual check.
 
-Two deviations from the spec, both narrowing:
+No deviations from the spec remain. Two narrowings were present in the first
+draft and were folded back in at the user's direction on 2026-08-02:
 
-1. Spec §7 describes rendering a thread as a flat list of all messages. Task 12
-   renders only the newest message of the thread. Full flat-thread rendering is
-   deferred; it is UI assembly over the same parsed data and adds no new
-   subsystem.
-2. Spec §9 lists tagging multiple selected threads. Task 12 tags the messages of
-   the loaded thread only, because resolving message ids for unloaded threads
-   needs a worker round-trip that is not yet designed. The status bar reports
-   when nothing is selected.
+1. **Full thread rendering** (spec §7). The whole thread renders, oldest first,
+   matched messages expanded and unmatched collapsed to stubs. This was called
+   out as fundamental for newsletter threads.
 
-Both are noted here rather than silently dropped, and both should be confirmed
-acceptable before Task 12 is executed.
+   Folding it in surfaced two design consequences worth recording:
+
+   - The thread renders as **one document in one web view**, not one view per
+     message. A newsletter thread can hold dozens of messages, and a
+     `QWebEngineView` each would spawn a Chromium render process each.
+   - Because messages share a document, their `cid:` references **collide**:
+     two newsletters both using `cid:logo@example.org` would resolve to
+     whichever part won. Every reference is therefore rewritten to
+     `cid:<prefix>!<id>` with a per-message prefix. This is covered by
+     `threadNamespacesCidUrls` in Task 6.
+
+   Determining which messages matched required a real change to the worker:
+   `loadThread` now takes the user's query and intersects it with the thread,
+   and `MessageRef` carries a `matched` flag.
+
+2. **Batch tagging** (spec §9). Archive, flag, delete, and spam apply to every
+   selected thread. The UI holds thread ids, not message ids, for rows it never
+   opened, so `NotmuchWorker::applyTagsToThreads` resolves them in a single
+   combined query rather than one query per thread.
+
+   Undo follows: `ThreadTagCommand` stores thread ids and re-resolves on undo,
+   so it stays correct even after the selection moves.

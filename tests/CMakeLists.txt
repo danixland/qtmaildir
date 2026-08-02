@@ -4,3 +4,5 @@ function(add_qtmaildir_test name)
     target_link_libraries(test_${name} PRIVATE qtmaildir_lib Qt6::Test)
     add_test(NAME ${name} COMMAND test_${name})
 endfunction()
+
+add_qtmaildir_test(keymap)

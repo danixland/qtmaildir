@@ -1,5 +1,5 @@
 add_library(qtmaildir_lib STATIC
-    main_placeholder.cpp
+    keymap.cpp
 )
 
 target_include_directories(qtmaildir_lib

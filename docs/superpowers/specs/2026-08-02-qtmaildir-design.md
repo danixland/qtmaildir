@@ -312,6 +312,15 @@ pointed at input from strangers.
   from the current message's own parts are permitted. Remote images, CSS,
   and fonts are blocked before a connection opens, which defeats tracking
   pixels and read receipts.
+
+  The document-load exemption is scoped to the **exact** base URL passed to
+  `setHtml()`, not to the whole `qtmaildir:` scheme. A blanket
+  scheme-level allow would let a hostile body reference
+  `qtmaildir://anything` and have it trusted, making the interceptor's
+  correctness depend on the scheme handler's. The interceptor fails closed:
+  with no document URL set, every `qtmaildir:` URL is denied. `MessageView`
+  must therefore call `setDocumentUrl()` with the same URL it gives
+  `setHtml()`.
 - When anything was blocked, the header bar shows "Remote content blocked"
   with a **Load remote content** button. Clicking it re-renders that one
   message with remote loads permitted. The grant is never sticky and never

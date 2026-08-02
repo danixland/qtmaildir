@@ -1636,6 +1636,11 @@ public:
     /// Content-IDs belonging to the currently displayed message.
     void setAllowedCids(const QSet<QString> &cids) { m_allowedCids = cids; }
 
+    /// The exact base URL passed to setHtml(). REQUIRED: without it every
+    /// qtmaildir: URL is denied and nothing renders. Only this exact URL is
+    /// trusted on that scheme; the scheme alone is not sufficient.
+    void setDocumentUrl(const QUrl &url) { m_documentUrl = url; }
+
     /// Per-message opt-in, triggered by the user clicking "Load remote content".
     /// Never persisted, never carried to the next message.
     void setAllowRemote(bool allow) { m_allowRemote = allow; }
@@ -1650,6 +1655,7 @@ public:
 
 private:
     QSet<QString> m_allowedCids;
+    QUrl m_documentUrl;
     bool m_allowRemote = false;
     bool m_blockedAnything = false;
 };
@@ -1672,9 +1678,17 @@ bool RequestInterceptor::shouldAllow(const QUrl &url)
     const QString scheme = url.scheme();
 
     // The document itself is loaded via setHtml() with a qtmaildir: base URL,
-    // so that scheme must pass or nothing renders at all.
-    if (scheme == QLatin1String("qtmaildir"))
-        return true;
+    // so that exact URL must pass or nothing renders at all. Allowing the
+    // whole SCHEME would be a hole: a hostile body could reference
+    // qtmaildir://anything and be trusted, which would make this object's
+    // correctness depend on the scheme handler's. Fails closed when no
+    // document URL has been set.
+    if (scheme == QLatin1String("qtmaildir")) {
+        if (!m_documentUrl.isEmpty() && url == m_documentUrl)
+            return true;
+        m_blockedAnything = true;
+        return false;
+    }
 
     // Inline parts of the current message only.
     if (scheme == QLatin1String("cid")) {
@@ -3509,6 +3523,11 @@ void MessageView::showThread(const QList<ThreadRenderItem> &items)
 
     m_interceptor->setAllowedCids(cids);
     m_cidHandler->setParts(allParts);
+
+    // REQUIRED by RequestInterceptor: it trusts only this exact URL on the
+    // qtmaildir: scheme and fails closed otherwise, so this must match the
+    // base URL passed to setHtml() in render() or nothing renders at all.
+    m_interceptor->setDocumentUrl(QUrl(QStringLiteral("qtmaildir://message")));
 
     updateHeader();
     render();

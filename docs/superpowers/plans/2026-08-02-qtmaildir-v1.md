@@ -544,13 +544,13 @@ void TestConfig::parsesAccounts()
 {
     QTemporaryDir dir;
     const QString path = writeIni(dir, QStringLiteral(
-        "[account/work]\n"
+        "[account.work]\n"
         "name=Test User\n"
         "address=user@example.org\n"
         "maildir=work-mail\n"
         "drafts=Drafts\n"
         "\n"
-        "[account/personal]\n"
+        "[account.personal]\n"
         "name=Test User\n"
         "address=me@example.net\n"
         "maildir=personal\n"
@@ -610,7 +610,7 @@ void TestConfig::accountWithoutMaildirIsRejected()
 {
     QTemporaryDir dir;
     const QString path = writeIni(dir, QStringLiteral(
-        "[account/broken]\n"
+        "[account.broken]\n"
         "name=No Maildir\n"
         "address=x@example.org\n"
     ));
@@ -666,7 +666,7 @@ Expected: FAIL, `config.h: No such file or directory`.
 /// identity.
 struct Account
 {
-    QString key;      ///< INI group suffix, e.g. "work" from [account/work].
+    QString key;      ///< INI group suffix, e.g. "work" from [account.work].
     QString name;
     QString address;
     QString maildir;  ///< Relative to notmuch's database.path.
@@ -762,11 +762,11 @@ void Config::load(const QString &path)
     }
 
     for (const QString &group : settings.childGroups()) {
-        if (!group.startsWith(QStringLiteral("account/")))
+        if (!group.startsWith(QStringLiteral("account.")))
             continue;
 
         Account account;
-        account.key = group.mid(QStringLiteral("account/").size());
+        account.key = group.mid(QStringLiteral("account.").size());
 
         settings.beginGroup(group);
         account.name = settings.value(QStringLiteral("name")).toString();

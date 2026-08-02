@@ -205,13 +205,13 @@ identity.
 [sync]
 command = /home/danix/bin/mailsync.sh
 
-[account/provider-personal]
+[account.provider-personal]
 name = Danilo M.
 address = danix@danix.xyz
 maildir = provider-personal    ; relative to notmuch's database.path
 drafts = Drafts
 
-[account/gmail]
+[account.gmail]
 name = Danilo M.
 address = <the gmail address>
 maildir = gmail

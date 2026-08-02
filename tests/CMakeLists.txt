@@ -6,3 +6,4 @@ function(add_qtmaildir_test name)
 endfunction()
 
 add_qtmaildir_test(keymap)
+add_qtmaildir_test(config)

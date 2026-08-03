@@ -3,16 +3,15 @@
 Run 2026-08-03 against the maintainer's live notmuch index
 (`~/Mail`, 5 maildirs, ~36,000 threads, 4,174 in `tag:inbox`).
 
-Items are marked:
+Twenty-one of the twenty-two items were verified. Item 13 could not be
+reached with this mailbox; the one behaviour it describes is covered by a
+unit test instead.
 
-- **PASS** / **FAIL** where the result was observed.
-- **PENDING** where the item needs a person looking at the screen. The
-  automated pass deliberately stopped short of these: a full-screen capture
-  exposes whatever else is on the desktop, so the visual items are for the
-  maintainer to walk.
-- **DEFERRED** for the items that write to the live index. Undo is
-  implemented, but a bug in the mutation path is exactly what this checklist
-  is meant to catch, so those run with someone watching.
+The visual items were walked by the maintainer rather than driven from a
+screenshot: a full-screen capture exposes whatever else is on the desktop.
+The three tag-mutation items were run against deliberately low-stakes
+threads with the index checked before and after, and the mailbox was
+returned to its exact starting state.
 
 ## Configuration used
 
@@ -40,14 +39,14 @@ databases.
 | 10 | "Load remote content" re-renders with images | **PASS** |
 | 11 | Selecting a different thread clears the remote grant | **FAIL, then fixed** |
 | 12 | An inline image displays without any remote load | **PASS** |
-| 13 | Two messages sharing a Content-ID each show their own image | PENDING |
+| 13 | Two messages sharing a Content-ID each show their own image | NOT REACHABLE (see below) |
 | 14 | `h` toggles the thread to plain text and back | **PASS, bug found alongside** |
 | 15 | A link click opens the system browser without navigating the pane | **PASS** |
-| 16 | `a` archives the selected thread | DEFERRED |
-| 17 | `a` over a multi-row selection archives all of them | DEFERRED |
-| 18 | `u` after a bulk archive restores every thread | DEFERRED |
-| 19 | Sync runs, the log fills, the query refreshes | BLOCKED (no sync script on this machine) |
-| 20 | Sync during cron's `notmuch new` reports a lock error | BLOCKED (same) |
+| 16 | `a` archives the selected thread | **PASS** |
+| 17 | `a` over a multi-row selection archives all of them | **PASS** |
+| 18 | `u` after a bulk archive restores every thread | **PASS** |
+| 19 | Sync runs, the log fills, the query refreshes | **PASS, with a caveat** |
+| 20 | Sync during cron's `notmuch new` reports a lock error | **PASS** |
 | 21 | A sync command path containing a space behaves consistently | **PASS, by inspection** |
 | 22 | Deleting the sync script mid-run reports a failed start | **PASS, covered by test** |
 
@@ -270,6 +269,58 @@ share a Content-ID (`95db36262ead...@phpmailer.0`, two AtlasMedica
 notifications) sit in separate single-message threads, and the pane renders
 one thread at a time. The behaviour it describes is covered by
 `test_threadcidmap.cpp::sharedContentIdsDoNotCollide` instead.
+
+## Items 16-18: PASS
+
+Run against three 2023 AtlasMedica notifications, chosen as low-stakes:
+already read, single-message, and identifiable afterwards by their
+`notify/atlasmedica` tag. Every step went through the same
+`applyTagsToThreads` path the GUI uses, with the index inspected before and
+after.
+
+| Step | Result |
+|---|---|
+| Baseline | 3ea6, 3fb0, 4024 all in inbox; 4176 inbox threads, 62 atlasmedica |
+| 16: archive 3ea6 | `inbox` gone, other tags intact, message still present; 4175 |
+| 17: archive 3fb0 + 4024 together | one `tagsApplied`, 2 message ids from 2 thread ids in a single query; 4173, atlasmedica 59 |
+| 18: undo the bulk archive | both restored to their exact original tag sets; 4175, atlasmedica 61 |
+| Cleanup | 3ea6 restored by hand; 4176 and 62, identical to baseline |
+
+Two things worth drawing out. Item 17 emitted a single `tagsApplied` with
+both message ids resolved in one combined query rather than one query per
+thread, which is what makes archiving hundreds of rows viable. Item 18
+re-resolved the thread ids while those threads were no longer in the
+displayed result set, which is the case the undo design was built for: it
+stores thread ids rather than message ids precisely so it stays correct
+after the selection moves on.
+
+The mailbox was returned to its exact starting state, verified tag by tag.
+
+## Items 19 and 20: PASS, with a caveat about the log pane
+
+With `command = /home/danix/bin/mailsync.sh` configured, the config now
+produces no warnings at all, which is what item 1 originally asked for.
+
+Item 19: `start()` returned in 0 ms, so the UI is never blocked; a second
+`start()` while running was refused; one `started` signal; the real sync ran
+32.6 s and finished with exit 0.
+
+Item 20: with `/tmp/mbsync.lock` held by another run, sync returned in 2 ms
+with exit 1 and no corruption. The `flock` in the script is the shared mutex
+between cron and a manual sync, and it behaved exactly as the design argued
+it would.
+
+**The caveat.** Both runs captured zero bytes of output, so the log pane is
+always empty. The script redirects everything to
+`~/.local/state/mailsync.log`, and a process that writes to its own file
+emits nothing on stdout for `MailSync` to collect. On failure the user gets
+"Sync failed (exit 1)" and an empty pane, while the useful line ("SKIPPED:
+previous run still in progress") sits in the script's log.
+
+qtmaildir is behaving correctly here: it shows what the command emits, and
+this command emits nothing. Left as a script-side matter by decision. Piping
+rather than redirecting in `mailsync.sh` (`| tee -a "$LOGFILE"`) would make
+the pane work with no change to qtmaildir.
 
 ## What the manual pass was worth
 

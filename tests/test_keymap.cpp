@@ -37,7 +37,15 @@ private slots:
     void defaultsDoNotCollide();
     void everyDefaultIsAKnownAction();
     void everyDefaultParses();
+    void completeQueryIsBoundByDefault();
 };
+
+void TestKeyMap::completeQueryIsBoundByDefault()
+{
+    QVERIFY(KeyMap::knownActions().contains(QStringLiteral("complete_query")));
+    QCOMPARE(KeyMap::defaultSequenceFor(QStringLiteral("complete_query")),
+             QKeySequence(QStringLiteral("Ctrl+Space")));
+}
 
 void TestKeyMap::everyDefaultParses()
 {

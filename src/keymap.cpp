@@ -33,6 +33,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("toggle_unread"),
         QStringLiteral("flag"),
         QStringLiteral("focus_query"),
+        QStringLiteral("complete_query"),
         QStringLiteral("toggle_html"),
         QStringLiteral("load_remote"),
         QStringLiteral("zoom_in"),
@@ -64,6 +65,10 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Ctrl+U"),       QStringLiteral("toggle_unread") },
         { QStringLiteral("Ctrl+I"),       QStringLiteral("flag") },
         { QStringLiteral("Ctrl+L"),       QStringLiteral("focus_query") },
+        // Ctrl+Space is the completion idiom users already carry over from
+        // shells and editors, and it is a named key rather than a symbol, so
+        // no layout has to shift it.
+        { QStringLiteral("Ctrl+Space"),   QStringLiteral("complete_query") },
         { QStringLiteral("Ctrl+H"),       QStringLiteral("toggle_html") },
         { QStringLiteral("Ctrl+M"),       QStringLiteral("load_remote") },
         // Ctrl++ is what the '+' key really delivers on a layout where '+' is

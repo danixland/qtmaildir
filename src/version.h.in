@@ -1,0 +1,27 @@
+/*
+ * qtmaildir - a Qt6 mail client for notmuch-indexed Maildirs
+ * Copyright (C) 2026 Danilo M. <danix@danix.xyz>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#pragma once
+
+/// Generated from the project() declaration in the top-level CMakeLists.txt.
+/// The version is declared in exactly one place; anything that needs it takes
+/// it from here rather than repeating the literal.
+#define QTMAILDIR_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define QTMAILDIR_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define QTMAILDIR_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define QTMAILDIR_VERSION "@PROJECT_VERSION@"

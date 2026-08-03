@@ -14,8 +14,13 @@ bool RequestInterceptor::shouldAllow(const QUrl &url)
     // by unusual casing, in either the allow or the deny direction.
     const QString scheme = url.scheme();
 
-    // The document itself is loaded via setHtml() with a qtmaildir: base URL,
-    // so a request for exactly that URL must pass or nothing renders at all.
+    // data: is never allowed here. It is permitted for the main-frame
+    // document only, which is handled in interceptRequest() where the resource
+    // type is known: a message body can put data: in <img src> or
+    // <iframe src>, and those must stay blocked.
+
+    // The document's origin is the qtmaildir: base URL, so requests can still
+    // arrive on that scheme once the document is live.
     // This is the ONLY trusted qtmaildir: URL: everything else on this scheme
     // is denied, including sub-paths of it. A hostile message body can put
     // arbitrary qtmaildir: URLs in <img src>, <link href>, etc., so this
@@ -64,6 +69,23 @@ bool RequestInterceptor::shouldAllow(const QUrl &url)
 
 void RequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
 {
+    // The main-frame document arrives as a data: URL, because setHtml() does
+    // not fetch the base URL it is given: it navigates to a data: URL carrying
+    // the markup and applies the base URL afterwards as the document's origin.
+    // (Verified empirically on Qt 6.11. The qtmaildir: rule in shouldAllow()
+    // was written on the opposite assumption, and until this was found every
+    // document load was blocked and the pane rendered blank.)
+    //
+    // Scoping this to ResourceTypeMainFrame is what keeps it from being a
+    // hole: those bytes are the ones HtmlBuilder produced a moment earlier and
+    // they arrive in the navigation itself rather than over any transport,
+    // while a data: URL written into a message body reaches this function as
+    // an image, stylesheet or subframe and is still denied by shouldAllow().
+    if (info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame
+        && info.requestUrl().scheme() == QLatin1String("data")) {
+        return;
+    }
+
     if (!shouldAllow(info.requestUrl()))
         info.block(true);
 }

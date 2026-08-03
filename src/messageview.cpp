@@ -31,10 +31,18 @@ protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type,
                                  bool isMainFrame) override
     {
-        // setHtml() arrives as a typed navigation to our own base URL. Matching
-        // the exact URL rather than the scheme keeps this consistent with the
-        // interceptor, which deliberately refuses to trust qtmaildir: wholesale.
-        if (type == NavigationTypeTyped && url == MessageView::documentUrl())
+        // setHtml() does NOT navigate to the base URL it is given: it
+        // navigates to a data: URL carrying the markup, and applies the base
+        // URL afterwards as the document's origin. Verified empirically on Qt
+        // 6.11; an earlier version of this function compared against
+        // documentUrl() here and rejected every document load, so nothing
+        // rendered at all.
+        //
+        // A typed main-frame navigation is therefore one we initiated
+        // ourselves, and is accepted on that basis. This is not the security
+        // boundary: RequestInterceptor still vets every request the document
+        // goes on to make, including the qtmaildir: origin itself.
+        if (type == NavigationTypeTyped && isMainFrame)
             return true;
 
         if (type == NavigationTypeLinkClicked) {

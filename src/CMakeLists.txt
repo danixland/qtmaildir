@@ -14,6 +14,7 @@ add_library(qtmaildir_lib STATIC
     threadcidmap.cpp
     messageview.cpp
     mainwindow.cpp
+    querycompleter.cpp
 )
 
 target_include_directories(qtmaildir_lib

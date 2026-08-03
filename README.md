@@ -110,6 +110,19 @@ identity.
 ; Unread. Falls back to the first saved query if no query by this name
 ; exists, and warns if you named one explicitly.
 ; startup_query = Unread
+; Optional. Open the completion popup as soon as an empty query bar takes
+; focus, without pressing the shortcut. Defaults to false.
+; completion_on_focus = false
+
+[completion]
+; Optional. Extra content types offered after mimetype:, APPENDED to the
+; built-in list rather than replacing it, so a typo here cannot leave you
+; with fewer completions than the defaults.
+; Entries are separated by ',', and within an entry '|' separates the value
+; from its optional description. The two characters differ because QSettings
+; splits comma lists itself, so a description containing a comma would
+; otherwise be read as two entries. Neither character is legal in a mimetype.
+extra_mimetypes = application/vnd.oasis.opendocument.text|ODT document, message/rfc822|forwarded mail, text/calendar
 
 [sync]
 ; Optional. Omit and the Sync button disables itself with a tooltip.
@@ -154,6 +167,42 @@ Saved-query buttons appear in alphabetical order rather than file order:
 QSettings returns keys sorted, and preserving file order would mean
 hand-rolling an INI parser. Which query opens at startup is therefore a
 separate setting, `[general] startup_query`, rather than "the first one".
+
+## The query bar
+
+The bar at the top takes a notmuch query and shows the matching threads.
+Saved queries from `[queries]` sit beside it as buttons.
+
+Completion helps with the syntax rather than replacing it. `Ctrl+Space`
+opens the popup, and ordinary typing keeps it up to date. Candidates carry a
+short description on the right, and matching is on substrings, so typing
+`amazon` still finds `shopping/amazon`.
+
+What completes:
+
+- **Prefixes.** `tag:`, `from:`, `date:`, `mimetype:` and the rest, each with
+  a one-line description of what it matches, plus the `and`, `or` and `not`
+  operators.
+- **Tag names**, after `tag:` and after `is:`, which notmuch treats as the
+  same thing. The list is the real set of tags in your database, refreshed at
+  startup, after a sync, and whenever tagging introduces a new one.
+- **Dates**, after `date:`. `today`, `last_week` and similar, on either side
+  of a `..` range independently, so `date:last_month..today` can be completed
+  a bound at a time. Entries that are ranges in themselves, like `1week..`,
+  are withheld once a range is already being written.
+- **Content types**, after `mimetype:`, from a short built-in list you can
+  extend through `[completion] extra_mimetypes`.
+- **Account directories**, after `path:`, in both the plain and the
+  recursive `<maildir>/**` form.
+
+`from:`, `to:`, `subject:`, `folder:`, `attachment:`, `thread:` and `id:`
+offer no values. Addresses and folder names would need an enumerator
+libnotmuch does not expose, and the rest are free text.
+
+notmuch's date parser also accepts free-form dates such as `2026-01-15` or
+`15/01/2026..today`. Those cannot be offered as candidates, since there is no
+finite list of them, so the date popup carries a footer line saying so. Type
+them and they work; the popup simply has nothing to suggest.
 
 ## Tags
 
@@ -220,6 +269,7 @@ Defaults, all rebindable through `[keys]`:
 | `Ctrl+U` | `toggle_unread` | Toggle `unread` |
 | `Ctrl+I` | `flag` | Add `flagged` |
 | `Ctrl+L` | `focus_query` | Focus and select the query bar |
+| `Ctrl+Space` | `complete_query` | Focus the query bar and offer completions |
 | `Ctrl+H` | `toggle_html` | Switch the thread between HTML and plain text |
 | `Ctrl+M` | `load_remote` | Load remote images for the current thread |
 | `Ctrl+Z` | `undo` | Undo the last tag change |

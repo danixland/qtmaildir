@@ -139,13 +139,17 @@ void TestQueryCompleter::rangeUpperBoundCompletes()
 
 void TestQueryCompleter::rangeLowerBoundCompletes()
 {
-    // Cursor sits at offset 8, before the "..".
-    const QString text = QStringLiteral("date:las..today");
+    // Cursor sits at offset 8, mid-way through the lower bound rather than at
+    // its end. End-of-bound would not discriminate: there the whole-bound span
+    // and the typed-so-far span happen to be the same length.
+    const QString text = QStringLiteral("date:lastweek..today");
     const CompletionContext ctx = completionContext(text, 8);
     QCOMPARE(ctx.kind, CompletionContext::Value);
     QCOMPARE(ctx.stem, QStringLiteral("las"));
     QCOMPARE(ctx.replaceFrom, 5);
-    QCOMPARE(ctx.replaceLength, 3);
+    // Covers the whole lower bound, so accepting leaves no "tweek" tail.
+    QCOMPARE(ctx.replaceLength, 8);
+    QVERIFY(!ctx.allowRangeEntries);
 }
 
 void TestQueryCompleter::bareValueAllowsRelativeEntries()

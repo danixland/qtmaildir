@@ -206,9 +206,9 @@ read as a promise.
 
 `NotmuchWorker` gains `requestAllTags(quint64 generation)`, wrapping
 `notmuch_database_get_all_tags()` (notmuch.h:942) and emitting a sorted
-`QStringList`. A `NmTags` RAII alias is added to `nmraii.h` alongside the
-existing ones. No notmuch pointer crosses the thread boundary; the generation
-counter follows the existing pattern.
+`QStringList`. The `NmTags` RAII alias it needs already exists in `nmraii.h`.
+No notmuch pointer crosses the thread boundary; the generation counter follows
+the existing pattern.
 
 The list refreshes:
 

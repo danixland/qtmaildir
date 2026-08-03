@@ -72,6 +72,15 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
 
     installEventFilter(this);
 
+    // The thread view needs its own filter, not just the window's. A filter on
+    // the window only sees key presses the focused child did not consume, and
+    // QAbstractItemView consumes plain letters for its type-to-search feature:
+    // with the list focused, 'h' jumped to the next thread whose subject began
+    // with "h" instead of toggling HTML, and every other single-letter binding
+    // (j, k, a, d, N, F, u, G) was swallowed the same way. Filtering the view
+    // itself puts the keymap ahead of that search.
+    m_threadView->installEventFilter(this);
+
     if (!m_config.savedQueries().isEmpty()) {
         m_queryEdit->setText(m_config.savedQueries().first().query);
         runCurrentQuery();

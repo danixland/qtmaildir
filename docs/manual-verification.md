@@ -200,7 +200,7 @@ subject began with "h", and `j`, `k`, `a`, `d`, `N`, `F`, `u`, `G` behaved
 the same way. The event filter was installed on the MainWindow, and a
 window-level filter only sees key presses the focused child did not consume.
 Installing it on the thread view as well puts the keymap first. Fixed in
-`b0e3a30`; `j`/`k` navigation confirmed working afterwards.
+`a81c794`; `j`/`k` navigation confirmed working afterwards.
 
 This one is worth noting for how it hid: the bindings all worked when focus
 was anywhere other than the list, which is the state a developer testing a

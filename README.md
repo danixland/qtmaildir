@@ -91,12 +91,21 @@ name = Your Name
 address = you@example.org
 maildir = work-mail        ; relative to notmuch's database.path
 drafts = Drafts            ; recorded for v2; unused today
+label = W                  ; optional chip text; defaults to the key
+color = #2f6fa8            ; optional chip colour; generated when unset
 
 [account.personal]
 name = Your Name
 address = you@example.net
 maildir = personal
 drafts = Drafts
+
+[tagcolors]
+; Optional. Colours resolve by exact tag first, then by top-level prefix, so
+; one entry covers a whole hierarchy.
+shopping = #3366cc         ; also colours shopping/amazon, shopping/nike, ...
+shopping/amazon = #ff9900  ; ... unless the exact tag overrides it
+work = #cc4444
 
 [queries]
 Inbox = tag:inbox
@@ -113,6 +122,32 @@ k = prev_thread
 Saved-query buttons appear in alphabetical order rather than file order:
 QSettings returns keys sorted, and preserving file order would mean
 hand-rolling an INI parser.
+
+## Tags
+
+Tags render as coloured chips, and fall into two kinds.
+
+**Account tags** (`account-<key>`, matching an `[account.<key>]` stanza) say
+which mailbox a thread arrived in. They appear as a chip in front of the
+subject in the thread list, coloured by that account's `color` key and labelled
+by its `label` key. `label` changes the chip text only; the notmuch tag is
+never renamed, so queries and external tagging are unaffected.
+
+**Functional tags** say what state a thread is in. They fill one row under the
+message pane, sorted, with whatever does not fit collapsing into a `+N` chip
+whose tooltip lists the rest. Colours come from `[tagcolors]`, falling back to
+built-in defaults for the usual state tags (`flagged`, `unread`, `deleted`,
+`spam`, `attachment`, `replied`, and others), and finally to a colour derived
+from the tag name so no chip is ever unstyled.
+
+Lookup is exact tag first, then top-level prefix. One `shopping` entry
+therefore covers `shopping/amazon` and `shopping/nike`, while a
+`shopping/amazon` entry still overrides its own.
+
+Note that a `/` in an INI key is a group separator to QSettings, so
+`shopping/amazon = #ff9900` is stored as a nested key and written to the file
+as `shopping\amazon`. It is read back correctly; the escaping is QSettings'
+own.
 
 ## Keybindings
 

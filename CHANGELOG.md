@@ -13,6 +13,22 @@ point at which they are stable.
 
 ### Added
 
+- Tags render as coloured chips instead of text in a column. The account tag
+  sits in front of the subject in the thread list, and the functional tags fill
+  a single row under the message pane, with anything that does not fit
+  collapsing into a `+N` chip whose tooltip names the rest.
+- `[tagcolors]` config group. Colours resolve by exact tag first, then by
+  top-level prefix, so one `shopping` entry covers `shopping/amazon` and
+  `shopping/nike` while `shopping/amazon` can still override its own. Built-in
+  defaults cover the usual state tags; anything unconfigured gets a stable
+  colour derived from its name.
+- `color` and `label` keys in an account stanza, setting the account chip's
+  fill and its text. `label` shortens a long key for display only and renames
+  nothing in notmuch; unset falls back to the key.
+- The application icon is now used: window icon, a `.desktop` entry, and
+  install rules placing both into `hicolor` and `share/applications`.
+- Toolbar and menu actions carry icons from the system theme, falling back to
+  text where a theme lacks one.
 - Menu bar covering every action: File, Edit, Message, View and Help.
 - Toolbar with the frequent subset, Sync, Archive, Delete and Undo.
 - **Help > Keyboard shortcuts**, listing the current bindings. Generated from
@@ -29,8 +45,14 @@ point at which they are stable.
   every column. The tag change was already applied, but `Tags` sat after the
   stretching `Subject` column and was pushed off-screen, so Delete looked like
   it had done nothing.
-- Thread list columns reordered to Tags, Date, From, Subject. Subject stretches
-  and is now last, so no column can be pushed out of view.
+- Thread list columns are Date, From and Subject, all resizable. The tags
+  column is gone: spelling out a dozen tags per row consumed most of the list's
+  width. Widening past the viewport scrolls horizontally rather than squeezing
+  the other columns.
+- Hierarchical tags in `[tagcolors]` were silently ignored. QSettings treats
+  `/` in a key as a group separator, so `shopping/amazon` becomes a nested key
+  that `childKeys()` never returns, and every tag containing a `/` fell through
+  to its prefix.
 - Three default bindings never fired. Typing a capital sends `Shift`+the key,
   but `N`, `F` and `G` were stored as the unshifted key, which no keystroke
   produces, leaving `toggle_unread`, `flag` and `sync` dead. A bare capital in

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=qtmaildir
+GenericName=Mail Reader
+Comment=Read and organize a local notmuch-indexed Maildir
+Exec=qtmaildir
+Icon=qtmaildir
+Terminal=false
+Categories=Network;Email;Qt;
+Keywords=mail;email;notmuch;maildir;
+StartupNotify=true
+StartupWMClass=qtmaildir

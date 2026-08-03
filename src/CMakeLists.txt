@@ -6,6 +6,9 @@ add_library(qtmaildir_lib STATIC
     htmlbuilder.cpp
     cidschemehandler.cpp
     notmuchworker.cpp
+    tagchip.cpp
+    tagcolors.cpp
+    tagstrip.cpp
     threadlistmodel.cpp
     mailsync.cpp
     threadcidmap.cpp
@@ -20,7 +23,18 @@ target_include_directories(qtmaildir_lib
 target_link_libraries(qtmaildir_lib
     PUBLIC Qt6::Widgets Qt6::WebEngineWidgets PkgConfig::GMIME ${NOTMUCH_LIBRARY})
 
-add_executable(qtmaildir main.cpp)
+# resources.qrc belongs to the executable, not to the static library. A qrc
+# compiled into a .a registers itself from a global initialiser, and the linker
+# drops that object because nothing references it, so the resource silently
+# fails to exist at runtime.
+add_executable(qtmaildir main.cpp resources.qrc)
 target_link_libraries(qtmaildir PRIVATE qtmaildir_lib)
 
 install(TARGETS qtmaildir RUNTIME DESTINATION bin)
+
+# The icon goes into the hicolor theme under its scalable directory, which is
+# where a desktop environment looks for the Icon= name in the .desktop entry.
+install(FILES ${CMAKE_SOURCE_DIR}/assets/icons/qtmaildir.svg
+        DESTINATION share/icons/hicolor/scalable/apps)
+install(FILES ${CMAKE_SOURCE_DIR}/assets/qtmaildir.desktop
+        DESTINATION share/applications)

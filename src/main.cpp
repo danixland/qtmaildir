@@ -17,6 +17,7 @@
  */
 
 #include <QApplication>
+#include <QIcon>
 #include <QMessageBox>
 #include <QWebEngineUrlScheme>
 
@@ -75,6 +76,13 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("qtmaildir"));
     app.setOrganizationName(QStringLiteral("qtmaildir"));
     app.setApplicationVersion(QStringLiteral(QTMAILDIR_VERSION));
+
+    // Compiled in rather than read from disk, so the icon is there whether or
+    // not the app was installed. setDesktopFileName() is what lets a Wayland
+    // compositor match the window to its .desktop entry, which is where the
+    // taskbar icon really comes from there.
+    app.setWindowIcon(QIcon(QStringLiteral(":/icons/qtmaildir.svg")));
+    app.setDesktopFileName(QStringLiteral("qtmaildir"));
 
     // Fail loudly on an ABI mismatch rather than crashing later.
     if (LIBNOTMUCH_MAJOR_VERSION < 5) {

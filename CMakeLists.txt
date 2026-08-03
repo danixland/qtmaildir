@@ -6,7 +6,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets WebEngineWidgets Test)
+# Off for a packaging build, which has no use for the test binaries and would
+# otherwise pull in Qt6::Test and compile the whole suite to produce nothing
+# that ships.
+option(QTMAILDIR_BUILD_TESTS "Build the test suite" ON)
+
+set(QTMAILDIR_QT_COMPONENTS Widgets WebEngineWidgets)
+if(QTMAILDIR_BUILD_TESTS)
+    list(APPEND QTMAILDIR_QT_COMPONENTS Test)
+endif()
+find_package(Qt6 6.5 REQUIRED COMPONENTS ${QTMAILDIR_QT_COMPONENTS})
 
 # notmuch ships no pkg-config file; locate it by hand.
 find_path(NOTMUCH_INCLUDE_DIR notmuch.h)
@@ -27,6 +36,8 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/generated/qtmaildir/version.h
     @ONLY)
 
-enable_testing()
 add_subdirectory(src)
-add_subdirectory(tests)
+if(QTMAILDIR_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

@@ -60,6 +60,29 @@ A single test binary, for a tighter loop:
 ./build/tests/test_keymap
 ```
 
+Packaging builds do not need the tests, and building them pulls in `Qt6::Test`
+to produce nothing that ships:
+
+```bash
+cmake -S . -B build -DQTMAILDIR_BUILD_TESTS=OFF
+```
+
+### Slackware package
+
+`assets/slackbuild/` holds a SlackBuild. It follows SBo conventions, with two
+deliberate departures: the tag is `_danix` rather than `_SBo`, and the package
+type is `txz` rather than `tgz`, since this is not an SBo submission. `sbolint`
+reports exactly those two as errors and nothing else.
+
+```bash
+cd assets/slackbuild
+# fetch the source tarball named in qtmaildir.info next to the script
+sudo ./qtmaildir.SlackBuild
+```
+
+`notmuch` is the only dependency outside Slackware itself; Qt6 (WebEngine
+included), gmime and cmake are all stock.
+
 ## Configuration
 
 `~/.config/qtmaildir/qtmaildir.conf`, INI format.

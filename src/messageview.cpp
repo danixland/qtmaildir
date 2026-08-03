@@ -21,8 +21,12 @@
 #include <QDesktopServices>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QApplication>
+#include <QMouseEvent>
 #include <QPushButton>
+#include <QtNumeric>
 #include <QTimer>
+#include <QWheelEvent>
 #include <QVBoxLayout>
 #include <QWebEnginePage>
 #include <QWebEngineProfile>
@@ -100,6 +104,13 @@ MessageView::MessageView(QWidget *parent)
     settings->setAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls, false);
     settings->setAttribute(QWebEngineSettings::PluginsEnabled, false);
     settings->setAttribute(QWebEngineSettings::FullScreenSupportEnabled, false);
+
+    // Ctrl+wheel zoom. The filter goes on the application rather than on
+    // m_view: the wheel event is delivered to an internal QQuickWidget the
+    // view creates lazily, so there is no child to filter at this point and a
+    // filter on m_view itself would never see it. eventFilter() narrows by
+    // ancestry, so no event outside this pane is touched.
+    qApp->installEventFilter(this);
 
     m_headerLabel = new QLabel(this);
     m_headerLabel->setTextFormat(Qt::RichText);
@@ -279,6 +290,88 @@ void MessageView::toggleHtml()
     }
     m_preferHtml = !m_preferHtml;
     render();
+}
+
+bool MessageView::eventFilter(QObject *watched, QEvent *event)
+{
+    const QEvent::Type type = event->type();
+    if (type != QEvent::Wheel && type != QEvent::MouseButtonPress)
+        return QWidget::eventFilter(watched, event);
+
+    // Application-wide filter: only events inside this pane are ours. Anything
+    // else, including a Ctrl+wheel over the thread list, passes untouched.
+    // isAncestorOf() is false for the widget itself, so test that separately.
+    auto *widget = qobject_cast<QWidget *>(watched);
+    if (!widget || (widget != m_view && !m_view->isAncestorOf(widget)))
+        return QWidget::eventFilter(watched, event);
+
+    if (type == QEvent::Wheel) {
+        auto *wheel = static_cast<QWheelEvent *>(event);
+        if (!(wheel->modifiers() & Qt::ControlModifier))
+            return QWidget::eventFilter(watched, event);
+
+        // angleDelta is in eighths of a degree; one detent is 120. A high
+        // resolution wheel sends smaller steps, so scale rather than treating
+        // every event as one full step.
+        const int delta = wheel->angleDelta().y();
+        if (delta != 0)
+            setZoomFactor(zoomFactor() + 0.1 * delta / 120.0);
+
+        // Consumed, or Chromium's own Ctrl+wheel zoom would run on top of
+        // ours and the factor we track would no longer be what is on screen.
+        return true;
+    }
+
+    // Ctrl+middle-click resets: the same hand that just zoomed with the wheel
+    // puts it back, without reaching for the keyboard.
+    auto *mouse = static_cast<QMouseEvent *>(event);
+    if (mouse->button() != Qt::MiddleButton
+        || !(mouse->modifiers() & Qt::ControlModifier)) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    zoomReset();
+
+    // Consumed: a plain middle click is paste-on-X11 in some contexts, and
+    // this gesture must do one thing only.
+    return true;
+}
+
+qreal MessageView::clampZoom(qreal factor)
+{
+    // qIsFinite rejects the NaN and infinity a corrupt or hand-edited state
+    // file can produce; qFuzzyIsNull rejects the 0.0 that a missing or
+    // non-numeric value converts to, which would render nothing at all.
+    if (!qIsFinite(factor) || factor <= 0.0)
+        return kDefaultZoom;
+    return qBound(kMinZoom, factor, kMaxZoom);
+}
+
+qreal MessageView::zoomFactor() const
+{
+    // The web view is the single source of truth. It keeps the factor across
+    // setHtml(), verified on Qt 6.11, so there is no second copy to drift.
+    return m_view->zoomFactor();
+}
+
+void MessageView::setZoomFactor(qreal factor)
+{
+    m_view->setZoomFactor(clampZoom(factor));
+}
+
+void MessageView::zoomIn()
+{
+    setZoomFactor(zoomFactor() + 0.1);
+}
+
+void MessageView::zoomOut()
+{
+    setZoomFactor(zoomFactor() - 0.1);
+}
+
+void MessageView::zoomReset()
+{
+    setZoomFactor(kDefaultZoom);
 }
 
 void MessageView::loadRemoteContent()

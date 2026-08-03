@@ -77,8 +77,23 @@ Per-account subdirectories *are* configured, since notmuch does not model accoun
 
 **Config format gotcha:** QSettings treats `/` in a section name as a group separator, so
 account sections are `[account.work]`, not `[account/work]`. `childKeys` returns keys
-sorted alphabetically, never in file order. Config lives at
+sorted alphabetically, never in file order. **`[general]` keys are read WITHOUT the
+`general/` prefix** — QSettings' INI backend treats a section literally named `[general]`
+as its own fallback section and strips it, so a `general/<key>` lookup silently matches
+nothing (this is how `notmuch_config` went unnoticed as broken). Config lives at
 `~/.config/qtmaildir/qtmaildir.conf`.
+
+Machine-written UI state is a **separate** file, `~/.local/state/qtmaildir/uistate.conf`
+via `MainWindow::uiStatePath()`. Never write window blobs into the hand-edited config.
+Build the path from `QStandardPaths::GenericStateLocation`, not `StateLocation`: the
+latter appends both the organization and the application name, and both are `qtmaildir`.
+
+**Do not conclude a key binding is dead from `QTest::keyClick()`.** Whether a symbol needs
+Shift is a layout property, not a Qt one. `Ctrl++` is the shipped `zoom_in` default and is
+exactly what the `+` key emits on an Italian layout, while synthetic input never delivers
+it. Verify against a real keyboard before changing a default on reachability grounds. The
+separate, real trap `normalizeSequence()` handles is a **bare capital** (`N` parses to
+unshifted Key_N, which no keystroke emits).
 
 ## Web view security
 

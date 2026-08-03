@@ -36,6 +36,8 @@ private slots:
     void documentActuallyLoads();
     void threadContentReachesThePage();
     void dataUrlSubResourceStillBlocked();
+    void zoomIsClampedToARenderableRange();
+    void zoomSurvivesANewDocument();
 
 private:
     QWebEngineView *webViewOf(MessageView *view) const
@@ -173,6 +175,59 @@ void TestMessageView::dataUrlSubResourceStillBlocked()
     });
     QTRY_VERIFY_WITH_TIMEOUT(done, 15000);
     QVERIFY(text.contains(QStringLiteral("visible-text")));
+}
+
+void TestMessageView::zoomIsClampedToARenderableRange()
+{
+    // A factor outside the range leaves the pane unreadable, and the only way
+    // back is a menu entry the user can no longer read. A corrupt state file
+    // reaching setZoomFactor() must not be able to do that.
+    QCOMPARE(MessageView::clampZoom(100.0), MessageView::kMaxZoom);
+    QCOMPARE(MessageView::clampZoom(0.01), MessageView::kMinZoom);
+
+    // A missing or non-numeric state value converts to 0.0, and a hand-edited
+    // one can hold NaN or an infinity. None of those may reach the web view.
+    QCOMPARE(MessageView::clampZoom(0.0), MessageView::kDefaultZoom);
+    QCOMPARE(MessageView::clampZoom(-2.0), MessageView::kDefaultZoom);
+    QCOMPARE(MessageView::clampZoom(qQNaN()), MessageView::kDefaultZoom);
+    QCOMPARE(MessageView::clampZoom(qInf()), MessageView::kDefaultZoom);
+
+    // In-range values pass through untouched.
+    QCOMPARE(MessageView::clampZoom(1.4), 1.4);
+
+    MessageView view;
+    view.setZoomFactor(50.0);
+    QCOMPARE(view.zoomFactor(), MessageView::kMaxZoom);
+}
+
+void TestMessageView::zoomSurvivesANewDocument()
+{
+    // MainWindow persists whatever zoomFactor() reports and never reapplies it
+    // per render, which is only correct if the web view keeps the factor
+    // across setHtml(). Verified rather than assumed.
+    MessageView view;
+    QWebEngineView *web = webViewOf(&view);
+    QVERIFY(web);
+
+    view.setZoomFactor(1.5);
+
+    QSignalSpy loaded(web, &QWebEngineView::loadFinished);
+
+    ParsedMessage message;
+    message.ok = true;
+    message.from = QStringLiteral("Sender <sender@example.org>");
+    message.subject = QStringLiteral("Zoom");
+    message.plainBody = QStringLiteral("body text");
+
+    ThreadRenderItem item;
+    item.message = message;
+    item.cidPrefix = QStringLiteral("m0");
+    item.expanded = true;
+
+    view.showThread({ item });
+    QVERIFY(loaded.wait(15000));
+
+    QCOMPARE(view.zoomFactor(), 1.5);
 }
 
 QTEST_MAIN(TestMessageView)

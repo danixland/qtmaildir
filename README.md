@@ -79,6 +79,10 @@ identity.
 ; Optional. Omit to let notmuch resolve its own config, which is what keeps
 ; the GUI and the CLI pointed at one database.
 ; notmuch_config = /home/you/.notmuch-config
+; Optional. Starting zoom of the message pane, 0.5 to 3.0. Only the starting
+; point: once you zoom with Ctrl+wheel or Ctrl+/Ctrl-, that is remembered
+; separately and this value no longer applies.
+; message_zoom = 1.0
 
 [sync]
 ; Optional. Omit and the Sync button disables itself with a tooltip.

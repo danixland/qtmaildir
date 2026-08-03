@@ -78,6 +78,11 @@ public:
     /// Optional alternate notmuch config file. Empty means "let notmuch decide".
     QString notmuchConfig() const { return m_notmuchConfig; }
 
+    /// Starting message-pane zoom for a profile with no saved UI state. Once
+    /// the user zooms, the state file remembers that instead, so this is only
+    /// ever the default. Clamped by MessageView::clampZoom() on use.
+    qreal messageZoom() const { return m_messageZoom; }
+
     /// Every non-fatal problem, both kinds below. Shown in the status bar.
     QStringList warnings() const { return m_warnings; }
 
@@ -101,6 +106,7 @@ private:
     QList<SavedQuery> m_savedQueries;
     QString m_syncCommand;
     QString m_notmuchConfig;
+    qreal m_messageZoom = 1.0;
     QStringList m_warnings;
     QStringList m_problems;
 };

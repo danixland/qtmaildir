@@ -36,7 +36,27 @@ private slots:
     void userBindingWinsOverDefaultInMenus();
     void defaultsDoNotCollide();
     void everyDefaultIsAKnownAction();
+    void everyDefaultParses();
 };
+
+void TestKeyMap::everyDefaultParses()
+{
+    // A default that does not parse is a dead binding, the failure mode
+    // bareCapitalMatchesShiftedPress() covers for user-written keys.
+    //
+    // This deliberately does NOT try to decide which keys a keyboard can
+    // deliver. Whether a symbol needs Shift is a layout property, not a Qt
+    // one: Ctrl++ is exactly what the '+' key emits on an Italian layout and
+    // is unreachable on a US one, and QTest::keyClick() cannot reproduce
+    // either faithfully. A test asserting reachability from synthetic input
+    // would encode one layout's habits as a rule for all of them.
+    for (const auto &binding : KeyMap::defaultBindings()) {
+        const QKeySequence sequence = KeyMap::normalizeSequence(binding.first);
+        QVERIFY2(!sequence.isEmpty(),
+                 qPrintable(QStringLiteral("default '%1' for %2 does not parse")
+                                .arg(binding.first, binding.second)));
+    }
+}
 
 void TestKeyMap::defaultsAreLoaded()
 {

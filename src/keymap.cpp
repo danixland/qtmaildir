@@ -35,6 +35,9 @@ QStringList KeyMap::knownActions()
         QStringLiteral("focus_query"),
         QStringLiteral("toggle_html"),
         QStringLiteral("load_remote"),
+        QStringLiteral("zoom_in"),
+        QStringLiteral("zoom_out"),
+        QStringLiteral("zoom_reset"),
         QStringLiteral("undo"),
         QStringLiteral("sync"),
         QStringLiteral("quit"),
@@ -63,6 +66,15 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Ctrl+L"),       QStringLiteral("focus_query") },
         { QStringLiteral("Ctrl+H"),       QStringLiteral("toggle_html") },
         { QStringLiteral("Ctrl+M"),       QStringLiteral("load_remote") },
+        // Ctrl++ is what the '+' key really delivers on a layout where '+' is
+        // unshifted, an Italian one among them, confirmed against the actual
+        // keyboard. QTest::keyClick() cannot reproduce it, so a synthetic-input
+        // probe wrongly reports this binding as dead; do not "fix" it on that
+        // evidence. A US layout, where '+' is Shift+'=', wants Ctrl+Shift+= in
+        // [keys] instead.
+        { QStringLiteral("Ctrl++"),       QStringLiteral("zoom_in") },
+        { QStringLiteral("Ctrl+-"),       QStringLiteral("zoom_out") },
+        { QStringLiteral("Ctrl+0"),       QStringLiteral("zoom_reset") },
         { QStringLiteral("Ctrl+Z"),       QStringLiteral("undo") },
         { QStringLiteral("Ctrl+G"),       QStringLiteral("sync") },
         { QStringLiteral("Ctrl+Q"),       QStringLiteral("quit") },

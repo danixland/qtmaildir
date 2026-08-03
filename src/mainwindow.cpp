@@ -105,6 +105,13 @@ void MainWindow::restoreUiState()
     if (!header.isEmpty()) {
         m_threadView->horizontalHeader()->restoreState(header);
     }
+
+    // The config value is the starting point for a profile that has never
+    // zoomed; once the user does, the state file is what they last had.
+    // clampZoom() rejects the garbage a hand-edited file can hold.
+    m_messageView->setZoomFactor(
+        state.value(QStringLiteral("message/zoom"), m_config.messageZoom())
+            .toDouble());
 }
 
 void MainWindow::saveUiState() const
@@ -116,6 +123,7 @@ void MainWindow::saveUiState() const
     state.setValue(QStringLiteral("window/splitter"), m_splitter->saveState());
     state.setValue(QStringLiteral("threadlist/header"),
                    m_threadView->horizontalHeader()->saveState());
+    state.setValue(QStringLiteral("message/zoom"), m_messageView->zoomFactor());
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -381,6 +389,32 @@ void MainWindow::registerActions()
               tr("Load remote images for the current thread"), [this]() {
         m_messageView->loadRemoteContent();
     });
+    addAction(QStringLiteral("zoom_in"), tr("Zoom &in"),
+              tr("Enlarge the message text"), [this]() {
+        m_messageView->zoomIn();
+    });
+    addAction(QStringLiteral("zoom_out"), tr("Zoom &out"),
+              tr("Shrink the message text"), [this]() {
+        m_messageView->zoomOut();
+    });
+    auto *zoomReset =
+        addAction(QStringLiteral("zoom_reset"), tr("&Actual size"),
+                  tr("Return the message text to its default size"), [this]() {
+        m_messageView->zoomReset();
+    });
+
+    // Ctrl+= alongside the configured binding: '=' reads as "back to normal",
+    // and on a layout where '+' is Shift+'=' it is the unshifted key next to
+    // zoom in. Appended rather than assigned, so a [keys] override of
+    // zoom_reset keeps working and simply gains this as a second way in.
+    // A user who bound Ctrl+= to something else in [keys] keeps their binding.
+    const QKeySequence altReset(QStringLiteral("Ctrl+="));
+    if (m_keyMap.actionFor(altReset).isEmpty()) {
+        QList<QKeySequence> shortcuts = zoomReset->shortcuts();
+        shortcuts.append(altReset);
+        zoomReset->setShortcuts(shortcuts);
+    }
+
     addAction(QStringLiteral("undo"), tr("&Undo"),
               tr("Undo the last tag change"), [this]() {
         if (m_undoStack.canUndo())
@@ -428,6 +462,10 @@ void MainWindow::buildMenus()
     viewMenu->addSeparator();
     viewMenu->addAction(m_actions.value(QStringLiteral("toggle_html")));
     viewMenu->addAction(m_actions.value(QStringLiteral("load_remote")));
+    viewMenu->addSeparator();
+    viewMenu->addAction(m_actions.value(QStringLiteral("zoom_in")));
+    viewMenu->addAction(m_actions.value(QStringLiteral("zoom_out")));
+    viewMenu->addAction(m_actions.value(QStringLiteral("zoom_reset")));
 
     auto *helpMenu = menuBar()->addMenu(tr("&Help"));
     auto *shortcuts = helpMenu->addAction(tr("&Keyboard shortcuts"));

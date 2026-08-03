@@ -52,8 +52,32 @@ void Config::load(const QString &path)
 {
     QSettings settings(path, QSettings::IniFormat);
 
+    // Keys of [general] are read WITHOUT the "general/" prefix. QSettings'
+    // INI backend treats a section literally named [general] as its own
+    // fallback section and strips the prefix, so "general/notmuch_config"
+    // never matches anything, in any section arrangement (verified on
+    // Qt 6.11). The file still reads as [general] to the user; only the
+    // lookup differs. Same family of trap as the [account.work] dot and the
+    // childKeys() ordering already documented in CLAUDE.md.
     m_notmuchConfig =
-        settings.value(QStringLiteral("general/notmuch_config")).toString();
+        settings.value(QStringLiteral("notmuch_config")).toString();
+
+    // Absent is fine and silent: the default is 1.0. Present but unparseable
+    // is a problem, since the user asked for something and is not getting it.
+    // The range check lives in MessageView::clampZoom(), the one place that
+    // knows what the web view can render.
+    const QVariant zoom = settings.value(QStringLiteral("message_zoom"));
+    if (zoom.isValid()) {
+        bool ok = false;
+        const double value = zoom.toString().toDouble(&ok);
+        if (ok) {
+            m_messageZoom = value;
+        } else {
+            addProblem(QStringLiteral("Message zoom '%1' is not a number; "
+                                      "using the default.")
+                           .arg(zoom.toString()));
+        }
+    }
 
     m_syncCommand = settings.value(QStringLiteral("sync/command")).toString();
     if (m_syncCommand.isEmpty()) {

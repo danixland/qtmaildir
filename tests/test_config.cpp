@@ -34,6 +34,8 @@ private slots:
     void brokenSyncCommandIsAProblem();
     void malformedAccountIsAProblem();
     void validConfigHasNoProblems();
+    void generalSectionKeysAreActuallyRead();
+    void messageZoomDefaultsAndValidates();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -220,6 +222,60 @@ void TestConfig::validConfigHasNoProblems()
 
     QVERIFY(config.problems().isEmpty());
     QVERIFY(config.warnings().isEmpty());
+}
+
+void TestConfig::generalSectionKeysAreActuallyRead()
+{
+    // QSettings' INI backend treats a section literally named [general] as its
+    // own fallback section and strips the prefix, so a "general/<key>" lookup
+    // matches nothing. notmuch_config was read that way and had never worked.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "notmuch_config=/somewhere/notmuch-config\n"
+        "\n"
+        "[sync]\n"
+        "command=/bin/true\n")));
+
+    QCOMPARE(config.notmuchConfig(),
+             QStringLiteral("/somewhere/notmuch-config"));
+}
+
+void TestConfig::messageZoomDefaultsAndValidates()
+{
+    // A QTemporaryDir per case, not one shared: writeIni() always uses the
+    // same file name, and QSettings caches by path, so a second load of the
+    // same path would return the first case's contents.
+
+    // Absent: 1.0, silently. Nothing the user asked for is being ignored.
+    {
+        QTemporaryDir dir;
+        Config config;
+        config.load(writeIni(dir, QStringLiteral("[general]\n")));
+        QCOMPARE(config.messageZoom(), 1.0);
+        QVERIFY(config.problems().isEmpty());
+    }
+
+    {
+        QTemporaryDir dir;
+        Config config;
+        config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                                 "message_zoom=1.25\n")));
+        QCOMPARE(config.messageZoom(), 1.25);
+        QVERIFY(config.problems().isEmpty());
+    }
+
+    // Present but unparseable is a problem: the user asked for something and
+    // is not getting it, which is the line addProblem() draws.
+    {
+        QTemporaryDir dir;
+        Config config;
+        config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                                 "message_zoom=huge\n")));
+        QCOMPARE(config.messageZoom(), 1.0);
+        QCOMPARE(config.problems().size(), 1);
+    }
 }
 
 QTEST_MAIN(TestConfig)

@@ -28,6 +28,7 @@
 #include "config.h"
 #include "keymap.h"
 #include "mainwindow.h"
+#include "messageview.h"
 
 /// MainWindow is mostly wiring, and the parts that need a real database are
 /// still verified manually. What is checked here is the action registry: the
@@ -190,6 +191,7 @@ void TestMainWindow::uiStateSurvivesARestart()
         const Config config;
         MainWindow window(config);
         window.resize(resized);
+        window.findChild<MessageView *>()->setZoomFactor(1.4);
         window.close();  // closeEvent() is what persists the state
     }
 
@@ -200,6 +202,7 @@ void TestMainWindow::uiStateSurvivesARestart()
     const Config config;
     MainWindow reopened(config);
     QCOMPARE(reopened.size(), resized);
+    QCOMPARE(reopened.findChild<MessageView *>()->zoomFactor(), 1.4);
 
     QFile::remove(MainWindow::uiStatePath());
     QStandardPaths::setTestModeEnabled(false);

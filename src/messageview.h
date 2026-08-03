@@ -65,12 +65,36 @@ public:
     /// Tags of the thread on display, shown as chips along the bottom.
     void setTags(const QStringList &tags);
 
+    /// The body zoom factor. Chromium's own range is roughly 0.25 to 5.0;
+    /// these are tighter, since a pane at either extreme is unusable and the
+    /// only visible way back is a menu entry the user cannot read.
+    static constexpr qreal kMinZoom = 0.5;
+    static constexpr qreal kMaxZoom = 3.0;
+    static constexpr qreal kDefaultZoom = 1.0;
+
+    /// Clamps to [kMinZoom, kMaxZoom]. A non-finite or non-positive value,
+    /// which is what a corrupt state file yields, falls back to kDefaultZoom.
+    static qreal clampZoom(qreal factor);
+
+    qreal zoomFactor() const;
+    void setZoomFactor(qreal factor);
+
 public slots:
     void toggleHtml();
     void loadRemoteContent();
+    void zoomIn();
+    void zoomOut();
+    void zoomReset();
 
 signals:
     void statusMessage(const QString &text);
+
+protected:
+    /// Turns Ctrl+wheel over the body into zoom, and Ctrl+middle-click into a
+    /// reset. Both events are delivered to the web view's internal QQuickWidget
+    /// focus proxy, not to the view itself, so this filters the whole subtree
+    /// rather than one widget.
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void render();

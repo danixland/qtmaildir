@@ -94,7 +94,7 @@ notmuch access happens on that thread; the UI never blocks.
 **Sync.** qtmaildir runs a configured external command rather than
 reimplementing `mbsync` orchestration. The decisive reason is the `flock`
 guard in the existing script: it is the shared mutex between the user's
-hourly cron sync and any manual sync. Reimplementing the sync internally
+cron sync (every 10 minutes) and any manual sync. Reimplementing it internally
 would place qtmaildir outside that mutex, and two concurrent `mbsync -a` runs
 on one Maildir corrupt UID state. Calling the script joins the mutex for
 free. Reimplementing would also not remove the dependency, since `mbsync`
@@ -379,7 +379,7 @@ query re-runs so new mail appears. On non-zero, the status bar shows the last
 stderr lines with a "Show log" link.
 
 Sync never runs automatically in v1: no timer, no sync on startup. The user's
-cron already syncs hourly, and a second scheduler competing with the first is
+cron already syncs every 10 minutes, and a second scheduler competing with it is
 exactly what the script's `flock` guard exists to prevent. The button means
 "now".
 

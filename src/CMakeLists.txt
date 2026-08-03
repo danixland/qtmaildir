@@ -7,6 +7,7 @@ add_library(qtmaildir_lib STATIC
     cidschemehandler.cpp
     notmuchworker.cpp
     threadlistmodel.cpp
+    mailsync.cpp
 )
 
 target_include_directories(qtmaildir_lib

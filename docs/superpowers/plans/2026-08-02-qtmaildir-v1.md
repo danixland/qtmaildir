@@ -3200,10 +3200,10 @@ Expected: FAIL, `mailsync.h: No such file or directory`.
 /// Runs the configured external sync command.
 ///
 /// qtmaildir deliberately does not implement sync itself. The existing script
-/// holds a flock that is the shared mutex between the user's hourly cron sync
-/// and any manual sync; running the script joins that mutex, whereas a built-in
-/// implementation would sit outside it and could run mbsync concurrently with
-/// cron, corrupting Maildir UID state.
+/// holds a flock that is the shared mutex between the user's cron sync, which
+/// runs every 10 minutes, and any manual sync; running the script joins that
+/// mutex, whereas a built-in implementation would sit outside it and could run
+/// mbsync concurrently with cron, corrupting Maildir UID state.
 class MailSync : public QObject
 {
     Q_OBJECT

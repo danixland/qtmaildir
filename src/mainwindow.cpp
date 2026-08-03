@@ -169,21 +169,24 @@ void MainWindow::buildUi()
     m_threadView->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_threadView->verticalHeader()->hide();
     m_threadView->horizontalHeader()->setStretchLastSection(false);
-    // Subject is last and takes the leftover width, so no column can be
-    // pushed off the right edge. The other three stay Interactive: both
-    // ResizeToContents and Stretch ignore a drag, and the user resizes these.
-    m_threadView->horizontalHeader()->setSectionResizeMode(
-        ThreadListModel::SubjectColumn, QHeaderView::Stretch);
-    for (int column : { ThreadListModel::TagsColumn, ThreadListModel::DateColumn,
-                        ThreadListModel::AuthorsColumn }) {
+    // Every column Interactive, Subject included: Stretch and ResizeToContents
+    // both compute a width and discard the user's drag. Nothing absorbs spare
+    // width as a result, so the columns end where they end.
+    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
         m_threadView->horizontalHeader()->setSectionResizeMode(
             column, QHeaderView::Interactive);
     }
+    // Widening a column past the viewport scrolls rather than squeezing the
+    // others. Per-pixel so the scroll does not jump a whole column at a time.
+    m_threadView->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_threadView->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+
     // Starting widths only; a drag overrides them, and they are what the
     // saved-widths item will persist.
     m_threadView->setColumnWidth(ThreadListModel::TagsColumn, 160);
     m_threadView->setColumnWidth(ThreadListModel::DateColumn, 130);
     m_threadView->setColumnWidth(ThreadListModel::AuthorsColumn, 180);
+    m_threadView->setColumnWidth(ThreadListModel::SubjectColumn, 520);
 
     connect(m_threadView->selectionModel(),
             &QItemSelectionModel::currentRowChanged,

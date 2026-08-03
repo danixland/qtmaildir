@@ -20,6 +20,8 @@
 
 #include <QAction>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -362,24 +364,55 @@ void MainWindow::showShortcutReference()
         if (!action)
             continue;
         const QString sequence = action->shortcut().toString(QKeySequence::NativeText);
-        rows.append(QStringLiteral("<tr><td><tt>%1</tt></td><td>%2</td>"
+        rows.append(QStringLiteral("<tr><td><tt>%1</tt>&nbsp;&nbsp;</td>"
+                                   "<td>%2&nbsp;&nbsp;</td>"
                                    "<td><tt>%3</tt></td></tr>")
                         .arg(sequence.isEmpty() ? tr("(unbound)") : sequence.toHtmlEscaped(),
                              m_actionDescriptions.value(name).toHtmlEscaped(),
                              name.toHtmlEscaped()));
     }
 
-    QMessageBox box(this);
-    box.setWindowTitle(tr("Keyboard shortcuts"));
-    box.setTextFormat(Qt::RichText);
-    box.setText(tr("<h3>Keyboard shortcuts</h3>"
-                   "<table cellpadding='4'>"
-                   "<tr><th align='left'>Key</th><th align='left'>Does</th>"
-                   "<th align='left'>Action name</th></tr>%1</table>"
-                   "<p>Rebind any of these in the <tt>[keys]</tt> section of "
-                   "<tt>qtmaildir.conf</tt>, using the action name.</p>")
-                    .arg(rows.join(QString())));
-    box.exec();
+    // Two columns rather than one. Fourteen actions in a single table made a
+    // dialog taller than the screen, which cut off its own title bar.
+    const int half = (rows.size() + 1) / 2;
+    const QString header =
+        tr("<tr><th align='left'>Key</th><th align='left'>Does</th>"
+           "<th align='left'>Action name</th></tr>");
+    const QString left = header + rows.mid(0, half).join(QString());
+    const QString right = header + rows.mid(half).join(QString());
+
+    // A QDialog rather than QMessageBox: the message box wraps its text at a
+    // narrow default width, which turned every description into a column of
+    // single words and made the dialog taller than the screen.
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Keyboard shortcuts"));
+
+    auto *label = new QLabel(&dialog);
+    label->setTextFormat(Qt::RichText);
+    label->setText(tr("<table cellspacing='0'><tr>"
+                      "<td valign='top'><table cellpadding='3'>%1</table></td>"
+                      "<td width='32'></td>"
+                      "<td valign='top'><table cellpadding='3'>%2</table></td>"
+                      "</tr></table>")
+                       .arg(left, right));
+
+    auto *note = new QLabel(
+        tr("Rebind any of these in the <tt>[keys]</tt> section of "
+           "<tt>qtmaildir.conf</tt>, using the action name."),
+        &dialog);
+    note->setTextFormat(Qt::RichText);
+    note->setWordWrap(true);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->addWidget(label);
+    layout->addWidget(note);
+    layout->addStretch();
+    layout->addWidget(buttons);
+
+    dialog.exec();
 }
 
 void MainWindow::showAbout()

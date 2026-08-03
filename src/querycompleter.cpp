@@ -23,6 +23,7 @@
 #include <QCompleter>
 #include <QCoreApplication>
 #include <QFontMetrics>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
@@ -350,9 +351,17 @@ QueryCompleter::QueryCompleter(QLineEdit *edit, const Config &config,
     // which silently drops the description column.
     m_popup->setItemDelegate(new CompletionDelegate(m_popup));
 
-    m_edit->setCompleter(m_completer);
+    // setWidget, NOT QLineEdit::setCompleter. setCompleter hands completion to
+    // the line edit, which then overwrites completionPrefix with the widget's
+    // ENTIRE text on every keystroke. The prefix must be the stem instead, so
+    // the whole-line prefix matches nothing and the popup stops appearing after
+    // the first token. setWidget still gives the completer the anchor it needs:
+    // complete() dereferences widget() unconditionally and crashes without one.
+    m_completer->setWidget(m_edit);
 
-    connect(m_edit, &QLineEdit::textEdited, this, &QueryCompleter::updateContext);
+    // With the line edit no longer driving completion, every edit has to open
+    // the popup explicitly.
+    connect(m_edit, &QLineEdit::textEdited, this, &QueryCompleter::triggerCompletion);
     connect(m_edit, &QLineEdit::cursorPositionChanged,
             this, [this]() { updateContext(); });
 
@@ -361,8 +370,9 @@ QueryCompleter::QueryCompleter(QLineEdit *edit, const Config &config,
         acceptCompletion(index.data(Qt::DisplayRole).toString());
     });
 
-    if (m_config.completionOnFocus())
-        m_edit->installEventFilter(this);
+    // Always filtered, not only for completion_on_focus: the popup is ours to
+    // drive now, so Tab, Enter, Escape and the arrows must be routed by hand.
+    m_edit->installEventFilter(this);
 }
 
 void QueryCompleter::triggerCompletion()
@@ -386,10 +396,55 @@ bool QueryCompleter::eventFilter(QObject *watched, QEvent *event)
     // Only the empty-bar case: once there is text, ordinary typing has
     // already driven completion.
     if (watched == m_edit && event->type() == QEvent::FocusIn
-        && m_edit->text().isEmpty()) {
+        && m_config.completionOnFocus() && m_edit->text().isEmpty()) {
         triggerCompletion();
+        return QObject::eventFilter(watched, event);
     }
+
+    if (event->type() != QEvent::KeyPress || !popupVisible())
+        return QObject::eventFilter(watched, event);
+
+    auto *keyEvent = static_cast<QKeyEvent *>(event);
+    switch (keyEvent->key()) {
+    case Qt::Key_Tab:
+    case Qt::Key_Enter:
+    case Qt::Key_Return: {
+        // Accept whatever the popup highlights. A freshly opened popup has no
+        // current row, so fall back to the first entry: the user sees it at the
+        // top of the list and expects Tab to take it.
+        QModelIndex index = m_popup->currentIndex();
+        if (!index.isValid())
+            index = m_popup->model()->index(0, 0);
+        if (!index.isValid())
+            return QObject::eventFilter(watched, event);
+
+        acceptCompletion(index.data(Qt::DisplayRole).toString());
+        m_popup->hide();
+        // Consume it. Tab would otherwise move focus to the next widget, and
+        // Return would run the half-typed query.
+        return true;
+    }
+    case Qt::Key_Escape:
+        m_popup->hide();
+        return true;
+    case Qt::Key_Up:
+    case Qt::Key_Down:
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown:
+        // Navigation belongs to the popup, which is not the focus widget while
+        // the user is typing in the bar.
+        QCoreApplication::sendEvent(m_popup, event);
+        return true;
+    default:
+        break;
+    }
+
     return QObject::eventFilter(watched, event);
+}
+
+bool QueryCompleter::popupVisible() const
+{
+    return m_popup && m_popup->isVisible();
 }
 
 void QueryCompleter::acceptCompletion(const QString &value)

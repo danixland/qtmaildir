@@ -20,6 +20,7 @@
 #include <QTemporaryDir>
 
 #include <QLineEdit>
+#include <QListView>
 
 #include "config.h"
 #include "querycompleter.h"
@@ -54,6 +55,14 @@ private slots:
     void acceptReplacesOnlyTheValueAfterThePrefix();
     void acceptReplacesOnlyTheEditedRangeBound();
     void acceptReplacesTheWholeBoundWhenCompletingMidWord();
+
+    // The tests above call acceptCompletion() directly and so never touch the
+    // widget. These drive the path a user actually hits.
+    void typingOpensThePopupOnALaterToken();
+    void tabAcceptsTheHighlightedCompletion();
+    void tabIsIgnoredWhileThePopupIsHidden();
+    void returnIsIgnoredWhileThePopupIsHidden();
+    void focusOpensThePopupOnlyWhenConfigured();
 };
 
 // Copied from tests/test_config.cpp rather than shared, so the two test files
@@ -351,6 +360,141 @@ void TestQueryCompleter::acceptReplacesTheWholeBoundWhenCompletingMidWord()
     QCOMPARE(acceptInto(QStringLiteral("date:yesterday..today"), 9,
                         QStringLiteral("this_week")),
              QStringLiteral("date:this_week..today"));
+}
+
+// The popup is owned by the QCompleter, which is not reachable from the line
+// edit now that setCompleter is deliberately not used. It is the only list
+// view these tests create, so find it that way.
+static QListView *findPopup()
+{
+    const auto widgets = QApplication::allWidgets();
+    for (QWidget *w : widgets) {
+        if (auto *view = qobject_cast<QListView *>(w))
+            return view;
+    }
+    return nullptr;
+}
+
+void TestQueryCompleter::typingOpensThePopupOnALaterToken()
+{
+    // The regression: QLineEdit::setCompleter reset the completion prefix to
+    // the widget's whole text on every keystroke, so nothing matched and the
+    // popup stopped appearing after the first token.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QueryCompleter completer(&edit, config);
+
+    QTest::keyClicks(&edit, QStringLiteral("tag:unread date:last"));
+
+    QListView *popup = findPopup();
+    QVERIFY(popup);
+    QVERIFY(popup->isVisible());
+
+    QStringList offered;
+    for (int row = 0; row < popup->model()->rowCount(); ++row)
+        offered << popup->model()->index(row, 0).data().toString();
+    QCOMPARE(offered, QStringList({ QStringLiteral("last_week"),
+                                    QStringLiteral("last_month") }));
+}
+
+void TestQueryCompleter::tabAcceptsTheHighlightedCompletion()
+{
+    // The user's exact scenario. Tab used to fall through to focus navigation,
+    // leaving the query half-typed.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QueryCompleter completer(&edit, config);
+
+    QTest::keyClicks(&edit, QStringLiteral("tag:unread date:last"));
+    QVERIFY(findPopup() && findPopup()->isVisible());
+
+    QKeyEvent tab(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier,
+                  QStringLiteral("\t"));
+    QApplication::sendEvent(&edit, &tab);
+
+    // Consumed, so focus does not move to the next widget.
+    QVERIFY(tab.isAccepted());
+    // Only the token being completed is replaced, not the whole line.
+    QCOMPARE(edit.text(), QStringLiteral("tag:unread date:last_week"));
+    QVERIFY(!findPopup()->isVisible());
+}
+
+void TestQueryCompleter::tabIsIgnoredWhileThePopupIsHidden()
+{
+    // Every key must fall through when the popup is closed, or the query bar
+    // stops behaving like a line edit.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QueryCompleter completer(&edit, config);
+
+    edit.setText(QStringLiteral("tag:unread"));
+    if (QListView *popup = findPopup())
+        popup->hide();
+
+    QKeyEvent tab(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier,
+                  QStringLiteral("\t"));
+    tab.ignore();
+    QApplication::sendEvent(&edit, &tab);
+
+    QCOMPARE(edit.text(), QStringLiteral("tag:unread"));
+}
+
+void TestQueryCompleter::returnIsIgnoredWhileThePopupIsHidden()
+{
+    // Enter accepts a completion only while the popup is up. With it closed it
+    // must still reach returnPressed, which is what runs the query.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QueryCompleter completer(&edit, config);
+
+    edit.setText(QStringLiteral("tag:unread"));
+    if (QListView *popup = findPopup())
+        popup->hide();
+
+    bool ran = false;
+    connect(&edit, &QLineEdit::returnPressed, &edit, [&ran]() { ran = true; });
+
+    QKeyEvent ret(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(&edit, &ret);
+
+    QVERIFY(ran);
+    QCOMPARE(edit.text(), QStringLiteral("tag:unread"));
+}
+
+void TestQueryCompleter::focusOpensThePopupOnlyWhenConfigured()
+{
+    // The event filter is now installed unconditionally, so the
+    // completion_on_focus check moved inside it. Both settings still behave.
+    QTemporaryDir dir;
+
+    {
+        Config off;
+        off.load(writeIni(dir, QStringLiteral("[general]\n"
+                                              "completion_on_focus=false\n")));
+        QLineEdit edit;
+        edit.show();
+        QueryCompleter completer(&edit, off);
+        edit.setFocus();
+        QVERIFY(!findPopup() || !findPopup()->isVisible());
+    }
+
+    {
+        Config on;
+        on.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "completion_on_focus=true\n")));
+        QVERIFY(on.completionOnFocus());
+        QLineEdit edit;
+        edit.show();
+        QueryCompleter completer(&edit, on);
+        QFocusEvent focusIn(QEvent::FocusIn);
+        QApplication::sendEvent(&edit, &focusIn);
+        QVERIFY(findPopup());
+        QVERIFY(findPopup()->isVisible());
+    }
 }
 
 QTEST_MAIN(TestQueryCompleter)

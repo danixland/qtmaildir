@@ -119,6 +119,11 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    /// Whether the completion popup is on screen. Every key the filter claims
+    /// is claimed only while it is, so the bar types and tabs normally
+    /// otherwise.
+    bool popupVisible() const;
+
     QList<CompletionEntry> entriesFor(const CompletionContext &context) const;
     void rebuildModel(const CompletionContext &context);
 

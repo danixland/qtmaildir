@@ -44,6 +44,13 @@ struct CompletionContext
     /// being completed, so accepting never disturbs neighbouring text.
     int replaceFrom = 0;
     int replaceLength = 0;
+
+    /// Whether candidates that are themselves ranges may be offered.
+    ///
+    /// The relative date entries ("1week..") are complete open-ended ranges.
+    /// Offering one inside an existing range yields date:1week....today, which
+    /// is malformed, so they are withheld once a range is underway.
+    bool allowRangeEntries = true;
 };
 
 /// Decides what the cursor position implies about completion.

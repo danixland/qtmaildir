@@ -46,6 +46,22 @@ int tokenStart(const QString &text, int cursor)
     return start;
 }
 
+/// End of the token the cursor sits in, using the same boundary characters as
+/// tokenStart plus ')'. The token must extend past the cursor: a range
+/// separator to the right of the cursor decides which bound is being edited,
+/// so truncating the token at the cursor would hide it.
+int tokenEnd(const QString &text, int cursor)
+{
+    int end = cursor;
+    while (end < text.size()) {
+        const QChar c = text.at(end);
+        if (c.isSpace() || c == QLatin1Char('(') || c == QLatin1Char(')'))
+            break;
+        ++end;
+    }
+    return end;
+}
+
 } // namespace
 
 CompletionContext completionContext(const QString &text, int cursor)
@@ -59,21 +75,54 @@ CompletionContext completionContext(const QString &text, int cursor)
         return ctx;   // kind stays None
 
     const int start = tokenStart(text, cursor);
-    const QString token = text.mid(start, cursor - start);
+    const int end = tokenEnd(text, cursor);
+    const QString token = text.mid(start, end - start);
+
+    // Everything the user has typed up to the caret. Candidates are matched
+    // against this, never against text still sitting to the right of it.
+    const QString typed = text.mid(start, cursor - start);
 
     const int colon = token.indexOf(QLatin1Char(':'));
-    if (colon < 0) {
+    if (colon < 0 || cursor <= start + colon) {
+        // No prefix yet, or the caret is still inside the keyword itself.
         ctx.kind = CompletionContext::Prefix;
-        ctx.stem = token;
+        ctx.stem = typed;
         ctx.replaceFrom = start;
-        ctx.replaceLength = token.size();
+        ctx.replaceLength = typed.size();
         return ctx;
     }
 
     ctx.kind = CompletionContext::Value;
     ctx.prefix = token.left(colon).toLower();
-    ctx.stem = token.mid(colon + 1);
-    ctx.replaceFrom = start + colon + 1;
-    ctx.replaceLength = ctx.stem.size();
+
+    const QString value = token.mid(colon + 1);
+    const int valueStart = start + colon + 1;
+
+    // A range is two independent values. Complete whichever side the cursor
+    // is in, leaving the other untouched.
+    const int separator = value.indexOf(QStringLiteral(".."));
+    if (separator < 0) {
+        ctx.stem = text.mid(valueStart, cursor - valueStart);
+        ctx.replaceFrom = valueStart;
+        ctx.replaceLength = ctx.stem.size();
+        return ctx;
+    }
+
+    ctx.allowRangeEntries = false;
+
+    const int cursorInValue = cursor - valueStart;
+    if (cursorInValue <= separator) {
+        // stem uses the cursor offset while replaceLength covers the whole
+        // side: matching runs on what has been typed so far, but accepting
+        // replaces the entire bound, so completing mid-word leaves no tail.
+        ctx.stem = value.left(cursorInValue);
+        ctx.replaceFrom = valueStart;
+        ctx.replaceLength = separator;
+    } else {
+        const int upperStart = separator + 2;
+        ctx.stem = value.mid(upperStart, cursorInValue - upperStart);
+        ctx.replaceFrom = valueStart + upperStart;
+        ctx.replaceLength = value.size() - upperStart;
+    }
     return ctx;
 }

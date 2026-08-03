@@ -35,6 +35,10 @@ private slots:
     void emptyValueAfterColonStillCompletes();
     void insideQuotesCompletesNothing();
     void afterClosedQuotesCompletesAgain();
+    void rangeUpperBoundCompletes();
+    void rangeLowerBoundCompletes();
+    void bareValueAllowsRelativeEntries();
+    void rangeSuppressesRelativeEntries();
 };
 
 void TestQueryCompleter::emptyTextCompletesPrefix()
@@ -119,6 +123,44 @@ void TestQueryCompleter::afterClosedQuotesCompletesAgain()
     const CompletionContext ctx = completionContext(text, text.size());
     QCOMPARE(ctx.kind, CompletionContext::Prefix);
     QCOMPARE(ctx.stem, QStringLiteral("ta"));
+}
+
+void TestQueryCompleter::rangeUpperBoundCompletes()
+{
+    const QString text = QStringLiteral("date:today..yes");
+    const CompletionContext ctx = completionContext(text, text.size());
+    QCOMPARE(ctx.kind, CompletionContext::Value);
+    QCOMPARE(ctx.prefix, QStringLiteral("date"));
+    QCOMPARE(ctx.stem, QStringLiteral("yes"));
+    // Overwrites "yes" only: "date:today.." must survive.
+    QCOMPARE(ctx.replaceFrom, 12);
+    QCOMPARE(ctx.replaceLength, 3);
+}
+
+void TestQueryCompleter::rangeLowerBoundCompletes()
+{
+    // Cursor sits at offset 8, before the "..".
+    const QString text = QStringLiteral("date:las..today");
+    const CompletionContext ctx = completionContext(text, 8);
+    QCOMPARE(ctx.kind, CompletionContext::Value);
+    QCOMPARE(ctx.stem, QStringLiteral("las"));
+    QCOMPARE(ctx.replaceFrom, 5);
+    QCOMPARE(ctx.replaceLength, 3);
+}
+
+void TestQueryCompleter::bareValueAllowsRelativeEntries()
+{
+    const QString text = QStringLiteral("date:1w");
+    const CompletionContext ctx = completionContext(text, text.size());
+    QVERIFY(ctx.allowRangeEntries);
+}
+
+void TestQueryCompleter::rangeSuppressesRelativeEntries()
+{
+    // "1week.." offered here would produce date:1week....today.
+    const QString text = QStringLiteral("date:1w..today");
+    const CompletionContext ctx = completionContext(text, 7);
+    QVERIFY(!ctx.allowRangeEntries);
 }
 
 QTEST_MAIN(TestQueryCompleter)

@@ -8,6 +8,8 @@ add_library(qtmaildir_lib STATIC
     notmuchworker.cpp
     threadlistmodel.cpp
     mailsync.cpp
+    threadcidmap.cpp
+    messageview.cpp
 )
 
 target_include_directories(qtmaildir_lib

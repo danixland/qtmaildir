@@ -28,6 +28,7 @@
 
 #include "config.h"
 #include "keymap.h"
+#include "tagcolors.h"
 #include "types.h"
 
 class QAction;
@@ -103,6 +104,7 @@ private:
 
     Config m_config;
     KeyMap m_keyMap;
+    TagColors m_tagColors;
 
     QThread m_workerThread;
     NotmuchWorker *m_worker = nullptr;

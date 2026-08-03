@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QColor>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -32,6 +33,15 @@ struct Account
     QString address;
     QString maildir;  ///< Relative to notmuch's database.path.
     QString drafts;   ///< Unused in v1; send is v2.
+
+    /// Chip colour in the thread list. Invalid when unset, in which case one
+    /// is generated from the account tag's name.
+    QColor color;
+
+    /// Text shown on the chip. Empty falls back to the key, which can be long:
+    /// "provider-work" is a lot of row for one bit of information.
+    /// This renames nothing in notmuch, only what the chip displays.
+    QString label;
 
     bool isValid() const { return !key.isEmpty() && !maildir.isEmpty(); }
 

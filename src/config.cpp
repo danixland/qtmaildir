@@ -89,6 +89,23 @@ void Config::load(const QString &path)
         account.address = settings.value(QStringLiteral("address")).toString();
         account.maildir = settings.value(QStringLiteral("maildir")).toString();
         account.drafts = settings.value(QStringLiteral("drafts")).toString();
+
+        // Both optional, and both describe this account's chip in the thread
+        // list. An account tag is a different taxonomy from a functional one,
+        // saying which mailbox a thread arrived in rather than what state it
+        // is in, so these live here rather than in [tagcolors].
+        account.label = settings.value(QStringLiteral("label")).toString();
+
+        const QString colour = settings.value(QStringLiteral("color")).toString();
+        if (!colour.isEmpty()) {
+            account.color = QColor(colour);
+            if (!account.color.isValid()) {
+                addProblem(
+                    QStringLiteral("Account '%1' has an unparseable color '%2'; "
+                                   "using a generated one.")
+                        .arg(account.key, colour));
+            }
+        }
         settings.endGroup();
 
         if (!account.isValid()) {

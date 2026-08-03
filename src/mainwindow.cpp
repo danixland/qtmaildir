@@ -42,6 +42,7 @@
 #include "messageview.h"
 #include "mimeparser.h"
 #include "notmuchworker.h"
+#include "tagchip.h"
 #include "threadlistmodel.h"
 #include "version.h"
 
@@ -73,6 +74,14 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     {
         QSettings settings(Config::defaultPath(), QSettings::IniFormat);
         m_keyMap.loadOverrides(settings);
+        m_tagColors.load(settings);
+    }
+
+    // An account's chip colour comes from its own stanza, since an account tag
+    // is a different taxonomy from a functional one.
+    for (const Account &account : m_config.accounts()) {
+        m_tagColors.setAccountColour(account.key, account.color);
+        m_tagColors.setAccountLabel(account.key, account.label);
     }
 
     buildUi();
@@ -163,6 +172,7 @@ void MainWindow::buildUi()
 
     // Thread list and message pane.
     m_model = new ThreadListModel(this);
+    m_model->setTagColors(&m_tagColors);
     m_threadView = new QTableView(central);
     m_threadView->setModel(m_model);
     m_threadView->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -176,6 +186,10 @@ void MainWindow::buildUi()
         m_threadView->horizontalHeader()->setSectionResizeMode(
             column, QHeaderView::Interactive);
     }
+
+    // The subject cell carries the account chip in front of its text.
+    m_threadView->setItemDelegateForColumn(ThreadListModel::SubjectColumn,
+                                           new SubjectDelegate(this));
     // Widening a column past the viewport scrolls rather than squeezing the
     // others. Per-pixel so the scroll does not jump a whole column at a time.
     m_threadView->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -183,7 +197,6 @@ void MainWindow::buildUi()
 
     // Starting widths only; a drag overrides them, and they are what the
     // saved-widths item will persist.
-    m_threadView->setColumnWidth(ThreadListModel::TagsColumn, 160);
     m_threadView->setColumnWidth(ThreadListModel::DateColumn, 130);
     m_threadView->setColumnWidth(ThreadListModel::AuthorsColumn, 180);
     m_threadView->setColumnWidth(ThreadListModel::SubjectColumn, 520);
@@ -193,6 +206,7 @@ void MainWindow::buildUi()
             this, &MainWindow::onThreadSelected);
 
     m_messageView = new MessageView(central);
+    m_messageView->setTagColors(&m_tagColors);
     connect(m_messageView, &MessageView::statusMessage,
             this, [this](const QString &text) { m_statusLabel->setText(text); });
 
@@ -355,6 +369,28 @@ void MainWindow::buildMenus()
             this, &MainWindow::showShortcutReference);
     auto *about = helpMenu->addAction(tr("&About"));
     connect(about, &QAction::triggered, this, &MainWindow::showAbout);
+
+    // Standard names from the icon theme, so the buttons match the rest of the
+    // desktop rather than shipping bespoke art. A theme that lacks one leaves
+    // that action with text alone, which still works.
+    const QHash<QString, QString> themeIcons = {
+        { QStringLiteral("sync"),    QStringLiteral("mail-receive") },
+        { QStringLiteral("archive"), QStringLiteral("mail-mark-read") },
+        { QStringLiteral("delete"),  QStringLiteral("edit-delete") },
+        { QStringLiteral("undo"),    QStringLiteral("edit-undo") },
+        { QStringLiteral("spam"),    QStringLiteral("mail-mark-junk") },
+        { QStringLiteral("flag"),    QStringLiteral("mail-mark-important") },
+        { QStringLiteral("quit"),    QStringLiteral("application-exit") },
+        { QStringLiteral("focus_query"), QStringLiteral("edit-find") },
+    };
+    for (auto it = themeIcons.cbegin(); it != themeIcons.cend(); ++it) {
+        QAction *action = m_actions.value(it.key());
+        if (!action)
+            continue;
+        const QIcon icon = QIcon::fromTheme(it.value());
+        if (!icon.isNull())
+            action->setIcon(icon);
+    }
 
     // The frequent subset only. A toolbar holding every action is as
     // unreadable as no toolbar.
@@ -543,7 +579,9 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     if (!current.isValid())
         return;
 
-    m_currentThreadId = m_model->threadAt(current.row()).threadId;
+    const ThreadSummary thread = m_model->threadAt(current.row());
+    m_currentThreadId = thread.threadId;
+    m_messageView->setTags(thread.tags);
     QMetaObject::invokeMethod(m_worker, "loadThread", Qt::QueuedConnection,
                               Q_ARG(QString, m_currentThreadId),
                               Q_ARG(QString, m_lastQuery),
@@ -664,6 +702,14 @@ void MainWindow::sendThreadTagChange(const QStringList &threadIds,
     // feels instant. Recorded so onWorkerError() can put them back.
     for (const QString &threadId : threadIds)
         m_model->applyTagChange(threadId, add, remove);
+
+    // The strip shows the open thread's tags, so it has to follow a change to
+    // that thread rather than waiting for the next selection.
+    if (threadIds.contains(m_currentThreadId)) {
+        const QModelIndex current = m_threadView->currentIndex();
+        if (current.isValid())
+            m_messageView->setTags(m_model->threadAt(current.row()).tags);
+    }
 
     m_pendingThreadIds = threadIds;
     m_pendingChange = TagChange{ {}, add, remove, description };

@@ -20,7 +20,9 @@
 
 #include <QAction>
 #include <QDir>
+#include <QFile>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include "config.h"
@@ -41,6 +43,9 @@ private slots:
     void configuredBindingReachesTheAction();
     void cidPrefixesAreBangFree();
     void cidPrefixesAreDistinctPerMessage();
+    void uiStateIsNotWrittenIntoTheUserConfig();
+    void uiStateSurvivesARestart();
+    void missingUiStateLeavesTheDefaults();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -156,6 +161,62 @@ void TestMainWindow::cidPrefixesAreDistinctPerMessage()
                  qPrintable(QStringLiteral("prefix '%1' repeats").arg(prefix)));
         seen.insert(prefix);
     }
+}
+
+void TestMainWindow::uiStateIsNotWrittenIntoTheUserConfig()
+{
+    // The config file is hand-edited and must never gain a base64 geometry
+    // blob, nor be rewritten on exit: QSettings preserves neither comments nor
+    // key order, so writing it would quietly destroy the user's formatting.
+    QVERIFY(MainWindow::uiStatePath() != Config::defaultPath());
+
+    // One qtmaildir component, not two. QStandardPaths::StateLocation appends
+    // both the organization and the application name, and here both are
+    // "qtmaildir", so using it nests the directory inside itself.
+    QCOMPARE(MainWindow::uiStatePath().count(QStringLiteral("/qtmaildir/")), 1);
+    QVERIFY(MainWindow::uiStatePath().endsWith(
+        QStringLiteral("/qtmaildir/uistate.conf")));
+}
+
+void TestMainWindow::uiStateSurvivesARestart()
+{
+    // Test mode redirects QStandardPaths at the process level, so the state
+    // file lands in a scratch directory rather than the real ~/.local/state.
+    QStandardPaths::setTestModeEnabled(true);
+    QFile::remove(MainWindow::uiStatePath());
+
+    const QSize resized(940, 620);
+    {
+        const Config config;
+        MainWindow window(config);
+        window.resize(resized);
+        window.close();  // closeEvent() is what persists the state
+    }
+
+    QVERIFY2(QFile::exists(MainWindow::uiStatePath()),
+             qPrintable(QStringLiteral("no state file at %1")
+                            .arg(MainWindow::uiStatePath())));
+
+    const Config config;
+    MainWindow reopened(config);
+    QCOMPARE(reopened.size(), resized);
+
+    QFile::remove(MainWindow::uiStatePath());
+    QStandardPaths::setTestModeEnabled(false);
+}
+
+void TestMainWindow::missingUiStateLeavesTheDefaults()
+{
+    // A restore that silently succeeded on an empty blob would give a
+    // zero-size window on first launch. Absent state must be a no-op.
+    QStandardPaths::setTestModeEnabled(true);
+    QFile::remove(MainWindow::uiStatePath());
+
+    const Config config;
+    MainWindow window(config);
+    QCOMPARE(window.size(), QSize(1200, 800));
+
+    QStandardPaths::setTestModeEnabled(false);
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

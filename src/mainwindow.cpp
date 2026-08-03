@@ -19,9 +19,12 @@
 #include "mainwindow.h"
 
 #include <QAction>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -33,6 +36,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QTableView>
 #include <QToolBar>
@@ -61,6 +65,65 @@ QString MainWindow::cidPrefixForIndex(int index)
     return QStringLiteral("m%1").arg(index);
 }
 
+QString MainWindow::uiStatePath()
+{
+    // GenericStateLocation, not StateLocation: the latter appends both the
+    // organization and the application name, and both are "qtmaildir" here,
+    // so it yields ~/.local/state/qtmaildir/qtmaildir. Built the same way
+    // Config::defaultPath() builds its own.
+    const QString base =
+        QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation);
+    return base + QStringLiteral("/qtmaildir/uistate.conf");
+}
+
+void MainWindow::restoreUiState()
+{
+    QSettings state(uiStatePath(), QSettings::IniFormat);
+
+    // Every restore is conditional: an absent or rejected blob must leave the
+    // buildUi() defaults alone rather than produce a zero-size window.
+    const QByteArray geometry = state.value(QStringLiteral("window/geometry"))
+                                    .toByteArray();
+    if (!geometry.isEmpty()) {
+        restoreGeometry(geometry);
+    }
+
+    const QByteArray windowState = state.value(QStringLiteral("window/state"))
+                                       .toByteArray();
+    if (!windowState.isEmpty()) {
+        restoreState(windowState);
+    }
+
+    const QByteArray splitter = state.value(QStringLiteral("window/splitter"))
+                                    .toByteArray();
+    if (!splitter.isEmpty()) {
+        m_splitter->restoreState(splitter);
+    }
+
+    const QByteArray header = state.value(QStringLiteral("threadlist/header"))
+                                  .toByteArray();
+    if (!header.isEmpty()) {
+        m_threadView->horizontalHeader()->restoreState(header);
+    }
+}
+
+void MainWindow::saveUiState() const
+{
+    QDir().mkpath(QFileInfo(uiStatePath()).absolutePath());
+    QSettings state(uiStatePath(), QSettings::IniFormat);
+    state.setValue(QStringLiteral("window/geometry"), saveGeometry());
+    state.setValue(QStringLiteral("window/state"), saveState());
+    state.setValue(QStringLiteral("window/splitter"), m_splitter->saveState());
+    state.setValue(QStringLiteral("threadlist/header"),
+                   m_threadView->horizontalHeader()->saveState());
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    saveUiState();
+    QMainWindow::closeEvent(event);
+}
+
 MainWindow::MainWindow(const Config &config, QWidget *parent)
     : QMainWindow(parent), m_config(config)
 {
@@ -87,6 +150,9 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     buildUi();
     registerActions();
     buildMenus();
+    // After buildMenus(): QMainWindow::restoreState() matches toolbars by
+    // object name, so they must already exist or their position is dropped.
+    restoreUiState();
     wireWorker();
     showWarnings();
 
@@ -210,11 +276,11 @@ void MainWindow::buildUi()
     connect(m_messageView, &MessageView::statusMessage,
             this, [this](const QString &text) { m_statusLabel->setText(text); });
 
-    auto *splitter = new QSplitter(Qt::Horizontal, central);
-    splitter->addWidget(m_threadView);
-    splitter->addWidget(m_messageView);
-    splitter->setStretchFactor(1, 2);
-    layout->addWidget(splitter, 1);
+    m_splitter = new QSplitter(Qt::Horizontal, central);
+    m_splitter->addWidget(m_threadView);
+    m_splitter->addWidget(m_messageView);
+    m_splitter->setStretchFactor(1, 2);
+    layout->addWidget(m_splitter, 1);
 
     layout->addWidget(m_syncLog);
 

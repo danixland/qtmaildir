@@ -38,6 +38,7 @@ class QLabel;
 class QPushButton;
 class QComboBox;
 class QPlainTextEdit;
+class QSplitter;
 
 class ThreadListModel;
 class MessageView;
@@ -63,6 +64,15 @@ public:
     /// cid: references from resolving to another's.
     static QString cidPrefixForIndex(int index);
 
+    /// Path of the machine-written UI state file. Deliberately not
+    /// Config::defaultPath(): the config is hand-edited and must never gain a
+    /// base64 geometry blob, nor be rewritten on exit (QSettings does not
+    /// preserve comments or key order).
+    static QString uiStatePath();
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
 private slots:
     void runCurrentQuery();
     void onThreadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
@@ -74,6 +84,12 @@ private slots:
 
 private:
     void buildUi();
+
+    /// Restores window geometry, splitter and thread-list header widths.
+    /// A missing or rejected blob leaves the buildUi() defaults in place.
+    void restoreUiState();
+    void saveUiState() const;
+
     void registerActions();
     void buildMenus();
     void wireWorker();
@@ -116,6 +132,7 @@ private:
 
     QLineEdit *m_queryEdit = nullptr;
     QTableView *m_threadView = nullptr;
+    QSplitter *m_splitter = nullptr;
     QComboBox *m_accountBox = nullptr;
     QPushButton *m_syncButton = nullptr;
     QLabel *m_statusLabel = nullptr;

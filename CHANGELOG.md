@@ -24,6 +24,13 @@ point at which they are stable.
 
 ### Fixed
 
+- Acting on a thread now visibly changes its row. A thread tagged `deleted`
+  or `spam` is filled dark red or orange, in white struck-through text, across
+  every column. The tag change was already applied, but `Tags` sat after the
+  stretching `Subject` column and was pushed off-screen, so Delete looked like
+  it had done nothing.
+- Thread list columns reordered to Tags, Date, From, Subject. Subject stretches
+  and is now last, so no column can be pushed out of view.
 - Three default bindings never fired. Typing a capital sends `Shift`+the key,
   but `N`, `F` and `G` were stored as the unshifted key, which no keystroke
   produces, leaving `toggle_unread`, `flag` and `sync` dead. A bare capital in

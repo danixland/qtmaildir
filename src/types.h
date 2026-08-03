@@ -35,6 +35,13 @@ struct ThreadSummary
 
     bool isUnread() const { return tags.contains(QStringLiteral("unread")); }
     bool isFlagged() const { return tags.contains(QStringLiteral("flagged")); }
+    bool isDeleted() const { return tags.contains(QStringLiteral("deleted")); }
+    bool isSpam() const { return tags.contains(QStringLiteral("spam")); }
+
+    /// True while the thread is tagged for removal. notmuch deletes nothing
+    /// itself: the tag marks the thread for whatever the user's sync script
+    /// does next, so the row has to show it is on its way out.
+    bool isDoomed() const { return isDeleted() || isSpam(); }
 };
 
 struct MessageRef

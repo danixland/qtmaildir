@@ -18,7 +18,23 @@
 
 #include "threadlistmodel.h"
 
+#include <QBrush>
 #include <QFont>
+
+QColor ThreadListModel::deletedColour()
+{
+    // Desaturated crimson: legible under white text on a dark theme, and calm
+    // enough that deleting fifty threads does not repaint the list as a
+    // warning banner.
+    return QColor(0x8b, 0x2c, 0x2c);
+}
+
+QColor ThreadListModel::spamColour()
+{
+    // Distinct hue rather than a lighter red, so spam and deleted are told
+    // apart by colour and not by shade.
+    return QColor(0xa8, 0x5c, 0x18);
+}
 
 ThreadListModel::ThreadListModel(QObject *parent)
     : QAbstractTableModel(parent)
@@ -67,10 +83,34 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         }
     }
 
-    if (role == Qt::FontRole && thread.isUnread()) {
+    // A thread tagged deleted or spam is on its way out, and the user needs to
+    // see that the moment they act. Every one of these roles applies to the
+    // whole row: a cue on a single column disappears as soon as that column
+    // scrolls out of view, which is exactly how the tag change used to go
+    // unnoticed.
+    if (thread.isDoomed()) {
+        if (role == Qt::BackgroundRole)
+            return QBrush(thread.isDeleted() ? deletedColour() : spamColour());
+        if (role == Qt::ForegroundRole)
+            return QBrush(QColor(Qt::white));
+    }
+
+    if (role == Qt::FontRole) {
         QFont font;
-        font.setBold(true);
-        return font;
+        bool styled = false;
+        if (thread.isUnread()) {
+            font.setBold(true);
+            styled = true;
+        }
+        // Struck through as well as filled, so the state survives a
+        // screenshot, a colourblind reader, and a theme that overrides the
+        // background.
+        if (thread.isDoomed()) {
+            font.setStrikeOut(true);
+            styled = true;
+        }
+        if (styled)
+            return font;
     }
 
     return {};

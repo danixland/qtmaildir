@@ -19,6 +19,7 @@
 #pragma once
 
 #include <QAbstractTableModel>
+#include <QColor>
 #include <QVector>
 
 #include "types.h"
@@ -29,11 +30,14 @@ class ThreadListModel : public QAbstractTableModel
 {
     Q_OBJECT
 public:
+    /// Subject stretches to fill the view, so it must come last: anything
+    /// after it is pushed out of sight. Tags leads, being the column that
+    /// changes when the user acts on a thread.
     enum Column {
-        DateColumn = 0,
+        TagsColumn = 0,
+        DateColumn,
         AuthorsColumn,
         SubjectColumn,
-        TagsColumn,
         ColumnCount,
     };
 
@@ -43,6 +47,13 @@ public:
         /// rather than in every caller.
         ThreadIdRole = Qt::UserRole + 1,
     };
+
+    /// Row fill for a thread tagged `deleted`, and for one tagged `spam`.
+    /// Muted rather than saturated: a bulk delete paints every selected row,
+    /// and a wall of pure red is harder to read than the list it replaces.
+    /// Exposed so a test names the same colour the model uses.
+    static QColor deletedColour();
+    static QColor spamColour();
 
     explicit ThreadListModel(QObject *parent = nullptr);
 

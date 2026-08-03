@@ -33,6 +33,11 @@ private slots:
     void reportsSubjectAndAuthors();
     void subjectShowsMessageCountOnlyForRealThreads();
     void unreadThreadsRenderBold();
+    void tagsAreTheFirstColumnAndSubjectTheLast();
+    void deletedThreadsAreRedAndStruckThrough();
+    void spamThreadsAreOrangeAndStruckThrough();
+    void doomedStylingCoversEveryColumn();
+    void ordinaryThreadsCarryNoRowColour();
     void threadIdIsReachableFromAnIndex();
     void invalidIndexesReturnNothing();
     void threadAtOutOfRangeIsSafe();
@@ -151,6 +156,103 @@ void TestThreadListModel::unreadThreadsRenderBold()
         model.data(model.index(1, ThreadListModel::SubjectColumn), Qt::FontRole);
     QVERIFY(unreadFont.isValid());
     QVERIFY(unreadFont.value<QFont>().bold());
+}
+
+void TestThreadListModel::tagsAreTheFirstColumnAndSubjectTheLast()
+{
+    // Subject stretches to fill the view, so whatever sits after it is pushed
+    // off-screen. Tags used to be there, which is why acting on a thread
+    // looked like it did nothing: the only column that changed was invisible.
+    QCOMPARE(ThreadListModel::TagsColumn, 0);
+    QCOMPARE(ThreadListModel::SubjectColumn, ThreadListModel::ColumnCount - 1);
+
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("hello")) });
+    QCOMPARE(model.headerData(ThreadListModel::TagsColumn, Qt::Horizontal,
+                              Qt::DisplayRole).toString(),
+             QStringLiteral("Tags"));
+    QCOMPARE(model.headerData(ThreadListModel::SubjectColumn, Qt::Horizontal,
+                              Qt::DisplayRole).toString(),
+             QStringLiteral("Subject"));
+}
+
+void TestThreadListModel::deletedThreadsAreRedAndStruckThrough()
+{
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), QStringLiteral("doomed"));
+    thread.tags = QStringList{ QStringLiteral("inbox") };
+    model.appendBatch({ thread });
+
+    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    QVERIFY(!model.data(subject, Qt::BackgroundRole).isValid());
+
+    model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
+
+    const QVariant background = model.data(subject, Qt::BackgroundRole);
+    QVERIFY(background.isValid());
+    QCOMPARE(background.value<QBrush>().color(), ThreadListModel::deletedColour());
+
+    // White text on the fill, and struck through so the state reads even in a
+    // screenshot with the colours stripped.
+    QCOMPARE(model.data(subject, Qt::ForegroundRole).value<QBrush>().color(),
+             QColor(Qt::white));
+    QVERIFY(model.data(subject, Qt::FontRole).value<QFont>().strikeOut());
+}
+
+void TestThreadListModel::spamThreadsAreOrangeAndStruckThrough()
+{
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), QStringLiteral("junk"));
+    thread.tags = QStringList{ QStringLiteral("inbox") };
+    model.appendBatch({ thread });
+
+    model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("spam") }, {});
+
+    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    QCOMPARE(model.data(subject, Qt::BackgroundRole).value<QBrush>().color(),
+             ThreadListModel::spamColour());
+    QVERIFY(model.data(subject, Qt::FontRole).value<QFont>().strikeOut());
+
+    // Spam and deleted must be distinguishable, not two shades of one colour.
+    QVERIFY(ThreadListModel::spamColour() != ThreadListModel::deletedColour());
+}
+
+void TestThreadListModel::doomedStylingCoversEveryColumn()
+{
+    // A cue on one column would vanish the moment that column scrolled out of
+    // view, which is the bug this whole change exists to fix.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), QStringLiteral("doomed"));
+    thread.tags = QStringList{ QStringLiteral("inbox") };
+    model.appendBatch({ thread });
+
+    model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
+
+    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
+        const QModelIndex index = model.index(0, column);
+        QVERIFY2(model.data(index, Qt::BackgroundRole).isValid(),
+                 qPrintable(QStringLiteral("column %1 has no background").arg(column)));
+        QVERIFY2(model.data(index, Qt::FontRole).value<QFont>().strikeOut(),
+                 qPrintable(QStringLiteral("column %1 is not struck through").arg(column)));
+    }
+}
+
+void TestThreadListModel::ordinaryThreadsCarryNoRowColour()
+{
+    // Undo has to restore the plain look, not merely drop the tag.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), QStringLiteral("normal"));
+    thread.tags = QStringList{ QStringLiteral("inbox") };
+    model.appendBatch({ thread });
+
+    model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
+    model.applyTagChange(QStringLiteral("t1"), {}, { QStringLiteral("deleted") });
+
+    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    QVERIFY(!model.data(subject, Qt::BackgroundRole).isValid());
+    QVERIFY(!model.data(subject, Qt::ForegroundRole).isValid());
+    const QVariant font = model.data(subject, Qt::FontRole);
+    QVERIFY(!font.isValid() || !font.value<QFont>().strikeOut());
 }
 
 void TestThreadListModel::threadIdIsReachableFromAnIndex()

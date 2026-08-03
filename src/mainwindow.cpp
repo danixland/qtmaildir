@@ -169,8 +169,16 @@ void MainWindow::buildUi()
     m_threadView->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_threadView->verticalHeader()->hide();
     m_threadView->horizontalHeader()->setStretchLastSection(false);
+    // Subject is the last column and takes the leftover width; the three
+    // fixed-width ones size to their contents. Nothing sits to the right of
+    // the stretching column, so no column can be pushed out of view.
     m_threadView->horizontalHeader()->setSectionResizeMode(
         ThreadListModel::SubjectColumn, QHeaderView::Stretch);
+    for (int column : { ThreadListModel::TagsColumn, ThreadListModel::DateColumn,
+                        ThreadListModel::AuthorsColumn }) {
+        m_threadView->horizontalHeader()->setSectionResizeMode(
+            column, QHeaderView::ResizeToContents);
+    }
 
     connect(m_threadView->selectionModel(),
             &QItemSelectionModel::currentRowChanged,

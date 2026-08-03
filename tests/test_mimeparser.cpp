@@ -39,6 +39,9 @@ private slots:
     void savedAttachmentMatchesBytes();
     void safeFilenameStripsPathComponents();
     void pathInsideDirectoryRejectsSiblingPrefix();
+    void attachmentFolderNameIsASinglePlainComponent();
+    void folderNameSurvivesATimezoneComment();
+    void savingABatchNeverOverwrites();
 
 private:
     QString fixture(const QString &name) const
@@ -241,6 +244,138 @@ void TestMimeParser::pathInsideDirectoryRejectsSiblingPrefix()
     QVERIFY(!Attachment::isPathInsideDirectory(base, QStringLiteral("/tmp/safe-evil/x")));
     QVERIFY(!Attachment::isPathInsideDirectory(base, QStringLiteral("/tmp/safe/../etc/passwd")));
     QVERIFY(!Attachment::isPathInsideDirectory(base, QStringLiteral("/etc/passwd")));
+}
+
+void TestMimeParser::attachmentFolderNameIsASinglePlainComponent()
+{
+    const QString validDate = QStringLiteral("Thu, 7 May 2026 16:51:48 +0200");
+
+    // The ordinary case: date prefix so the folders sort chronologically.
+    QCOMPARE(attachmentFolderName(validDate, QStringLiteral("Quarterly report")),
+             QStringLiteral("2026-05-07 Quarterly report"));
+
+    // A subject is attacker-controlled and is about to become a directory
+    // name. None of these may produce anything but one plain component.
+    const QStringList hostile = {
+        QStringLiteral("../../etc"),
+        QStringLiteral("/etc/passwd"),
+        QStringLiteral("a/b/c"),
+        QStringLiteral(".."),
+        QStringLiteral("."),
+        QStringLiteral(".hidden"),
+        QStringLiteral("with\\backslash"),
+        QStringLiteral("null\0byte"),
+    };
+    for (const QString &subject : hostile) {
+        const QString folder = attachmentFolderName(validDate, subject);
+        QVERIFY2(!folder.contains(QLatin1Char('/')),
+                 qPrintable(QStringLiteral("'%1' -> '%2'").arg(subject, folder)));
+        QVERIFY2(!folder.contains(QLatin1Char('\\')),
+                 qPrintable(QStringLiteral("'%1' -> '%2'").arg(subject, folder)));
+        QVERIFY2(!folder.startsWith(QLatin1Char('.')),
+                 qPrintable(QStringLiteral("'%1' -> '%2'").arg(subject, folder)));
+        QVERIFY2(folder != QLatin1String("..") && folder != QLatin1String("."),
+                 qPrintable(QStringLiteral("'%1' -> '%2'").arg(subject, folder)));
+        QVERIFY(!folder.isEmpty());
+
+        // The decisive check: joining it onto a directory cannot escape.
+        QVERIFY2(Attachment::isPathInsideDirectory(
+                     QStringLiteral("/tmp/parent"),
+                     QDir(QStringLiteral("/tmp/parent")).absoluteFilePath(folder)),
+                 qPrintable(QStringLiteral("'%1' escaped as '%2'")
+                                .arg(subject, folder)));
+    }
+
+    // An unparseable Date: is dropped rather than guessed at.
+    QCOMPARE(attachmentFolderName(QStringLiteral("not a date"),
+                                  QStringLiteral("Subject here")),
+             QStringLiteral("Subject here"));
+
+    // Neither a usable date nor a usable subject still yields a name, since
+    // the caller is about to create a directory with it.
+    const QString generated = attachmentFolderName(QString(), QStringLiteral("///"));
+    QVERIFY(!generated.isEmpty());
+    QVERIFY(!generated.contains(QLatin1Char('/')));
+
+    // A subject can be far longer than a filesystem component allows.
+    const QString huge = attachmentFolderName(validDate, QString(500, QLatin1Char('x')));
+    QVERIFY2(huge.size() <= 120,
+             qPrintable(QStringLiteral("length %1").arg(huge.size())));
+}
+
+void TestMimeParser::folderNameSurvivesATimezoneComment()
+{
+    // "+0200 (CEST)" is legal per RFC 5322 and common in real mail, but
+    // Qt::RFC2822Date rejects the entire string when the comment is present
+    // (verified on Qt 6.11). Every such message silently lost its date prefix.
+    QCOMPARE(attachmentFolderName(
+                 QStringLiteral("Thu, 7 May 2026 16:51:48 +0200 (CEST)"),
+                 QStringLiteral("Report")),
+             QStringLiteral("2026-05-07 Report"));
+
+    // The same date without the comment must not regress.
+    QCOMPARE(attachmentFolderName(
+                 QStringLiteral("Thu, 7 May 2026 16:51:48 +0200"),
+                 QStringLiteral("Report")),
+             QStringLiteral("2026-05-07 Report"));
+}
+
+void TestMimeParser::savingABatchNeverOverwrites()
+{
+    // Saving a thread's attachments with saveTo() destroyed files: several
+    // messages in one thread commonly attach the same filename, each write
+    // landed on the previous one, and all of them reported success. Sixteen
+    // attachments produced ten files.
+    QTemporaryDir dir;
+
+    Attachment first;
+    first.filename = QStringLiteral("questionario.pdf");
+    first.data = QByteArray("first copy");
+
+    Attachment second;
+    second.filename = QStringLiteral("questionario.pdf");
+    second.data = QByteArray("second copy, different bytes");
+
+    Attachment third;
+    third.filename = QStringLiteral("questionario.pdf");
+    third.data = QByteArray("third");
+
+    QString error;
+    const QString pathA = first.saveWithoutOverwriting(dir.path(), &error);
+    const QString pathB = second.saveWithoutOverwriting(dir.path(), &error);
+    const QString pathC = third.saveWithoutOverwriting(dir.path(), &error);
+
+    QVERIFY(!pathA.isEmpty());
+    QVERIFY(!pathB.isEmpty());
+    QVERIFY(!pathC.isEmpty());
+
+    // Three distinct files, and every one still holds its own bytes.
+    QCOMPARE(QDir(dir.path()).entryList(QDir::Files).size(), 3);
+    QVERIFY(pathA != pathB);
+    QVERIFY(pathB != pathC);
+
+    const auto contentsOf = [](const QString &path) {
+        QFile file(path);
+        file.open(QIODevice::ReadOnly);
+        return file.readAll();
+    };
+    QCOMPARE(contentsOf(pathA), QByteArray("first copy"));
+    QCOMPARE(contentsOf(pathB), QByteArray("second copy, different bytes"));
+    QCOMPARE(contentsOf(pathC), QByteArray("third"));
+
+    // The extension is kept whole rather than split at the first dot.
+    Attachment tarball;
+    tarball.filename = QStringLiteral("archive.tar.gz");
+    tarball.data = QByteArray("one");
+    Attachment tarballAgain = tarball;
+    tarballAgain.data = QByteArray("two");
+
+    QVERIFY(!tarball.saveWithoutOverwriting(dir.path(), &error).isEmpty());
+    const QString second_tar =
+        tarballAgain.saveWithoutOverwriting(dir.path(), &error);
+    QVERIFY(second_tar.endsWith(QStringLiteral(".gz")));
+    QVERIFY2(second_tar.contains(QStringLiteral("archive.tar")),
+             qPrintable(second_tar));
 }
 
 QTEST_MAIN(TestMimeParser)

@@ -44,7 +44,21 @@ struct Attachment
 
     /// Writes the attachment into directory. Returns the full path written, or
     /// an empty string on failure with *error set.
+    ///
+    /// **Overwrites an existing file of the same name.** That is right for a
+    /// single save the user just confirmed a location for, and wrong for
+    /// saving a batch: several messages in one thread commonly attach the
+    /// same filename. Use saveWithoutOverwriting() there.
     QString saveTo(const QString &directory, QString *error) const;
+
+    /// Writes the attachment into directory under a name that is not already
+    /// taken, appending " (2)", " (3)" and so on before the extension.
+    /// Returns the full path written, or an empty string on failure.
+    ///
+    /// Saving a thread's attachments with saveTo() silently destroyed files:
+    /// six of sixteen were lost to same-name collisions and every write still
+    /// reported success.
+    QString saveWithoutOverwriting(const QString &directory, QString *error) const;
 
     /// True if candidatePath (need not exist) is directory itself or strictly
     /// beneath it, by path-boundary comparison after QDir::cleanPath on both
@@ -64,6 +78,21 @@ struct Attachment
     /// runs first and never produces a path that could fail it.
     static bool isPathInsideDirectory(const QString &directory, const QString &candidatePath);
 };
+
+/// A directory name for a thread's saved attachments, "<date> <subject>".
+///
+/// `rfc822Date` is a raw Date: header as ParsedMessage stores it; it is
+/// reduced to "yyyy-MM-dd" when it parses and dropped when it does not.
+///
+/// Both inputs are untrusted: a subject is attacker-controlled and may carry
+/// path separators, "..", control characters, or nothing usable at all. The
+/// result is always a single plain component, never a path, and never "." or
+/// "..". Falls back to the date alone, then to a generated name, so it is
+/// never empty.
+///
+/// Length is capped: many filesystems limit one component to 255 bytes, and a
+/// subject can be far longer than that.
+QString attachmentFolderName(const QString &rfc822Date, const QString &subject);
 
 struct ParsedMessage
 {

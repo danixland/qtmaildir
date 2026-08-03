@@ -16,6 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <QPushButton>
 #include <QSignalSpy>
 #include <QWebEngineUrlScheme>
 #include <QWebEngineView>
@@ -38,6 +39,8 @@ private slots:
     void dataUrlSubResourceStillBlocked();
     void zoomIsClampedToARenderableRange();
     void zoomSurvivesANewDocument();
+    void attachmentBarOffersEveryAttachment();
+    void attachmentBarClearsBetweenThreads();
 
 private:
     QWebEngineView *webViewOf(MessageView *view) const
@@ -228,6 +231,113 @@ void TestMessageView::zoomSurvivesANewDocument()
     QVERIFY(loaded.wait(15000));
 
     QCOMPARE(view.zoomFactor(), 1.5);
+}
+
+/// The buttons in the attachment bar, by their label. Excludes the
+/// "Load remote content" button, which lives in the same pane but is not part
+/// of the bar.
+static QStringList attachmentButtonLabels(MessageView *view)
+{
+    QStringList labels;
+    for (QPushButton *button : view->findChildren<QPushButton *>()) {
+        if (button->text() != QStringLiteral("Load remote content"))
+            labels.append(button->text());
+    }
+    return labels;
+}
+
+void TestMessageView::attachmentBarOffersEveryAttachment()
+{
+    // The bar existed as an empty placeholder for two releases: it was created
+    // and added to the layout, and nothing ever put anything in it, so
+    // attachments were parsed and then unreachable.
+    ParsedMessage first;
+    first.ok = true;
+    first.from = QStringLiteral("Sender <sender@example.org>");
+    first.subject = QStringLiteral("With files");
+    first.plainBody = QStringLiteral("see attached");
+    first.attachments.append({ QStringLiteral("notes.txt"),
+                               QStringLiteral("text/plain"),
+                               QByteArray("hello") });
+
+    ParsedMessage second;
+    second.ok = true;
+    second.from = QStringLiteral("Other <other@example.org>");
+    second.subject = QStringLiteral("Reply");
+    second.plainBody = QStringLiteral("mine too");
+    second.attachments.append({ QStringLiteral("../../etc/passwd"),
+                                QStringLiteral("text/plain"),
+                                QByteArray("root:x:0:0") });
+
+    ThreadRenderItem itemA;
+    itemA.message = first;
+    itemA.cidPrefix = QStringLiteral("m0");
+    itemA.expanded = true;
+
+    ThreadRenderItem itemB;
+    itemB.message = second;
+    itemB.cidPrefix = QStringLiteral("m1");
+    itemB.expanded = true;
+
+    MessageView view;
+    view.showThread({ itemA, itemB });
+
+    // ONE button whatever the count, carrying the total. A button per
+    // attachment made the bar as wide as the window on a thread with fifteen
+    // of them and pushed the splitter over, leaving the thread list unusable.
+    const QStringList labels = attachmentButtonLabels(&view);
+    QCOMPARE(labels.size(), 1);
+    QVERIFY2(labels.first().contains(QStringLiteral("2")),
+             qPrintable(QStringLiteral("expected the count in '%1'")
+                            .arg(labels.first())));
+
+    // A filename never reaches the bar, so a long one cannot widen it.
+    QVERIFY(!labels.first().contains(QStringLiteral("notes.txt")));
+    QVERIFY(!labels.first().contains(QStringLiteral("passwd")));
+}
+
+void TestMessageView::attachmentBarClearsBetweenThreads()
+{
+    ParsedMessage withFile;
+    withFile.ok = true;
+    withFile.from = QStringLiteral("Sender <sender@example.org>");
+    withFile.subject = QStringLiteral("With a file");
+    withFile.plainBody = QStringLiteral("attached");
+    withFile.attachments.append({ QStringLiteral("report.pdf"),
+                                  QStringLiteral("application/pdf"),
+                                  QByteArray("%PDF-1.4") });
+
+    ThreadRenderItem carrying;
+    carrying.message = withFile;
+    carrying.cidPrefix = QStringLiteral("m0");
+    carrying.expanded = true;
+
+    MessageView view;
+    view.showThread({ carrying });
+    QCOMPARE(attachmentButtonLabels(&view).size(), 1);
+
+    // Moving to a thread without attachments must not leave the previous
+    // thread's buttons behind, still offering to save a file from a message
+    // that is no longer on screen.
+    ParsedMessage plain;
+    plain.ok = true;
+    plain.from = QStringLiteral("Sender <sender@example.org>");
+    plain.subject = QStringLiteral("Nothing attached");
+    plain.plainBody = QStringLiteral("just text");
+
+    ThreadRenderItem bare;
+    bare.message = plain;
+    bare.cidPrefix = QStringLiteral("m0");
+    bare.expanded = true;
+
+    view.showThread({ bare });
+    QVERIFY(attachmentButtonLabels(&view).isEmpty());
+
+    view.showThread({ carrying });
+    QCOMPARE(attachmentButtonLabels(&view).size(), 1);
+
+    view.clear();
+    QVERIFY(attachmentButtonLabels(&view).isEmpty());
 }
 
 QTEST_MAIN(TestMessageView)

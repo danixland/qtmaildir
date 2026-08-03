@@ -164,6 +164,109 @@ QString Attachment::safeFilename() const
     return name;
 }
 
+QString Attachment::saveWithoutOverwriting(const QString &directory,
+                                           QString *error) const
+{
+    const QString name = safeFilename();
+    const QFileInfo info(name);
+    const QString base = info.completeBaseName();
+    // Kept whole: "archive.tar.gz" must not become "archive (2).gz".
+    const QString suffix = info.suffix().isEmpty()
+                               ? QString()
+                               : QLatin1Char('.') + info.suffix();
+
+    const QDir dir(directory);
+    QString candidate = name;
+    for (int n = 2; dir.exists(candidate); ++n)
+        candidate = QStringLiteral("%1 (%2)%3").arg(base).arg(n).arg(suffix);
+
+    // The containment check still applies: candidate is derived from
+    // safeFilename(), but the guarantee belongs at the write, not upstream.
+    const QString target = dir.absoluteFilePath(candidate);
+    if (!isPathInsideDirectory(directory, target)) {
+        if (error) {
+            *error = QStringLiteral("Refusing to write outside %1")
+                         .arg(QDir::cleanPath(QDir(directory).absolutePath()));
+        }
+        return {};
+    }
+
+    QFile file(target);
+    if (!file.open(QIODevice::WriteOnly)) {
+        if (error)
+            *error = file.errorString();
+        return {};
+    }
+    if (file.write(data) != data.size()) {
+        if (error)
+            *error = file.errorString();
+        return {};
+    }
+    file.close();
+    return target;
+}
+
+QString attachmentFolderName(const QString &rfc822Date, const QString &subject)
+{
+    // The date prefix sorts chronologically in a file manager. A Date: header
+    // that does not parse is simply dropped rather than guessed at.
+    // A trailing timezone comment, "... +0200 (CEST)", is legal per RFC 5322
+    // and common in the wild, but Qt::RFC2822Date rejects the whole string
+    // when one is present (verified on Qt 6.11). Strip comments before
+    // parsing, or every such message silently loses its date prefix.
+    QString cleaned = rfc822Date;
+    cleaned.remove(QRegularExpression(QStringLiteral("\\s*\\([^)]*\\)")));
+    cleaned = cleaned.trimmed();
+
+    QString prefix;
+    const QDateTime parsed = QDateTime::fromString(cleaned, Qt::RFC2822Date);
+    if (parsed.isValid())
+        prefix = parsed.toString(QStringLiteral("yyyy-MM-dd"));
+
+    // The subject is attacker-controlled and is about to become a directory
+    // name. Everything that could make it more than one plain component goes:
+    // separators, and the control characters that can hide what a name really
+    // is when it is displayed.
+    QString name = subject.simplified();
+    name.remove(QLatin1Char('/'));
+    name.remove(QLatin1Char('\\'));
+    QString stripped;
+    stripped.reserve(name.size());
+    for (const QChar c : name) {
+        if (!c.isNull() && c.category() != QChar::Other_Control)
+            stripped.append(c);
+    }
+    // Leading dots would make a hidden directory, and a name of "." or ".."
+    // would escape or alias the parent; removing them handles every case.
+    while (stripped.startsWith(QLatin1Char('.')))
+        stripped.remove(0, 1);
+    stripped = stripped.trimmed();
+
+    QString combined;
+    if (!prefix.isEmpty() && !stripped.isEmpty())
+        combined = prefix + QLatin1Char(' ') + stripped;
+    else if (!prefix.isEmpty())
+        combined = prefix;
+    else
+        combined = stripped;
+
+    // A subject can be far longer than a filesystem component allows. Cut to
+    // a conservative 120 characters, well under the usual 255-byte limit even
+    // once multi-byte characters are counted as bytes.
+    constexpr int maxLength = 120;
+    if (combined.size() > maxLength)
+        combined = combined.left(maxLength).trimmed();
+
+    // Nothing usable survived: no parseable date and a subject that was empty,
+    // punctuation, or control characters only.
+    if (combined.isEmpty()) {
+        return QStringLiteral("attachments-%1").arg(
+            QUuid::createUuid().toString(QUuid::Id128).left(8));
+    }
+
+    return combined;
+}
+
 bool Attachment::isPathInsideDirectory(const QString &directory, const QString &candidatePath)
 {
     // Compare candidatePath itself, not QFileInfo(candidatePath).absolutePath()

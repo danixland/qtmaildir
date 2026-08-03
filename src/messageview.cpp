@@ -18,16 +18,23 @@
 
 #include "messageview.h"
 
+#include <QApplication>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QApplication>
+#include <QLocale>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QtNumeric>
 #include <QTimer>
-#include <QWheelEvent>
+#include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <QWebEnginePage>
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
@@ -185,6 +192,10 @@ void MessageView::clear()
     m_headerLabel->clear();
     m_blockedLabel->hide();
     m_loadRemoteButton->hide();
+
+    // clear() does not go through render(), so the bar has to be emptied
+    // here or the previous thread's attachments stay offered.
+    rebuildAttachmentBar();
 }
 
 void MessageView::showThread(const QList<ThreadRenderItem> &items)
@@ -268,6 +279,7 @@ void MessageView::render()
         m_preferHtml ? HtmlBuilder::PreferHtml : HtmlBuilder::ForcePlain;
 
     setDocument(HtmlBuilder::buildThread(m_items, mode));
+    rebuildAttachmentBar();
 
     // Blocking is discovered during load, so check shortly afterwards.
     QTimer::singleShot(300, this, [this]() {
@@ -276,6 +288,182 @@ void MessageView::render()
         m_blockedLabel->setVisible(blocked);
         m_loadRemoteButton->setVisible(blocked);
     });
+}
+
+QList<Attachment> MessageView::allAttachments() const
+{
+    QList<Attachment> all;
+    for (const ThreadRenderItem &item : m_items)
+        all.append(item.message.attachments);
+    return all;
+}
+
+void MessageView::rebuildAttachmentBar()
+{
+    auto *layout = qobject_cast<QHBoxLayout *>(m_attachmentBar->layout());
+
+    // Rebuilt rather than updated: a thread can change under the same widget
+    // (toggle_html re-renders, and the next thread reuses this bar), and a
+    // stale button would offer a save from the message before it.
+    while (QLayoutItem *item = layout->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+
+    const int total = allAttachments().size();
+    if (total == 0) {
+        m_attachmentBar->hide();
+        return;
+    }
+
+    // One button whatever the count. A button per attachment made the bar as
+    // wide as the window on a thread with fifteen of them, which pushed the
+    // splitter over and left the thread list a few pixels wide.
+    auto *button = new QPushButton(tr("Attachments (%1)...").arg(total),
+                                   m_attachmentBar);
+    button->setToolTip(tr("List the attachments in this thread"));
+    connect(button, &QPushButton::clicked,
+            this, &MessageView::showAttachmentDialog);
+
+    layout->addWidget(button);
+    layout->addStretch();
+    m_attachmentBar->show();
+}
+
+void MessageView::showAttachmentDialog()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Attachments"));
+
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *list = new QTreeWidget(&dialog);
+    list->setColumnCount(4);
+    // The fourth column holds the per-row Save button and needs no label.
+    list->setHeaderLabels({ tr("Message"), tr("File"), tr("Size"), QString() });
+    list->setRootIsDecorated(false);
+    list->setSelectionMode(QAbstractItemView::NoSelection);
+
+    // A thread renders as one document, so the message number is what says
+    // which of them a file came from.
+    for (int index = 0; index < m_items.size(); ++index) {
+        const ParsedMessage &message = m_items.at(index).message;
+        for (const Attachment &attachment : message.attachments) {
+            auto *row = new QTreeWidgetItem(list);
+            row->setText(0, QString::number(index + 1));
+            // safeFilename(), never the raw filename: the name in a message is
+            // attacker-controlled and may carry separators or "..".
+            row->setText(1, attachment.safeFilename());
+            row->setText(2, QLocale().formattedDataSize(attachment.data.size()));
+
+            auto *save = new QPushButton(tr("Save..."), list);
+            // Copied into the lambda: m_items is replaced wholesale by the
+            // next showThread(), so a reference would dangle.
+            connect(save, &QPushButton::clicked, this,
+                    [this, attachment]() { saveAttachment(attachment); });
+            list->setItemWidget(row, 3, save);
+        }
+    }
+    for (int column = 0; column < 3; ++column)
+        list->resizeColumnToContents(column);
+
+    layout->addWidget(list);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    // Only worth offering for more than one file: with a single attachment it
+    // is the same action as its own Save button, one dialog deeper.
+    if (allAttachments().size() > 1) {
+        auto *saveAll = buttons->addButton(tr("Save all..."),
+                                           QDialogButtonBox::ActionRole);
+        connect(saveAll, &QPushButton::clicked, this,
+                [this, &dialog]() {
+            saveAllAttachments();
+            dialog.accept();
+        });
+    }
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    dialog.resize(560, 320);
+    dialog.exec();
+}
+
+void MessageView::saveAllAttachments()
+{
+    const QList<Attachment> attachments = allAttachments();
+    if (attachments.isEmpty())
+        return;
+
+    // The subfolder is stated up front rather than discovered afterwards: the
+    // user picks a parent, and what lands in it is one directory, not fifteen
+    // loose files among whatever is already there.
+    const QString subject = m_items.isEmpty() ? QString()
+                                              : m_items.first().message.subject;
+    const QString rfc822Date = m_items.isEmpty() ? QString()
+                                                 : m_items.first().message.date;
+    const QString folder = attachmentFolderName(rfc822Date, subject);
+
+    const QString parent = QFileDialog::getExistingDirectory(
+        this,
+        tr("Choose a folder. A subfolder \"%1\" will be created inside it.")
+            .arg(folder),
+        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+    if (parent.isEmpty())
+        return;  // cancelled
+
+    // Never overwrite an existing directory: a second save of the same thread
+    // gets its own folder rather than merging into the first.
+    QDir parentDir(parent);
+    QString unique = folder;
+    for (int suffix = 2; parentDir.exists(unique); ++suffix)
+        unique = tr("%1 (%2)").arg(folder).arg(suffix);
+
+    if (!parentDir.mkpath(unique)) {
+        emit statusMessage(tr("Could not create %1").arg(unique));
+        return;
+    }
+    const QString target = parentDir.absoluteFilePath(unique);
+
+    int saved = 0;
+    QStringList failures;
+    for (const Attachment &attachment : attachments) {
+        QString error;
+        // Not saveTo(): several messages in a thread commonly attach the same
+        // filename, and overwriting silently lost six of sixteen files while
+        // still reporting every one as saved.
+        if (attachment.saveWithoutOverwriting(target, &error).isEmpty())
+            failures.append(attachment.safeFilename());
+        else
+            ++saved;
+    }
+
+    if (failures.isEmpty()) {
+        emit statusMessage(tr("Saved %1 attachment(s) to %2")
+                               .arg(saved).arg(target));
+    } else {
+        emit statusMessage(tr("Saved %1 of %2 to %3; failed: %4")
+                               .arg(saved).arg(attachments.size())
+                               .arg(target, failures.join(QStringLiteral(", "))));
+    }
+}
+
+void MessageView::saveAttachment(const Attachment &attachment)
+{
+    const QString directory = QFileDialog::getExistingDirectory(
+        this, tr("Save attachment to"),
+        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+    if (directory.isEmpty())
+        return;  // cancelled
+
+    QString error;
+    const QString written = attachment.saveTo(directory, &error);
+    if (written.isEmpty()) {
+        emit statusMessage(tr("Could not save attachment: %1").arg(error));
+        return;
+    }
+
+    // Reported, not silent: a save with no feedback is the same failure as
+    // acting on a thread and seeing nothing change.
+    emit statusMessage(tr("Saved %1").arg(written));
 }
 
 void MessageView::toggleHtml()

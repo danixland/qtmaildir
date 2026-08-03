@@ -101,6 +101,31 @@ private:
     void updateHeader();
     void setDocument(const QString &html);
 
+    /// Rebuilds the attachment bar from m_items. Called from render(), so a
+    /// toggle between HTML and plain text keeps the bar in step with what is
+    /// on screen.
+    ///
+    /// The bar holds ONE button however many attachments a thread carries. A
+    /// button per file resized the splitter and crushed the thread list on a
+    /// thread with fifteen of them.
+    void rebuildAttachmentBar();
+
+    /// The list of attachments, with a save button each and a "save all".
+    void showAttachmentDialog();
+
+    /// Saves one attachment, asking for the target directory. Writing goes
+    /// through Attachment::saveTo(), which is where the path-traversal guard
+    /// lives; the filename in a message is attacker-controlled.
+    void saveAttachment(const Attachment &attachment);
+
+    /// Saves every attachment into a new subdirectory of a directory the user
+    /// picks, so fifteen files do not land loose among hundreds of others and
+    /// cannot collide with what is already there.
+    void saveAllAttachments();
+
+    /// Every attachment in the thread, in the order the messages render.
+    QList<Attachment> allAttachments() const;
+
     QList<ThreadRenderItem> m_items;
     bool m_preferHtml = true;
 

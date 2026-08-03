@@ -19,6 +19,17 @@ QString Config::defaultPath()
     return base + QStringLiteral("/qtmaildir/qtmaildir.conf");
 }
 
+void Config::addProblem(const QString &message)
+{
+    m_warnings.append(message);
+    m_problems.append(message);
+}
+
+void Config::addNotice(const QString &message)
+{
+    m_warnings.append(message);
+}
+
 void Config::load(const QString &path)
 {
     QSettings settings(path, QSettings::IniFormat);
@@ -28,10 +39,12 @@ void Config::load(const QString &path)
 
     m_syncCommand = settings.value(QStringLiteral("sync/command")).toString();
     if (m_syncCommand.isEmpty()) {
-        m_warnings.append(QStringLiteral(
+        // Not a problem: sync is optional, and nothing the user asked for is
+        // being ignored. A modal here would fire on every launch.
+        addNotice(QStringLiteral(
             "No sync command configured ([sync] command); syncing is disabled."));
     } else if (!QFileInfo::exists(m_syncCommand.split(QLatin1Char(' ')).first())) {
-        m_warnings.append(
+        addProblem(
             QStringLiteral("Sync command '%1' does not exist; syncing is disabled.")
                 .arg(m_syncCommand));
         m_syncCommand.clear();
@@ -61,7 +74,7 @@ void Config::load(const QString &path)
         settings.endGroup();
 
         if (!account.isValid()) {
-            m_warnings.append(
+            addProblem(
                 QStringLiteral("Account '%1' has no maildir; ignoring it.")
                     .arg(account.key));
             continue;

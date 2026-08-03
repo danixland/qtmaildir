@@ -274,15 +274,25 @@ void MainWindow::wireWorker()
 
 void MainWindow::showWarnings()
 {
-    QStringList warnings = m_config.warnings() + m_keyMap.warnings();
+    const QStringList warnings = m_config.warnings() + m_keyMap.warnings();
     if (warnings.isEmpty())
         return;
 
     // Non-fatal: the app runs degraded rather than refusing to start.
     m_statusLabel->setText(
-        tr("%1 configuration warning(s); see Help").arg(warnings.size()));
-    QMessageBox::warning(this, tr("Configuration warnings"),
-                         warnings.join(QLatin1Char('\n')));
+        tr("%n configuration warning(s)", "", warnings.size()));
+
+    // Interrupt startup only for things that are actually wrong. Every KeyMap
+    // warning qualifies (each one means a binding the user wrote is being
+    // ignored), but a Config notice such as "no sync command configured" does
+    // not: nothing is broken, the feature is simply off, and a modal on every
+    // launch teaches the user to dismiss dialogs unread.
+    const QStringList problems = m_config.problems() + m_keyMap.warnings();
+    if (problems.isEmpty())
+        return;
+
+    QMessageBox::warning(this, tr("Configuration problems"),
+                         problems.join(QLatin1Char('\n')));
 }
 
 void MainWindow::runCurrentQuery()

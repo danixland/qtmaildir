@@ -12,6 +12,10 @@ private slots:
     void missingSyncCommandIsEmpty();
     void accountWithoutMaildirIsRejected();
     void scopedQueryWrapsCorrectly();
+    void absentSyncCommandIsNoticeNotProblem();
+    void brokenSyncCommandIsAProblem();
+    void malformedAccountIsAProblem();
+    void validConfigHasNoProblems();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -126,6 +130,78 @@ void TestConfig::scopedQueryWrapsCorrectly()
     // An empty query still scopes to the account rather than matching nothing.
     QCOMPARE(account.scopedQuery(QString()),
              QStringLiteral("path:\"work-mail/**\""));
+}
+
+void TestConfig::absentSyncCommandIsNoticeNotProblem()
+{
+    // An optional feature simply not being configured must not interrupt
+    // startup: the modal would fire on every launch and train the user to
+    // dismiss dialogs without reading them.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work-mail\n"));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.warnings().size(), 1);
+    QVERIFY(config.warnings().first().contains(QStringLiteral("No sync command")));
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::brokenSyncCommandIsAProblem()
+{
+    // Configured but missing is different: the user asked for sync and is not
+    // getting it, so they need telling.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[sync]\n"
+        "command=/nonexistent/qtmaildir-test/mailsync.sh\n"
+        "\n"
+        "[account.work]\n"
+        "maildir=work-mail\n"));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.problems().size(), 1);
+    QVERIFY(config.problems().first().contains(QStringLiteral("does not exist")));
+    // Problems are a subset of warnings, so a caller wanting everything needs
+    // only warnings().
+    QVERIFY(config.warnings().contains(config.problems().first()));
+}
+
+void TestConfig::malformedAccountIsAProblem()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[account.broken]\n"
+        "name=No Maildir Here\n"));
+
+    Config config;
+    config.load(path);
+
+    QVERIFY(!config.problems().isEmpty());
+    QVERIFY(config.problems().first().contains(QStringLiteral("broken")));
+}
+
+void TestConfig::validConfigHasNoProblems()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[sync]\n"
+        "command=/bin/true\n"
+        "\n"
+        "[account.work]\n"
+        "maildir=work-mail\n"
+        "address=user@example.org\n"));
+
+    Config config;
+    config.load(path);
+
+    QVERIFY(config.problems().isEmpty());
+    QVERIFY(config.warnings().isEmpty());
 }
 
 QTEST_MAIN(TestConfig)

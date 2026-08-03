@@ -50,13 +50,29 @@ public:
     /// Optional alternate notmuch config file. Empty means "let notmuch decide".
     QString notmuchConfig() const { return m_notmuchConfig; }
 
-    /// Non-fatal problems, shown once in a startup banner.
+    /// Every non-fatal problem, both kinds below. Shown in the status bar.
     QStringList warnings() const { return m_warnings; }
 
+    /// The subset worth interrupting startup for: something in the config is
+    /// wrong and the user's stated intent is not being honoured (a malformed
+    /// account, an unparseable key binding, a sync command that does not
+    /// exist). An optional setting simply being absent is NOT one of these:
+    /// nothing is broken, the feature is just off, and a modal on every launch
+    /// trains the user to dismiss dialogs without reading them.
+    QStringList problems() const { return m_problems; }
+
 private:
+    /// Records a problem: something configured but wrong. Also appears in
+    /// warnings(), so callers that want everything need only that one.
+    void addProblem(const QString &message);
+
+    /// Records a notice: nothing is wrong, a feature is simply not configured.
+    void addNotice(const QString &message);
+
     QList<Account> m_accounts;
     QList<SavedQuery> m_savedQueries;
     QString m_syncCommand;
     QString m_notmuchConfig;
     QStringList m_warnings;
+    QStringList m_problems;
 };

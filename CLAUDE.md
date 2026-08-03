@@ -75,6 +75,12 @@ combined `thread:a or thread:b` query rather than one query per thread.
 The only escape hatch is `general/notmuch_config`, pointing at an alternate notmuch config.
 Per-account subdirectories *are* configured, since notmuch does not model accounts at all.
 
+**Every user-facing string is translatable.** Wrap UI text in `tr()`, including strings
+that are only ever shown in passing: status bar messages, tooltips, dialog prose,
+completion descriptions. Query syntax itself is not user-facing text — notmuch keywords
+like `tag:` and `date:` are wire format and must never be translated, only the prose
+describing them. Pre-existing code has not been audited against this rule.
+
 **Config format gotcha:** QSettings treats `/` in a section name as a group separator, so
 account sections are `[account.work]`, not `[account/work]`. `childKeys` returns keys
 sorted alphabetically, never in file order. **`[general]` keys are read WITHOUT the

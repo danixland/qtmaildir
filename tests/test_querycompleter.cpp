@@ -29,6 +29,10 @@ private slots:
     void bareWordCompletesPrefix();
     void wordAfterOperatorCompletesPrefix();
     void prefixReplaceSpanCoversTheWord();
+    void colonSwitchesToValue();
+    void valueReplaceSpanExcludesThePrefix();
+    void prefixIsLowercased();
+    void emptyValueAfterColonStillCompletes();
 };
 
 void TestQueryCompleter::emptyTextCompletesPrefix()
@@ -60,6 +64,43 @@ void TestQueryCompleter::prefixReplaceSpanCoversTheWord()
     const CompletionContext ctx = completionContext(text, text.size());
     QCOMPARE(ctx.replaceFrom, 14);
     QCOMPARE(ctx.replaceLength, 2);
+}
+
+void TestQueryCompleter::colonSwitchesToValue()
+{
+    const QString text = QStringLiteral("tag:sho");
+    const CompletionContext ctx = completionContext(text, text.size());
+    QCOMPARE(ctx.kind, CompletionContext::Value);
+    QCOMPARE(ctx.prefix, QStringLiteral("tag"));
+    QCOMPARE(ctx.stem, QStringLiteral("sho"));
+}
+
+void TestQueryCompleter::valueReplaceSpanExcludesThePrefix()
+{
+    // Accepting must overwrite "sho" only, never "tag:".
+    const QString text = QStringLiteral("tag:sho");
+    const CompletionContext ctx = completionContext(text, text.size());
+    QCOMPARE(ctx.replaceFrom, 4);
+    QCOMPARE(ctx.replaceLength, 3);
+}
+
+void TestQueryCompleter::prefixIsLowercased()
+{
+    const QString text = QStringLiteral("TAG:sho");
+    const CompletionContext ctx = completionContext(text, text.size());
+    QCOMPARE(ctx.prefix, QStringLiteral("tag"));
+}
+
+void TestQueryCompleter::emptyValueAfterColonStillCompletes()
+{
+    // "tag:" with the cursor at the end offers every tag.
+    const QString text = QStringLiteral("tag:");
+    const CompletionContext ctx = completionContext(text, text.size());
+    QCOMPARE(ctx.kind, CompletionContext::Value);
+    QCOMPARE(ctx.prefix, QStringLiteral("tag"));
+    QCOMPARE(ctx.stem, QString());
+    QCOMPARE(ctx.replaceFrom, 4);
+    QCOMPARE(ctx.replaceLength, 0);
 }
 
 QTEST_MAIN(TestQueryCompleter)

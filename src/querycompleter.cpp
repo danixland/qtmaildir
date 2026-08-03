@@ -46,9 +46,19 @@ CompletionContext completionContext(const QString &text, int cursor)
     const int start = tokenStart(text, cursor);
     const QString token = text.mid(start, cursor - start);
 
-    ctx.kind = CompletionContext::Prefix;
-    ctx.stem = token;
-    ctx.replaceFrom = start;
-    ctx.replaceLength = token.size();
+    const int colon = token.indexOf(QLatin1Char(':'));
+    if (colon < 0) {
+        ctx.kind = CompletionContext::Prefix;
+        ctx.stem = token;
+        ctx.replaceFrom = start;
+        ctx.replaceLength = token.size();
+        return ctx;
+    }
+
+    ctx.kind = CompletionContext::Value;
+    ctx.prefix = token.left(colon).toLower();
+    ctx.stem = token.mid(colon + 1);
+    ctx.replaceFrom = start + colon + 1;
+    ctx.replaceLength = ctx.stem.size();
     return ctx;
 }

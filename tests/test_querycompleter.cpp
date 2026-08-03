@@ -19,6 +19,8 @@
 #include <QtTest>
 #include <QTemporaryDir>
 
+#include <QLineEdit>
+
 #include "config.h"
 #include "querycompleter.h"
 
@@ -48,6 +50,10 @@ private slots:
     void folderOffersNothing();
     void mimetypeAppendsConfiguredEntries();
     void rangeContextDropsRelativeDates();
+    void acceptReplacesOnlyThePrefixToken();
+    void acceptReplacesOnlyTheValueAfterThePrefix();
+    void acceptReplacesOnlyTheEditedRangeBound();
+    void acceptReplacesTheWholeBoundWhenCompletingMidWord();
 };
 
 // Copied from tests/test_config.cpp rather than shared, so the two test files
@@ -296,6 +302,55 @@ void TestQueryCompleter::rangeContextDropsRelativeDates()
         completionContext(ranged, ranged.size()));
     QVERIFY(inRange.contains(QStringLiteral("yesterday")));
     QVERIFY(!inRange.contains(QStringLiteral("1week..")));
+}
+
+// The accept path is driven directly rather than through synthetic key
+// events: whether a key needs Shift is a keyboard-layout property, so
+// QTest::keyClick could never decide whether this logic is right.
+static QString acceptInto(const QString &text, int cursor, const QString &value)
+{
+    Config config;
+    QLineEdit edit;
+    QueryCompleter completer(&edit, config);
+
+    edit.setText(text);
+    edit.setCursorPosition(cursor);
+    completer.updateContext();
+    completer.acceptCompletion(value);
+
+    return edit.text();
+}
+
+void TestQueryCompleter::acceptReplacesOnlyThePrefixToken()
+{
+    // The neighbouring token must survive untouched.
+    QCOMPARE(acceptInto(QStringLiteral("tag:inbox su"), 12,
+                        QStringLiteral("subject:")),
+             QStringLiteral("tag:inbox subject:"));
+}
+
+void TestQueryCompleter::acceptReplacesOnlyTheValueAfterThePrefix()
+{
+    // QCompleter's own insertion would overwrite "date:tod" whole, because
+    // that is the token it matched on. Only "tod" may be replaced.
+    QCOMPARE(acceptInto(QStringLiteral("date:tod"), 8, QStringLiteral("today")),
+             QStringLiteral("date:today"));
+}
+
+void TestQueryCompleter::acceptReplacesOnlyTheEditedRangeBound()
+{
+    const QString text = QStringLiteral("date:yesterday..to");
+    QCOMPARE(acceptInto(text, text.size(), QStringLiteral("today")),
+             QStringLiteral("date:yesterday..today"));
+}
+
+void TestQueryCompleter::acceptReplacesTheWholeBoundWhenCompletingMidWord()
+{
+    // Caret sits after "yest" but the bound runs to the "..", so accepting
+    // must leave no "erday" tail behind.
+    QCOMPARE(acceptInto(QStringLiteral("date:yesterday..today"), 9,
+                        QStringLiteral("this_week")),
+             QStringLiteral("date:this_week..today"));
 }
 
 QTEST_MAIN(TestQueryCompleter)

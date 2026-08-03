@@ -20,7 +20,16 @@
 
 #include "config.h"
 
+#include <QCompleter>
 #include <QCoreApplication>
+#include <QFontMetrics>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListView>
+#include <QPainter>
+#include <QResizeEvent>
+#include <QStandardItemModel>
+#include <QStyledItemDelegate>
 
 namespace {
 
@@ -76,7 +85,135 @@ int tokenEnd(const QString &text, int cursor)
     return end;
 }
 
+/// Draws the description greyed and right-aligned beside the value.
+///
+/// The two are drawn into disjoint halves of the row rather than simply
+/// painted on top of each other: a long value ("application/vnd.oasis..."
+/// exceeds the popup width on its own) would otherwise run underneath the
+/// description and render both unreadable.
+class CompletionDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        const QModelIndex sibling = index.sibling(index.row(), 1);
+        const QString description = sibling.data(Qt::DisplayRole).toString();
+        if (description.isEmpty()) {
+            QStyledItemDelegate::paint(painter, option, index);
+            return;
+        }
+
+        const QFontMetrics metrics(option.font);
+        const int gap = 12;
+        const int rightMargin = 6;
+
+        // The description never takes more than its share, so a long value
+        // keeps room to be legible and a long description gets elided too.
+        const int available = option.rect.width() - gap - rightMargin;
+        int descriptionWidth = qMin(metrics.horizontalAdvance(description),
+                                    available / 2);
+        descriptionWidth = qMax(descriptionWidth, 0);
+
+        // Let the base class draw the selection background and the value, but
+        // only into the part of the row the description does not claim.
+        QStyleOptionViewItem valueOption = option;
+        valueOption.rect = option.rect.adjusted(
+            0, 0, -(descriptionWidth + gap + rightMargin), 0);
+        QStyledItemDelegate::paint(painter, valueOption, index);
+
+        // The background belongs to the whole row, so repaint the strip the
+        // base class just left untouched before drawing the description.
+        painter->save();
+        QRect descriptionRect = option.rect;
+        descriptionRect.setLeft(valueOption.rect.right() + 1);
+        if (option.state & QStyle::State_Selected)
+            painter->fillRect(descriptionRect, option.palette.highlight());
+
+        painter->setPen(option.palette.color(QPalette::Disabled, QPalette::Text));
+        painter->drawText(descriptionRect.adjusted(0, 0, -rightMargin, 0),
+                          Qt::AlignRight | Qt::AlignVCenter,
+                          metrics.elidedText(description, Qt::ElideRight,
+                                             descriptionWidth));
+        painter->restore();
+    }
+};
+
 } // namespace
+
+/// A completion list with a non-selectable footer strip below the items.
+///
+/// The footer is a child label sitting in space reserved by
+/// setViewportMargins, not a model row. A row would be filtered away by
+/// QCompleter's filter model on the first keystroke that did not match it,
+/// and could be selected and inserted, producing a query that errors.
+///
+/// QCompleter::setPopup takes a QAbstractItemView, so the label cannot simply
+/// be laid out beside the view in a container widget: the container would not
+/// be accepted. Reserving margin inside the view is what fits that signature.
+class CompletionPopup : public QListView
+{
+public:
+    explicit CompletionPopup(QWidget *parent = nullptr)
+        : QListView(parent), m_hint(new QLabel(this))
+    {
+        // Illustrative, not a promise: notmuch's date parser is permissive and
+        // the set it accepts varies between builds.
+        m_hintText = QueryCompleter::tr(
+            "also accepts free-form dates, e.g. 2026-01-15 or 15/01/2026..today");
+        m_hint->setText(m_hintText);
+        m_hint->setTextInteractionFlags(Qt::NoTextInteraction);
+        m_hint->setMargin(4);
+
+        QFont hintFont = m_hint->font();
+        hintFont.setItalic(true);
+        hintFont.setPointSizeF(hintFont.pointSizeF() * 0.9);
+        m_hint->setFont(hintFont);
+
+        m_hint->hide();
+    }
+
+    void setHintVisible(bool visible)
+    {
+        if (visible == !m_hint->isHidden())
+            return;
+        m_hint->setVisible(visible);
+        setViewportMargins(0, 0, 0,
+                           visible ? m_hint->sizeHint().height() : 0);
+        layoutHint();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QListView::resizeEvent(event);
+        layoutHint();
+    }
+
+private:
+    void layoutHint()
+    {
+        // isHidden, not isVisible: while the popup window is still unmapped
+        // every child reports invisible, which would skip the only layout pass
+        // that runs before the popup appears.
+        if (m_hint->isHidden())
+            return;
+
+        // The popup is only as wide as the line edit, which is routinely
+        // narrower than the hint. Elide rather than let it clip mid-word.
+        const int textWidth = width() - 2 * m_hint->margin();
+        m_hint->setText(QFontMetrics(m_hint->font())
+                            .elidedText(m_hintText, Qt::ElideRight, textWidth));
+
+        const int height = m_hint->sizeHint().height();
+        m_hint->setGeometry(0, this->height() - height, width(), height);
+    }
+
+    QLabel *m_hint;
+    QString m_hintText;
+};
 
 QList<CompletionEntry> prefixVocabulary()
 {
@@ -193,6 +330,95 @@ QueryCompleter::QueryCompleter(QLineEdit *edit, const Config &config,
                                QObject *parent)
     : QObject(parent), m_edit(edit), m_config(config)
 {
+    if (!m_edit)
+        return;
+
+    m_model = new QStandardItemModel(this);
+
+    m_completer = new QCompleter(m_model, this);
+    m_completer->setCaseSensitivity(Qt::CaseInsensitive);
+    m_completer->setCompletionColumn(0);
+    m_completer->setCompletionMode(QCompleter::PopupCompletion);
+    // Tag hierarchies are the reason completion exists here, and a user who
+    // types "amazon" means shopping/amazon.
+    m_completer->setFilterMode(Qt::MatchContains);
+
+    m_popup = new CompletionPopup;
+    m_completer->setPopup(m_popup);
+    // After setPopup, never before: setPopup installs a plain
+    // QStyledItemDelegate of its own and discards whatever was set already,
+    // which silently drops the description column.
+    m_popup->setItemDelegate(new CompletionDelegate(m_popup));
+
+    m_edit->setCompleter(m_completer);
+
+    connect(m_edit, &QLineEdit::textEdited, this, &QueryCompleter::updateContext);
+    connect(m_edit, &QLineEdit::cursorPositionChanged,
+            this, [this]() { updateContext(); });
+
+    connect(m_completer, QOverload<const QModelIndex &>::of(&QCompleter::activated),
+            this, [this](const QModelIndex &index) {
+        acceptCompletion(index.data(Qt::DisplayRole).toString());
+    });
+}
+
+void QueryCompleter::acceptCompletion(const QString &value)
+{
+    if (!m_edit)
+        return;
+
+    // Replace exactly the span the tokenizer identified. QCompleter's own
+    // insertion replaces the whole "completion prefix", which is not the same
+    // span once a prefix or a range bound is involved.
+    QString text = m_edit->text();
+    if (m_context.replaceFrom < 0 || m_context.replaceLength < 0
+        || m_context.replaceFrom + m_context.replaceLength > text.size())
+        return;
+
+    text.replace(m_context.replaceFrom, m_context.replaceLength, value);
+
+    // Setting the text re-emits cursorPositionChanged, which would recompute
+    // the context from a caret Qt has not moved yet. Block that so the caret
+    // lands past the insertion first.
+    const QSignalBlocker blocker(m_edit);
+    m_edit->setText(text);
+    m_edit->setCursorPosition(m_context.replaceFrom + value.size());
+
+    // The context is now stale in every field; recompute it from the caret we
+    // just placed so a second accept without an intervening keystroke is sane.
+    m_context = completionContext(m_edit->text(), m_edit->cursorPosition());
+}
+
+void QueryCompleter::updateContext()
+{
+    if (!m_edit)
+        return;
+    m_context = completionContext(m_edit->text(), m_edit->cursorPosition());
+    rebuildModel(m_context);
+}
+
+void QueryCompleter::rebuildModel(const CompletionContext &context)
+{
+    if (!m_model)
+        return;
+
+    m_model->clear();
+
+    const QList<CompletionEntry> entries = entriesFor(context);
+    for (const CompletionEntry &entry : entries) {
+        // Matching runs on column 0 only, so a description never influences
+        // which candidates are offered.
+        auto *value = new QStandardItem(entry.value);
+        auto *description = new QStandardItem(entry.description);
+        value->setEditable(false);
+        description->setEditable(false);
+        m_model->appendRow({ value, description });
+    }
+
+    if (m_popup) {
+        m_popup->setHintVisible(context.kind == CompletionContext::Value
+                                && context.prefix == QStringLiteral("date"));
+    }
 }
 
 void QueryCompleter::setTags(const QStringList &tags)

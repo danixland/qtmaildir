@@ -26,7 +26,12 @@
 #include "completionentry.h"
 
 class Config;
+class QCompleter;
 class QLineEdit;
+class QStandardItemModel;
+
+/// The completion popup, defined in the .cpp: a list view with a footer strip.
+class CompletionPopup;
 
 /// Where the cursor sits in a query, and therefore what should be offered.
 ///
@@ -96,10 +101,25 @@ public:
     /// The candidate values for a context, in the order they are offered.
     QStringList candidatesFor(const CompletionContext &context) const;
 
+    /// Recomputes the context from the line edit and refills the popup model.
+    void updateContext();
+
+    /// Inserts `value` over the span the last updateContext() identified.
+    ///
+    /// Public so a test can drive the accept path directly. Going through
+    /// synthetic key events instead would test the keyboard layout, not this.
+    void acceptCompletion(const QString &value);
+
 private:
     QList<CompletionEntry> entriesFor(const CompletionContext &context) const;
+    void rebuildModel(const CompletionContext &context);
 
     QLineEdit *m_edit = nullptr;
     const Config &m_config;
     QStringList m_tags;
+
+    QCompleter *m_completer = nullptr;
+    QStandardItemModel *m_model = nullptr;
+    CompletionPopup *m_popup = nullptr;
+    CompletionContext m_context;
 };

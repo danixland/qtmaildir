@@ -169,16 +169,21 @@ void MainWindow::buildUi()
     m_threadView->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_threadView->verticalHeader()->hide();
     m_threadView->horizontalHeader()->setStretchLastSection(false);
-    // Subject is the last column and takes the leftover width; the three
-    // fixed-width ones size to their contents. Nothing sits to the right of
-    // the stretching column, so no column can be pushed out of view.
+    // Subject is last and takes the leftover width, so no column can be
+    // pushed off the right edge. The other three stay Interactive: both
+    // ResizeToContents and Stretch ignore a drag, and the user resizes these.
     m_threadView->horizontalHeader()->setSectionResizeMode(
         ThreadListModel::SubjectColumn, QHeaderView::Stretch);
     for (int column : { ThreadListModel::TagsColumn, ThreadListModel::DateColumn,
                         ThreadListModel::AuthorsColumn }) {
         m_threadView->horizontalHeader()->setSectionResizeMode(
-            column, QHeaderView::ResizeToContents);
+            column, QHeaderView::Interactive);
     }
+    // Starting widths only; a drag overrides them, and they are what the
+    // saved-widths item will persist.
+    m_threadView->setColumnWidth(ThreadListModel::TagsColumn, 160);
+    m_threadView->setColumnWidth(ThreadListModel::DateColumn, 130);
+    m_threadView->setColumnWidth(ThreadListModel::AuthorsColumn, 180);
 
     connect(m_threadView->selectionModel(),
             &QItemSelectionModel::currentRowChanged,

@@ -11,6 +11,14 @@ point at which they are stable.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] - 2026-08-03
+
+Menus, a toolbar and an in-app shortcut reference, so the app is usable
+without memorizing keys. Tags render as coloured chips rather than a column
+of text. Three default keybindings that had never worked now do.
+
 ### Added
 
 - Tags render as coloured chips instead of text in a column. The account tag
@@ -64,9 +72,30 @@ point at which they are stable.
 
 ### Changed
 
-- Default bindings moved to modifier shortcuts (`Ctrl+E` archive, `Ctrl+D`
-  delete, and so on). Existing `[keys]` entries are unaffected, and single
-  letters are still safe to bind. See "Upgrading from 0.1.0" in the README.
+- Default bindings moved to modifier shortcuts. **A `[keys]` section written
+  for 0.1.0 keeps working and keeps the old keys**, which also means it hides
+  every new default: delete the section to adopt them, or rebind individually.
+  Single letters are still safe to bind, since Qt suppresses a plain-letter
+  shortcut while the query bar has focus.
+
+  | Action | 0.1.0 | 0.2.0 |
+  |---|---|---|
+  | `next_thread` | `j` | `Ctrl+J` |
+  | `prev_thread` | `k` | `Ctrl+K` |
+  | `open_thread` | `Return` | `Return` |
+  | `archive` | `a` | `Ctrl+E` |
+  | `delete` | `d` | `Ctrl+D` |
+  | `spam` | *(unbound)* | `Ctrl+Shift+S` |
+  | `toggle_unread` | `N` *(never fired)* | `Ctrl+U` |
+  | `flag` | `F` *(never fired)* | `Ctrl+I` |
+  | `focus_query` | `/` | `Ctrl+L` |
+  | `toggle_html` | `h` | `Ctrl+H` |
+  | `load_remote` | *(unbound)* | `Ctrl+M` |
+  | `undo` | `u` | `Ctrl+Z` |
+  | `sync` | `G` *(never fired)* | `Ctrl+G` |
+  | `quit` | `Ctrl+Q` | `Ctrl+Q` |
+
+  Action names are unchanged, so no existing binding becomes invalid.
 - Actions are `QAction`s dispatched by shortcut rather than a hash of
   callbacks behind an event filter, which is what lets them appear in menus.
   The hand-maintained list of registered action names is now derived from the

@@ -23,6 +23,4 @@ documented in /usr/doc/qtmaildir-$VERSION/README.md.
 
 This package is built with the test suite disabled
 (-DQTMAILDIR_BUILD_TESTS=OFF), which skips the Qt6::Test dependency and
-builds nothing that would ship. Note that this option was added after
-0.4.0 was tagged: with the 0.4.0 tarball the flag is accepted but has no
-effect, so that build still compiles the tests and needs Qt6::Test.
+builds nothing that would ship.

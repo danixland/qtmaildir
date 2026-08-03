@@ -13,6 +13,21 @@ point at which they are stable.
 
 Nothing yet.
 
+## [0.4.1] - 2026-08-03
+
+Packaging only. No change to the application itself.
+
+### Added
+
+- A SlackBuild under `assets/slackbuild/`, with the usual `.info`,
+  `slack-desc`, `doinst.sh` and `README`. It follows SBo conventions except
+  for the tag, `_danix` rather than `_SBo`, and the package type, `txz` rather
+  than `tgz`, since it is not an SBo submission.
+- `QTMAILDIR_BUILD_TESTS`, on by default. Turning it off skips the test suite
+  and its `Qt6::Test` dependency, which a packaging build has no use for.
+  0.4.0 accepted this flag but ignored it, because the option did not exist in
+  that tarball; this release is the first where it takes effect.
+
 ## [0.4.0] - 2026-08-03
 
 Attachments become reachable. They were parsed all along and there was simply

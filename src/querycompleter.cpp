@@ -18,7 +18,19 @@
 
 #include "querycompleter.h"
 
+#include <QCoreApplication>
+
 namespace {
+
+// The vocabulary lives in free functions, not in a QObject, so there is no
+// inherited tr(). Q_DECLARE_TR_FUNCTIONS gives this namespace its own tr()
+// bound to an explicit context, which is what lupdate scans for. Calling
+// QObject::tr() here would compile but file every string under the "QObject"
+// context, mixing the vocabulary in with unrelated strings.
+class VocabularyStrings
+{
+    Q_DECLARE_TR_FUNCTIONS(VocabularyStrings)
+};
 
 /// Whether the cursor sits inside a double-quoted literal. Counts quotes from
 /// the start: an odd count before the cursor means the quote is still open.
@@ -63,6 +75,54 @@ int tokenEnd(const QString &text, int cursor)
 }
 
 } // namespace
+
+QList<CompletionEntry> prefixVocabulary()
+{
+    return {
+        { QStringLiteral("tag:"),        VocabularyStrings::tr("messages with a tag") },
+        { QStringLiteral("is:"),         VocabularyStrings::tr("same as tag:") },
+        { QStringLiteral("from:"),       VocabularyStrings::tr("sender address or name") },
+        { QStringLiteral("to:"),         VocabularyStrings::tr("recipient, including Cc") },
+        { QStringLiteral("subject:"),    VocabularyStrings::tr("words in the subject") },
+        { QStringLiteral("date:"),       VocabularyStrings::tr("a date or a range") },
+        { QStringLiteral("attachment:"), VocabularyStrings::tr("attachment filename") },
+        { QStringLiteral("mimetype:"),   VocabularyStrings::tr("attachment content type") },
+        { QStringLiteral("folder:"),     VocabularyStrings::tr("Maildir folder name") },
+        { QStringLiteral("path:"),       VocabularyStrings::tr("directory below the Maildir root") },
+        { QStringLiteral("thread:"),     VocabularyStrings::tr("a thread id") },
+        { QStringLiteral("id:"),         VocabularyStrings::tr("a single message id") },
+        { QStringLiteral("and"),         VocabularyStrings::tr("both conditions") },
+        { QStringLiteral("or"),          VocabularyStrings::tr("either condition") },
+        { QStringLiteral("not"),         VocabularyStrings::tr("exclude what follows") },
+    };
+}
+
+QList<CompletionEntry> dateVocabulary()
+{
+    return {
+        { QStringLiteral("today"),      VocabularyStrings::tr("since midnight") },
+        { QStringLiteral("yesterday"),  VocabularyStrings::tr("the previous day") },
+        { QStringLiteral("this_week"),  VocabularyStrings::tr("the current week") },
+        { QStringLiteral("last_week"),  VocabularyStrings::tr("the week before this one") },
+        { QStringLiteral("this_month"), VocabularyStrings::tr("the current month") },
+        { QStringLiteral("last_month"), VocabularyStrings::tr("the month before this one") },
+        { QStringLiteral("this_year"),  VocabularyStrings::tr("the current year") },
+        // These two are complete open-ended ranges, hence the trailing "..".
+        { QStringLiteral("1week.."),    VocabularyStrings::tr("the last seven days") },
+        { QStringLiteral("1month.."),   VocabularyStrings::tr("the last month") },
+    };
+}
+
+QList<CompletionEntry> mimetypeVocabulary()
+{
+    return {
+        { QStringLiteral("application/pdf"), VocabularyStrings::tr("PDF document") },
+        { QStringLiteral("image/jpeg"),      VocabularyStrings::tr("JPEG image") },
+        { QStringLiteral("image/png"),       VocabularyStrings::tr("PNG image") },
+        { QStringLiteral("text/html"),       VocabularyStrings::tr("HTML document") },
+        { QStringLiteral("application/zip"), VocabularyStrings::tr("ZIP archive") },
+    };
+}
 
 CompletionContext completionContext(const QString &text, int cursor)
 {

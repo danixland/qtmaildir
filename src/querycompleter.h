@@ -18,7 +18,10 @@
 
 #pragma once
 
+#include <QList>
 #include <QString>
+
+#include "completionentry.h"
 
 /// Where the cursor sits in a query, and therefore what should be offered.
 ///
@@ -57,3 +60,15 @@ struct CompletionContext
 ///
 /// `cursor` is an offset into `text`, as QLineEdit::cursorPosition() returns.
 CompletionContext completionContext(const QString &text, int cursor);
+
+/// The notmuch query keywords, with descriptions. Hardcoded: notmuch exposes
+/// no way to enumerate its own prefixes, so this list must track releases by
+/// hand. See the spec's Consequences section.
+QList<CompletionEntry> prefixVocabulary();
+
+/// Symbolic and relative date values. Absolute dates are not enumerable and
+/// are covered by the free-form hint in the popup footer instead.
+QList<CompletionEntry> dateVocabulary();
+
+/// The built-in mimetypes, before the user's extra_mimetypes are appended.
+QList<CompletionEntry> mimetypeVocabulary();

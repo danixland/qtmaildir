@@ -39,6 +39,8 @@ private slots:
     void rangeLowerBoundCompletes();
     void bareValueAllowsRelativeEntries();
     void rangeSuppressesRelativeEntries();
+    void prefixVocabularyCoversNotmuchKeywords();
+    void dateVocabularySeparatesRelativeEntries();
 };
 
 void TestQueryCompleter::emptyTextCompletesPrefix()
@@ -165,6 +167,39 @@ void TestQueryCompleter::rangeSuppressesRelativeEntries()
     const QString text = QStringLiteral("date:1w..today");
     const CompletionContext ctx = completionContext(text, 7);
     QVERIFY(!ctx.allowRangeEntries);
+}
+
+void TestQueryCompleter::prefixVocabularyCoversNotmuchKeywords()
+{
+    const QList<CompletionEntry> entries = prefixVocabulary();
+
+    QStringList values;
+    for (const CompletionEntry &entry : entries)
+        values.append(entry.value);
+
+    QVERIFY(values.contains(QStringLiteral("tag:")));
+    QVERIFY(values.contains(QStringLiteral("date:")));
+    QVERIFY(values.contains(QStringLiteral("and")));
+
+    // Every entry carries a description; a blank column teaches nothing.
+    for (const CompletionEntry &entry : entries)
+        QVERIFY(!entry.description.isEmpty());
+}
+
+void TestQueryCompleter::dateVocabularySeparatesRelativeEntries()
+{
+    const QList<CompletionEntry> entries = dateVocabulary();
+
+    bool sawSymbolic = false;
+    bool sawRelative = false;
+    for (const CompletionEntry &entry : entries) {
+        if (entry.value == QStringLiteral("today"))
+            sawSymbolic = true;
+        if (entry.value.contains(QStringLiteral("..")))
+            sawRelative = true;
+    }
+    QVERIFY(sawSymbolic);
+    QVERIFY(sawRelative);
 }
 
 QTEST_MAIN(TestQueryCompleter)

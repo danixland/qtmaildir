@@ -4287,8 +4287,12 @@ git commit -S -m "feat: add MainWindow wiring query, list, message, and sync"
 
 ## Task 13: Manual verification against a real database
 
-The notmuch layer has no automated test by design. This task is the compensating
-control. Do not skip it.
+**Amended 2026-08-03.** The original framing, that the notmuch layer has no
+automated test and this task is the compensating control, no longer holds:
+Task 8 tests `NotmuchWorker` against a throwaway database. This task is now
+confirmation against real mail rather than the only coverage. Still do not
+skip it: a throwaway database has four tidy messages, and the user's has years
+of real ones.
 
 **Files:**
 - Create: `docs/manual-verification.md`
@@ -4344,7 +4348,20 @@ Create `docs/manual-verification.md` and record pass/fail for each:
 18. `u` after a bulk archive restores every thread it touched.
 19. Sync runs, the log fills, and the query refreshes on completion.
 20. Sync while `notmuch new` runs from cron reports a lock error rather than
-    corrupting anything.
+    corrupting anything. Cron runs every 10 minutes, so waiting for the window
+    is quick; `watch -n1 pgrep -a notmuch` finds it.
+21. A sync command whose path contains a space is either handled consistently
+    or rejected consistently. `config.cpp` validates existence by splitting the
+    command on `' '` and taking the first field, while `MailSync` splits it with
+    `QProcess::splitCommand`, which honours quoting. For
+    `command = "/home/danix/my scripts/mailsync.sh"` the two disagree: config
+    checks a path that does not exist and disables sync, so the failure is safe
+    but the message is misleading. Confirm the behaviour, then decide whether to
+    align config on `splitCommand` or to document the restriction.
+22. Delete the configured sync script while qtmaildir is running, then press
+    sync. The status bar must report a failed start rather than leaving a
+    spinner up forever. (Config validates the path only at load time; this is
+    the path `MailSync::handleError` exists for.)
 
 - [ ] **Step 4: Commit the results**
 
@@ -4429,8 +4446,9 @@ Checked against the spec on 2026-08-02:
 - Spec §13 testing maps to Tasks 2, 3, 4, 5, 6, 9, 10. The spec named three
   test targets; this plan has seven, because config, htmlbuilder, model, and
   sync each earned one.
-- Spec §14 known gaps are preserved: `NotmuchWorker` has no unit test, and
-  Task 13 is the compensating manual check.
+- Spec §14 known gaps are preserved, with one resolved on 2026-08-02:
+  `NotmuchWorker` IS unit-tested, against a throwaway database (Task 8), so
+  Task 13 confirms against real mail rather than being the only coverage.
 
 No deviations from the spec remain. Two narrowings were present in the first
 draft and were folded back in at the user's direction on 2026-08-02:

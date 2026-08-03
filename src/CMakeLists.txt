@@ -10,6 +10,7 @@ add_library(qtmaildir_lib STATIC
     mailsync.cpp
     threadcidmap.cpp
     messageview.cpp
+    mainwindow.cpp
 )
 
 target_include_directories(qtmaildir_lib

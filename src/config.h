@@ -78,6 +78,18 @@ public:
     /// Optional alternate notmuch config file. Empty means "let notmuch decide".
     QString notmuchConfig() const { return m_notmuchConfig; }
 
+    /// The saved query to open at startup, by name. Falls back to "Unread"
+    /// when unset, and to the first saved query when no query by that name
+    /// exists: [queries] is read through childKeys(), which sorts
+    /// alphabetically, so "first" would otherwise mean whatever happens to
+    /// sort first rather than anything the user chose.
+    QString startupQuery() const { return m_startupQuery; }
+
+    /// The saved query startupQuery() names, or the first one when it names
+    /// nothing that exists. A default-constructed SavedQuery when there are
+    /// none at all.
+    SavedQuery startupSavedQuery() const;
+
     /// Starting message-pane zoom for a profile with no saved UI state. Once
     /// the user zooms, the state file remembers that instead, so this is only
     /// ever the default. Clamped by MessageView::clampZoom() on use.
@@ -107,6 +119,12 @@ private:
     QString m_syncCommand;
     QString m_notmuchConfig;
     qreal m_messageZoom = 1.0;
+    QString m_startupQuery = QStringLiteral("Unread");
+
+    /// Whether startup_query came from the config rather than being the
+    /// built-in default. Only a name the user wrote is worth reporting when
+    /// it matches no saved query.
+    bool m_startupQueryWasSet = false;
     QStringList m_warnings;
     QStringList m_problems;
 };

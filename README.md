@@ -83,6 +83,10 @@ identity.
 ; point: once you zoom with Ctrl+wheel or Ctrl+/Ctrl-, that is remembered
 ; separately and this value no longer applies.
 ; message_zoom = 1.0
+; Optional. Which [queries] entry to open at startup, by name. Defaults to
+; Unread. Falls back to the first saved query if no query by this name
+; exists, and warns if you named one explicitly.
+; startup_query = Unread
 
 [sync]
 ; Optional. Omit and the Sync button disables itself with a tooltip.
@@ -125,7 +129,8 @@ k = prev_thread
 
 Saved-query buttons appear in alphabetical order rather than file order:
 QSettings returns keys sorted, and preserving file order would mean
-hand-rolling an INI parser.
+hand-rolling an INI parser. Which query opens at startup is therefore a
+separate setting, `[general] startup_query`, rather than "the first one".
 
 ## Tags
 

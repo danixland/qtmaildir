@@ -66,6 +66,14 @@ void Config::load(const QString &path)
     // is a problem, since the user asked for something and is not getting it.
     // The range check lives in MessageView::clampZoom(), the one place that
     // knows what the web view can render.
+    // Empty is treated as unset rather than as "a query named nothing".
+    const QString startup =
+        settings.value(QStringLiteral("startup_query")).toString().trimmed();
+    if (!startup.isEmpty()) {
+        m_startupQuery = startup;
+        m_startupQueryWasSet = true;
+    }
+
     const QVariant zoom = settings.value(QStringLiteral("message_zoom"));
     if (zoom.isValid()) {
         bool ok = false;
@@ -149,6 +157,34 @@ void Config::load(const QString &path)
     for (const QString &name : settings.childKeys())
         m_savedQueries.append({ name, settings.value(name).toString() });
     settings.endGroup();
+
+    // Checked here rather than where startup_query is read: [queries] is not
+    // parsed until now. Only a name the user actually wrote is worth a
+    // problem; the built-in default naming a query they never created is not
+    // something they got wrong.
+    if (m_startupQueryWasSet && !m_savedQueries.isEmpty()
+        && startupSavedQuery().name.compare(m_startupQuery,
+                                            Qt::CaseInsensitive) != 0) {
+        addProblem(QStringLiteral("Startup query '%1' is not a saved query; "
+                                  "opening '%2' instead.")
+                       .arg(m_startupQuery, startupSavedQuery().name));
+    }
+}
+
+SavedQuery Config::startupSavedQuery() const
+{
+    if (m_savedQueries.isEmpty())
+        return {};
+
+    for (const SavedQuery &query : m_savedQueries) {
+        if (query.name.compare(m_startupQuery, Qt::CaseInsensitive) == 0)
+            return query;
+    }
+
+    // Named a query that does not exist. Not worth a warning: the default is
+    // a name the user never wrote, so an install with no [queries] Unread
+    // entry would warn on every launch about a key it never set.
+    return m_savedQueries.first();
 }
 
 Account Config::account(const QString &key) const

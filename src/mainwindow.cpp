@@ -171,8 +171,12 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     // modifier shortcuts such as Ctrl+Q still work there, which the old
     // filter blocked.
 
-    if (!m_config.savedQueries().isEmpty()) {
-        m_queryEdit->setText(m_config.savedQueries().first().query);
+    // Not savedQueries().first(): [queries] is read through childKeys(), which
+    // sorts alphabetically, so "first" means whatever happens to sort first
+    // rather than anything the user chose. Config resolves the name.
+    const SavedQuery startup = m_config.startupSavedQuery();
+    if (!startup.query.isEmpty()) {
+        m_queryEdit->setText(startup.query);
         runCurrentQuery();
     }
 }

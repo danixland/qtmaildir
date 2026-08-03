@@ -34,6 +34,9 @@ private slots:
     void brokenSyncCommandIsAProblem();
     void malformedAccountIsAProblem();
     void validConfigHasNoProblems();
+    void startupQueryDefaultsToUnread();
+    void startupQueryHonoursTheConfiguredName();
+    void unknownStartupQueryFallsBackAndReports();
     void generalSectionKeysAreActuallyRead();
     void messageZoomDefaultsAndValidates();
 };
@@ -222,6 +225,70 @@ void TestConfig::validConfigHasNoProblems()
 
     QVERIFY(config.problems().isEmpty());
     QVERIFY(config.warnings().isEmpty());
+}
+
+void TestConfig::startupQueryDefaultsToUnread()
+{
+    // [queries] is read through childKeys(), which sorts alphabetically, so
+    // savedQueries().first() is "Flagged" here. The startup query must be
+    // chosen by name, not by sort order.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[queries]\n"
+        "Inbox=tag:inbox\n"
+        "Unread=tag:unread\n"
+        "Flagged=tag:flagged\n")));
+
+    QCOMPARE(config.savedQueries().first().name, QStringLiteral("Flagged"));
+    QCOMPARE(config.startupSavedQuery().name, QStringLiteral("Unread"));
+    QCOMPARE(config.startupSavedQuery().query, QStringLiteral("tag:unread"));
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::startupQueryHonoursTheConfiguredName()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_query=Flagged\n"
+        "\n"
+        "[queries]\n"
+        "Inbox=tag:inbox\n"
+        "Unread=tag:unread\n"
+        "Flagged=tag:flagged\n")));
+
+    QCOMPARE(config.startupSavedQuery().name, QStringLiteral("Flagged"));
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::unknownStartupQueryFallsBackAndReports()
+{
+    // A name the user wrote that matches nothing is a problem: they asked for
+    // something and are not getting it. Startup still works, on the fallback.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_query=Nonexistent\n"
+        "\n"
+        "[queries]\n"
+        "Inbox=tag:inbox\n")));
+
+    QCOMPARE(config.startupSavedQuery().name, QStringLiteral("Inbox"));
+    QCOMPARE(config.problems().size(), 1);
+
+    // The built-in default naming a query the user never created is NOT a
+    // problem: they did not get it wrong, they simply have no Unread entry.
+    QTemporaryDir quiet;
+    Config silent;
+    silent.load(writeIni(quiet, QStringLiteral(
+        "[queries]\n"
+        "Inbox=tag:inbox\n")));
+
+    QCOMPARE(silent.startupSavedQuery().name, QStringLiteral("Inbox"));
+    QVERIFY(silent.problems().isEmpty());
 }
 
 void TestConfig::generalSectionKeysAreActuallyRead()

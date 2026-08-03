@@ -13,6 +13,43 @@ point at which they are stable.
 
 Nothing yet.
 
+## [0.4.0] - 2026-08-03
+
+Attachments become reachable. They were parsed all along and there was simply
+no way to get at one, and no way to tell a message had any without opening it.
+
+### Added
+
+- A paperclip column marks threads carrying an attachment, so it is visible
+  without opening the thread. Driven by the `attachment` tag notmuch already
+  applies, so it costs no extra query.
+- The message pane lists attachments behind one **Attachments (N)** button:
+  a dialog with the message number, filename and size, a **Save** for each,
+  and **Save all** when there is more than one.
+- **Save all** writes into a new subfolder named `<date> <subject>` inside a
+  folder you pick, so a thread with sixteen files does not scatter them among
+  whatever is already there. The folder is named in the picker before you
+  choose, and an existing folder of that name is never merged into.
+
+### Fixed
+
+- **Attachments were unreachable.** The attachment bar had been created and
+  added to the layout since it was written, and nothing ever populated it.
+- **Saving several attachments could destroy files.** Messages in one thread
+  commonly attach the same filename, and each save overwrote the previous one
+  while still reporting success: sixteen attachments produced ten files. Batch
+  saves now add a numeric suffix instead, and keep a compound extension like
+  `.tar.gz` whole.
+- **A `Date:` header carrying a timezone comment lost its date.** `+0200
+  (CEST)` is legal and common, but Qt rejects the whole header rather than the
+  comment, so those messages got no date prefix on their folder.
+
+### Changed
+
+- Thread-list column widths reset once on first launch after upgrading. The
+  saved layout is from before the paperclip column existed, and applying it
+  would have shifted every width onto the wrong column.
+
 ## [0.3.0] - 2026-08-03
 
 The app remembers how you left it. Window, splitter and column sizes survive

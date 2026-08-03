@@ -158,6 +158,30 @@ Note that a `/` in an INI key is a group separator to QSettings, so
 as `shopping\amazon`. It is read back correctly; the escaping is QSettings'
 own.
 
+## Attachments
+
+A paperclip in the leftmost column of the thread list marks threads that carry
+an attachment, so it is visible without opening the thread. It comes from the
+`attachment` tag notmuch applies while indexing, not from parsing the message,
+and costs no extra query.
+
+Under the message pane, one **Attachments (N)** button opens a list of the
+thread's attachments: which message each came from, its filename and its size,
+with a **Save** for each. With more than one, **Save all** writes them into a
+new subfolder named `<date> <subject>` inside a folder you choose. The subfolder
+is named in the picker before you commit to a location, and an existing folder
+of that name is never merged into.
+
+Filenames in a message are untrusted, so what is displayed and written is
+always a sanitised basename: an attachment named `../../etc/passwd` is written
+inside the folder you chose and nowhere else. Where several messages in a thread
+attach the same filename, later ones get a numeric suffix rather than
+overwriting the earlier file.
+
+Opening an attachment in its default application is deliberately not offered.
+Handing a file from a stranger to `xdg-open` is a different security decision
+from writing it where you asked, and is not one this program makes for you.
+
 ## Keybindings
 
 Defaults, all rebindable through `[keys]`:

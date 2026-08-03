@@ -134,6 +134,38 @@ rule above): `1week..`, `1month..`.
 **Mimetypes** — `application/pdf`, `image/jpeg`, `image/png`, `text/html`,
 `application/zip`.
 
+Mimetypes are the one list a user can extend, via `[completion]
+extra_mimetypes` in the config. Entries **append to** the built-ins rather than
+replacing them, so a typo or a short list can never leave completion worse off
+than the defaults, and there is no way to lose a built-in by adding one entry.
+
+Each entry accepts an optional description after a `|`:
+
+```ini
+[completion]
+extra_mimetypes = application/epub+zip|EPUB book, message/rfc822
+```
+
+`,` separates entries and `|` separates a value from its description. They are
+different characters deliberately: QSettings splits comma lists itself, so a
+description containing a comma would otherwise be torn into two entries.
+Neither character is legal in a mimetype, so nothing is ambiguous.
+
+An entry without a description shows a blank right column rather than being
+rejected. An entry that is empty, or whose value is empty, is skipped and
+recorded through `Config::addProblem()`: the user configured something that is
+not being honoured.
+
+The other value lists are deliberately **not** configurable, because each has a
+real source and a user-editable copy would only drift from it:
+
+- **Prefixes** come from notmuch. Adding one to a config list would not teach
+  notmuch the keyword; it would complete happily and then error on Enter.
+- **Paths** are derived from the configured accounts.
+- **Dates** are closed once symbolic and relative forms are covered. Everything
+  beyond them is literal and handled by the free-form hint.
+- **Tags** are read from the database and are never config.
+
 **Paths** — `Account::maildir` for each configured account, offered after
 `path:`. Config-derived rather than scanned: the Maildir root is deliberately
 not duplicated in this project's config, and the configured accounts are the
@@ -220,6 +252,11 @@ TDD, tokenizer first. `tests/test_querycompleter.cpp`:
   selects dates, `path:` selects the configured maildirs in both bare and
   `/**` forms, `is:` selects the same model as `tag:`, and `folder:` selects
   nothing.
+- `extra_mimetypes` appends: configured entries are present **and** every
+  built-in survives. An entry with `|description` carries it; one without shows
+  blank rather than being dropped. A description containing a comma survives
+  intact. A malformed entry is skipped, the rest of the list still loads, and a
+  problem is recorded.
 
 `requestAllTags` is tested in the existing `tests/test_notmuchworker.cpp`
 against its throwaway notmuch database, asserting the tags generated into that
@@ -232,9 +269,13 @@ and add `querycompleter.cpp` to the `qtmaildir_lib` list in
 ## Consequences
 
 - `mainwindow.cpp` grows by construction and two connections only.
-- `Config` gains one accessor.
+- `Config` gains two accessors: `completionOnFocus()` and `extraMimetypes()`.
 - `KeyMap` gains one default binding, which the shortcut reference picks up
   without further change.
 - `NotmuchWorker` gains one slot and one signal.
-- The prefix list is a maintenance point: notmuch may add prefixes, and this
-  list will not track them automatically.
+- The prefix list is a maintenance point: notmuch adds prefixes across releases
+  (`mimetype:` and `thread:` were not always present), and a hardcoded list
+  will not track them. Config would not fix this, it would only let a user
+  guess at keywords notmuch may not accept. The real upgrade path is deriving
+  the list from the installed notmuch rather than making it editable. Revisit
+  if the list goes visibly stale.

@@ -42,7 +42,7 @@ databases.
 | 12 | An inline image displays without any remote load | **PASS** |
 | 13 | Two messages sharing a Content-ID each show their own image | PENDING |
 | 14 | `h` toggles the thread to plain text and back | **PASS, bug found alongside** |
-| 15 | A link click opens the system browser without navigating the pane | PENDING |
+| 15 | A link click opens the system browser without navigating the pane | **PASS** |
 | 16 | `a` archives the selected thread | DEFERRED |
 | 17 | `a` over a multi-row selection archives all of them | DEFERRED |
 | 18 | `u` after a bulk archive restores every thread | DEFERRED |
@@ -206,6 +206,18 @@ This one is worth noting for how it hid: the bindings all worked when focus
 was anywhere other than the list, which is the state a developer testing a
 single shortcut is most likely to be in.
 
+## Item 15: PASS
+
+Clicking a link in a message opened the system browser and left the pane
+showing the message.
+
+Worth having checked by hand: `acceptNavigationRequest` was modified twice
+in one session, once when MessageView was written and again as part of the
+blank-pane fix, and it is the only thing standing between a message body and
+replacing the pane with an arbitrary page. `NavigationTypeLinkClicked` goes
+to `QDesktopServices::openUrl` and returns false; everything except a typed
+main-frame navigation is refused.
+
 ## Item 8: PASS
 
 With the 22-message thread (`thread:0000000000008faa`) open:
@@ -248,6 +260,31 @@ rather than a hung spinner.
 
 ## Still to do
 
-Items 4, 6-15 need a person at the screen. Items 16-18 write to the live
-index and should be run with someone watching. Items 19-20 need a sync
-script to exist on this machine.
+Items 16-18 write to the live index and are deferred until they can be run
+with someone watching; undo is implemented, but the mutation path is exactly
+where this checklist would earn its keep. Items 19-20 need a `mailsync.sh`
+to exist on this machine.
+
+Item 13 is unreachable with this mailbox: the only two messages found that
+share a Content-ID (`95db36262ead...@phpmailer.0`, two AtlasMedica
+notifications) sit in separate single-message threads, and the pane renders
+one thread at a time. The behaviour it describes is covered by
+`test_threadcidmap.cpp::sharedContentIdsDoNotCollide` instead.
+
+## What the manual pass was worth
+
+Three defects, none of which any unit test in this project would have
+caught, all found by a person clicking:
+
+1. **The message pane never rendered at all** (items 6, 9, 10). Every layer
+   was correct in isolation; `setHtml()` simply does not navigate to the
+   base URL it is given, and two separate pieces of code assumed it does.
+2. **Remote images survived a thread switch** (item 11). The policy was
+   right the whole time and the pane still showed images the user had not
+   re-authorised, because a cached resource never reaches the interceptor.
+3. **Every single-letter key binding was swallowed** (item 14) whenever the
+   thread list had focus, which is most of the time in normal use.
+
+The common thread: each one lived in the gap between components that were
+individually tested and correct. That gap is what a manual checklist is
+for.

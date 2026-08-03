@@ -148,6 +148,26 @@ void MessageView::showThread(const QList<ThreadRenderItem> &items)
     // Every thread starts from a clean policy: no remote grant carries over.
     m_interceptor->resetForNewMessage();
 
+    // Resetting the policy is not enough on its own. Anything fetched under a
+    // previous grant stays in the engine's caches, and a cached resource is
+    // painted without the interceptor being consulted at all, so returning to
+    // a thread would show its remote images again with the grant switched off.
+    // The policy would be right and the pane would still be lying.
+    //
+    // clearHttpCache() empties the profile's store, but the render process
+    // keeps its own decoded-image cache keyed on the document, and that one
+    // outlives a setHtml() of the same URL. Loading about:blank first discards
+    // the previous document entirely, which is what actually drops those
+    // images. Verified against a local server: the image is fetched once under
+    // the grant and never re-fetched afterwards, so anything still visible on
+    // return could only have come from that cache.
+    //
+    // This belongs here rather than in render(): render() also runs for the
+    // remote-content grant itself, where throwing the document away would
+    // discard exactly what the user just asked to see.
+    m_profile->clearHttpCache();
+    m_view->setUrl(QUrl(QStringLiteral("about:blank")));
+
     // Two messages in one thread commonly share a Content-ID, and the thread is
     // one document, so the parts are namespaced per message.
     const ThreadCidMap cidMap = buildThreadCidMap(m_items);

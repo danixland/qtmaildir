@@ -13,6 +13,57 @@ point at which they are stable.
 
 Nothing yet.
 
+## [0.3.0] - 2026-08-03
+
+The app remembers how you left it. Window, splitter and column sizes survive
+a restart, the message pane owns its zoom and keeps it, and startup opens the
+query you asked for rather than whichever one sorted first.
+
+### Added
+
+- Window geometry, splitter position and thread-list column widths persist
+  across restarts. Machine-written state lives in a separate file,
+  `~/.local/state/qtmaildir/uistate.conf`, and never touches the hand-edited
+  config: a base64 geometry blob does not belong in a file you edit, and
+  rewriting that file on exit would drop its comments and key order.
+- The message pane owns its zoom, which is remembered across restarts. It was
+  previously the web engine's own behavior, invisible to the application,
+  which is why there was nothing to save.
+
+  | Gesture | Does |
+  |---|---|
+  | `Ctrl++` | Zoom in |
+  | `Ctrl+-` | Zoom out |
+  | `Ctrl+0`, `Ctrl+=` | Actual size |
+  | `Ctrl`+wheel | Zoom in and out |
+  | `Ctrl`+middle-click | Actual size |
+
+  All three actions appear in the View menu and are rebindable through
+  `[keys]` as `zoom_in`, `zoom_out` and `zoom_reset`. The factor is clamped
+  to 0.5 - 3.0.
+- `[general] message_zoom` sets the starting zoom for a profile that has
+  never zoomed. Once you zoom, the state file remembers that instead.
+- `[general] startup_query` names the saved query to open at startup, and
+  defaults to `Unread`.
+
+### Changed
+
+- **Startup no longer opens `savedQueries().first()`.** `[queries]` is read
+  through `childKeys()`, which sorts alphabetically, so the query that opened
+  was whichever name sorted first rather than one you chose. It is now
+  selected by name. If your `[queries]` has no entry named `Unread`, set
+  `[general] startup_query` to the one you want, or you will keep getting the
+  alphabetically first one. Saved-query button order is unchanged.
+
+### Fixed
+
+- **`[general]` keys were never read.** They were looked up as
+  `general/<key>`, which matches nothing: QSettings' INI backend treats a
+  section literally named `[general]` as its own fallback section and strips
+  the prefix. `notmuch_config` had therefore been silently ignored since it
+  was introduced. If you set it and wondered why nothing changed, it works
+  now. The file format is unchanged.
+
 ## [0.2.0] - 2026-08-03
 
 Menus, a toolbar and an in-app shortcut reference, so the app is usable

@@ -33,6 +33,7 @@ private slots:
     void invalidSequenceIsReported();
     void collidingOverridesAreReported();
     void bareCapitalMatchesShiftedPress();
+    void userBindingWinsOverDefaultInMenus();
     void defaultsDoNotCollide();
     void everyDefaultIsAKnownAction();
 };
@@ -98,6 +99,38 @@ void TestKeyMap::bareCapitalMatchesShiftedPress()
     QCOMPARE(caseMap.actionFor(QKeySequence(upper.keyCombination())),
              QStringLiteral("delete"));
     QVERIFY(caseMap.warnings().isEmpty());
+}
+
+void TestKeyMap::userBindingWinsOverDefaultInMenus()
+{
+    // loadOverrides() adds a binding without removing the default, so two
+    // sequences reach 'archive'. sequenceFor() is what the menus and the
+    // shortcut reference display: it must show the user's, not the built-in
+    // one they were trying to replace.
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("t.conf"));
+    {
+        QSettings s(path, QSettings::IniFormat);
+        s.beginGroup(QStringLiteral("keys"));
+        s.setValue(QStringLiteral("Ctrl+Alt+A"), QStringLiteral("archive"));
+        s.endGroup();
+    }
+
+    KeyMap map;
+    map.loadDefaults();
+    QSettings s(path, QSettings::IniFormat);
+    map.loadOverrides(s);
+
+    QCOMPARE(map.sequenceFor(QStringLiteral("archive")),
+             QKeySequence(QStringLiteral("Ctrl+Alt+A")));
+
+    // The default still fires; it is only no longer the advertised one.
+    QCOMPARE(map.actionFor(KeyMap::defaultSequenceFor(QStringLiteral("archive"))),
+             QStringLiteral("archive"));
+
+    // An action the user left alone still shows its default.
+    QCOMPARE(map.sequenceFor(QStringLiteral("delete")),
+             KeyMap::defaultSequenceFor(QStringLiteral("delete")));
 }
 
 void TestKeyMap::defaultsDoNotCollide()

@@ -11,7 +11,37 @@ point at which they are stable.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Menu bar covering every action: File, Edit, Message, View and Help.
+- Toolbar with the frequent subset, Sync, Archive, Delete and Undo.
+- **Help > Keyboard shortcuts**, listing the current bindings. Generated from
+  the actions themselves, so it shows configured overrides rather than a
+  hand-written copy of the defaults.
+- **Help > About**.
+- Default bindings for `spam` and `load_remote`, which previously had none
+  and were unreachable until bound by hand.
+
+### Fixed
+
+- Three default bindings never fired. Typing a capital sends `Shift`+the key,
+  but `N`, `F` and `G` were stored as the unshifted key, which no keystroke
+  produces, leaving `toggle_unread`, `flag` and `sync` dead. A bare capital in
+  `[keys]` is now read as `Shift`+that letter. As a side effect `y` and `Y`
+  are two distinct keys rather than a collision that silently dropped one.
+- Modifier shortcuts such as `Ctrl+Q` now work while the query bar has focus.
+  The old event filter suppressed every binding there, not only the plain
+  letters that would have interfered with typing.
+
+### Changed
+
+- Default bindings moved to modifier shortcuts (`Ctrl+E` archive, `Ctrl+D`
+  delete, and so on). Existing `[keys]` entries are unaffected, and single
+  letters are still safe to bind. See "Upgrading from 0.1.0" in the README.
+- Actions are `QAction`s dispatched by shortcut rather than a hash of
+  callbacks behind an event filter, which is what lets them appear in menus.
+  The hand-maintained list of registered action names is now derived from the
+  actions, so it can no longer drift from them.
 
 ## [0.1.0] - 2026-08-03
 

@@ -30,6 +30,7 @@
 #include "keymap.h"
 #include "types.h"
 
+class QAction;
 class QLineEdit;
 class QTableView;
 class QLabel;
@@ -49,10 +50,10 @@ public:
     explicit MainWindow(const Config &config, QWidget *parent = nullptr);
     ~MainWindow() override;
 
-    /// Every action name registerActions() installs. Exposed so a test can hold
-    /// it against KeyMap::knownActions(): the two lists are maintained by hand,
-    /// and a drift either way silently breaks a user's key binding.
-    static QStringList registeredActionNames();
+    /// Every action name registerActions() installs. Derived from the actions
+    /// themselves rather than hand-maintained, so it cannot drift from what is
+    /// really registered.
+    QStringList registeredActionNames() const;
 
     /// The cid: namespace prefix for the nth message of a thread.
     ///
@@ -60,9 +61,6 @@ public:
     /// must never contain '!', which is the separator that keeps one message's
     /// cid: references from resolving to another's.
     static QString cidPrefixForIndex(int index);
-
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void runCurrentQuery();
@@ -76,8 +74,17 @@ private slots:
 private:
     void buildUi();
     void registerActions();
+    void buildMenus();
     void wireWorker();
     void showWarnings();
+    void showShortcutReference();
+    void showAbout();
+
+    /// Creates a QAction, binds it to the sequence KeyMap holds for `name`,
+    /// and registers it. `name` is the action name used in [keys].
+    QAction *addAction(const QString &name, const QString &text,
+                       const QString &description,
+                       const std::function<void()> &handler);
 
     void tagSelected(const QStringList &add, const QStringList &remove,
                      const QString &description);
@@ -112,7 +119,15 @@ private:
     QLabel *m_statusLabel = nullptr;
     QPlainTextEdit *m_syncLog = nullptr;
 
-    QHash<QString, std::function<void()>> m_actions;
+    /// Action name (as used in [keys]) to the QAction implementing it. Owned
+    /// by the window through the QObject parent, not by this hash.
+    QHash<QString, QAction *> m_actions;
+
+    /// One-line description per action, for the shortcut reference. Kept
+    /// beside the actions so the dialog is generated, never hand-written in
+    /// parallel with them.
+    QHash<QString, QString> m_actionDescriptions;
+
     quint64 m_generation = 0;
     QString m_lastQuery;
     QString m_currentThreadId;

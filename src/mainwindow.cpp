@@ -18,13 +18,14 @@
 
 #include "mainwindow.h"
 
+#include <QAction>
 #include <QComboBox>
-#include <QEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
-#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -32,6 +33,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTableView>
+#include <QToolBar>
 #include <QVBoxLayout>
 
 #include "mailsync.h"
@@ -41,26 +43,13 @@
 #include "threadlistmodel.h"
 #include "version.h"
 
-QStringList MainWindow::registeredActionNames()
+QStringList MainWindow::registeredActionNames() const
 {
-    // Keep in sync with registerActions(). Held against KeyMap::knownActions()
-    // by a test rather than by hope.
-    return {
-        QStringLiteral("next_thread"),
-        QStringLiteral("prev_thread"),
-        QStringLiteral("open_thread"),
-        QStringLiteral("archive"),
-        QStringLiteral("delete"),
-        QStringLiteral("spam"),
-        QStringLiteral("toggle_unread"),
-        QStringLiteral("flag"),
-        QStringLiteral("focus_query"),
-        QStringLiteral("toggle_html"),
-        QStringLiteral("load_remote"),
-        QStringLiteral("undo"),
-        QStringLiteral("sync"),
-        QStringLiteral("quit"),
-    };
+    // Derived from the actions themselves, so it cannot drift from what
+    // registerActions() really installed.
+    QStringList names = m_actions.keys();
+    names.sort();
+    return names;
 }
 
 QString MainWindow::cidPrefixForIndex(int index)
@@ -86,19 +75,16 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
 
     buildUi();
     registerActions();
+    buildMenus();
     wireWorker();
     showWarnings();
 
-    installEventFilter(this);
-
-    // The thread view needs its own filter, not just the window's. A filter on
-    // the window only sees key presses the focused child did not consume, and
-    // QAbstractItemView consumes plain letters for its type-to-search feature:
-    // with the list focused, 'h' jumped to the next thread whose subject began
-    // with "h" instead of toggling HTML, and every other single-letter binding
-    // (j, k, a, d, N, F, u, G) was swallowed the same way. Filtering the view
-    // itself puts the keymap ahead of that search.
-    m_threadView->installEventFilter(this);
+    // No event filter: QAction shortcuts are dispatched before the focused
+    // widget sees the key, so they beat QAbstractItemView's type-to-search
+    // without one. Qt also suppresses a plain-letter shortcut while an
+    // editable widget has focus, so typing in the query bar stays typing;
+    // modifier shortcuts such as Ctrl+Q still work there, which the old
+    // filter blocked.
 
     if (!m_config.savedQueries().isEmpty()) {
         m_queryEdit->setText(m_config.savedQueries().first().query);
@@ -206,40 +192,77 @@ void MainWindow::buildUi()
     setWindowTitle(QStringLiteral("qtmaildir %1").arg(QTMAILDIR_VERSION));
 }
 
+QAction *MainWindow::addAction(const QString &name, const QString &text,
+                               const QString &description,
+                               const std::function<void()> &handler)
+{
+    auto *action = new QAction(text, this);
+    action->setObjectName(name);
+    action->setStatusTip(description);
+    m_actionDescriptions.insert(name, description);
+
+    // The binding comes from KeyMap, so a [keys] override reaches the menus
+    // and the shortcut reference as well as the keyboard.
+    const QKeySequence sequence = m_keyMap.sequenceFor(name);
+    if (!sequence.isEmpty())
+        action->setShortcut(sequence);
+
+    // Shortcuts must work while focus is in the thread list or the message
+    // view, not only on the window itself.
+    action->setShortcutContext(Qt::WindowShortcut);
+
+    connect(action, &QAction::triggered, this, handler);
+
+    // Added to the window so the shortcut is live even before the action is
+    // put in a menu; the ones that never reach a menu depend on this.
+    QMainWindow::addAction(action);
+    m_actions.insert(name, action);
+    return action;
+}
+
 void MainWindow::registerActions()
 {
-    m_actions[QStringLiteral("focus_query")] = [this]() {
+    addAction(QStringLiteral("focus_query"), tr("&Find"),
+              tr("Focus and select the query bar"), [this]() {
         m_queryEdit->setFocus();
         m_queryEdit->selectAll();
-    };
-    m_actions[QStringLiteral("next_thread")] = [this]() {
+    });
+    addAction(QStringLiteral("next_thread"), tr("&Next thread"),
+              tr("Select the next thread"), [this]() {
         const QModelIndex current = m_threadView->currentIndex();
         const int row = current.isValid() ? current.row() + 1 : 0;
         if (row < m_model->rowCount())
             m_threadView->selectRow(row);
-    };
-    m_actions[QStringLiteral("prev_thread")] = [this]() {
+    });
+    addAction(QStringLiteral("prev_thread"), tr("&Previous thread"),
+              tr("Select the previous thread"), [this]() {
         const QModelIndex current = m_threadView->currentIndex();
         if (current.isValid() && current.row() > 0)
             m_threadView->selectRow(current.row() - 1);
-    };
-    m_actions[QStringLiteral("open_thread")] = [this]() {
+    });
+    addAction(QStringLiteral("open_thread"), tr("&Open thread"),
+              tr("Focus the thread list"), [this]() {
         m_threadView->setFocus();
-    };
-    m_actions[QStringLiteral("archive")] = [this]() {
+    });
+    addAction(QStringLiteral("archive"), tr("&Archive"),
+              tr("Remove inbox from every selected thread"), [this]() {
         tagSelected({}, { QStringLiteral("inbox") }, tr("Archive"));
-    };
-    m_actions[QStringLiteral("delete")] = [this]() {
+    });
+    addAction(QStringLiteral("delete"), tr("&Delete"),
+              tr("Add the deleted tag"), [this]() {
         tagSelected({ QStringLiteral("deleted") }, {}, tr("Delete"));
-    };
-    m_actions[QStringLiteral("spam")] = [this]() {
+    });
+    addAction(QStringLiteral("spam"), tr("Mark &spam"),
+              tr("Add spam and remove inbox"), [this]() {
         tagSelected({ QStringLiteral("spam") }, { QStringLiteral("inbox") },
                     tr("Mark spam"));
-    };
-    m_actions[QStringLiteral("flag")] = [this]() {
+    });
+    addAction(QStringLiteral("flag"), tr("&Flag"),
+              tr("Add the flagged tag"), [this]() {
         tagSelected({ QStringLiteral("flagged") }, {}, tr("Flag"));
-    };
-    m_actions[QStringLiteral("toggle_unread")] = [this]() {
+    });
+    addAction(QStringLiteral("toggle_unread"), tr("Toggle &unread"),
+              tr("Toggle the unread tag"), [this]() {
         // The direction comes from the current row, but the change applies to
         // the whole selection, so a mixed selection lands in one consistent
         // state rather than each row flipping its own way.
@@ -251,28 +274,123 @@ void MainWindow::registerActions()
             tagSelected({}, { QStringLiteral("unread") }, tr("Mark read"));
         else
             tagSelected({ QStringLiteral("unread") }, {}, tr("Mark unread"));
-    };
-    m_actions[QStringLiteral("toggle_html")] = [this]() {
+    });
+    addAction(QStringLiteral("toggle_html"), tr("Toggle &HTML"),
+              tr("Switch the thread between HTML and plain text"), [this]() {
         m_messageView->toggleHtml();
-    };
-    m_actions[QStringLiteral("load_remote")] = [this]() {
+    });
+    addAction(QStringLiteral("load_remote"), tr("Load &remote content"),
+              tr("Load remote images for the current thread"), [this]() {
         m_messageView->loadRemoteContent();
-    };
-    m_actions[QStringLiteral("undo")] = [this]() {
+    });
+    addAction(QStringLiteral("undo"), tr("&Undo"),
+              tr("Undo the last tag change"), [this]() {
         if (m_undoStack.canUndo())
             m_undoStack.undo();
         else
             m_statusLabel->setText(tr("Nothing to undo"));
-    };
-    m_actions[QStringLiteral("sync")] = [this]() {
+    });
+    addAction(QStringLiteral("sync"), tr("&Sync"),
+              tr("Run the configured sync command"), [this]() {
         if (m_sync->isAvailable())
             m_sync->start();
-    };
-    m_actions[QStringLiteral("quit")] = [this]() { close(); };
+    });
+    addAction(QStringLiteral("quit"), tr("&Quit"),
+              tr("Quit qtmaildir"), [this]() { close(); });
 
-    // The two lists are maintained by hand and a test pins them together; this
-    // catches the same drift in a debug run.
-    Q_ASSERT(m_actions.size() == registeredActionNames().size());
+    // A binding the user wrote for an action that does not exist would be
+    // silently dead. KeyMap warns about unknown names, but only a check here
+    // catches the reverse: a known action nothing implements.
+    Q_ASSERT(m_actions.size() == KeyMap::knownActions().size());
+}
+
+void MainWindow::buildMenus()
+{
+    auto *fileMenu = menuBar()->addMenu(tr("&File"));
+    fileMenu->addAction(m_actions.value(QStringLiteral("sync")));
+    fileMenu->addSeparator();
+    fileMenu->addAction(m_actions.value(QStringLiteral("quit")));
+
+    auto *editMenu = menuBar()->addMenu(tr("&Edit"));
+    editMenu->addAction(m_actions.value(QStringLiteral("undo")));
+    editMenu->addSeparator();
+    editMenu->addAction(m_actions.value(QStringLiteral("focus_query")));
+
+    auto *messageMenu = menuBar()->addMenu(tr("&Message"));
+    messageMenu->addAction(m_actions.value(QStringLiteral("archive")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("delete")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("spam")));
+    messageMenu->addSeparator();
+    messageMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("flag")));
+
+    auto *viewMenu = menuBar()->addMenu(tr("&View"));
+    viewMenu->addAction(m_actions.value(QStringLiteral("prev_thread")));
+    viewMenu->addAction(m_actions.value(QStringLiteral("next_thread")));
+    viewMenu->addSeparator();
+    viewMenu->addAction(m_actions.value(QStringLiteral("toggle_html")));
+    viewMenu->addAction(m_actions.value(QStringLiteral("load_remote")));
+
+    auto *helpMenu = menuBar()->addMenu(tr("&Help"));
+    auto *shortcuts = helpMenu->addAction(tr("&Keyboard shortcuts"));
+    connect(shortcuts, &QAction::triggered,
+            this, &MainWindow::showShortcutReference);
+    auto *about = helpMenu->addAction(tr("&About"));
+    connect(about, &QAction::triggered, this, &MainWindow::showAbout);
+
+    // The frequent subset only. A toolbar holding every action is as
+    // unreadable as no toolbar.
+    auto *toolBar = addToolBar(tr("Main"));
+    toolBar->setObjectName(QStringLiteral("main_toolbar"));
+    toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolBar->addAction(m_actions.value(QStringLiteral("sync")));
+    toolBar->addSeparator();
+    toolBar->addAction(m_actions.value(QStringLiteral("archive")));
+    toolBar->addAction(m_actions.value(QStringLiteral("delete")));
+    toolBar->addSeparator();
+    toolBar->addAction(m_actions.value(QStringLiteral("undo")));
+}
+
+void MainWindow::showShortcutReference()
+{
+    // Generated from the actions, so it cannot disagree with what the keys
+    // really do. A hand-written list would drift the first time a binding
+    // changed.
+    QStringList rows;
+    for (const QString &name : registeredActionNames()) {
+        const QAction *action = m_actions.value(name);
+        if (!action)
+            continue;
+        const QString sequence = action->shortcut().toString(QKeySequence::NativeText);
+        rows.append(QStringLiteral("<tr><td><tt>%1</tt></td><td>%2</td>"
+                                   "<td><tt>%3</tt></td></tr>")
+                        .arg(sequence.isEmpty() ? tr("(unbound)") : sequence.toHtmlEscaped(),
+                             m_actionDescriptions.value(name).toHtmlEscaped(),
+                             name.toHtmlEscaped()));
+    }
+
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Keyboard shortcuts"));
+    box.setTextFormat(Qt::RichText);
+    box.setText(tr("<h3>Keyboard shortcuts</h3>"
+                   "<table cellpadding='4'>"
+                   "<tr><th align='left'>Key</th><th align='left'>Does</th>"
+                   "<th align='left'>Action name</th></tr>%1</table>"
+                   "<p>Rebind any of these in the <tt>[keys]</tt> section of "
+                   "<tt>qtmaildir.conf</tt>, using the action name.</p>")
+                    .arg(rows.join(QString())));
+    box.exec();
+}
+
+void MainWindow::showAbout()
+{
+    QMessageBox::about(
+        this, tr("About qtmaildir"),
+        tr("<h3>qtmaildir %1</h3>"
+           "<p>A Qt6 mail client for notmuch-indexed Maildirs.</p>"
+           "<p>Reads and organizes local mail. Fetching and sending are "
+           "handled by external scripts.</p>")
+            .arg(QStringLiteral(QTMAILDIR_VERSION)));
 }
 
 void MainWindow::wireWorker()
@@ -511,23 +629,3 @@ void MainWindow::sendThreadTagChange(const QStringList &threadIds,
                               Q_ARG(QString, description));
 }
 
-bool MainWindow::eventFilter(QObject *watched, QEvent *event)
-{
-    if (event->type() != QEvent::KeyPress)
-        return QMainWindow::eventFilter(watched, event);
-
-    // The query bar must receive ordinary typing, so single-key bindings are
-    // suppressed while it has focus.
-    if (m_queryEdit->hasFocus())
-        return QMainWindow::eventFilter(watched, event);
-
-    auto *keyEvent = static_cast<QKeyEvent *>(event);
-    const QKeySequence sequence(keyEvent->keyCombination());
-
-    const QString action = m_keyMap.actionFor(sequence);
-    if (action.isEmpty() || !m_actions.contains(action))
-        return QMainWindow::eventFilter(watched, event);
-
-    m_actions.value(action)();
-    return true;
-}

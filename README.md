@@ -104,18 +104,10 @@ Unread = tag:unread
 Flagged = tag:flagged
 
 [keys]
+Ctrl+E = archive
+Ctrl+D = delete
 j = next_thread
 k = prev_thread
-Return = open_thread
-a = archive
-d = delete
-N = toggle_unread
-F = flag
-/ = focus_query
-h = toggle_html
-u = undo
-G = sync
-Ctrl+Q = quit
 ```
 
 Saved-query buttons appear in alphabetical order rather than file order:
@@ -128,26 +120,41 @@ Defaults, all rebindable through `[keys]`:
 
 | Key | Action | Does |
 |---|---|---|
-| `j` | `next_thread` | Select the next thread |
-| `k` | `prev_thread` | Select the previous thread |
+| `Ctrl+J` | `next_thread` | Select the next thread |
+| `Ctrl+K` | `prev_thread` | Select the previous thread |
 | `Return` | `open_thread` | Focus the thread list |
-| `a` | `archive` | Remove `inbox` from every selected thread |
-| `d` | `delete` | Add `deleted` |
-| `N` | `toggle_unread` | Toggle `unread` |
-| `F` | `flag` | Add `flagged` |
-| `/` | `focus_query` | Focus and select the query bar |
-| `h` | `toggle_html` | Switch the thread between HTML and plain text |
-| `u` | `undo` | Undo the last tag change |
-| `G` | `sync` | Run the configured sync command |
+| `Ctrl+E` | `archive` | Remove `inbox` from every selected thread |
+| `Ctrl+D` | `delete` | Add `deleted` |
+| `Ctrl+Shift+S` | `spam` | Add `spam`, remove `inbox` |
+| `Ctrl+U` | `toggle_unread` | Toggle `unread` |
+| `Ctrl+I` | `flag` | Add `flagged` |
+| `Ctrl+L` | `focus_query` | Focus and select the query bar |
+| `Ctrl+H` | `toggle_html` | Switch the thread between HTML and plain text |
+| `Ctrl+M` | `load_remote` | Load remote images for the current thread |
+| `Ctrl+Z` | `undo` | Undo the last tag change |
+| `Ctrl+G` | `sync` | Run the configured sync command |
 | `Ctrl+Q` | `quit` | Quit |
 
-Two further actions exist but have **no default binding**, so they are
-unreachable until you bind them: `spam` (adds `spam`, removes `inbox`) and
-`load_remote` (the keyboard equivalent of the "Load remote content"
-button).
+Every action now carries a default binding, and every one appears in a menu.
+**Help > Keyboard shortcuts** lists the current bindings, generated from the
+actions themselves, so it shows your overrides rather than these defaults.
 
 An unknown action name in `[keys]` produces a warning at startup rather than
 binding silently, so a typo is visible.
+
+### Upgrading from 0.1.0
+
+0.1.0 used single letters (`j`, `k`, `a`, `d`, `N`, `F`, `h`, `u`, `G`, `/`).
+Those still work if you keep them in `[keys]`, and single letters remain safe
+to bind: Qt suppresses a plain-letter shortcut while the query bar has focus,
+so typing a query is unaffected.
+
+Three of the old defaults never actually fired. Typing a capital sends
+`Shift`+the key, but `N`, `F` and `G` were stored as the unshifted key, a
+combination no keystroke produces, so `toggle_unread`, `flag` and `sync` were
+dead. A bare capital in `[keys]` is now read as `Shift`+that letter, which is
+what you press, so those bindings work whether you keep the old names or move
+to the new defaults. Note this makes `y` and `Y` two different keys.
 
 Tag actions apply to **every selected thread**, not only the focused one.
 

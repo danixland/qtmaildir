@@ -106,17 +106,33 @@ void KeyMap::loadDefaults()
 
 QKeySequence KeyMap::sequenceFor(const QString &action) const
 {
-    // Several sequences can point at one action (a default the user did not
-    // remove, plus their own addition). QHash iteration order is unspecified,
-    // so pick deterministically rather than taking whichever comes first.
+    // Several sequences can reach one action: the built-in default, which
+    // loadOverrides() does not remove, plus whatever the user added. Their
+    // binding is the one to show and to put on the QAction, or configuring
+    // "Ctrl+Alt+A = archive" would leave the menu still advertising Ctrl+E.
+    //
+    // QHash iteration order is unspecified, so ties are broken on the text
+    // rather than left to chance.
+    const QKeySequence builtIn = defaultSequenceFor(action);
     QKeySequence best;
+    bool bestIsBuiltIn = false;
+
     for (auto it = m_bindings.cbegin(); it != m_bindings.cend(); ++it) {
         if (it.value() != action)
             continue;
-        const QString candidate = it.key().toString();
-        if (best.isEmpty() || candidate.size() < best.toString().size()
-            || (candidate.size() == best.toString().size()
-                && candidate < best.toString())) {
+
+        const bool isBuiltIn = !builtIn.isEmpty() && it.key() == builtIn;
+        if (best.isEmpty()) {
+            best = it.key();
+            bestIsBuiltIn = isBuiltIn;
+            continue;
+        }
+        // A user binding always beats the default.
+        if (bestIsBuiltIn && !isBuiltIn) {
+            best = it.key();
+            bestIsBuiltIn = false;
+        } else if (bestIsBuiltIn == isBuiltIn
+                   && it.key().toString() < best.toString()) {
             best = it.key();
         }
     }

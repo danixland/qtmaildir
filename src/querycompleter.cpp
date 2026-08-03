@@ -360,6 +360,36 @@ QueryCompleter::QueryCompleter(QLineEdit *edit, const Config &config,
             this, [this](const QModelIndex &index) {
         acceptCompletion(index.data(Qt::DisplayRole).toString());
     });
+
+    if (m_config.completionOnFocus())
+        m_edit->installEventFilter(this);
+}
+
+void QueryCompleter::triggerCompletion()
+{
+    if (!m_edit || !m_completer)
+        return;
+
+    updateContext();
+    if (m_context.kind == CompletionContext::None)
+        return;
+
+    // The prefix must be set explicitly: complete() filters against whatever
+    // prefix QCompleter last derived from the line edit's full text, which is
+    // not the stem once a keyword or a range bound is in play.
+    m_completer->setCompletionPrefix(m_context.stem);
+    m_completer->complete();
+}
+
+bool QueryCompleter::eventFilter(QObject *watched, QEvent *event)
+{
+    // Only the empty-bar case: once there is text, ordinary typing has
+    // already driven completion.
+    if (watched == m_edit && event->type() == QEvent::FocusIn
+        && m_edit->text().isEmpty()) {
+        triggerCompletion();
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 void QueryCompleter::acceptCompletion(const QString &value)

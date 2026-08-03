@@ -110,6 +110,14 @@ public:
     /// synthetic key events instead would test the keyboard layout, not this.
     void acceptCompletion(const QString &value);
 
+public slots:
+    /// Opens the popup regardless of what has been typed. Bound to
+    /// complete_query, and the only trigger when completion_on_focus is off.
+    void triggerCompletion();
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     QList<CompletionEntry> entriesFor(const CompletionContext &context) const;
     void rebuildModel(const CompletionContext &context);

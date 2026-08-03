@@ -44,6 +44,7 @@ class ThreadListModel;
 class MessageView;
 class MailSync;
 class NotmuchWorker;
+class QueryCompleter;
 
 class MainWindow : public QMainWindow
 {
@@ -81,6 +82,7 @@ private slots:
     void onThreadLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
+    void onAllTagsReady(const QStringList &tags);
 
 private:
     void buildUi();
@@ -93,6 +95,10 @@ private:
     void registerActions();
     void buildMenus();
     void wireWorker();
+
+    /// Asks the worker to re-enumerate the database tags for the completer.
+    void requestAllTags();
+
     void showWarnings();
     void showShortcutReference();
     void showAbout();
@@ -131,6 +137,7 @@ private:
     QUndoStack m_undoStack;
 
     QLineEdit *m_queryEdit = nullptr;
+    QueryCompleter *m_queryCompleter = nullptr;
     QTableView *m_threadView = nullptr;
     QSplitter *m_splitter = nullptr;
     QComboBox *m_accountBox = nullptr;
@@ -146,6 +153,11 @@ private:
     /// beside the actions so the dialog is generated, never hand-written in
     /// parallel with them.
     QHash<QString, QString> m_actionDescriptions;
+
+    /// The tag list last received from the worker. Held here and not only in
+    /// the completer so a mutation can ask whether it introduced a tag the
+    /// completer does not yet offer, without a round trip.
+    QStringList m_knownTags;
 
     quint64 m_generation = 0;
     QString m_lastQuery;

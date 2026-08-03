@@ -47,6 +47,7 @@
 #include "messageview.h"
 #include "mimeparser.h"
 #include "notmuchworker.h"
+#include "querycompleter.h"
 #include "tagchip.h"
 #include "threadlistmodel.h"
 #include "version.h"
@@ -221,6 +222,7 @@ void MainWindow::buildUi()
     m_queryEdit->setPlaceholderText(tr("notmuch query, e.g. tag:inbox"));
     connect(m_queryEdit, &QLineEdit::returnPressed,
             this, &MainWindow::runCurrentQuery);
+    m_queryCompleter = new QueryCompleter(m_queryEdit, m_config, this);
 
     m_syncLog = new QPlainTextEdit(central);
     m_syncLog->setReadOnly(true);
@@ -449,6 +451,13 @@ void MainWindow::registerActions()
         if (m_sync->isAvailable())
             m_sync->start();
     });
+    addAction(QStringLiteral("complete_query"), tr("&Complete query"),
+              tr("Offer completions for the query bar"), [this]() {
+        // Focus first: the popup anchors on the line edit, and the binding is
+        // reachable from the thread list where the bar has no focus at all.
+        m_queryEdit->setFocus();
+        m_queryCompleter->triggerCompletion();
+    });
     addAction(QStringLiteral("quit"), tr("&Quit"),
               tr("Quit qtmaildir"), [this]() { close(); });
 
@@ -469,6 +478,7 @@ void MainWindow::buildMenus()
     editMenu->addAction(m_actions.value(QStringLiteral("undo")));
     editMenu->addSeparator();
     editMenu->addAction(m_actions.value(QStringLiteral("focus_query")));
+    editMenu->addAction(m_actions.value(QStringLiteral("complete_query")));
 
     auto *messageMenu = menuBar()->addMenu(tr("&Message"));
     messageMenu->addAction(m_actions.value(QStringLiteral("archive")));
@@ -656,15 +666,51 @@ void MainWindow::wireWorker()
             this, &MainWindow::onThreadLoaded);
     connect(m_worker, &NotmuchWorker::errorOccurred,
             this, &MainWindow::onWorkerError);
+    connect(m_worker, &NotmuchWorker::allTagsReady,
+            this, &MainWindow::onAllTagsReady);
 
     // A confirmed write clears the pending revert: without this, a later
     // unrelated error would roll back a change that actually succeeded.
-    connect(m_worker, &NotmuchWorker::tagsApplied, this, [this](const TagChange &) {
+    connect(m_worker, &NotmuchWorker::tagsApplied,
+            this, [this](const TagChange &change) {
         m_pendingChange = {};
         m_pendingThreadIds.clear();
+
+        // A tag the user has just created is the one they are most likely to
+        // type again, so do not wait for the next sync to offer it. A set
+        // membership test, not a query.
+        for (const QString &tag : change.added) {
+            if (!m_knownTags.contains(tag)) {
+                requestAllTags();
+                break;
+            }
+        }
     });
 
     m_workerThread.start();
+
+    // Queued behind the thread start, so the completer has real tags as soon
+    // as the database can be read. Nothing waits on the answer: requestAllTags
+    // stays silent when the database cannot be opened.
+    requestAllTags();
+}
+
+void MainWindow::requestAllTags()
+{
+    // The generation is unused by the tag path, see onAllTagsReady().
+    QMetaObject::invokeMethod(m_worker, "requestAllTags", Qt::QueuedConnection,
+                              Q_ARG(quint64, 0));
+}
+
+void MainWindow::onAllTagsReady(const QStringList &tags)
+{
+    // The signal carries a generation, this slot deliberately does not take
+    // it. A tag list is not an ordered query result: a later one is always at
+    // least as good as an earlier one, and there is no partial state a stale
+    // arrival could corrupt. Discarding on generation would only be able to
+    // throw away a good list.
+    m_knownTags = tags;
+    m_queryCompleter->setTags(tags);
 }
 
 void MainWindow::showWarnings()
@@ -827,6 +873,8 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
     if (success) {
         m_statusLabel->setText(tr("Sync complete"));
         runCurrentQuery();
+        // A sync is the usual way new tags enter the database.
+        requestAllTags();
     } else {
         m_statusLabel->setText(tr("Sync failed (exit %1)").arg(exitCode));
         m_syncLog->show();

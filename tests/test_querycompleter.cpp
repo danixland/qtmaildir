@@ -33,6 +33,8 @@ private slots:
     void valueReplaceSpanExcludesThePrefix();
     void prefixIsLowercased();
     void emptyValueAfterColonStillCompletes();
+    void insideQuotesCompletesNothing();
+    void afterClosedQuotesCompletesAgain();
 };
 
 void TestQueryCompleter::emptyTextCompletesPrefix()
@@ -101,6 +103,22 @@ void TestQueryCompleter::emptyValueAfterColonStillCompletes()
     QCOMPARE(ctx.stem, QString());
     QCOMPARE(ctx.replaceFrom, 4);
     QCOMPARE(ctx.replaceLength, 0);
+}
+
+void TestQueryCompleter::insideQuotesCompletesNothing()
+{
+    // subject:"foo bar| is a literal, not a keyword position.
+    const QString text = QStringLiteral("subject:\"foo bar");
+    const CompletionContext ctx = completionContext(text, text.size());
+    QCOMPARE(ctx.kind, CompletionContext::None);
+}
+
+void TestQueryCompleter::afterClosedQuotesCompletesAgain()
+{
+    const QString text = QStringLiteral("subject:\"foo bar\" and ta");
+    const CompletionContext ctx = completionContext(text, text.size());
+    QCOMPARE(ctx.kind, CompletionContext::Prefix);
+    QCOMPARE(ctx.stem, QStringLiteral("ta"));
 }
 
 QTEST_MAIN(TestQueryCompleter)

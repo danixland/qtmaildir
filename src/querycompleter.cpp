@@ -20,6 +20,18 @@
 
 namespace {
 
+/// Whether the cursor sits inside a double-quoted literal. Counts quotes from
+/// the start: an odd count before the cursor means the quote is still open.
+bool insideQuotes(const QString &text, int cursor)
+{
+    int quotes = 0;
+    for (int i = 0; i < cursor; ++i) {
+        if (text.at(i) == QLatin1Char('"'))
+            ++quotes;
+    }
+    return (quotes % 2) != 0;
+}
+
 /// Start of the token the cursor sits in. The boundary is whitespace or '(',
 /// so "tag:inbox and su" has its last token starting at 14, not at 0.
 int tokenStart(const QString &text, int cursor)
@@ -42,6 +54,9 @@ CompletionContext completionContext(const QString &text, int cursor)
 
     if (cursor < 0 || cursor > text.size())
         return ctx;
+
+    if (insideQuotes(text, cursor))
+        return ctx;   // kind stays None
 
     const int start = tokenStart(text, cursor);
     const QString token = text.mid(start, cursor - start);

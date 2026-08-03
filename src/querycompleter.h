@@ -124,6 +124,10 @@ private:
     /// otherwise.
     bool popupVisible() const;
 
+    /// Reopens the popup when an accepted completion leaves the caret somewhere
+    /// more can be offered, so taking "tag:" goes straight on to the tag list.
+    void continueCompletion();
+
     QList<CompletionEntry> entriesFor(const CompletionContext &context) const;
     void rebuildModel(const CompletionContext &context);
 

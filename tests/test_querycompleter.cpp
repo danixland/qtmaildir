@@ -63,6 +63,16 @@ private slots:
     void tabIsIgnoredWhileThePopupIsHidden();
     void returnIsIgnoredWhileThePopupIsHidden();
     void focusOpensThePopupOnlyWhenConfigured();
+
+    // Delivered to the widget the window system actually gives the key to,
+    // rather than straight to the line edit. While the popup is up that is the
+    // popup, which has grabbed the keyboard, and a filter on the line edit
+    // never runs. Sending to the edit hides exactly the bug the user reports.
+    void tabAcceptsWhenTheKeyGoesToTheGrabbingPopup();
+    void returnAcceptsWhenTheKeyGoesToTheGrabbingPopup();
+    void acceptingAPrefixReopensThePopupForValues();
+    void acceptingAValueDoesNotReopenAnEmptyPopup();
+    void keysFallThroughWhileThePopupIsHidden();
 };
 
 // Copied from tests/test_config.cpp rather than shared, so the two test files
@@ -495,6 +505,142 @@ void TestQueryCompleter::focusOpensThePopupOnlyWhenConfigured()
         QVERIFY(findPopup());
         QVERIFY(findPopup()->isVisible());
     }
+}
+
+// The widget the window system would hand the next key to. While the popup is
+// up it has grabbed the keyboard, so that is the popup and NOT the line edit,
+// which has by then lost focus entirely. Routing test keys through here is what
+// makes these tests reproduce the user's experience instead of a synthetic one.
+static QWidget *keyboardTarget(QLineEdit *edit)
+{
+    if (QWidget *popup = QApplication::activePopupWidget())
+        return popup;
+    return edit;
+}
+
+void TestQueryCompleter::tabAcceptsWhenTheKeyGoesToTheGrabbingPopup()
+{
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+
+    QTest::keyClicks(&edit, QStringLiteral("t"));
+    QVERIFY(findPopup() && findPopup()->isVisible());
+
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Tab);
+
+    QCOMPARE(edit.text(), QStringLiteral("tag:"));
+}
+
+void TestQueryCompleter::returnAcceptsWhenTheKeyGoesToTheGrabbingPopup()
+{
+    // Return must be consumed too, or it reaches the thread list and opens a
+    // thread, which is what the user sees.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+
+    bool ran = false;
+    connect(&edit, &QLineEdit::returnPressed, &edit, [&ran]() { ran = true; });
+
+    QTest::keyClicks(&edit, QStringLiteral("t"));
+    QVERIFY(findPopup() && findPopup()->isVisible());
+
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Return);
+
+    QCOMPARE(edit.text(), QStringLiteral("tag:"));
+    QVERIFY(!ran);
+}
+
+void TestQueryCompleter::acceptingAPrefixReopensThePopupForValues()
+{
+    // The user's third complaint: after taking "tag:" the caret sits where a
+    // tag value goes, so the values must be offered without a second Ctrl+Space.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+    completer.setTags({ QStringLiteral("unread"), QStringLiteral("inbox") });
+
+    QTest::keyClicks(&edit, QStringLiteral("t"));
+    QVERIFY(findPopup() && findPopup()->isVisible());
+
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Tab);
+    QCOMPARE(edit.text(), QStringLiteral("tag:"));
+
+    QListView *popup = findPopup();
+    QVERIFY(popup);
+    QVERIFY(popup->isVisible());
+    QStringList offered;
+    for (int row = 0; row < popup->model()->rowCount(); ++row)
+        offered << popup->model()->index(row, 0).data().toString();
+    QCOMPARE(offered, QStringList({ QStringLiteral("unread"),
+                                    QStringLiteral("inbox") }));
+
+    // And the chain completes: typing into the reopened popup and accepting
+    // yields the finished term.
+    QTest::keyClicks(&edit, QStringLiteral("un"));
+    QVERIFY(findPopup() && findPopup()->isVisible());
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Tab);
+    QCOMPARE(edit.text(), QStringLiteral("tag:unread"));
+}
+
+void TestQueryCompleter::acceptingAValueDoesNotReopenAnEmptyPopup()
+{
+    // "tag:unread" is complete. Reopening here would put an empty list under
+    // the caret and swallow the next Return.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+    completer.setTags({ QStringLiteral("unread") });
+
+    QTest::keyClicks(&edit, QStringLiteral("tag:un"));
+    QVERIFY(findPopup() && findPopup()->isVisible());
+
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Tab);
+
+    QCOMPARE(edit.text(), QStringLiteral("tag:unread"));
+    QVERIFY(!findPopup() || !findPopup()->isVisible());
+}
+
+void TestQueryCompleter::keysFallThroughWhileThePopupIsHidden()
+{
+    // The filter is application-wide, so proving it does nothing with the popup
+    // down is what keeps it from breaking the rest of the application.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+
+    if (QListView *popup = findPopup())
+        popup->hide();
+
+    QLineEdit other;
+    other.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&other));
+    other.setFocus();
+
+    bool ran = false;
+    connect(&other, &QLineEdit::returnPressed, &other, [&ran]() { ran = true; });
+
+    QTest::keyClicks(&other, QStringLiteral("hello"));
+    QTest::keyClick(&other, Qt::Key_Return);
+
+    QCOMPARE(other.text(), QStringLiteral("hello"));
+    QVERIFY(ran);
 }
 
 QTEST_MAIN(TestQueryCompleter)

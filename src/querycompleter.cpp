@@ -367,12 +367,27 @@ QueryCompleter::QueryCompleter(QLineEdit *edit, const Config &config,
 
     connect(m_completer, QOverload<const QModelIndex &>::of(&QCompleter::activated),
             this, [this](const QModelIndex &index) {
+        // The mouse path. It must chain exactly like Tab does: the user's
+        // report was that clicking "tag:" offered no tags afterwards.
         acceptCompletion(index.data(Qt::DisplayRole).toString());
+        continueCompletion();
     });
 
-    // Always filtered, not only for completion_on_focus: the popup is ours to
-    // drive now, so Tab, Enter, Escape and the arrows must be routed by hand.
+    // Two filters, because the two jobs need different vantage points.
+    //
+    // The line edit filter handles FocusIn, which by definition arrives while
+    // the popup is down and the edit is the delivery target, so watching the
+    // widget is both sufficient and correctly scoped.
     m_edit->installEventFilter(this);
+
+    // The key filter must be application-wide. Showing the popup takes focus
+    // away from the line edit (focusWidget() becomes null) and the popup window
+    // grabs the keyboard, so keys pressed while it is up are delivered to the
+    // popup and a filter on the line edit never runs. That is precisely when
+    // Tab and Return need to be intercepted. Only an application filter sees
+    // those events. It is inert unless our own popup is visible.
+    if (QCoreApplication *app = QCoreApplication::instance())
+        app->installEventFilter(this);
 }
 
 void QueryCompleter::triggerCompletion()
@@ -401,6 +416,9 @@ bool QueryCompleter::eventFilter(QObject *watched, QEvent *event)
         return QObject::eventFilter(watched, event);
     }
 
+    // This filter is installed on the application, so it sees every key in the
+    // process. Claim nothing unless our own popup is on screen, otherwise the
+    // keyboard breaks everywhere else in the window.
     if (event->type() != QEvent::KeyPress || !popupVisible())
         return QObject::eventFilter(watched, event);
 
@@ -419,9 +437,13 @@ bool QueryCompleter::eventFilter(QObject *watched, QEvent *event)
             return QObject::eventFilter(watched, event);
 
         acceptCompletion(index.data(Qt::DisplayRole).toString());
+        // Hide before reopening: accepting "tag:" moves the caret into value
+        // position, and the popup has to be rebuilt around the new context
+        // rather than left showing the prefix list.
         m_popup->hide();
+        continueCompletion();
         // Consume it. Tab would otherwise move focus to the next widget, and
-        // Return would run the half-typed query.
+        // Return would run the half-typed query or reach the thread list.
         return true;
     }
     case Qt::Key_Escape:
@@ -472,6 +494,39 @@ void QueryCompleter::acceptCompletion(const QString &value)
     // The context is now stale in every field; recompute it from the caret we
     // just placed so a second accept without an intervening keystroke is sane.
     m_context = completionContext(m_edit->text(), m_edit->cursorPosition());
+}
+
+void QueryCompleter::continueCompletion()
+{
+    if (!m_edit || !m_completer)
+        return;
+
+    // acceptCompletion() already recomputed the context from the caret it
+    // placed, so this reads the situation the accept created.
+    if (m_context.kind == CompletionContext::None)
+        return;
+
+    // Reopen only for a value whose keyword actually offers candidates.
+    // Accepting a prefix ("tag:") lands here with an empty stem and the tag
+    // list waiting, which is the case worth reopening for. Accepting a value
+    // ("tag:unread") leaves a stem that already equals the only match, so
+    // reopening would show a one-entry popup that swallows the next Return.
+    if (m_context.kind != CompletionContext::Value)
+        return;
+
+    const QStringList candidates = candidatesFor(m_context);
+    if (candidates.isEmpty())
+        return;
+
+    // A stem that is already a complete candidate needs nothing more. This is
+    // also what stops the reopen from recurring: the next accept always
+    // produces such a stem, so the chain terminates after one step.
+    if (candidates.contains(m_context.stem, Qt::CaseInsensitive))
+        return;
+
+    rebuildModel(m_context);
+    m_completer->setCompletionPrefix(m_context.stem);
+    m_completer->complete();
 }
 
 void QueryCompleter::updateContext()

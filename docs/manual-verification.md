@@ -33,12 +33,12 @@ databases.
 | 3 | A large query paints the first rows within a second | **PASS** |
 | 4 | A new query discards the running one's results | **PASS** |
 | 5 | A malformed query (`tag:`) reports an error and does not crash | **PASS, item reworded** |
-| 6 | Selecting a thread renders every message, oldest first | PENDING |
-| 7 | Unmatched messages appear as one-line stubs | PENDING |
-| 8 | A large thread renders without stalling; `QtWebEngineProcess` count stays flat | PENDING |
-| 9 | An HTML newsletter renders, and shows "Remote content blocked" | PENDING |
-| 10 | "Load remote content" re-renders with images | PENDING |
-| 11 | Selecting a different thread clears the remote grant | PENDING |
+| 6 | Selecting a thread renders every message, oldest first | **PASS** |
+| 7 | Unmatched messages appear as one-line stubs | **PASS** |
+| 8 | A large thread renders without stalling; `QtWebEngineProcess` count stays flat | **PASS** |
+| 9 | An HTML newsletter renders, and shows "Remote content blocked" | **PASS** |
+| 10 | "Load remote content" re-renders with images | **PASS** |
+| 11 | Selecting a different thread clears the remote grant | **FAIL, then fixed** |
 | 12 | An inline image displays without any remote load | PENDING |
 | 13 | Two messages sharing a Content-ID each show their own image | PENDING |
 | 14 | `h` toggles the thread to plain text and back | PENDING |
@@ -99,6 +99,96 @@ counter discards superseded batches as designed.
 
 The maintainer's note that `*` "loaded almost quicker than I could type"
 matches the item 3 measurement: 21 ms to the first batch.
+
+## Items 6, 9, 10: PASS
+
+Opening a thread renders every message in the right-hand pane. An HTML
+newsletter renders with its layout intact and the "Remote content blocked"
+banner shown; clicking **Load remote content** re-renders the same thread
+with images loading.
+
+These only passed after the blank-pane defect below was fixed. Before that,
+clicking a thread did nothing visible at all.
+
+### The blank pane (found by this checklist, fixed in `5de8147`)
+
+This is the defect the manual pass existed to catch, and no unit test would
+have found it: every layer was correct in isolation. The worker returned all
+22 messages, MimeParser parsed them, HtmlBuilder produced 77 KB of correct
+HTML, and the pane stayed empty.
+
+`setHtml()` does not navigate to the base URL it is given. It navigates to a
+`data:` URL carrying the markup and applies the base URL afterwards as the
+document's origin only. Two separate pieces of Task 11 assumed otherwise and
+each independently rejected the document load:
+
+1. `MessagePage::acceptNavigationRequest` compared the navigation URL against
+   `documentUrl()`.
+2. `RequestInterceptor` trusted exactly the `qtmaildir:` base URL and denied
+   the `data:` document.
+
+Neither was a regression: the drafted implementation had the same defect in a
+different spelling, so the message pane had never worked.
+
+Worth recording about the fix itself: the first attempt allowed the `data:`
+scheme outright, which broke `dataSchemeBlocked` in the Task 5 suite. That
+test was right to fail. A message body can write `<img src="data:...">`, so a
+blanket allow would have opened a real hole while fixing a rendering bug. The
+exemption is scoped to `ResourceTypeMainFrame` instead.
+
+## Item 11: FAIL, then fixed
+
+Granting remote content on one thread, switching to another and returning
+showed the images again with no banner. Re-verified as passing after the fix
+in `9d13346`.
+
+The interceptor was not at fault. Against a local HTTP server counting
+requests, the image is fetched exactly once, under the grant, and never
+again; `allowRemote` is false on return and the request is blocked. Nothing
+was re-requested, so the images could only have come from the engine's
+decoded-image cache, which is keyed on the document and consulted before any
+request exists. The interceptor is never asked. The policy was right and the
+pane was lying, which is the kind of gap only a person looking at the screen
+will find.
+
+`QWebEngineProfile::clearHttpCache()` does not reach that cache. Loading
+`about:blank` before the new document discards the previous one along with
+its cached images. It is done in `showThread()` and deliberately not in
+`render()`: `render()` also runs for the grant itself, where discarding the
+document would throw away exactly what the user just asked to see.
+
+## Item 7: PASS, after correcting the query
+
+Verified with `from:nutpantz` against `thread:0000000000008faa` (22
+messages, 2 from that sender): the two matching messages rendered expanded,
+the other twenty collapsed to one-line stubs, and the last message rendered
+expanded despite not matching, which is the guard that stops a thread
+rendering as nothing but stubs.
+
+The first attempt used `LLM` and showed all 22 expanded. That was not a
+defect. notmuch reports all 22 as matching, and it is right to: the thread
+is a GitHub discussion whose subject is "I wanted to ask about LxQt's LLM
+position", so every reply carries the term in its headers and quoted text
+even when the visible reply does not mention it. Full-text indexing covers
+quoted material, so the match is real and expanding everything was the
+correct response to that query.
+
+Worth remembering when choosing a test query: a term from the subject line
+will match every message in a thread. Partition on something that varies
+per message, such as `from:`.
+
+## Item 8: PASS
+
+With the 22-message thread (`thread:0000000000008faa`) open:
+
+| State | `QtWebEngineProcess` count |
+|---|---|
+| Empty pane | 5 (3 renderers) |
+| 22-message thread open | 5 (3 renderers) |
+
+Flat, and no stall on render. One `QWebEngineView` per message would have
+spawned roughly one render process each; rendering the whole thread as a
+single document is what avoids that.
 
 ## Item 5: PASS, but the item was wrong
 

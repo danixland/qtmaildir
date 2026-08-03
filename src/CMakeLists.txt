@@ -14,7 +14,8 @@ add_library(qtmaildir_lib STATIC
 )
 
 target_include_directories(qtmaildir_lib
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${NOTMUCH_INCLUDE_DIR})
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${NOTMUCH_INCLUDE_DIR}
+           ${CMAKE_BINARY_DIR}/generated/qtmaildir)
 
 target_link_libraries(qtmaildir_lib
     PUBLIC Qt6::Widgets Qt6::WebEngineWidgets PkgConfig::GMIME ${NOTMUCH_LIBRARY})

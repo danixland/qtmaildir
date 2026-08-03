@@ -19,6 +19,13 @@ message(STATUS "Found notmuch: ${NOTMUCH_LIBRARY}")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GMIME REQUIRED IMPORTED_TARGET gmime-3.0)
 
+# The version lives only in the project() call above; version.h is generated
+# from it so no source file repeats the literal.
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/qtmaildir/version.h
+    @ONLY)
+
 enable_testing()
 add_subdirectory(src)
 add_subdirectory(tests)

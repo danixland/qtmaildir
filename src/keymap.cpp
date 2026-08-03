@@ -41,25 +41,95 @@ QStringList KeyMap::knownActions()
     };
 }
 
+QList<QPair<QString, QString>> KeyMap::defaultBindings()
+{
+    // Modifier shortcuts throughout, rather than the bare letters of 0.1.0.
+    // Two reasons. A bare capital never worked: "N" parses to plain Key_N
+    // while typing a capital emits Shift+N, so toggle_unread, flag and sync
+    // were dead keys. And a single letter cannot be a QAction shortcut in a
+    // menu without stealing that letter from every text field in the window.
+    //
+    // Ordered as the menus present them; a QList keeps that order, which a
+    // QHash would not.
+    return {
+        { QStringLiteral("Ctrl+J"),       QStringLiteral("next_thread") },
+        { QStringLiteral("Ctrl+K"),       QStringLiteral("prev_thread") },
+        { QStringLiteral("Return"),       QStringLiteral("open_thread") },
+        { QStringLiteral("Ctrl+E"),       QStringLiteral("archive") },
+        { QStringLiteral("Ctrl+D"),       QStringLiteral("delete") },
+        { QStringLiteral("Ctrl+Shift+S"), QStringLiteral("spam") },
+        { QStringLiteral("Ctrl+U"),       QStringLiteral("toggle_unread") },
+        { QStringLiteral("Ctrl+I"),       QStringLiteral("flag") },
+        { QStringLiteral("Ctrl+L"),       QStringLiteral("focus_query") },
+        { QStringLiteral("Ctrl+H"),       QStringLiteral("toggle_html") },
+        { QStringLiteral("Ctrl+M"),       QStringLiteral("load_remote") },
+        { QStringLiteral("Ctrl+Z"),       QStringLiteral("undo") },
+        { QStringLiteral("Ctrl+G"),       QStringLiteral("sync") },
+        { QStringLiteral("Ctrl+Q"),       QStringLiteral("quit") },
+    };
+}
+
+QStringList KeyMap::defaultActions()
+{
+    QStringList actions;
+    const auto bindings = defaultBindings();
+    actions.reserve(bindings.size());
+    for (const auto &binding : bindings)
+        actions.append(binding.second);
+    return actions;
+}
+
+QKeySequence KeyMap::normalizeSequence(const QString &text)
+{
+    const QKeySequence sequence = QKeySequence::fromString(text);
+
+    // fromString() does not return an empty sequence for unparseable input;
+    // it returns a non-empty one whose toString() is empty (verified on
+    // Qt 6.11). Both checks are needed to detect garbage.
+    if (sequence.isEmpty() || sequence.toString().isEmpty())
+        return {};
+
+    // A bare uppercase letter, no modifiers: the user wrote "N" meaning the
+    // key they press to type a capital N, which is Shift+N. fromString()
+    // folded the case away, so put the Shift back.
+    if (text.size() == 1 && text.at(0).isUpper() && text.at(0).isLetter())
+        return QKeySequence(sequence[0].key() | Qt::SHIFT);
+
+    return sequence;
+}
+
 void KeyMap::loadDefaults()
 {
-    const QHash<QString, QString> defaults = {
-        { QStringLiteral("j"),      QStringLiteral("next_thread") },
-        { QStringLiteral("k"),      QStringLiteral("prev_thread") },
-        { QStringLiteral("Return"), QStringLiteral("open_thread") },
-        { QStringLiteral("a"),      QStringLiteral("archive") },
-        { QStringLiteral("d"),      QStringLiteral("delete") },
-        { QStringLiteral("N"),      QStringLiteral("toggle_unread") },
-        { QStringLiteral("F"),      QStringLiteral("flag") },
-        { QStringLiteral("/"),      QStringLiteral("focus_query") },
-        { QStringLiteral("h"),      QStringLiteral("toggle_html") },
-        { QStringLiteral("u"),      QStringLiteral("undo") },
-        { QStringLiteral("G"),      QStringLiteral("sync") },
-        { QStringLiteral("Ctrl+Q"), QStringLiteral("quit") },
-    };
+    for (const auto &binding : defaultBindings())
+        m_bindings.insert(normalizeSequence(binding.first), binding.second);
+}
 
-    for (auto it = defaults.cbegin(); it != defaults.cend(); ++it)
-        m_bindings.insert(QKeySequence::fromString(it.key()), it.value());
+QKeySequence KeyMap::sequenceFor(const QString &action) const
+{
+    // Several sequences can point at one action (a default the user did not
+    // remove, plus their own addition). QHash iteration order is unspecified,
+    // so pick deterministically rather than taking whichever comes first.
+    QKeySequence best;
+    for (auto it = m_bindings.cbegin(); it != m_bindings.cend(); ++it) {
+        if (it.value() != action)
+            continue;
+        const QString candidate = it.key().toString();
+        if (best.isEmpty() || candidate.size() < best.toString().size()
+            || (candidate.size() == best.toString().size()
+                && candidate < best.toString())) {
+            best = it.key();
+        }
+    }
+    return best;
+}
+
+QKeySequence KeyMap::defaultSequenceFor(const QString &action)
+{
+    for (const auto &binding : defaultBindings()) {
+        if (binding.second == action)
+            return normalizeSequence(binding.first);
+    }
+    return {};
 }
 
 void KeyMap::loadOverrides(QSettings &settings)
@@ -79,12 +149,10 @@ void KeyMap::loadOverrides(QSettings &settings)
     for (const QString &key : keys) {
         const QString action = settings.value(key).toString();
 
-        const QKeySequence sequence = QKeySequence::fromString(key);
-        // QKeySequence::fromString() does not return an empty sequence for
-        // unparseable input; it returns a non-empty sequence whose
-        // toString() is empty (verified on Qt 6.11). Use that to detect
-        // garbage input instead.
-        if (sequence.isEmpty() || sequence.toString().isEmpty()) {
+        // Shares the defaults' normalization, so a hand-written "N" binds the
+        // key the user actually presses rather than one nothing emits.
+        const QKeySequence sequence = normalizeSequence(key);
+        if (sequence.isEmpty()) {
             m_warnings.append(
                 QStringLiteral("Unparseable key sequence '%1' in [keys]").arg(key));
             continue;

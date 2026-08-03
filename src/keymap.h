@@ -20,6 +20,8 @@
 
 #include <QHash>
 #include <QKeySequence>
+#include <QList>
+#include <QPair>
 #include <QStringList>
 
 class QSettings;
@@ -33,6 +35,11 @@ public:
     /// anything not in this set, so a typo in the config cannot bind silently.
     static QStringList knownActions();
 
+    /// The built-in bindings, in menu order: {sequence, action}. The single
+    /// source of truth for the defaults, so the menus, the shortcut reference
+    /// and loadDefaults() cannot disagree about them.
+    static QList<QPair<QString, QString>> defaultBindings();
+
     void loadDefaults();
 
     /// Reads the [keys] group. Invalid sequences and unknown action names are
@@ -41,6 +48,26 @@ public:
 
     /// Empty string when nothing is bound.
     QString actionFor(const QKeySequence &sequence) const;
+
+    /// The sequence currently bound to an action, empty if none. The reverse
+    /// of actionFor(): menus need a shortcut for an action they already know.
+    /// When several sequences are bound to one action, returns the shortest
+    /// text, so the menu shows a stable choice rather than a hash-order one.
+    QKeySequence sequenceFor(const QString &action) const;
+
+    /// The built-in sequence for an action, ignoring any user override.
+    static QKeySequence defaultSequenceFor(const QString &action);
+
+    /// Every action name carrying a built-in binding.
+    static QStringList defaultActions();
+
+    /// Normalizes a configured key string into the sequence a real keypress
+    /// produces. QKeySequence::fromString() discards the case of a bare
+    /// letter, so "N" parses to plain Key_N, which no keystroke ever emits:
+    /// typing a capital sends Shift+N. A bare uppercase letter is therefore
+    /// rewritten to Shift+<letter>. Returns an empty sequence for input
+    /// fromString() cannot parse.
+    static QKeySequence normalizeSequence(const QString &text);
 
     QStringList warnings() const { return m_warnings; }
 

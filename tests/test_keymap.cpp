@@ -32,16 +32,108 @@ private slots:
     void unknownActionIsReported();
     void invalidSequenceIsReported();
     void collidingOverridesAreReported();
+    void bareCapitalMatchesShiftedPress();
+    void defaultsDoNotCollide();
+    void everyDefaultIsAKnownAction();
 };
 
 void TestKeyMap::defaultsAreLoaded()
 {
     KeyMap map;
     map.loadDefaults();
-    QCOMPARE(map.actionFor(QKeySequence(QStringLiteral("j"))),
+    QCOMPARE(map.actionFor(QKeySequence(QStringLiteral("Ctrl+J"))),
              QStringLiteral("next_thread"));
-    QCOMPARE(map.actionFor(QKeySequence(QStringLiteral("a"))),
+    QCOMPARE(map.actionFor(QKeySequence(QStringLiteral("Ctrl+E"))),
              QStringLiteral("archive"));
+}
+
+void TestKeyMap::bareCapitalMatchesShiftedPress()
+{
+    // Typing a capital produces Shift+<key>, but QKeySequence::fromString()
+    // discards the case of a bare letter: "N" and "n" both parse to plain
+    // Key_N, which no keypress can ever produce. A user who writes "N = flag"
+    // would get a binding that silently never fires. Normalizing a bare
+    // capital to Shift+<key> is what they meant.
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("t.conf"));
+    {
+        QSettings s(path, QSettings::IniFormat);
+        s.beginGroup(QStringLiteral("keys"));
+        s.setValue(QStringLiteral("N"), QStringLiteral("flag"));
+        s.endGroup();
+    }
+
+    KeyMap map;
+    map.loadDefaults();
+    QSettings s(path, QSettings::IniFormat);
+    map.loadOverrides(s);
+
+    // The sequence a real Shift+N keypress produces.
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_N, Qt::ShiftModifier);
+    QCOMPARE(map.actionFor(QKeySequence(press.keyCombination())),
+             QStringLiteral("flag"));
+
+    // A lowercase binding stays unshifted, so the two remain distinguishable.
+    QVERIFY(map.warnings().isEmpty());
+
+    // "y" and "Y" are two different keys, not a collision: the second would
+    // have silently displaced the first before normalization.
+    QTemporaryDir caseDir;
+    const QString casePath = caseDir.filePath(QStringLiteral("case.conf"));
+    {
+        QSettings s(casePath, QSettings::IniFormat);
+        s.beginGroup(QStringLiteral("keys"));
+        s.setValue(QStringLiteral("y"), QStringLiteral("archive"));
+        s.setValue(QStringLiteral("Y"), QStringLiteral("delete"));
+        s.endGroup();
+    }
+    KeyMap caseMap;
+    QSettings caseSettings(casePath, QSettings::IniFormat);
+    caseMap.loadOverrides(caseSettings);
+
+    QKeyEvent lower(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier);
+    QKeyEvent upper(QEvent::KeyPress, Qt::Key_Y, Qt::ShiftModifier);
+    QCOMPARE(caseMap.actionFor(QKeySequence(lower.keyCombination())),
+             QStringLiteral("archive"));
+    QCOMPARE(caseMap.actionFor(QKeySequence(upper.keyCombination())),
+             QStringLiteral("delete"));
+    QVERIFY(caseMap.warnings().isEmpty());
+}
+
+void TestKeyMap::defaultsDoNotCollide()
+{
+    // Two defaults on one sequence means one of them is unreachable, and the
+    // QHash would silently keep whichever was inserted last.
+    KeyMap map;
+    map.loadDefaults();
+
+    QSet<QString> actions;
+    for (const QString &action : KeyMap::knownActions()) {
+        const QKeySequence seq = map.defaultSequenceFor(action);
+        if (seq.isEmpty())
+            continue;  // Not every action carries a default.
+        QVERIFY2(map.actionFor(seq) == action,
+                 qPrintable(QStringLiteral("default '%1' for '%2' resolves to '%3'")
+                                .arg(seq.toString(), action, map.actionFor(seq))));
+        actions.insert(action);
+    }
+    QVERIFY(!actions.isEmpty());
+}
+
+void TestKeyMap::everyDefaultIsAKnownAction()
+{
+    // A default bound to a name loadOverrides() would reject as unknown.
+    KeyMap map;
+    map.loadDefaults();
+    const QStringList known = KeyMap::knownActions();
+    for (const QString &action : known)
+        QVERIFY(!action.isEmpty());
+
+    for (const QString &action : map.defaultActions()) {
+        QVERIFY2(known.contains(action),
+                 qPrintable(QStringLiteral("default binds unknown action '%1'")
+                                .arg(action)));
+    }
 }
 
 void TestKeyMap::iniOverridesDefault()
@@ -51,7 +143,7 @@ void TestKeyMap::iniOverridesDefault()
     {
         QSettings s(path, QSettings::IniFormat);
         s.beginGroup(QStringLiteral("keys"));
-        s.setValue(QStringLiteral("j"), QStringLiteral("archive"));
+        s.setValue(QStringLiteral("Ctrl+J"), QStringLiteral("archive"));
         s.endGroup();
     }
 
@@ -60,10 +152,10 @@ void TestKeyMap::iniOverridesDefault()
     QSettings s(path, QSettings::IniFormat);
     map.loadOverrides(s);
 
-    QCOMPARE(map.actionFor(QKeySequence(QStringLiteral("j"))),
+    QCOMPARE(map.actionFor(QKeySequence(QStringLiteral("Ctrl+J"))),
              QStringLiteral("archive"));
     // An untouched default survives.
-    QCOMPARE(map.actionFor(QKeySequence(QStringLiteral("k"))),
+    QCOMPARE(map.actionFor(QKeySequence(QStringLiteral("Ctrl+K"))),
              QStringLiteral("prev_thread"));
 }
 
@@ -148,16 +240,22 @@ void TestKeyMap::invalidSequenceIsReported()
 
 void TestKeyMap::collidingOverridesAreReported()
 {
-    // "y" and "Y" both normalize to the same QKeySequence ("Y"), so binding
-    // both in [keys] is a genuine collision that must not silently drop one.
+    // Two spellings of one sequence. "Ctrl+Y" and "ctrl+y" parse identically,
+    // so binding both in [keys] is a genuine collision that must not silently
+    // drop one.
+    //
+    // Note "y" and "Y" are NOT a collision any more: normalizeSequence()
+    // rewrites a bare capital to Shift+Y, which is the key a user actually
+    // presses, leaving the two distinct. Before that they both folded to
+    // plain Key_Y and one was lost.
     {
         QTemporaryDir dir;
         const QString path = dir.filePath(QStringLiteral("t.conf"));
         {
             QSettings s(path, QSettings::IniFormat);
             s.beginGroup(QStringLiteral("keys"));
-            s.setValue(QStringLiteral("y"), QStringLiteral("archive"));
-            s.setValue(QStringLiteral("Y"), QStringLiteral("delete"));
+            s.setValue(QStringLiteral("Ctrl+Y"), QStringLiteral("archive"));
+            s.setValue(QStringLiteral("ctrl+y"), QStringLiteral("delete"));
             s.endGroup();
         }
 
@@ -179,7 +277,7 @@ void TestKeyMap::collidingOverridesAreReported()
         {
             QSettings s(path, QSettings::IniFormat);
             s.beginGroup(QStringLiteral("keys"));
-            s.setValue(QStringLiteral("j"), QStringLiteral("archive"));
+            s.setValue(QStringLiteral("Ctrl+J"), QStringLiteral("archive"));
             s.endGroup();
         }
 

@@ -12,3 +12,4 @@ target_compile_definitions(test_mimeparser PRIVATE
     FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 add_qtmaildir_test(interceptor)
 add_qtmaildir_test(htmlbuilder)
+add_qtmaildir_test(notmuchworker)

@@ -5,6 +5,7 @@ add_library(qtmaildir_lib STATIC
     requestinterceptor.cpp
     htmlbuilder.cpp
     cidschemehandler.cpp
+    notmuchworker.cpp
 )
 
 target_include_directories(qtmaildir_lib

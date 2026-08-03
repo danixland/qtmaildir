@@ -17,7 +17,9 @@
  */
 
 #include <QtTest>
+#include <QTemporaryDir>
 
+#include "config.h"
 #include "querycompleter.h"
 
 class TestQueryCompleter : public QObject
@@ -41,7 +43,24 @@ private slots:
     void rangeSuppressesRelativeEntries();
     void prefixVocabularyCoversNotmuchKeywords();
     void dateVocabularySeparatesRelativeEntries();
+    void tagAndIsShareTheTagModel();
+    void pathOffersAccountMaildirsBothForms();
+    void folderOffersNothing();
+    void mimetypeAppendsConfiguredEntries();
+    void rangeContextDropsRelativeDates();
 };
+
+// Copied from tests/test_config.cpp rather than shared, so the two test files
+// stay independent.
+static QString writeIni(const QTemporaryDir &dir, const QString &body)
+{
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile f(path);
+    f.open(QIODevice::WriteOnly | QIODevice::Text);
+    f.write(body.toUtf8());
+    f.close();
+    return path;
+}
 
 void TestQueryCompleter::emptyTextCompletesPrefix()
 {
@@ -200,6 +219,83 @@ void TestQueryCompleter::dateVocabularySeparatesRelativeEntries()
     }
     QVERIFY(sawSymbolic);
     QVERIFY(sawRelative);
+}
+
+void TestQueryCompleter::tagAndIsShareTheTagModel()
+{
+    Config config;
+    QueryCompleter completer(nullptr, config);
+    completer.setTags({ QStringLiteral("inbox"), QStringLiteral("shopping/amazon") });
+
+    const QStringList forTag = completer.candidatesFor(
+        completionContext(QStringLiteral("tag:"), 4));
+    const QStringList forIs = completer.candidatesFor(
+        completionContext(QStringLiteral("is:"), 3));
+
+    QVERIFY(forTag.contains(QStringLiteral("shopping/amazon")));
+    QCOMPARE(forTag, forIs);
+}
+
+void TestQueryCompleter::pathOffersAccountMaildirsBothForms()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir = work\n"
+        "address = you@example.org\n")));
+
+    QueryCompleter completer(nullptr, config);
+    const QStringList candidates = completer.candidatesFor(
+        completionContext(QStringLiteral("path:"), 5));
+
+    QVERIFY(candidates.contains(QStringLiteral("work")));
+    // The recursive form is what scopedQuery() itself builds and is not
+    // guessable, so it is offered directly.
+    QVERIFY(candidates.contains(QStringLiteral("work/**")));
+}
+
+void TestQueryCompleter::folderOffersNothing()
+{
+    // folder: matches a Maildir folder name, not a path, and its values are
+    // not enumerable from config. Prefix-only, like from: and to:.
+    Config config;
+    QueryCompleter completer(nullptr, config);
+    const QStringList candidates = completer.candidatesFor(
+        completionContext(QStringLiteral("folder:"), 7));
+    QVERIFY(candidates.isEmpty());
+}
+
+void TestQueryCompleter::mimetypeAppendsConfiguredEntries()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[completion]\n"
+        "extra_mimetypes = application/epub+zip|EPUB book\n")));
+
+    QueryCompleter completer(nullptr, config);
+    const QStringList candidates = completer.candidatesFor(
+        completionContext(QStringLiteral("mimetype:"), 9));
+
+    QVERIFY(candidates.contains(QStringLiteral("application/epub+zip")));
+    QVERIFY(candidates.contains(QStringLiteral("application/pdf")));
+}
+
+void TestQueryCompleter::rangeContextDropsRelativeDates()
+{
+    Config config;
+    QueryCompleter completer(nullptr, config);
+
+    const QStringList bare = completer.candidatesFor(
+        completionContext(QStringLiteral("date:"), 5));
+    QVERIFY(bare.contains(QStringLiteral("1week..")));
+
+    const QString ranged = QStringLiteral("date:today..");
+    const QStringList inRange = completer.candidatesFor(
+        completionContext(ranged, ranged.size()));
+    QVERIFY(inRange.contains(QStringLiteral("yesterday")));
+    QVERIFY(!inRange.contains(QStringLiteral("1week..")));
 }
 
 QTEST_MAIN(TestQueryCompleter)

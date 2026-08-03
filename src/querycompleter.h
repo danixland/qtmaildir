@@ -19,9 +19,14 @@
 #pragma once
 
 #include <QList>
+#include <QObject>
 #include <QString>
+#include <QStringList>
 
 #include "completionentry.h"
+
+class Config;
+class QLineEdit;
 
 /// Where the cursor sits in a query, and therefore what should be offered.
 ///
@@ -72,3 +77,29 @@ QList<CompletionEntry> dateVocabulary();
 
 /// The built-in mimetypes, before the user's extra_mimetypes are appended.
 QList<CompletionEntry> mimetypeVocabulary();
+
+/// Completion for the notmuch query bar.
+///
+/// completionContext() above decides which context the cursor sits in; this
+/// class owns the candidates offered for that context.
+class QueryCompleter : public QObject
+{
+    Q_OBJECT
+public:
+    /// `edit` may be null in tests that exercise candidate selection only.
+    QueryCompleter(QLineEdit *edit, const Config &config,
+                   QObject *parent = nullptr);
+
+    /// Replaces the tag candidates. Called with the worker's allTagsReady.
+    void setTags(const QStringList &tags);
+
+    /// The candidate values for a context, in the order they are offered.
+    QStringList candidatesFor(const CompletionContext &context) const;
+
+private:
+    QList<CompletionEntry> entriesFor(const CompletionContext &context) const;
+
+    QLineEdit *m_edit = nullptr;
+    const Config &m_config;
+    QStringList m_tags;
+};

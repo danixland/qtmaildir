@@ -18,6 +18,8 @@
 
 #include "querycompleter.h"
 
+#include "config.h"
+
 #include <QCoreApplication>
 
 namespace {
@@ -185,4 +187,84 @@ CompletionContext completionContext(const QString &text, int cursor)
         ctx.replaceLength = value.size() - upperStart;
     }
     return ctx;
+}
+
+QueryCompleter::QueryCompleter(QLineEdit *edit, const Config &config,
+                               QObject *parent)
+    : QObject(parent), m_edit(edit), m_config(config)
+{
+}
+
+void QueryCompleter::setTags(const QStringList &tags)
+{
+    m_tags = tags;
+}
+
+QList<CompletionEntry> QueryCompleter::entriesFor(
+    const CompletionContext &context) const
+{
+    if (context.kind == CompletionContext::None)
+        return {};
+
+    if (context.kind == CompletionContext::Prefix)
+        return prefixVocabulary();
+
+    // notmuch treats is:x as a synonym for tag:x, so both take the tag list.
+    if (context.prefix == QStringLiteral("tag")
+        || context.prefix == QStringLiteral("is")) {
+        QList<CompletionEntry> entries;
+        entries.reserve(m_tags.size());
+        for (const QString &tag : m_tags)
+            entries.append({ tag, QString() });
+        return entries;
+    }
+
+    if (context.prefix == QStringLiteral("date")) {
+        QList<CompletionEntry> entries;
+        const QList<CompletionEntry> vocabulary = dateVocabulary();
+        for (const CompletionEntry &entry : vocabulary) {
+            // Entries that are themselves ranges cannot go inside a range.
+            if (!context.allowRangeEntries
+                && entry.value.contains(QStringLiteral("..")))
+                continue;
+            entries.append(entry);
+        }
+        return entries;
+    }
+
+    if (context.prefix == QStringLiteral("mimetype")) {
+        QList<CompletionEntry> entries = mimetypeVocabulary();
+        entries.append(m_config.extraMimetypes());
+        return entries;
+    }
+
+    if (context.prefix == QStringLiteral("path")) {
+        QList<CompletionEntry> entries;
+        const QList<Account> accounts = m_config.accounts();
+        for (const Account &account : accounts) {
+            if (account.maildir.isEmpty())
+                continue;
+            entries.append({ account.maildir,
+                             VocabularyStrings::tr("account directory") });
+            entries.append({ account.maildir + QStringLiteral("/**"),
+                             VocabularyStrings::tr("and everything below it") });
+        }
+        return entries;
+    }
+
+    // from:, to:, folder:, subject:, attachment:, thread:, id: complete no
+    // values. Addresses need an enumerator libnotmuch does not expose;
+    // folder: matches a Maildir folder name that config cannot enumerate, and
+    // the rest are free text.
+    return {};
+}
+
+QStringList QueryCompleter::candidatesFor(const CompletionContext &context) const
+{
+    QStringList values;
+    const QList<CompletionEntry> entries = entriesFor(context);
+    values.reserve(entries.size());
+    for (const CompletionEntry &entry : entries)
+        values.append(entry.value);
+    return values;
 }

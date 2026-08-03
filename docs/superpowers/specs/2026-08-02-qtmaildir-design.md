@@ -200,15 +200,15 @@ identity.
 ```ini
 [general]
 ; optional; omit to use notmuch's own database.path
-; notmuch_config = /home/danix/.notmuch-config
+; notmuch_config = /home/you/.notmuch-config
 
 [sync]
-command = /home/danix/bin/mailsync.sh
+command = /home/you/bin/mailsync.sh
 
-[account.provider-personal]
+[account.work]
 name = Danilo M.
 address = danix@danix.xyz
-maildir = provider-personal    ; relative to notmuch's database.path
+maildir = work-mail             ; relative to notmuch's database.path
 drafts = Drafts
 
 [account.gmail]

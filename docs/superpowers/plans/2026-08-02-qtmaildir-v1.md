@@ -4354,7 +4354,7 @@ Create `docs/manual-verification.md` and record pass/fail for each:
     or rejected consistently. `config.cpp` validates existence by splitting the
     command on `' '` and taking the first field, while `MailSync` splits it with
     `QProcess::splitCommand`, which honours quoting. For
-    `command = "/home/danix/my scripts/mailsync.sh"` the two disagree: config
+    `command = "/home/you/my scripts/mailsync.sh"` the two disagree: config
     checks a path that does not exist and disables sync, so the failure is safe
     but the message is misleading. Confirm the behaviour, then decide whether to
     align config on `splitCommand` or to document the restriction.

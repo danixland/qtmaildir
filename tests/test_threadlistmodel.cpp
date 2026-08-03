@@ -34,6 +34,9 @@ private slots:
     void subjectShowsMessageCountOnlyForRealThreads();
     void unreadThreadsRenderBold();
     void tagsAreTheFirstColumnAndSubjectTheLast();
+    void accountTagBecomesAChipLabel();
+    void unreadStylingSurvivesAnAccountChip();
+    void accountChipUsesTheConfiguredColour();
     void deletedThreadsAreRedAndStruckThrough();
     void spamThreadsAreOrangeAndStruckThrough();
     void doomedStylingCoversEveryColumn();
@@ -118,9 +121,11 @@ void TestThreadListModel::reportsSubjectAndAuthors()
     const QModelIndex date = model.index(0, ThreadListModel::DateColumn);
     QVERIFY(!model.data(date, Qt::DisplayRole).toString().isEmpty());
 
-    const QModelIndex tags = model.index(0, ThreadListModel::TagsColumn);
-    QCOMPARE(model.data(tags, Qt::DisplayRole).toString(),
-             QStringLiteral("inbox unread"));
+    // Tags are no longer a column; they reach the strip under the message
+    // pane through a role instead.
+    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    QCOMPARE(model.data(subject, ThreadListModel::TagsRole).toStringList(),
+             QStringList({ QStringLiteral("inbox"), QStringLiteral("unread") }));
 }
 
 void TestThreadListModel::subjectShowsMessageCountOnlyForRealThreads()
@@ -163,17 +168,86 @@ void TestThreadListModel::tagsAreTheFirstColumnAndSubjectTheLast()
     // Subject stretches to fill the view, so whatever sits after it is pushed
     // off-screen. Tags used to be there, which is why acting on a thread
     // looked like it did nothing: the only column that changed was invisible.
-    QCOMPARE(ThreadListModel::TagsColumn, 0);
     QCOMPARE(ThreadListModel::SubjectColumn, ThreadListModel::ColumnCount - 1);
 
     ThreadListModel model;
     model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("hello")) });
-    QCOMPARE(model.headerData(ThreadListModel::TagsColumn, Qt::Horizontal,
-                              Qt::DisplayRole).toString(),
-             QStringLiteral("Tags"));
     QCOMPARE(model.headerData(ThreadListModel::SubjectColumn, Qt::Horizontal,
                               Qt::DisplayRole).toString(),
              QStringLiteral("Subject"));
+
+    // No tags column at all: spelling out a dozen tags per row consumed most
+    // of the list's width and was unreadable.
+    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
+        QVERIFY(model.headerData(column, Qt::Horizontal, Qt::DisplayRole)
+                    .toString() != QStringLiteral("Tags"));
+    }
+}
+
+void TestThreadListModel::accountTagBecomesAChipLabel()
+{
+    // The account tag is a different taxonomy from a functional one: which
+    // mailbox the thread arrived in. It renders as a chip in front of the
+    // subject, so the model exposes its label and colour separately.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), QStringLiteral("hello"));
+    thread.tags = QStringList{ QStringLiteral("inbox"),
+                               QStringLiteral("account-webmail-personal") };
+    model.appendBatch({ thread });
+
+    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    QCOMPARE(model.data(subject, ThreadListModel::AccountLabelRole).toString(),
+             QStringLiteral("webmail-personal"));
+    QVERIFY(model.data(subject, ThreadListModel::AccountColourRole)
+                .value<QColor>().isValid());
+
+    // A thread with no account tag gets no chip rather than an empty one.
+    ThreadListModel plain;
+    ThreadSummary untagged = makeThread(QStringLiteral("t2"), QStringLiteral("hi"));
+    untagged.tags = QStringList{ QStringLiteral("inbox") };
+    plain.appendBatch({ untagged });
+    QVERIFY(plain.data(plain.index(0, ThreadListModel::SubjectColumn),
+                       ThreadListModel::AccountLabelRole).toString().isEmpty());
+}
+
+void TestThreadListModel::unreadStylingSurvivesAnAccountChip()
+{
+    // The subject cell is drawn by a delegate when the thread has an account
+    // chip. The delegate paints the text itself, so it has to keep honouring
+    // the model's font: otherwise an unread thread stops rendering bold for
+    // exactly those threads that carry an account tag, which is all of them.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), QStringLiteral("hello"));
+    thread.tags = QStringList{ QStringLiteral("inbox"), QStringLiteral("unread"),
+                               QStringLiteral("account-webmail-personal") };
+    model.appendBatch({ thread });
+
+    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    QVERIFY(!model.data(subject, ThreadListModel::AccountLabelRole)
+                 .toString().isEmpty());
+
+    const QVariant font = model.data(subject, Qt::FontRole);
+    QVERIFY2(font.isValid(), "unread thread with an account tag has no font");
+    QVERIFY2(font.value<QFont>().bold(), "unread thread is not bold");
+}
+
+void TestThreadListModel::accountChipUsesTheConfiguredColour()
+{
+    // The colour comes from the account's own stanza, so a configured one must
+    // reach the chip rather than the generated fallback.
+    TagColors colours;
+    colours.setAccountColour(QStringLiteral("webmail-personal"),
+                             QColor(QStringLiteral("#cc0000")));
+
+    ThreadListModel model;
+    model.setTagColors(&colours);
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), QStringLiteral("hello"));
+    thread.tags = QStringList{ QStringLiteral("account-webmail-personal") };
+    model.appendBatch({ thread });
+
+    QCOMPARE(model.data(model.index(0, ThreadListModel::SubjectColumn),
+                        ThreadListModel::AccountColourRole).value<QColor>(),
+             QColor(QStringLiteral("#cc0000")));
 }
 
 void TestThreadListModel::deletedThreadsAreRedAndStruckThrough()

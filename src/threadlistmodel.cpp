@@ -65,6 +65,26 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     if (role == ThreadIdRole)
         return thread.threadId;
 
+    if (role == TagsRole)
+        return thread.tags;
+
+    if (role == AccountLabelRole || role == AccountColourRole) {
+        // At most one account tag per thread in practice, but a thread whose
+        // messages landed in two mailboxes carries both; the first is shown.
+        for (const QString &tag : thread.tags) {
+            if (!TagColors::isAccountTag(tag))
+                continue;
+            if (role == AccountLabelRole) {
+                // The configured label when there is one, otherwise the key.
+                return m_tagColors ? m_tagColors->labelForAccountTag(tag)
+                                   : TagColors::accountKeyForTag(tag);
+            }
+            return m_tagColors ? m_tagColors->colourFor(tag)
+                               : TagColors().colourFor(tag);
+        }
+        return {};
+    }
+
     if (role == Qt::DisplayRole) {
         switch (index.column()) {
         case DateColumn:
@@ -76,8 +96,6 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
                 ? QStringLiteral("%1 (%2)").arg(thread.subject)
                       .arg(thread.totalCount)
                 : thread.subject;
-        case TagsColumn:
-            return thread.tags.join(QLatin1Char(' '));
         default:
             return {};
         }
@@ -126,7 +144,6 @@ QVariant ThreadListModel::headerData(int section, Qt::Orientation orientation,
     case DateColumn:    return QStringLiteral("Date");
     case AuthorsColumn: return QStringLiteral("From");
     case SubjectColumn: return QStringLiteral("Subject");
-    case TagsColumn:    return QStringLiteral("Tags");
     default:            return {};
     }
 }

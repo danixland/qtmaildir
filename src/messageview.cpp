@@ -34,6 +34,7 @@
 #include "cidschemehandler.h"
 #include "htmlbuilder.h"
 #include "requestinterceptor.h"
+#include "tagstrip.h"
 #include "threadcidmap.h"
 
 namespace {
@@ -118,16 +119,32 @@ MessageView::MessageView(QWidget *parent)
     m_attachmentBar = new QWidget(this);
     new QHBoxLayout(m_attachmentBar);
 
+    // Tags live under the message rather than in the thread list, where
+    // spelling them out cost most of the list's width.
+    m_tagStrip = new TagStrip(this);
+    m_tagStrip->hide();
+
     auto *layout = new QVBoxLayout(this);
     layout->addWidget(m_headerLabel);
     layout->addLayout(blockedRow);
     layout->addWidget(m_view, 1);
     layout->addWidget(m_attachmentBar);
+    layout->addWidget(m_tagStrip);
 
     clear();
 }
 
 MessageView::~MessageView() = default;
+
+void MessageView::setTagColors(const TagColors *colours)
+{
+    m_tagStrip->setTagColors(colours);
+}
+
+void MessageView::setTags(const QStringList &tags)
+{
+    m_tagStrip->setTags(tags);
+}
 
 /// The single place that loads a document into the view.
 ///
@@ -145,6 +162,7 @@ void MessageView::setDocument(const QString &html)
 void MessageView::clear()
 {
     m_items.clear();
+    m_tagStrip->setTags({});
 
     // No thread is displayed, so nothing may be served or allowed. Without
     // this, the previous thread's parts would stay reachable.

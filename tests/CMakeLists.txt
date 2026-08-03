@@ -13,6 +13,7 @@ target_compile_definitions(test_mimeparser PRIVATE
 add_qtmaildir_test(interceptor)
 add_qtmaildir_test(htmlbuilder)
 add_qtmaildir_test(notmuchworker)
+add_qtmaildir_test(tagcolors)
 add_qtmaildir_test(threadlistmodel)
 add_qtmaildir_test(mailsync)
 add_qtmaildir_test(threadcidmap)

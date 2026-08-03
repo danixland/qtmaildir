@@ -22,6 +22,7 @@
 #include <QColor>
 #include <QVector>
 
+#include "tagcolors.h"
 #include "types.h"
 
 /// Table model over query results, filled in batches so a large query paints
@@ -30,12 +31,12 @@ class ThreadListModel : public QAbstractTableModel
 {
     Q_OBJECT
 public:
-    /// Subject stretches to fill the view, so it must come last: anything
-    /// after it is pushed out of sight. Tags leads, being the column that
-    /// changes when the user acts on a thread.
+    /// No tags column: spelling out a dozen tags per row cost most of the
+    /// list's width and was unreadable. Functional tags moved to a chip strip
+    /// under the message pane, and the account tag renders as a chip in front
+    /// of the subject.
     enum Column {
-        TagsColumn = 0,
-        DateColumn,
+        DateColumn = 0,
         AuthorsColumn,
         SubjectColumn,
         ColumnCount,
@@ -46,6 +47,17 @@ public:
         /// worker speaks thread ids, so the mapping belongs on the model
         /// rather than in every caller.
         ThreadIdRole = Qt::UserRole + 1,
+
+        /// The account tag on this thread without its "account-" prefix, for
+        /// the chip drawn in front of the subject. Empty when the thread
+        /// carries none.
+        AccountLabelRole,
+
+        /// Fill colour for that chip.
+        AccountColourRole,
+
+        /// Every tag on the thread, for the strip under the message pane.
+        TagsRole,
     };
 
     /// Row fill for a thread tagged `deleted`, and for one tagged `spam`.
@@ -56,6 +68,10 @@ public:
     static QColor spamColour();
 
     explicit ThreadListModel(QObject *parent = nullptr);
+
+    /// Supplies the account chip colours. Not owned; must outlive the model.
+    /// Without one, chips fall back to a colour generated from the tag name.
+    void setTagColors(const TagColors *colours) { m_tagColors = colours; }
 
     int rowCount(const QModelIndex &parent = {}) const override;
     int columnCount(const QModelIndex &parent = {}) const override;
@@ -76,4 +92,5 @@ public:
 
 private:
     QVector<ThreadSummary> m_threads;
+    const TagColors *m_tagColors = nullptr;
 };

@@ -30,6 +30,8 @@ class QPushButton;
 class QWebEngineView;
 class QWebEngineProfile;
 class CidSchemeHandler;
+class TagColors;
+class TagStrip;
 class RequestInterceptor;
 
 /// The message pane: thread header, body, attachment bar.
@@ -57,6 +59,12 @@ public:
     void showError(const QString &text, const QString &filePath);
     void clear();
 
+    /// Supplies the tag strip's colours. Not owned; must outlive the view.
+    void setTagColors(const TagColors *colours);
+
+    /// Tags of the thread on display, shown as chips along the bottom.
+    void setTags(const QStringList &tags);
+
 public slots:
     void toggleHtml();
     void loadRemoteContent();
@@ -81,4 +89,5 @@ private:
     QLabel *m_blockedLabel = nullptr;
     QPushButton *m_loadRemoteButton = nullptr;
     QWidget *m_attachmentBar = nullptr;
+    TagStrip *m_tagStrip = nullptr;
 };

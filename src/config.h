@@ -23,6 +23,8 @@
 #include <QString>
 #include <QStringList>
 
+#include "completionentry.h"
+
 /// One mail account. notmuch has no concept of accounts; it sees a single flat
 /// tree. An account is therefore a path prefix within that tree plus an
 /// identity.
@@ -95,6 +97,19 @@ public:
     /// ever the default. Clamped by MessageView::clampZoom() on use.
     qreal messageZoom() const { return m_messageZoom; }
 
+    /// Whether focusing an empty query bar opens the completion popup. Off by
+    /// default: it is helpful when learning the query language and intrusive
+    /// once it is known. The manual trigger works regardless.
+    bool completionOnFocus() const { return m_completionOnFocus; }
+
+    /// User-supplied mimetype completions, APPENDED to the built-in list.
+    /// Appending rather than replacing means a typo cannot leave completion
+    /// worse off than the defaults. Mimetypes are the only completion list a
+    /// user can extend, because they are the only one with no enumerator and
+    /// an open-ended set: prefixes are fixed, paths come from the configured
+    /// accounts, dates are closed, tags come from the database.
+    QList<CompletionEntry> extraMimetypes() const { return m_extraMimetypes; }
+
     /// Every non-fatal problem, both kinds below. Shown in the status bar.
     QStringList warnings() const { return m_warnings; }
 
@@ -119,6 +134,8 @@ private:
     QString m_syncCommand;
     QString m_notmuchConfig;
     qreal m_messageZoom = 1.0;
+    bool m_completionOnFocus = false;
+    QList<CompletionEntry> m_extraMimetypes;
     QString m_startupQuery = QStringLiteral("Unread");
 
     /// Whether startup_query came from the config rather than being the

@@ -39,6 +39,11 @@ private slots:
     void unknownStartupQueryFallsBackAndReports();
     void generalSectionKeysAreActuallyRead();
     void messageZoomDefaultsAndValidates();
+    void completionOnFocusDefaultsToFalse();
+    void completionOnFocusIsActuallyRead();
+    void extraMimetypesAppendToBuiltins();
+    void extraMimetypeDescriptionMayContainComma();
+    void malformedExtraMimetypeIsSkipped();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -343,6 +348,75 @@ void TestConfig::messageZoomDefaultsAndValidates()
         QCOMPARE(config.messageZoom(), 1.0);
         QCOMPARE(config.problems().size(), 1);
     }
+}
+
+void TestConfig::completionOnFocusDefaultsToFalse()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n")));
+    QCOMPARE(config.completionOnFocus(), false);
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::completionOnFocusIsActuallyRead()
+{
+    // The default is false, so a test that only checks the default would pass
+    // just as happily against a "general/completion_on_focus" lookup that
+    // matches nothing. Round-tripping a true proves the key is really read.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "completion_on_focus=true\n")));
+    QCOMPARE(config.completionOnFocus(), true);
+}
+
+void TestConfig::extraMimetypesAppendToBuiltins()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[completion]\n"
+        "extra_mimetypes = application/epub+zip|EPUB book, message/rfc822\n")));
+
+    const QList<CompletionEntry> extra = config.extraMimetypes();
+    QCOMPARE(extra.size(), 2);
+    QCOMPARE(extra.at(0).value, QStringLiteral("application/epub+zip"));
+    QCOMPARE(extra.at(0).description, QStringLiteral("EPUB book"));
+    QCOMPARE(extra.at(1).value, QStringLiteral("message/rfc822"));
+    QVERIFY(extra.at(1).description.isEmpty());
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::extraMimetypeDescriptionMayContainComma()
+{
+    // '|' separates value from description precisely so a description can
+    // contain a comma without QSettings tearing the entry in two.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[completion]\n"
+        "extra_mimetypes = \"application/epub+zip|EPUB, an ebook format\"\n")));
+
+    const QList<CompletionEntry> extra = config.extraMimetypes();
+    QCOMPARE(extra.size(), 1);
+    QCOMPARE(extra.at(0).value, QStringLiteral("application/epub+zip"));
+    QCOMPARE(extra.at(0).description, QStringLiteral("EPUB, an ebook format"));
+}
+
+void TestConfig::malformedExtraMimetypeIsSkipped()
+{
+    // One bad entry must not cost the user the rest of the list.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[completion]\n"
+        "extra_mimetypes = |no value here, message/rfc822\n")));
+
+    const QList<CompletionEntry> extra = config.extraMimetypes();
+    QCOMPARE(extra.size(), 1);
+    QCOMPARE(extra.at(0).value, QStringLiteral("message/rfc822"));
+    QVERIFY(!config.problems().isEmpty());
 }
 
 QTEST_MAIN(TestConfig)

@@ -87,6 +87,38 @@ void Config::load(const QString &path)
         }
     }
 
+    // A [general] key, so no prefix, per the note at the top of load().
+    m_completionOnFocus =
+        settings.value(QStringLiteral("completion_on_focus"), false).toBool();
+
+    // [completion] is an ordinary section, so this one DOES take its prefix.
+    // ',' separates entries and '|' separates a value from its description:
+    // two different characters because QSettings splits comma lists itself,
+    // so a description holding a comma would otherwise become two entries.
+    // Neither character is legal in a mimetype.
+    const QStringList rawMimetypes =
+        settings.value(QStringLiteral("completion/extra_mimetypes")).toStringList();
+    for (const QString &raw : rawMimetypes) {
+        const QString entry = raw.trimmed();
+        if (entry.isEmpty())
+            continue;
+
+        const int bar = entry.indexOf(QLatin1Char('|'));
+        const QString value = (bar < 0 ? entry : entry.left(bar)).trimmed();
+        const QString description =
+            (bar < 0 ? QString() : entry.mid(bar + 1)).trimmed();
+
+        // Skip only the bad entry: one typo must not cost the user the rest
+        // of the list, and the built-ins are appended to regardless.
+        if (value.isEmpty()) {
+            addProblem(QStringLiteral("[completion] extra_mimetypes: entry '%1' "
+                                      "has no mimetype; ignoring it.")
+                           .arg(entry));
+            continue;
+        }
+        m_extraMimetypes.append({ value, description });
+    }
+
     m_syncCommand = settings.value(QStringLiteral("sync/command")).toString();
     if (m_syncCommand.isEmpty()) {
         // Not a problem: sync is optional, and nothing the user asked for is

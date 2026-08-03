@@ -39,9 +39,9 @@ databases.
 | 9 | An HTML newsletter renders, and shows "Remote content blocked" | **PASS** |
 | 10 | "Load remote content" re-renders with images | **PASS** |
 | 11 | Selecting a different thread clears the remote grant | **FAIL, then fixed** |
-| 12 | An inline image displays without any remote load | PENDING |
+| 12 | An inline image displays without any remote load | **PASS** |
 | 13 | Two messages sharing a Content-ID each show their own image | PENDING |
-| 14 | `h` toggles the thread to plain text and back | PENDING |
+| 14 | `h` toggles the thread to plain text and back | **PASS, bug found alongside** |
 | 15 | A link click opens the system browser without navigating the pane | PENDING |
 | 16 | `a` archives the selected thread | DEFERRED |
 | 17 | `a` over a multi-row selection archives all of them | DEFERRED |
@@ -176,6 +176,35 @@ correct response to that query.
 Worth remembering when choosing a test query: a term from the subject line
 will match every message in a thread. Partition on something that varies
 per message, such as `from:`.
+
+## Item 12: PASS
+
+The AtlasMedica message (3 inline `cid:` parts) displayed all three images
+with no "Remote content blocked" banner. The absent banner is the stronger
+half of the result: nothing was denied, so the images came entirely from
+parts carried inside the message and no request left the machine.
+
+This exercises the whole namespaced-cid path end to end, which until now
+had only unit coverage: `buildThreadCidMap()` builds `m0!<content-id>`
+keys, the interceptor allows exactly those, and `CidSchemeHandler` serves
+the bytes.
+
+## Item 14: PASS, and a keyboard bug found alongside
+
+`h` toggles between the HTML and plain-text rendering of a thread. Verified
+after the fix below; before it, `h` mostly moved the selection instead.
+
+With the thread list focused, every single-letter binding was being eaten by
+`QAbstractItemView`'s type-to-search: `h` jumped to the next thread whose
+subject began with "h", and `j`, `k`, `a`, `d`, `N`, `F`, `u`, `G` behaved
+the same way. The event filter was installed on the MainWindow, and a
+window-level filter only sees key presses the focused child did not consume.
+Installing it on the thread view as well puts the keymap first. Fixed in
+`b0e3a30`; `j`/`k` navigation confirmed working afterwards.
+
+This one is worth noting for how it hid: the bindings all worked when focus
+was anywhere other than the list, which is the state a developer testing a
+single shortcut is most likely to be in.
 
 ## Item 8: PASS
 

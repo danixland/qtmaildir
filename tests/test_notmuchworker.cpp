@@ -55,6 +55,9 @@ private slots:
     void applyTagsToThreadsSpansMultipleThreads();
     void applyTagsToThreadsWithNoThreadsDoesNothing();
 
+    void requestAllTagsReturnsSortedTags();
+    void requestAllTagsOnUnreadableConfigEmitsError();
+
 private:
     /// Tags of one message, read back through a fresh worker query.
     QStringList tagsOf(const QString &messageId);
@@ -431,6 +434,42 @@ void TestNotmuchWorker::applyTagsToThreadsWithNoThreadsDoesNothing()
 
     QVERIFY(applied.isEmpty());
     QVERIFY(errors.isEmpty());
+}
+
+void TestNotmuchWorker::requestAllTagsReturnsSortedTags()
+{
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::allTagsReady);
+
+    worker.requestAllTags(7);
+
+    QCOMPARE(spy.count(), 1);
+    const QStringList tags = spy.at(0).at(0).toStringList();
+    const quint64 generation = spy.at(0).at(1).value<quint64>();
+
+    QCOMPARE(generation, quint64(7));
+    QVERIFY(tags.contains(QStringLiteral("inbox")));
+    QVERIFY(tags.contains(QStringLiteral("unread")));
+
+    // Completion offers these in order, so the worker sorts once rather than
+    // every consumer sorting again.
+    QStringList sorted = tags;
+    sorted.sort();
+    QCOMPARE(tags, sorted);
+}
+
+void TestNotmuchWorker::requestAllTagsOnUnreadableConfigEmitsError()
+{
+    // Fails closed like every other entry point: never silently fall through to
+    // the user's real database.
+    NotmuchWorker worker(QStringLiteral("/nonexistent/qtmaildir-test/config"));
+    QSignalSpy ready(&worker, &NotmuchWorker::allTagsReady);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.requestAllTags(1);
+
+    QCOMPARE(errors.size(), 1);
+    QVERIFY(ready.isEmpty());
 }
 
 QTEST_MAIN(TestNotmuchWorker)

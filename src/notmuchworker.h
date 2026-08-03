@@ -69,11 +69,17 @@ public slots:
                             const QStringList &remove,
                             const QString &description);
 
+    /// Every tag in the database, sorted. Feeds query bar completion, which
+    /// cannot offer tag names it has no way to enumerate. Called at startup,
+    /// after a sync, and after a tag mutation introduces an unknown tag.
+    void requestAllTags(quint64 generation);
+
 signals:
     void threadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void queryFinished(int totalThreads, quint64 generation);
     void threadLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void tagsApplied(const TagChange &change);
+    void allTagsReady(const QStringList &tags, quint64 generation);
     void errorOccurred(const QString &message);
 
 private:

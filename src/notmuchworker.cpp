@@ -332,3 +332,24 @@ void NotmuchWorker::applyTags(const TagChange &change)
 
     emit tagsApplied(change);
 }
+
+void NotmuchWorker::requestAllTags(quint64 generation)
+{
+    if (!openReadOnly())
+        return;
+
+    NmTags tags(notmuch_database_get_all_tags(m_db));
+    if (!tags) {
+        emit errorOccurred(QStringLiteral("Cannot list tags"));
+        return;
+    }
+
+    QStringList result;
+    for (; notmuch_tags_valid(tags.get()); notmuch_tags_move_to_next(tags.get()))
+        result.append(QString::fromUtf8(notmuch_tags_get(tags.get())));
+
+    // Sorted once here so no consumer has to sort again. notmuch returns tags
+    // in Xapian term order, which is byte order, not the user's locale order.
+    result.sort();
+    emit allTagsReady(result, generation);
+}

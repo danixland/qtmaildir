@@ -27,6 +27,7 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -594,13 +595,51 @@ void MainWindow::showShortcutReference()
 
 void MainWindow::showAbout()
 {
-    QMessageBox::about(
-        this, tr("About qtmaildir"),
-        tr("<h3>qtmaildir %1</h3>"
-           "<p>A Qt6 mail client for notmuch-indexed Maildirs.</p>"
-           "<p>Reads and organizes local mail. Fetching and sending are "
-           "handled by external scripts.</p>")
-            .arg(QStringLiteral(QTMAILDIR_VERSION)));
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("About qtmaildir"));
+
+    auto *icon = new QLabel(&dialog);
+    icon->setPixmap(QIcon(QStringLiteral(":/icons/qtmaildir.svg"))
+                        .pixmap(QSize(160, 160)));
+    icon->setAlignment(Qt::AlignCenter);
+
+    auto *text = new QLabel(&dialog);
+    text->setTextFormat(Qt::RichText);
+    text->setWordWrap(true);
+    text->setAlignment(Qt::AlignTop);
+    text->setText(tr("<h3>qtmaildir %1</h3>"
+                     "<p>A Qt6 mail client for notmuch-indexed Maildirs.</p>"
+                     "<p>Reads and organizes local mail. Fetching and sending "
+                     "are handled by external scripts.</p>"
+                     "<p>Copyright &copy; 2026 Danilo M. "
+                     "&lt;danix@danix.xyz&gt;<br>"
+                     "Licensed under the GNU General Public License "
+                     "version 2.</p>"
+                     "<p>Developed with AI assistance. All code is reviewed, "
+                     "tested and curated by the maintainer.</p>")
+                      .arg(QStringLiteral(QTMAILDIR_VERSION)));
+
+    auto *link = new QLabel(
+        QStringLiteral("<a href='https://danix.xyz/qtmaildir'>"
+                       "https://danix.xyz/qtmaildir</a>"),
+        &dialog);
+    link->setTextFormat(Qt::RichText);
+    link->setAlignment(Qt::AlignCenter);
+    link->setOpenExternalLinks(true);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+
+    auto *columns = new QHBoxLayout;
+    columns->addWidget(icon, 40);
+    columns->addWidget(text, 60);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->addLayout(columns);
+    layout->addWidget(link);
+    layout->addWidget(buttons);
+
+    dialog.exec();
 }
 
 void MainWindow::wireWorker()

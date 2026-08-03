@@ -36,7 +36,11 @@ public:
     /// under the message pane, and the account tag renders as a chip in front
     /// of the subject.
     enum Column {
-        DateColumn = 0,
+        /// A paperclip when the thread has an attachment, so it is visible
+        /// without opening the thread. Icon only and deliberately narrow;
+        /// it carries no text.
+        AttachmentColumn = 0,
+        DateColumn,
         AuthorsColumn,
         SubjectColumn,
         ColumnCount,
@@ -64,6 +68,10 @@ public:
     /// Muted rather than saturated: a bulk delete paints every selected row,
     /// and a wall of pure red is harder to read than the list it replaces.
     /// Exposed so a test names the same colour the model uses.
+    /// The character shown in AttachmentColumn for a thread that has one.
+    /// A paperclip when the system font can draw it, "*" otherwise.
+    static QString attachmentGlyph();
+
     static QColor deletedColour();
     static QColor spamColour();
 

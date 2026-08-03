@@ -38,6 +38,7 @@ private slots:
     void unreadStylingSurvivesAnAccountChip();
     void accountChipUsesTheConfiguredColour();
     void deletedThreadsAreRedAndStruckThrough();
+    void attachmentColumnIsFirstAndMarksOnlyTaggedThreads();
     void spamThreadsAreOrangeAndStruckThrough();
     void doomedStylingCoversEveryColumn();
     void ordinaryThreadsCarryNoRowColour();
@@ -470,6 +471,47 @@ void TestThreadListModel::modelPassesQtTester()
                         makeThread(QStringLiteral("t2"), QStringLiteral("two")) });
     model.applyTagChange(QStringLiteral("t1"), {}, { QStringLiteral("unread") });
     model.clear();
+}
+
+void TestThreadListModel::attachmentColumnIsFirstAndMarksOnlyTaggedThreads()
+{
+    // Leftmost, and narrow: the point is to see an attachment without opening
+    // the thread, which only works if the column is never scrolled away.
+    QCOMPARE(ThreadListModel::AttachmentColumn, 0);
+
+    ThreadSummary plain = makeThread(QStringLiteral("t1"),
+                                     QStringLiteral("no attachment"));
+    ThreadSummary withFile = makeThread(QStringLiteral("t2"),
+                                        QStringLiteral("has one"));
+    // notmuch applies this tag itself while indexing, so no MIME parsing and
+    // no extra worker query are involved.
+    withFile.tags.append(QStringLiteral("attachment"));
+
+    ThreadListModel model;
+    model.appendBatch({ plain, withFile });
+
+    const QModelIndex plainCell =
+        model.index(0, ThreadListModel::AttachmentColumn);
+    const QModelIndex fileCell =
+        model.index(1, ThreadListModel::AttachmentColumn);
+
+    QVERIFY(model.data(plainCell, Qt::DisplayRole).toString().isEmpty());
+    QCOMPARE(model.data(fileCell, Qt::DisplayRole).toString(),
+             ThreadListModel::attachmentGlyph());
+
+    // The glyph must be something a font can draw. An unrenderable codepoint
+    // shows as a tofu box, which reads as breakage rather than as a marker.
+    QVERIFY(!ThreadListModel::attachmentGlyph().isEmpty());
+
+    // Only the marked thread gets a tooltip, or an empty cell would claim to
+    // have an attachment on hover.
+    QVERIFY(model.data(plainCell, Qt::ToolTipRole).toString().isEmpty());
+    QVERIFY(!model.data(fileCell, Qt::ToolTipRole).toString().isEmpty());
+
+    // The header carries no text: a label would set a minimum width far wider
+    // than the icon and defeat the narrow column.
+    QVERIFY(model.headerData(ThreadListModel::AttachmentColumn, Qt::Horizontal,
+                             Qt::DisplayRole).toString().isEmpty());
 }
 
 QTEST_MAIN(TestThreadListModel)

@@ -38,6 +38,13 @@ struct ThreadSummary
     bool isDeleted() const { return tags.contains(QStringLiteral("deleted")); }
     bool isSpam() const { return tags.contains(QStringLiteral("spam")); }
 
+    /// notmuch applies "attachment" itself while indexing, so this needs no
+    /// MIME parsing and no extra worker query: the tag is already in tags.
+    bool hasAttachment() const
+    {
+        return tags.contains(QStringLiteral("attachment"));
+    }
+
     /// True while the thread is tagged for removal. notmuch deletes nothing
     /// itself: the tag marks the thread for whatever the user's sync script
     /// does next, so the row has to show it is on its way out.

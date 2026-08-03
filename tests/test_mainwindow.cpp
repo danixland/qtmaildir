@@ -25,10 +25,13 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 
+#include <QTableView>
+
 #include "config.h"
 #include "keymap.h"
 #include "mainwindow.h"
 #include "messageview.h"
+#include "threadlistmodel.h"
 
 /// MainWindow is mostly wiring, and the parts that need a real database are
 /// still verified manually. What is checked here is the action registry: the
@@ -47,6 +50,7 @@ private slots:
     void uiStateIsNotWrittenIntoTheUserConfig();
     void uiStateSurvivesARestart();
     void missingUiStateLeavesTheDefaults();
+    void headerStateFromADifferentColumnLayoutIsDiscarded();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -219,6 +223,46 @@ void TestMainWindow::missingUiStateLeavesTheDefaults()
     MainWindow window(config);
     QCOMPARE(window.size(), QSize(1200, 800));
 
+    QStandardPaths::setTestModeEnabled(false);
+}
+
+void TestMainWindow::headerStateFromADifferentColumnLayoutIsDiscarded()
+{
+    // The upgrade hazard: a 0.3.0 state file holds a three-column header blob,
+    // and 0.4.0 added the attachment column in front. QHeaderView::
+    // restoreState() returns TRUE for a blob with fewer sections than the
+    // model and applies the old widths shifted one column right, mangling the
+    // layout with no error to detect it by (verified on Qt 6.11). The stored
+    // column count is what makes that detectable.
+    QStandardPaths::setTestModeEnabled(true);
+    QFile::remove(MainWindow::uiStatePath());
+
+    {
+        const Config config;
+        MainWindow window(config);
+        window.close();
+    }
+
+    // Forge a state file from an older layout: same blob, wrong column count.
+    {
+        QSettings state(MainWindow::uiStatePath(), QSettings::IniFormat);
+        state.setValue(QStringLiteral("threadlist/columns"),
+                       int(ThreadListModel::ColumnCount) - 1);
+        state.setValue(QStringLiteral("threadlist/header"),
+                       QByteArray("not a header this model could have saved"));
+    }
+
+    // Constructing must not apply it, and must not crash on the garbage blob.
+    const Config config;
+    MainWindow reopened(config);
+
+    auto *view = reopened.findChild<QTableView *>();
+    QVERIFY(view);
+    QCOMPARE(view->columnWidth(ThreadListModel::AttachmentColumn), 28);
+    QCOMPARE(view->columnWidth(ThreadListModel::DateColumn), 130);
+    QCOMPARE(view->columnWidth(ThreadListModel::SubjectColumn), 520);
+
+    QFile::remove(MainWindow::uiStatePath());
     QStandardPaths::setTestModeEnabled(false);
 }
 

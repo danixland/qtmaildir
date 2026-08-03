@@ -20,6 +20,27 @@
 
 #include <QBrush>
 #include <QFont>
+#include <QFontDatabase>
+#include <QFontMetrics>
+
+QString ThreadListModel::attachmentGlyph()
+{
+    // U+1F4CE PAPERCLIP, with a fallback for a system whose default font
+    // cannot draw it: an unrenderable codepoint shows as a tofu box, which
+    // reads as "something is broken" rather than "this has an attachment".
+    // Computed once; the font does not change under a running application.
+    static const QString glyph = [] {
+        const char32_t paperclip = 0x1F4CE;
+        const QString preferred = QString::fromUcs4(&paperclip, 1);
+        const QFontMetrics metrics{QFontDatabase::systemFont(
+            QFontDatabase::GeneralFont)};
+        // "*" as the fallback: ASCII, present in every practical font, and
+        // unambiguous in a column that shows nothing else.
+        return metrics.inFontUcs4(paperclip) ? preferred
+                                             : QStringLiteral("*");
+    }();
+    return glyph;
+}
 
 QColor ThreadListModel::deletedColour()
 {
@@ -85,8 +106,19 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         return {};
     }
 
+    if (role == Qt::ToolTipRole && index.column() == AttachmentColumn)
+        return thread.hasAttachment() ? tr("Has an attachment") : QVariant();
+
+    if (role == Qt::TextAlignmentRole && index.column() == AttachmentColumn)
+        return QVariant::fromValue(Qt::AlignCenter);
+
     if (role == Qt::DisplayRole) {
         switch (index.column()) {
+        case AttachmentColumn:
+            // A glyph rather than an icon resource: no new asset to ship, and
+            // it inherits the row's font, so it strikes through with a doomed
+            // thread like every other cell.
+            return thread.hasAttachment() ? attachmentGlyph() : QString();
         case DateColumn:
             return thread.date.toString(QStringLiteral("yyyy-MM-dd hh:mm"));
         case AuthorsColumn:
@@ -141,6 +173,9 @@ QVariant ThreadListModel::headerData(int section, Qt::Orientation orientation,
         return {};
 
     switch (section) {
+    // No label: any text would set a minimum width far wider than the icon,
+    // which defeats the point of a narrow column.
+    case AttachmentColumn: return QString();
     case DateColumn:    return QStringLiteral("Date");
     case AuthorsColumn: return QStringLiteral("From");
     case SubjectColumn: return QStringLiteral("Subject");

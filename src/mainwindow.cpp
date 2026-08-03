@@ -100,9 +100,18 @@ void MainWindow::restoreUiState()
         m_splitter->restoreState(splitter);
     }
 
+    // A header blob saved against a different set of columns must be
+    // discarded, not restored. QHeaderView::restoreState() returns TRUE for a
+    // blob with fewer sections than the model and applies the old widths to
+    // the wrong columns: adding the attachment column in front shifted every
+    // saved width one place right, silently mangling the layout with no error
+    // to detect it by (verified on Qt 6.11). The column count is stored
+    // alongside and the blob is only used when it still matches.
     const QByteArray header = state.value(QStringLiteral("threadlist/header"))
                                   .toByteArray();
-    if (!header.isEmpty()) {
+    const int savedColumns =
+        state.value(QStringLiteral("threadlist/columns")).toInt();
+    if (!header.isEmpty() && savedColumns == ThreadListModel::ColumnCount) {
         m_threadView->horizontalHeader()->restoreState(header);
     }
 
@@ -123,6 +132,9 @@ void MainWindow::saveUiState() const
     state.setValue(QStringLiteral("window/splitter"), m_splitter->saveState());
     state.setValue(QStringLiteral("threadlist/header"),
                    m_threadView->horizontalHeader()->saveState());
+    // Guards the blob above: see restoreUiState().
+    state.setValue(QStringLiteral("threadlist/columns"),
+                   int(ThreadListModel::ColumnCount));
     state.setValue(QStringLiteral("message/zoom"), m_messageView->zoomFactor());
 }
 
@@ -275,6 +287,11 @@ void MainWindow::buildUi()
 
     // Starting widths only; a drag overrides them, and they are what the
     // saved-widths item will persist.
+    // Without this the attachment column cannot be narrow at all: the default
+    // minimum section size is 58px on this platform, and setColumnWidth()
+    // clamps to it silently rather than reporting the smaller value back.
+    m_threadView->horizontalHeader()->setMinimumSectionSize(24);
+    m_threadView->setColumnWidth(ThreadListModel::AttachmentColumn, 28);
     m_threadView->setColumnWidth(ThreadListModel::DateColumn, 130);
     m_threadView->setColumnWidth(ThreadListModel::AuthorsColumn, 180);
     m_threadView->setColumnWidth(ThreadListModel::SubjectColumn, 520);

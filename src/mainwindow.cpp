@@ -325,6 +325,7 @@ void MainWindow::buildUi()
     // The status label is created first: the sync wiring below can report into
     // it before the rest of the UI exists.
     m_statusLabel = new QLabel(this);
+    m_statusLabel->setObjectName(QStringLiteral("statusMessage"));
     statusBar()->addWidget(m_statusLabel);
 
     // Beside the sync status rather than as a widget competing with it: the two
@@ -487,6 +488,16 @@ void MainWindow::buildUi()
     connect(m_threadView->selectionModel(),
             &QItemSelectionModel::currentRowChanged,
             this, &MainWindow::onThreadSelected);
+
+    // Separate from currentRowChanged: a selection can grow without current
+    // moving at all. Ctrl+click adds a row and leaves current where it was, and
+    // selectAll() emits no currentRowChanged whatsoever (verified against
+    // Qt 6.11). Both are multi-select gestures that have to blank the pane and
+    // cancel a pending mark-read, so neither can rely on the current-index
+    // signal to notice them.
+    connect(m_threadView->selectionModel(),
+            &QItemSelectionModel::selectionChanged,
+            this, &MainWindow::onSelectionChanged);
 
     m_messageView = new MessageView(central);
     m_messageView->setTagColors(&m_tagColors);
@@ -659,6 +670,14 @@ void MainWindow::registerActions()
         m_queryEdit->setFocus();
         m_queryCompleter->triggerCompletion();
     });
+    addAction(QStringLiteral("select_all"), tr("Select &all threads"),
+              tr("Select every thread in the current result list"), [this]() {
+        // A registered action rather than the view's built-in SelectAll key, so
+        // it reaches the Edit menu, the shortcut reference and [keys] the same
+        // way every other binding does. That is the whole point: multi-select
+        // already worked, it was simply invisible.
+        m_threadView->selectAll();
+    });
     addAction(QStringLiteral("quit"), tr("&Quit"),
               tr("Quit qtmaildir"), [this]() { close(); });
 
@@ -680,6 +699,8 @@ void MainWindow::buildMenus()
     editMenu->addSeparator();
     editMenu->addAction(m_actions.value(QStringLiteral("focus_query")));
     editMenu->addAction(m_actions.value(QStringLiteral("complete_query")));
+    editMenu->addSeparator();
+    editMenu->addAction(m_actions.value(QStringLiteral("select_all")));
 
     auto *messageMenu = menuBar()->addMenu(tr("&Message"));
     messageMenu->addAction(m_actions.value(QStringLiteral("archive")));
@@ -730,6 +751,29 @@ void MainWindow::buildMenus()
         if (!icon.isNull())
             action->setIcon(icon);
     }
+
+    // Right-click on the thread list. Built from the same registered QActions
+    // as the menu bar, never from parallel copies: a [keys] override then shows
+    // the right shortcut here too, and an action cannot end up doing one thing
+    // from the menu bar and another from the context menu.
+    //
+    // Every entry applies to the whole selection already, since they all funnel
+    // through tagSelected(), so this needs no multi-row special casing.
+    m_threadContextMenu = new QMenu(this);
+    m_threadContextMenu->setObjectName(QStringLiteral("threadContextMenu"));
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("archive")));
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("delete")));
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("spam")));
+    m_threadContextMenu->addSeparator();
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("flag")));
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("edit_tags")));
+    m_threadContextMenu->addSeparator();
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("select_all")));
+
+    m_threadView->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_threadView, &QTableView::customContextMenuRequested,
+            this, &MainWindow::showThreadContextMenu);
 
     // The frequent subset only. A toolbar holding every action is as
     // unreadable as no toolbar.
@@ -787,6 +831,18 @@ void MainWindow::showShortcutReference()
                       "</tr></table>")
                        .arg(left, right));
 
+    // Mouse selection is view behaviour, not an action, so it cannot appear in
+    // the table above however the table is generated. Said here because it is
+    // otherwise undiscoverable: nothing in the UI hints that a thread list
+    // takes more than one row at a time.
+    auto *selectionNote = new QLabel(
+        tr("<b>Thread list:</b> <tt>Ctrl</tt>+click adds or removes a single "
+           "row, <tt>Shift</tt>+click extends the selection to a range. Tag, "
+           "archive and delete all apply to every selected thread."),
+        &dialog);
+    selectionNote->setTextFormat(Qt::RichText);
+    selectionNote->setWordWrap(true);
+
     auto *note = new QLabel(
         tr("Rebind any of these in the <tt>[keys]</tt> section of "
            "<tt>qtmaildir.conf</tt>, using the action name."),
@@ -799,6 +855,7 @@ void MainWindow::showShortcutReference()
 
     auto *layout = new QVBoxLayout(&dialog);
     layout->addWidget(label);
+    layout->addWidget(selectionNote);
     layout->addWidget(note);
     layout->addStretch();
     layout->addWidget(buttons);
@@ -973,11 +1030,93 @@ void MainWindow::onQueryFinished(int total, quint64 generation)
     m_statusLabel->setText(tr("%n thread(s)", "", total));
 }
 
+void MainWindow::showThreadContextMenu(const QPoint &pos)
+{
+    const QModelIndex index = m_threadView->indexAt(pos);
+    if (!index.isValid())
+        return;   // Right-click on empty space below the rows.
+
+    // Right-clicking a row that is already part of the selection must leave
+    // that selection alone: the actions apply to every selected thread, so
+    // collapsing to the clicked row here would silently narrow a deliberate
+    // multi-row selection to one. Right-clicking outside it selects that row
+    // instead, which is what every other list does.
+    if (!m_threadView->selectionModel()->isRowSelected(index.row()))
+        m_threadView->selectRow(index.row());
+
+    m_threadContextMenu->popup(m_threadView->viewport()->mapToGlobal(pos));
+}
+
+void MainWindow::onSelectionChanged()
+{
+    const int selected = m_threadView->selectionModel()->selectedRows().size();
+    if (selected <= 1) {
+        // Clearing the count here would wipe whatever the last action reported
+        // ("Archive: 3 threads"), which is the more useful message once the
+        // selection is gone. Only a count this function wrote is taken back.
+        if (m_statusLabel->text() == m_selectionMessage)
+            m_statusLabel->clear();
+        m_selectionMessage.clear();
+
+        // Collapsing a multi-row selection back to one row has to load that
+        // row here, and cannot be left to onThreadSelected. currentRowChanged
+        // is emitted BEFORE the selection model is updated (verified against
+        // Qt 6.11), so when a click collapses three rows to one, that handler
+        // still sees three selected, takes the multi-select branch and returns
+        // without loading anything. Only this signal sees the real count.
+        const QModelIndex current = m_threadView->currentIndex();
+        if (current.isValid()
+            && m_model->threadAt(current.row()).threadId != m_currentThreadId) {
+            onThreadSelected(current, QModelIndex());
+        }
+        return;
+    }
+
+    // The count is the part that actually teaches multi-select: it acknowledges
+    // the selection while it is being built, rather than only after an action
+    // has already been applied to it.
+    m_selectionMessage = tr("%n thread(s) selected", "", selected);
+    m_statusLabel->setText(m_selectionMessage);
+
+    // Ctrl+click and selectAll() reach a multi-row selection without moving
+    // current, so onThreadSelected never runs and its guard never fires. The
+    // pane and the pending timer have to be dealt with here as well.
+    m_markReadTimer->stop();
+    m_markReadThreadId.clear();
+    m_currentThreadId.clear();
+    m_messageView->clear();
+}
+
 void MainWindow::onThreadSelected(const QModelIndex &current,
                                   const QModelIndex &)
 {
     if (!current.isValid())
         return;
+
+    // A selection spanning more than one row is aimed at a bulk action, not at
+    // reading. current follows the keyboard cursor as the selection extends, so
+    // without this every row swept through would be rendered and, worse,
+    // queued to be marked read: a selection gesture must not mutate mail.
+    //
+    // The count read here is deliberately not trusted on its own. This signal
+    // is emitted BEFORE the selection model is updated (verified against
+    // Qt 6.11), so a Ctrl+click that takes the selection from one row to two
+    // arrives here still reporting one. onSelectionChanged() always follows and
+    // sees the true count, and it is what finally blanks the pane and cancels
+    // the timer; this branch only catches the case where the count is already
+    // stale in the other direction.
+    //
+    // The stop() is not redundant with the guard. Clicking one row arms a timer
+    // legitimately and only then does the selection grow, so the timer already
+    // running for that first row has to be cancelled here or it fires behind a
+    // pane that no longer shows the thread.
+    if (m_threadView->selectionModel()->selectedRows().size() > 1) {
+        m_markReadTimer->stop();
+        m_markReadThreadId.clear();
+        m_currentThreadId.clear();
+        m_messageView->clear();
+        return;
+    }
 
     const ThreadSummary thread = m_model->threadAt(current.row());
     m_currentThreadId = thread.threadId;
@@ -993,6 +1132,14 @@ void MainWindow::onThreadLoaded(const QVector<MessageRef> &messages,
                                 quint64 generation)
 {
     if (generation != m_generation || messages.isEmpty())
+        return;
+
+    // A load started while the selection was still a single row can land after
+    // it has grown: loadThread crosses to the worker on a queued connection, so
+    // the reply arrives after onSelectionChanged() has already blanked the
+    // pane. Without this it would paint a thread back over the blank, and the
+    // pane would only look right once a third row made the count stale-proof.
+    if (m_threadView->selectionModel()->selectedRows().size() > 1)
         return;
 
     MimeParser parser;

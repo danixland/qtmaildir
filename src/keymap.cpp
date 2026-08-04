@@ -35,6 +35,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("flag"),
         QStringLiteral("focus_query"),
         QStringLiteral("complete_query"),
+        QStringLiteral("select_all"),
         QStringLiteral("toggle_html"),
         QStringLiteral("load_remote"),
         QStringLiteral("message_details"),
@@ -72,6 +73,9 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         // shells and editors, and it is a named key rather than a symbol, so
         // no layout has to shift it.
         { QStringLiteral("Ctrl+Space"),   QStringLiteral("complete_query") },
+        // The conventional select-all key, and free here: the thread list is a
+        // read-only view, so nothing else in the window wants it.
+        { QStringLiteral("Ctrl+A"),       QStringLiteral("select_all") },
         { QStringLiteral("Ctrl+H"),       QStringLiteral("toggle_html") },
         { QStringLiteral("Ctrl+M"),       QStringLiteral("load_remote") },
         // Shifted because Ctrl+D is delete. Both are "D for details/delete"

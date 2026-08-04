@@ -88,6 +88,10 @@ private slots:
     void onThreadLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
+
+    /// A tag mutation the worker has confirmed reached the database. Counts it
+    /// as unsynced, since reaching the index is not reaching the mail store.
+    void onTagsApplied(const TagChange &change);
     void onAllTagsReady(const QStringList &tags);
 
 private:
@@ -127,6 +131,19 @@ private:
     /// the one on screen.
     void markCurrentThreadRead();
 
+    /// Redraws the unsynced-edits indicator from m_pendingEdits.
+    void updatePendingIndicator();
+
+    /// Set once the user has answered the exit prompt, or once a sync started
+    /// for exit has finished. Stops closeEvent asking a second time, and is
+    /// what lets the deferred close through.
+    bool m_closeApproved = false;
+
+    /// True while a sync started by the exit prompt is running. The window
+    /// stays open until it finishes: killing the process mid-sync is exactly
+    /// the loss the prompt exists to prevent.
+    bool m_syncingForExit = false;
+
     /// Sends a tag change for a set of threads without touching the undo stack.
     /// Both tagSelected() and ThreadTagCommand route through this.
     void sendThreadTagChange(const QStringList &threadIds,
@@ -158,6 +175,10 @@ private:
     QComboBox *m_accountBox = nullptr;
     QPushButton *m_syncButton = nullptr;
     QLabel *m_statusLabel = nullptr;
+
+    /// Says how many tag changes have not been seen to reach the mail store.
+    /// Hidden entirely at zero rather than reading "0 unsynced", which is noise.
+    QLabel *m_pendingLabel = nullptr;
     QPlainTextEdit *m_syncLog = nullptr;
 
     /// Action name (as used in [keys]) to the QAction implementing it. Owned
@@ -177,6 +198,17 @@ private:
     quint64 m_generation = 0;
     QString m_lastQuery;
     QString m_currentThreadId;
+
+    /// Confirmed tag mutations not yet known to have reached the mail store.
+    ///
+    /// A count of its own rather than QUndoStack::isClean(), which cannot serve
+    /// here: the undo stack is CLEARED on every query, since its entries refer
+    /// to rows the new result set discards. Tag a thread, run any query, and the
+    /// stack is empty while the change is still unsynced.
+    ///
+    /// A lower bound on what is outstanding, never a guarantee: the user's cron
+    /// can run notmuch new without the application noticing.
+    int m_pendingEdits = 0;
 
     /// Marks the open thread read once it has been on screen long enough.
     ///

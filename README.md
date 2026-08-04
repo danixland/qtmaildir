@@ -119,6 +119,11 @@ identity.
 ; with Ctrl+U. Arrowing quickly through a list marks only the thread you stop
 ; on, never the ones you pass through.
 ; mark_read_delay_ms = 2000
+; Optional. What to do about unsynced tag changes when you quit. "ask" (the
+; default) offers to sync, quit anyway, or stay; "always" syncs without asking
+; and quits when it finishes; "never" quits silently. A sync that fails never
+; closes the window, so a failure cannot discard the changes quietly.
+; sync_on_exit = ask
 
 [completion]
 ; Optional. Extra content types offered after mimetype:, APPENDED to the
@@ -242,6 +247,22 @@ A paperclip in the leftmost column of the thread list marks threads that carry
 an attachment, so it is visible without opening the thread. It comes from the
 `attachment` tag notmuch applies while indexing, not from parsing the message,
 and costs no extra query.
+
+## Unsynced changes
+
+Tagging changes the notmuch index at once, but the mail store only learns about
+it on the next sync. The status bar therefore counts the tag changes made here
+that a sync has not yet carried over, and clears the count when one succeeds. A
+**failed** sync leaves the count standing, since the changes really are still
+unsynced.
+
+The count is a lower bound rather than a guarantee: an external `notmuch new`
+from your own cron can carry changes over without this application noticing.
+
+Quitting with changes outstanding asks what to do, controlled by
+`[general] sync_on_exit`. See the configuration block above for the three
+values. When a sync started at exit fails, the window stays open and says so
+rather than quitting as though it had worked.
 
 ## Message details
 

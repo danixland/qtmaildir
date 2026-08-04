@@ -45,6 +45,9 @@ private slots:
     void markReadDelayIsActuallyRead();
     void markReadDelayAcceptsZeroAndNegative();
     void markReadDelayRejectsGarbage();
+    void syncOnExitDefaultsToAsk();
+    void syncOnExitReadsAllThreeValues();
+    void syncOnExitWarnsOnGarbage();
     void extraMimetypesAppendToBuiltins();
     void extraMimetypeDescriptionMayContainComma();
     void malformedExtraMimetypeIsSkipped();
@@ -426,6 +429,50 @@ void TestConfig::markReadDelayRejectsGarbage()
     config.load(writeIni(dir, QStringLiteral("[general]\n"
                                              "mark_read_delay_ms=soon\n")));
     QCOMPARE(config.markReadDelayMs(), 2000);
+    QVERIFY(!config.problems().isEmpty());
+}
+
+void TestConfig::syncOnExitDefaultsToAsk()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n")));
+    QCOMPARE(config.syncOnExit(), Config::SyncOnExit::Ask);
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::syncOnExitReadsAllThreeValues()
+{
+    // A bool could only carry two of these. Each is a distinct behaviour at
+    // exit, so each has to round-trip.
+    const QList<QPair<QString, Config::SyncOnExit>> cases = {
+        { QStringLiteral("ask"),    Config::SyncOnExit::Ask },
+        { QStringLiteral("always"), Config::SyncOnExit::Always },
+        { QStringLiteral("never"),  Config::SyncOnExit::Never },
+        // Case and surrounding space are the user's, not the parser's problem.
+        { QStringLiteral("  Always  "), Config::SyncOnExit::Always },
+    };
+
+    for (const auto &testCase : cases) {
+        QTemporaryDir dir;
+        Config config;
+        config.load(writeIni(dir, QStringLiteral("[general]\nsync_on_exit=%1\n")
+                                      .arg(testCase.first)));
+        QCOMPARE(config.syncOnExit(), testCase.second);
+        QVERIFY2(config.problems().isEmpty(),
+                 qPrintable(QStringLiteral("'%1' warned").arg(testCase.first)));
+    }
+}
+
+void TestConfig::syncOnExitWarnsOnGarbage()
+{
+    // Silently falling back would change what happens to unsynced work without
+    // telling the user, so a typo has to be named.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "sync_on_exit=maybe\n")));
+    QCOMPARE(config.syncOnExit(), Config::SyncOnExit::Ask);
     QVERIFY(!config.problems().isEmpty());
 }
 

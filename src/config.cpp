@@ -98,6 +98,25 @@ void Config::load(const QString &path)
     // Zero and negative are NOT errors and must not be clamped. Zero means mark
     // read at once, and any negative value means never, which is how the
     // behaviour is turned off.
+    // Three values, not a bool: "prompt me", "just do it" and "do nothing" are
+    // three distinct behaviours and true/false can only express two of them.
+    const QString syncExit =
+        settings.value(QStringLiteral("sync_on_exit"),
+                       QStringLiteral("ask")).toString().trimmed().toLower();
+    if (syncExit == QStringLiteral("ask")) {
+        m_syncOnExit = SyncOnExit::Ask;
+    } else if (syncExit == QStringLiteral("always")) {
+        m_syncOnExit = SyncOnExit::Always;
+    } else if (syncExit == QStringLiteral("never")) {
+        m_syncOnExit = SyncOnExit::Never;
+    } else {
+        // Naming the accepted values, since a typo here silently changes what
+        // happens to unsynced work at exit.
+        addProblem(QStringLiteral("Unknown sync_on_exit '%1'; expected ask, "
+                                  "always or never. Using ask.")
+                       .arg(syncExit));
+    }
+
     const QVariant markRead = settings.value(QStringLiteral("mark_read_delay_ms"));
     if (markRead.isValid()) {
         bool ok = false;

@@ -102,6 +102,15 @@ public:
     /// once it is known. The manual trigger works regardless.
     bool completionOnFocus() const { return m_completionOnFocus; }
 
+    /// What to do about unsynced edits when the window closes.
+    enum class SyncOnExit {
+        Ask,     ///< Prompt, offering to sync, quit anyway, or stay. The default.
+        Always,  ///< Sync without asking, then quit once it finishes.
+        Never,   ///< Quit silently, which is the behaviour before this existed.
+    };
+
+    SyncOnExit syncOnExit() const { return m_syncOnExit; }
+
     /// How long an opened thread stays unread before it is marked read.
     ///
     /// Three meanings, all deliberate: a positive value is the delay in
@@ -143,6 +152,7 @@ private:
     qreal m_messageZoom = 1.0;
     bool m_completionOnFocus = false;
     int m_markReadDelayMs = 2000;
+    SyncOnExit m_syncOnExit = SyncOnExit::Ask;
     QList<CompletionEntry> m_extraMimetypes;
     QString m_startupQuery = QStringLiteral("Unread");
 

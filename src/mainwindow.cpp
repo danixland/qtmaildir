@@ -145,6 +145,84 @@ void MainWindow::saveUiState() const
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // A sync started for exit is still running: hold the window open. Its
+    // finished signal closes us, and asking again here would stack prompts.
+    if (m_syncingForExit) {
+        event->ignore();
+        return;
+    }
+
+    if (!m_closeApproved && m_pendingEdits > 0
+        && m_config.syncOnExit() != Config::SyncOnExit::Never) {
+
+        // Not a destructive-action confirmation, which CLAUDE.md forbids for
+        // tag mutations. Those get undo instead. This asks about LOSING work at
+        // the one point where undo cannot help, which is the opposite case.
+        const bool canSync = m_sync && m_sync->isAvailable();
+
+        if (!canSync) {
+            // Degrade to a warning rather than offering a sync that cannot run.
+            const auto answer = QMessageBox::warning(
+                this, tr("Unsynced changes"),
+                tr("%n tag change(s) have not been synced, and no sync command "
+                   "is configured. Quit anyway?", "", m_pendingEdits),
+                QMessageBox::Discard | QMessageBox::Cancel,
+                QMessageBox::Cancel);
+            if (answer == QMessageBox::Cancel) {
+                event->ignore();
+                return;
+            }
+        } else if (m_config.syncOnExit() == Config::SyncOnExit::Ask) {
+            // Three buttons, not two: a user who hit Quit by mistake needs a
+            // way back that is not "sync".
+            QMessageBox box(this);
+            box.setIcon(QMessageBox::Question);
+            box.setWindowTitle(tr("Unsynced changes"));
+            box.setText(tr("%n tag change(s) have not been synced.", "",
+                           m_pendingEdits));
+            box.setInformativeText(tr("Sync before quitting?"));
+            QPushButton *sync =
+                box.addButton(tr("Sync and quit"), QMessageBox::AcceptRole);
+            QPushButton *quit =
+                box.addButton(tr("Quit anyway"), QMessageBox::DestructiveRole);
+            box.addButton(QMessageBox::Cancel);
+            box.setDefaultButton(sync);
+            box.exec();
+
+            if (box.clickedButton() == sync) {
+                if (m_sync->start()) {
+                    m_syncingForExit = true;
+                    m_statusLabel->setText(tr("Syncing before quitting..."));
+                    event->ignore();
+                    return;
+                }
+                // Could not start after all: say so and stay, rather than
+                // quitting as though the sync had happened.
+                QMessageBox::warning(this, tr("Sync failed"),
+                                     tr("The sync could not be started, so "
+                                        "your changes are still unsynced."));
+                event->ignore();
+                return;
+            }
+            if (box.clickedButton() != quit) {
+                event->ignore();   // Cancel, or the dialog was dismissed.
+                return;
+            }
+        } else if (m_config.syncOnExit() == Config::SyncOnExit::Always) {
+            if (m_sync->start()) {
+                m_syncingForExit = true;
+                m_statusLabel->setText(tr("Syncing before quitting..."));
+                event->ignore();
+                return;
+            }
+            QMessageBox::warning(this, tr("Sync failed"),
+                                 tr("The sync could not be started, so your "
+                                    "changes are still unsynced."));
+            event->ignore();
+            return;
+        }
+    }
+
     saveUiState();
     QMainWindow::closeEvent(event);
 }
@@ -242,6 +320,14 @@ void MainWindow::buildUi()
     // it before the rest of the UI exists.
     m_statusLabel = new QLabel(this);
     statusBar()->addWidget(m_statusLabel);
+
+    // Beside the sync status rather than as a widget competing with it: the two
+    // say related things and reading them apart would be worse than reading
+    // them together.
+    m_pendingLabel = new QLabel(this);
+    m_pendingLabel->setObjectName(QStringLiteral("pendingEdits"));
+    m_pendingLabel->hide();
+    statusBar()->addPermanentWidget(m_pendingLabel);
 
     // Query row.
     auto *queryRow = new QHBoxLayout;
@@ -422,10 +508,6 @@ void MainWindow::registerActions()
     });
     addAction(QStringLiteral("open_thread"), tr("&Open thread"),
               tr("Focus the thread list"), [this]() {
-        qDebug("[MW] open_thread action TRIGGERED (focus=%s)",
-               QApplication::focusWidget()
-                   ? QApplication::focusWidget()->metaObject()->className()
-                   : "none");
         m_threadView->setFocus();
     });
     addAction(QStringLiteral("archive"), tr("&Archive"),
@@ -739,20 +821,7 @@ void MainWindow::wireWorker()
     // A confirmed write clears the pending revert: without this, a later
     // unrelated error would roll back a change that actually succeeded.
     connect(m_worker, &NotmuchWorker::tagsApplied,
-            this, [this](const TagChange &change) {
-        m_pendingChange = {};
-        m_pendingThreadIds.clear();
-
-        // A tag the user has just created is the one they are most likely to
-        // type again, so do not wait for the next sync to offer it. A set
-        // membership test, not a query.
-        for (const QString &tag : change.added) {
-            if (!m_knownTags.contains(tag)) {
-                requestAllTags();
-                break;
-            }
-        }
-    });
+            this, &MainWindow::onTagsApplied);
 
     m_workerThread.start();
 
@@ -939,14 +1008,80 @@ void MainWindow::onWorkerError(const QString &message)
 void MainWindow::onSyncFinished(bool success, int exitCode)
 {
     if (success) {
+        // Only a SUCCESSFUL sync clears the count. Clearing on failure would
+        // assert the edits had reached the mail store when the sync is exactly
+        // what failed to put them there.
+        m_pendingEdits = 0;
+        updatePendingIndicator();
+
         m_statusLabel->setText(tr("Sync complete"));
+
+        if (m_syncingForExit) {
+            // The work is safely across, so finish the quit the user asked for.
+            m_syncingForExit = false;
+            m_closeApproved = true;
+            close();
+            return;
+        }
+
         runCurrentQuery();
         // A sync is the usual way new tags enter the database.
         requestAllTags();
     } else {
         m_statusLabel->setText(tr("Sync failed (exit %1)").arg(exitCode));
         m_syncLog->show();
+
+        if (m_syncingForExit) {
+            // Do NOT quit: the edits are still unsynced and quitting now would
+            // discard the user's choice silently, which is the failure the
+            // whole prompt exists to prevent. Leave the window open with the
+            // log showing, so they can see what went wrong and decide.
+            m_syncingForExit = false;
+            QMessageBox::warning(
+                this, tr("Sync failed"),
+                tr("The sync failed (exit %1), so your changes are still "
+                   "unsynced. The window has been left open.").arg(exitCode));
+        }
     }
+}
+
+void MainWindow::onTagsApplied(const TagChange &change)
+{
+    m_pendingChange = {};
+    m_pendingThreadIds.clear();
+
+    // Counted here, where a write is CONFIRMED, rather than where one is sent:
+    // an optimistic update the worker later rejects must not leave the
+    // indicator claiming an edit that never landed.
+    ++m_pendingEdits;
+    updatePendingIndicator();
+
+    // A tag the user has just created is the one they are most likely to type
+    // again, so do not wait for the next sync to offer it. A set membership
+    // test, not a query.
+    for (const QString &tag : change.added) {
+        if (!m_knownTags.contains(tag)) {
+            requestAllTags();
+            break;
+        }
+    }
+}
+
+void MainWindow::updatePendingIndicator()
+{
+    if (m_pendingEdits <= 0) {
+        m_pendingLabel->hide();
+        return;
+    }
+
+    // "Changes" and not "mutations": the unit the user thinks in is the tagging
+    // they did, not the writes it became.
+    m_pendingLabel->setText(tr("%n unsynced change(s)", "", m_pendingEdits));
+    m_pendingLabel->setToolTip(
+        tr("Tag changes made here that a sync has not yet carried to the mail "
+           "store. An external notmuch run can clear them without this count "
+           "noticing."));
+    m_pendingLabel->show();
 }
 
 void MainWindow::scheduleMarkRead(const ThreadSummary &thread)

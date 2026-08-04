@@ -20,8 +20,10 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCloseEvent>
 #include <QDir>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QFile>
 #include <QSettings>
@@ -35,6 +37,7 @@
 #include "keymap.h"
 #include "mainwindow.h"
 #include "messageview.h"
+#include "notmuchworker.h"
 #include "threadlistmodel.h"
 
 /// MainWindow is mostly wiring, and the parts that need a real database are
@@ -59,6 +62,10 @@ private slots:
     void markReadTimerRestartsRatherThanStacking();
     void markReadTimerIsNotArmedForAReadThread();
     void markReadCanBeDisabled();
+    void pendingEditCountSurvivesAQuery();
+    void aFailedSyncDoesNotClearThePendingCount();
+    void closingWithNoPendingEditsDoesNotPrompt();
+    void syncOnExitNeverClosesSilently();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -426,6 +433,162 @@ void TestMainWindow::markReadCanBeDisabled()
 
     QVERIFY2(!timer->isActive(),
              "a negative mark_read_delay_ms must disable the timer");
+}
+
+void TestMainWindow::pendingEditCountSurvivesAQuery()
+{
+    // The defining property, and the reason this is a counter of its own rather
+    // than QUndoStack::isClean(): the undo stack is cleared on every query,
+    // because its entries refer to rows the new result set discards. Tag a
+    // thread, run any query, and the stack is empty while the change is still
+    // sitting unsynced in the database.
+    const Config config;
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+    QVERIFY2(label->isHidden(), "the indicator must start hidden at zero");
+
+    // Confirm a write the way the worker really does, by emitting the signal
+    // the window listens to. No test-only entry point on MainWindow.
+    TagChange change;
+    change.added = { QStringLiteral("deleted") };
+    change.description = QStringLiteral("Delete");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+
+    QVERIFY2(!label->isHidden(), "a confirmed edit must show the indicator");
+    const QString afterEdit = label->text();
+    QVERIFY(!afterEdit.isEmpty());
+
+    // Now run a query, which clears the undo stack. The indicator must not
+    // follow it down.
+    window.findChild<QLineEdit *>()->setText(QStringLiteral("tag:inbox"));
+    QMetaObject::invokeMethod(&window, "runCurrentQuery");
+
+    QVERIFY2(!label->isHidden(),
+             "the indicator was cleared by a query, so it is tracking the undo "
+             "stack rather than unsynced state");
+    QCOMPARE(label->text(), afterEdit);
+}
+
+void TestMainWindow::aFailedSyncDoesNotClearThePendingCount()
+{
+    // A failed sync means the edits are still unsynced. Clearing here would
+    // assert the opposite, and the user would quit believing their tagging had
+    // been carried over.
+    const Config config;
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    TagChange change;
+    change.added = { QStringLiteral("flagged") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+    QVERIFY(!label->isHidden());
+    const QString afterEdit = label->text();
+
+    QMetaObject::invokeMethod(&window, "onSyncFinished",
+                              Q_ARG(bool, false), Q_ARG(int, 1));
+    QVERIFY2(!label->isHidden(), "a FAILED sync cleared the pending count");
+    QCOMPARE(label->text(), afterEdit);
+
+    // A successful one does clear it, so this is not "never clears".
+    QMetaObject::invokeMethod(&window, "onSyncFinished",
+                              Q_ARG(bool, true), Q_ARG(int, 0));
+    QVERIFY2(label->isHidden(), "a successful sync must clear the indicator");
+}
+
+/// Closes a window and reports whether it accepted, failing rather than hanging
+/// if a modal appears.
+///
+/// A modal spins its own event loop, so a test that simply sends a close event
+/// blocks forever when a dialog it did not expect opens. This arms a timer that
+/// closes any active modal and records that one was there, which turns "a
+/// dialog appeared" into an assertion instead of a hung run.
+struct CloseProbe
+{
+    bool accepted = false;
+    bool sawModal = false;
+
+    void run(MainWindow *window)
+    {
+        QTimer poll;
+        poll.setInterval(50);
+        int ticks = 0;
+        QObject::connect(&poll, &QTimer::timeout, [this, &poll, &ticks]() {
+            if (QWidget *modal = QApplication::activeModalWidget()) {
+                sawModal = true;
+                modal->close();
+                poll.stop();
+                return;
+            }
+            if (++ticks > 20)   // one second is ample for a synchronous close
+                poll.stop();
+        });
+        poll.start();
+
+        QCloseEvent event;
+        QApplication::sendEvent(window, &event);
+        accepted = event.isAccepted();
+        poll.stop();
+    }
+};
+
+void TestMainWindow::closingWithNoPendingEditsDoesNotPrompt()
+{
+    // Nothing outstanding means nothing to ask about. If a prompt fires here it
+    // is keying off something other than there being work to lose, and every
+    // quit would carry a dialog.
+    const Config config;
+    MainWindow window(config);
+
+    CloseProbe probe;
+    probe.run(&window);
+
+    QVERIFY2(!probe.sawModal, "a clean window prompted on close");
+    QVERIFY2(probe.accepted, "a clean window refused to close");
+}
+
+void TestMainWindow::syncOnExitNeverClosesSilently()
+{
+    // "never" is the behaviour that existed before the prompt did, and it has
+    // to stay reachable for anyone who does not want to be asked. It must hold
+    // whether or not a sync command is configured, so this covers both: the
+    // no-command path has its own dialog, and "never" must skip that one too.
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        file.write("[general]\nsync_on_exit=never\n\n[sync]\ncommand=/bin/true\n");
+    }
+
+    Config config;
+    config.load(path);
+    QCOMPARE(config.syncOnExit(), Config::SyncOnExit::Never);
+
+    MainWindow window(config);
+
+    // Give it something to lose, so this is not passing for the same reason
+    // the previous test does.
+    TagChange change;
+    change.added = { QStringLiteral("deleted") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+    QVERIFY(!label->isHidden());
+
+    CloseProbe probe;
+    probe.run(&window);
+
+    QVERIFY2(!probe.sawModal,
+             "sync_on_exit=never prompted anyway");
+    QVERIFY2(probe.accepted,
+             "sync_on_exit=never must close without prompting");
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

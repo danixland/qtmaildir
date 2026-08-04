@@ -31,6 +31,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("delete"),
         QStringLiteral("spam"),
         QStringLiteral("toggle_unread"),
+        QStringLiteral("edit_tags"),
         QStringLiteral("flag"),
         QStringLiteral("focus_query"),
         QStringLiteral("complete_query"),
@@ -65,6 +66,7 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Ctrl+Shift+S"), QStringLiteral("spam") },
         { QStringLiteral("Ctrl+U"),       QStringLiteral("toggle_unread") },
         { QStringLiteral("Ctrl+I"),       QStringLiteral("flag") },
+        { QStringLiteral("Ctrl+T"),       QStringLiteral("edit_tags") },
         { QStringLiteral("Ctrl+L"),       QStringLiteral("focus_query") },
         // Ctrl+Space is the completion idiom users already carry over from
         // shells and editors, and it is a named key rather than a symbol, so

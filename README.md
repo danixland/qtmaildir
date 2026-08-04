@@ -248,6 +248,27 @@ an attachment, so it is visible without opening the thread. It comes from the
 `attachment` tag notmuch applies while indexing, not from parsing the message,
 and costs no extra query.
 
+## Tagging
+
+Archive, delete, spam, flag and toggle-unread write fixed tags. For anything
+else, **Ctrl+T** opens a dialog over the selected threads: type tags to add or
+remove, separated by commas, or clear a checkbox to drop a tag already present.
+
+Both fields complete against every tag in your database, which is a guard
+against typing `shoppping` beside `shopping`, not a restriction: a tag that does
+not exist yet is exactly what the dialog is for, so any valid name is accepted.
+
+With several threads selected, a tag on only some of them shows a partially
+checked box saying how many. **Leaving it alone changes nothing.** Check it to
+apply it to all, clear it to remove it from all.
+
+Tag names are rejected if empty, if they start with `-` (notmuch reads that as
+"remove this tag"), or if they contain spaces or unprintable characters. The
+dialog says which name was refused and why, and applies nothing until the whole
+set is valid.
+
+Every change goes on the undo stack, so `Ctrl+Z` reverses a mistyped tag.
+
 ## Unsynced changes
 
 Tagging changes the notmuch index at once, but the mail store only learns about
@@ -311,6 +332,7 @@ Defaults, all rebindable through `[keys]`:
 | `Ctrl+Space` | `complete_query` | Focus the query bar and offer completions |
 | `Ctrl+H` | `toggle_html` | Switch the thread between HTML and plain text |
 | `Ctrl+M` | `load_remote` | Load remote images for the current thread |
+| `Ctrl+T` | `edit_tags` | Add or remove any tag on the selected threads |
 | `Ctrl+Shift+D` | `message_details` | Show the full headers of every message in the thread |
 | `Ctrl+Z` | `undo` | Undo the last tag change |
 | `Ctrl+G` | `sync` | Run the configured sync command |

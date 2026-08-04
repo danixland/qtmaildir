@@ -52,6 +52,7 @@
 #include "notmuchworker.h"
 #include "querycompleter.h"
 #include "tagchip.h"
+#include "tagdialog.h"
 #include "threadlistmodel.h"
 #include "version.h"
 
@@ -548,6 +549,10 @@ void MainWindow::registerActions()
         else
             tagSelected({ QStringLiteral("unread") }, {}, tr("Mark unread"));
     });
+    addAction(QStringLiteral("edit_tags"), tr("Edit &tags..."),
+              tr("Add or remove any tag on the selected threads"), [this]() {
+        editTagsOnSelection();
+    });
     addAction(QStringLiteral("toggle_html"), tr("Toggle &HTML"),
               tr("Switch the thread between HTML and plain text"), [this]() {
         m_messageView->toggleHtml();
@@ -634,6 +639,7 @@ void MainWindow::buildMenus()
     messageMenu->addAction(m_actions.value(QStringLiteral("spam")));
     messageMenu->addSeparator();
     messageMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("edit_tags")));
     messageMenu->addAction(m_actions.value(QStringLiteral("flag")));
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
@@ -1150,6 +1156,41 @@ void MainWindow::markCurrentThreadRead()
     // decision above the worker.
     sendThreadTagChange(threadIds, {}, { QStringLiteral("unread") },
                         tr("Mark read"));
+}
+
+void MainWindow::editTagsOnSelection()
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty()) {
+        m_statusLabel->setText(tr("Select a thread first"));
+        return;
+    }
+
+    // How many of the selected threads carry each tag, which is what tells a
+    // tag that is on all of them from one that is on some.
+    QHash<QString, int> counts;
+    for (const QModelIndex &index : rows) {
+        const ThreadSummary thread = m_model->threadAt(index.row());
+        for (const QString &tag : thread.tags)
+            counts[tag] += 1;
+    }
+
+    // m_knownTags is the same list the query completer uses, so the dialog
+    // offers every tag in the database without a round trip.
+    TagDialog dialog(m_knownTags, counts, rows.size(), this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const QStringList add = dialog.tagsToAdd();
+    const QStringList remove = dialog.tagsToRemove();
+    if (add.isEmpty() && remove.isEmpty())
+        return;   // Applied with nothing changed.
+
+    // Straight through tagSelected(), so this inherits undo, the optimistic
+    // model update, the one-query multi-row resolution, and the completer
+    // refresh for a tag that did not exist before.
+    tagSelected(add, remove, tr("Edit tags"));
 }
 
 void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,

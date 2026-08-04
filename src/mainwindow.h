@@ -134,6 +134,12 @@ private:
     /// Redraws the unsynced-edits indicator from m_pendingEdits.
     void updatePendingIndicator();
 
+    /// Opens the tag dialog on the current selection and applies its result.
+    ///
+    /// The only route to an arbitrary tag: every other tag action writes a
+    /// hardcoded name.
+    void editTagsOnSelection();
+
     /// Set once the user has answered the exit prompt, or once a sync started
     /// for exit has finished. Stops closeEvent asking a second time, and is
     /// what lets the deferred close through.

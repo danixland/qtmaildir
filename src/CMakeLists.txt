@@ -8,6 +8,7 @@ add_library(qtmaildir_lib STATIC
     notmuchworker.cpp
     tagchip.cpp
     tagcolors.cpp
+    tagdialog.cpp
     tagstrip.cpp
     threadlistmodel.cpp
     mailsync.cpp

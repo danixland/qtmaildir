@@ -20,7 +20,9 @@
 #include <QTemporaryDir>
 
 #include <QLineEdit>
+#include <QImage>
 #include <QListView>
+#include <QPixmap>
 
 #include "config.h"
 #include "querycompleter.h"
@@ -81,6 +83,7 @@ private slots:
     void returnRunsTheQueryOnceCompletionIsDone();
     void returnRunsTheQueryAfterAMouseAccept();
     void returnRunsTheQueryWhenThePopupMatchesNothing();
+    void theDescriptionSurvivesAModestPopupWidth();
 };
 
 // Copied from tests/test_config.cpp rather than shared, so the two test files
@@ -779,6 +782,98 @@ void TestQueryCompleter::returnRunsTheQueryWhenThePopupMatchesNothing()
 
     QCOMPARE(edit.text(), QStringLiteral("tag:zzz"));
     QVERIFY(ran);
+}
+
+void TestQueryCompleter::theDescriptionSurvivesAModestPopupWidth()
+{
+    // The delegate lends the description whatever the value does not need, up
+    // to 65% of the row. Under the previous even split the longest built-in
+    // description needed a ~650px popup to survive; it now needs ~500px, which
+    // is the difference between the column working at an ordinary window size
+    // and being decorative.
+    //
+    // 550px is chosen to sit inside that band: the current rule paints the text
+    // in full there, an even split cannot. A width outside the band would pass
+    // against both rules and prove nothing.
+    //
+    // The delegate is private to the .cpp, so this renders the real popup and
+    // reads the pixels back rather than reaching for the class: whether the text
+    // is legible on screen is a painting question, not an arithmetic one.
+    Config config;
+    QLineEdit edit;
+    edit.resize(550, edit.sizeHint().height());
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+
+    QTest::keyClicks(&edit, QStringLiteral("path"));
+    QListView *popup = findPopup();
+    QVERIFY(popup && popup->isVisible());
+    QVERIFY(QTest::qWaitForWindowExposed(popup));
+
+    // "path:" carries the longest built-in description, so it is the row that
+    // fails first if the column is starved.
+    const QModelIndex row = popup->model()->index(0, 0);
+    QVERIFY(row.isValid());
+    QCOMPARE(row.data(Qt::DisplayRole).toString(), QStringLiteral("path:"));
+
+    const QRect rect = popup->visualRect(row);
+    QVERIFY(rect.isValid());
+    QPixmap shot = popup->viewport()->grab(rect);
+    QVERIFY(!shot.isNull());
+    const QImage image = shot.toImage();
+
+    // Measure how much of the row carries ink, then compare that against the
+    // width the description needs when it is NOT elided.
+    //
+    // "Something was drawn" is too weak a check: the previous even-split rule
+    // also drew the description, just cut down to an ellipsis, so a blank-or-not
+    // test passes against the very code this replaces. What distinguishes the
+    // two is whether the full text fits, which is a width comparison.
+    const QRgb background = image.pixel(image.width() - 2, image.height() / 2);
+    int rightmostInk = -1;
+    int leftmostInkAfterValue = image.width();
+    for (int x = 0; x < image.width(); ++x) {
+        for (int y = 0; y < image.height(); ++y) {
+            if (image.pixel(x, y) != background) {
+                rightmostInk = qMax(rightmostInk, x);
+                break;
+            }
+        }
+    }
+    QVERIFY2(rightmostInk >= 0, "the row rendered entirely blank");
+
+    // The description is right-aligned, so the ink running to the right edge is
+    // the description itself. Walk left from there over the contiguous run to
+    // find how wide it was actually painted.
+    int x = rightmostInk;
+    int gapRun = 0;
+    while (x > 0 && gapRun < 8) {
+        bool column = false;
+        for (int y = 0; y < image.height(); ++y) {
+            if (image.pixel(x, y) != background) {
+                column = true;
+                break;
+            }
+        }
+        gapRun = column ? 0 : gapRun + 1;
+        if (column)
+            leftmostInkAfterValue = x;
+        --x;
+    }
+
+    const QFontMetrics metrics(popup->font());
+    const QString description = popup->model()->index(0, 1).data().toString();
+    QCOMPARE(description, QStringLiteral("directory below the Maildir root"));
+    const int painted = rightmostInk - leftmostInkAfterValue;
+    const int needed = metrics.horizontalAdvance(description);
+
+    // Allow a little slack for antialiasing at the glyph edges.
+    QVERIFY2(painted >= needed - 4,
+             qPrintable(QStringLiteral("description elided: painted %1px of the "
+                                       "%2px it needs")
+                            .arg(painted).arg(needed)));
 }
 
 QTEST_MAIN(TestQueryCompleter)

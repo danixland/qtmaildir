@@ -88,10 +88,10 @@ int tokenEnd(const QString &text, int cursor)
 
 /// Draws the description greyed and right-aligned beside the value.
 ///
-/// The two are drawn into disjoint halves of the row rather than simply
-/// painted on top of each other: a long value ("application/vnd.oasis..."
-/// exceeds the popup width on its own) would otherwise run underneath the
-/// description and render both unreadable.
+/// The two are drawn into disjoint spans of the row rather than simply painted
+/// on top of each other: a long value ("application/vnd.oasis..." exceeds the
+/// popup width on its own) would otherwise run underneath the description and
+/// render both unreadable. The split is not even, see paint().
 class CompletionDelegate : public QStyledItemDelegate
 {
 public:
@@ -111,11 +111,30 @@ public:
         const int gap = 12;
         const int rightMargin = 6;
 
-        // The description never takes more than its share, so a long value
-        // keeps room to be legible and a long description gets elided too.
+        // Give the description what the value does not need, up to a ceiling.
+        //
+        // An even split reads as fair but spends width on the wrong column:
+        // the values here are short (the longest prefix is "attachment:") while
+        // the descriptions are ordinary prose, so at a 400px popup two thirds
+        // of them elided while the value half sat mostly empty. Measuring the
+        // value and lending the description the remainder clears every built-in
+        // description at ~500px instead of ~700px.
+        //
+        // The ceiling still matters: a long value ("application/vnd.oasis...")
+        // must keep enough room to stay legible rather than be squeezed to an
+        // ellipsis by a description that happens to be wordy.
         const int available = option.rect.width() - gap - rightMargin;
+        const QString value = index.data(Qt::DisplayRole).toString();
+        const int valueWidth = metrics.horizontalAdvance(value);
+        const int ceiling = (available * 65) / 100;
+
+        // A value too long to fit would otherwise claim the whole row and
+        // leave no description at all. Cap what it can reserve, so an
+        // "application/vnd.oasis..." elides itself rather than silencing the
+        // column that explains what it is.
+        const int reservedForValue = qMin(valueWidth, available - ceiling);
         int descriptionWidth = qMin(metrics.horizontalAdvance(description),
-                                    available / 2);
+                                    qMin(available - reservedForValue, ceiling));
         descriptionWidth = qMax(descriptionWidth, 0);
 
         // Let the base class draw the selection background and the value, but

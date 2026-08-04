@@ -189,6 +189,15 @@ void MainWindow::closeEvent(QCloseEvent *event)
                 box.addButton(tr("Quit anyway"), QMessageBox::DestructiveRole);
             box.addButton(QMessageBox::Cancel);
             box.setDefaultButton(sync);
+
+            // The default is set correctly and Qt agrees (isDefault() and
+            // hasFocus() are both true on it), but qt6ct-style draws no
+            // visible default-button decoration, so Enter's target is
+            // invisible on this desktop. Naming it in the text costs nothing
+            // and does not fight the theme.
+            // ponytail: text, not a styled button. Restyling the button means
+            // overriding the user's theme, which is worse than a sentence.
+            sync->setText(tr("Sync and quit (default)"));
             box.exec();
 
             if (box.clickedButton() == sync) {

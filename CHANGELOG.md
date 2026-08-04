@@ -11,6 +11,44 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-04
+
+Small corrections from using 0.8.0, most of them things the application was
+saying that were not quite true.
+
+### Added
+
+- **Escape blanks the message pane**, on `clear_pane`, rebindable like any other
+  action. A view change only: the selection, the query and the undo stack are
+  untouched.
+- **Delete is now a toggle.** Pressing it on a thread that is already deleted
+  removes the tag instead, which is the natural way to say "no, put it back".
+  Over several selected threads it picks one direction for all of them: it
+  undeletes only when every selected thread is already deleted, so one keystroke
+  can never leave the selection in two states.
+
+### Changed
+
+- **Transient status messages expire** after a few seconds, leaving the thread
+  count behind. Messages that describe a state rather than an event do not:
+  "Syncing...", the selection count, and a sync failure, which must not vanish
+  before it is read.
+- **The Sync button is disabled while a background sync holds the lock**, since
+  starting one then could only produce a skip. It stays usable where the lock
+  cannot be observed at all, because nothing is known there and a permanently
+  dead button would be worse.
+- **The quit prompt names its default button.** The default was always set, and
+  Qt agrees it is set, but the active style draws no visible mark, so the button
+  now says so in words rather than fighting the theme.
+
+### Fixed
+
+- **Unsynced changes are counted as net state rather than as writes.** Letting a
+  thread be marked read automatically and then pressing Ctrl+U put it back
+  reported two unsynced changes with the mail store exactly where it started.
+  An edit and its inverse now cancel, per message and per tag, so two different
+  tags on one message still count as two.
+
 ## [0.8.0] - 2026-08-04
 
 Selecting more than one thread stops being a secret, and the window notices

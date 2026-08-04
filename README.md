@@ -113,6 +113,12 @@ identity.
 ; Optional. Open the completion popup as soon as an empty query bar takes
 ; focus, without pressing the shortcut. Defaults to false.
 ; completion_on_focus = false
+; Optional. How long an opened thread stays unread before it is marked read,
+; in milliseconds. Defaults to 2000. Zero marks it read at once; any negative
+; value turns the behaviour off, leaving threads unread until you toggle them
+; with Ctrl+U. Arrowing quickly through a list marks only the thread you stop
+; on, never the ones you pass through.
+; mark_read_delay_ms = 2000
 
 [completion]
 ; Optional. Extra content types offered after mimetype:, APPENDED to the

@@ -91,6 +91,26 @@ void Config::load(const QString &path)
     m_completionOnFocus =
         settings.value(QStringLiteral("completion_on_focus"), false).toBool();
 
+    // Absent is silent, the default being 2000. Present but unparseable warns,
+    // for the same reason message_zoom does: the user asked for something and
+    // is not getting it.
+    //
+    // Zero and negative are NOT errors and must not be clamped. Zero means mark
+    // read at once, and any negative value means never, which is how the
+    // behaviour is turned off.
+    const QVariant markRead = settings.value(QStringLiteral("mark_read_delay_ms"));
+    if (markRead.isValid()) {
+        bool ok = false;
+        const int value = markRead.toString().toInt(&ok);
+        if (ok) {
+            m_markReadDelayMs = value;
+        } else {
+            addProblem(QStringLiteral("Mark-read delay '%1' is not a number; "
+                                      "using the default.")
+                           .arg(markRead.toString()));
+        }
+    }
+
     // [completion] is an ordinary section, so this one DOES take its prefix.
     // ',' separates entries and '|' separates a value from its description:
     // two different characters because QSettings splits comma lists itself,

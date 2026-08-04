@@ -41,6 +41,10 @@ private slots:
     void messageZoomDefaultsAndValidates();
     void completionOnFocusDefaultsToFalse();
     void completionOnFocusIsActuallyRead();
+    void markReadDelayDefaultsToTwoSeconds();
+    void markReadDelayIsActuallyRead();
+    void markReadDelayAcceptsZeroAndNegative();
+    void markReadDelayRejectsGarbage();
     void extraMimetypesAppendToBuiltins();
     void extraMimetypeDescriptionMayContainComma();
     void malformedExtraMimetypeIsSkipped();
@@ -369,6 +373,60 @@ void TestConfig::completionOnFocusIsActuallyRead()
     config.load(writeIni(dir, QStringLiteral("[general]\n"
                                              "completion_on_focus=true\n")));
     QCOMPARE(config.completionOnFocus(), true);
+}
+
+void TestConfig::markReadDelayDefaultsToTwoSeconds()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n")));
+    QCOMPARE(config.markReadDelayMs(), 2000);
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::markReadDelayIsActuallyRead()
+{
+    // Round-trip a value that is not the default, which is what proves the key
+    // is really read: a "general/mark_read_delay_ms" lookup matches nothing and
+    // would still pass a test that only checked the default.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "mark_read_delay_ms=500\n")));
+    QCOMPARE(config.markReadDelayMs(), 500);
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::markReadDelayAcceptsZeroAndNegative()
+{
+    // Both are documented settings, not mistakes: 0 marks read immediately and
+    // a negative value disables the behaviour entirely. Neither may be
+    // clamped away or warned about.
+    QTemporaryDir dir;
+    Config zero;
+    zero.load(writeIni(dir, QStringLiteral("[general]\n"
+                                           "mark_read_delay_ms=0\n")));
+    QCOMPARE(zero.markReadDelayMs(), 0);
+    QVERIFY(zero.problems().isEmpty());
+
+    QTemporaryDir otherDir;
+    Config never;
+    never.load(writeIni(otherDir, QStringLiteral("[general]\n"
+                                                 "mark_read_delay_ms=-1\n")));
+    QCOMPARE(never.markReadDelayMs(), -1);
+    QVERIFY(never.problems().isEmpty());
+}
+
+void TestConfig::markReadDelayRejectsGarbage()
+{
+    // Absent is silent, but present-and-unparseable means the user asked for
+    // something and is not getting it, which warns rather than passing quietly.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "mark_read_delay_ms=soon\n")));
+    QCOMPARE(config.markReadDelayMs(), 2000);
+    QVERIFY(!config.problems().isEmpty());
 }
 
 void TestConfig::extraMimetypesAppendToBuiltins()

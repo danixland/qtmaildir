@@ -42,6 +42,7 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTableView>
+#include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
 
@@ -265,6 +266,14 @@ void MainWindow::buildUi()
     m_queryEdit->installEventFilter(this);
     m_queryCompleter = new QueryCompleter(m_queryEdit, m_config, this);
 
+    m_markReadTimer = new QTimer(this);
+    // Named so a test can observe whether it is armed without the window
+    // having to expose the timer or the decision that armed it.
+    m_markReadTimer->setObjectName(QStringLiteral("markReadTimer"));
+    m_markReadTimer->setSingleShot(true);
+    connect(m_markReadTimer, &QTimer::timeout,
+            this, &MainWindow::markCurrentThreadRead);
+
     m_syncLog = new QPlainTextEdit(central);
     m_syncLog->setReadOnly(true);
     m_syncLog->setMaximumHeight(120);
@@ -445,6 +454,13 @@ void MainWindow::registerActions()
         if (!current.isValid())
             return;
         const ThreadSummary thread = m_model->threadAt(current.row());
+
+        // An explicit toggle overrides the automatic one. Without this, marking
+        // a thread unread by hand would be undone a moment later by a timer
+        // armed when it was opened, and the key would look broken.
+        m_markReadTimer->stop();
+        m_markReadThreadId.clear();
+
         if (thread.isUnread())
             tagSelected({}, { QStringLiteral("unread") }, tr("Mark read"));
         else
@@ -843,6 +859,7 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     const ThreadSummary thread = m_model->threadAt(current.row());
     m_currentThreadId = thread.threadId;
     m_messageView->setTags(thread.tags);
+    scheduleMarkRead(thread);
     QMetaObject::invokeMethod(m_worker, "loadThread", Qt::QueuedConnection,
                               Q_ARG(QString, m_currentThreadId),
                               Q_ARG(QString, m_lastQuery),
@@ -930,6 +947,74 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         m_statusLabel->setText(tr("Sync failed (exit %1)").arg(exitCode));
         m_syncLog->show();
     }
+}
+
+void MainWindow::scheduleMarkRead(const ThreadSummary &thread)
+{
+    // Any pending timer belongs to a thread that is no longer on screen.
+    // Stopping unconditionally is what makes this a restart rather than a
+    // stack: arrowing down ten threads must mark only the one still selected
+    // when the timer finally fires.
+    m_markReadTimer->stop();
+    m_markReadThreadId.clear();
+
+    // Negative disables the behaviour entirely, per the config key.
+    const int delay = m_config.markReadDelayMs();
+    if (delay < 0)
+        return;
+
+    // Nothing to do for a thread that is already read. Checked here rather
+    // than in the handler so no timer is even armed, which keeps a read thread
+    // from arming one that would fire into a no-op write.
+    if (!thread.tags.contains(QStringLiteral("unread")))
+        return;
+
+    m_markReadThreadId = thread.threadId;
+
+    // Zero means immediately, and a zero-interval timer still fires through
+    // the event loop rather than reentering the selection handler.
+    m_markReadTimer->start(delay);
+}
+
+void MainWindow::markCurrentThreadRead()
+{
+    if (m_markReadThreadId.isEmpty())
+        return;
+
+    // The selection can have moved on between the timer being armed and it
+    // firing, and the thread can have been marked read by hand in that window.
+    // Both mean this timer has nothing left to do.
+    if (m_markReadThreadId != m_currentThreadId) {
+        m_markReadThreadId.clear();
+        return;
+    }
+
+    const QModelIndex current = m_threadView->currentIndex();
+    if (!current.isValid()) {
+        m_markReadThreadId.clear();
+        return;
+    }
+
+    const ThreadSummary thread = m_model->threadAt(current.row());
+    if (thread.threadId != m_markReadThreadId
+        || !thread.tags.contains(QStringLiteral("unread"))) {
+        m_markReadThreadId.clear();
+        return;
+    }
+
+    const QStringList threadIds = { m_markReadThreadId };
+    m_markReadThreadId.clear();
+
+    // sendThreadTagChange, NOT tagSelected: this deliberately does not go on
+    // the undo stack. The user never took this action, so hijacking Ctrl+Z to
+    // reverse it would undo something they did not do, and toggle_unread
+    // already gives them a direct way to put it back. Decided 2026-08-03.
+    //
+    // It still funnels through the one applyTags path, per CLAUDE.md; what
+    // differs is only whether the inverse is pushed, which is a window-level
+    // decision above the worker.
+    sendThreadTagChange(threadIds, {}, { QStringLiteral("unread") },
+                        tr("Mark read"));
 }
 
 void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,

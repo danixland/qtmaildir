@@ -102,6 +102,13 @@ public:
     /// once it is known. The manual trigger works regardless.
     bool completionOnFocus() const { return m_completionOnFocus; }
 
+    /// How long an opened thread stays unread before it is marked read.
+    ///
+    /// Three meanings, all deliberate: a positive value is the delay in
+    /// milliseconds, 0 marks read immediately, and any negative value disables
+    /// the behaviour so a thread stays unread until toggled by hand.
+    int markReadDelayMs() const { return m_markReadDelayMs; }
+
     /// User-supplied mimetype completions, APPENDED to the built-in list.
     /// Appending rather than replacing means a typo cannot leave completion
     /// worse off than the defaults. Mimetypes are the only completion list a
@@ -135,6 +142,7 @@ private:
     QString m_notmuchConfig;
     qreal m_messageZoom = 1.0;
     bool m_completionOnFocus = false;
+    int m_markReadDelayMs = 2000;
     QList<CompletionEntry> m_extraMimetypes;
     QString m_startupQuery = QStringLiteral("Unread");
 

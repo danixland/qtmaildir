@@ -29,6 +29,7 @@
 #include <QTemporaryDir>
 
 #include <QTableView>
+#include <QTimer>
 
 #include "config.h"
 #include "keymap.h"
@@ -55,6 +56,9 @@ private slots:
     void missingUiStateLeavesTheDefaults();
     void headerStateFromADifferentColumnLayoutIsDiscarded();
     void returnInTheQueryBarRunsTheQueryNotOpenThread();
+    void markReadTimerRestartsRatherThanStacking();
+    void markReadTimerIsNotArmedForAReadThread();
+    void markReadCanBeDisabled();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -309,6 +313,119 @@ void TestMainWindow::returnInTheQueryBarRunsTheQueryNotOpenThread()
              "the query bar let Return through to the open_thread shortcut");
 
     QVERIFY(!actionFired);
+}
+
+/// A thread summary carrying the tags a test needs. Enough to drive selection;
+/// nothing here touches a database.
+static ThreadSummary makeThread(const QString &id, const QStringList &tags)
+{
+    ThreadSummary thread;
+    thread.threadId = id;
+    thread.subject = QStringLiteral("Subject ") + id;
+    thread.authors = QStringLiteral("Someone <someone@example.org>");
+    thread.tags = tags;
+    return thread;
+}
+
+void TestMainWindow::markReadTimerRestartsRatherThanStacking()
+{
+    // The plan's hard requirement: arrowing quickly down a list must not mark
+    // every thread passed through as read, only the one still selected when the
+    // timer fires. A stacked timer per selection would mark all of them.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t2"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t3"),
+                                    { QStringLiteral("unread") }) });
+
+    view->selectRow(0);
+    QVERIFY2(timer->isActive(), "no timer armed for an unread thread");
+
+    // Move on before it can fire. One timer stays armed, not three.
+    view->selectRow(1);
+    QVERIFY(timer->isActive());
+    view->selectRow(2);
+    QVERIFY(timer->isActive());
+
+    // Exactly one timer exists at all, which is what "restarted, not stacked"
+    // means concretely.
+    QCOMPARE(window.findChildren<QTimer *>(QStringLiteral("markReadTimer")).size(),
+             1);
+}
+
+void TestMainWindow::markReadTimerIsNotArmedForAReadThread()
+{
+    // Opening a thread that is already read must not schedule a write that
+    // would change nothing.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("read"),
+                                    { QStringLiteral("inbox") }),
+                         makeThread(QStringLiteral("unread"),
+                                    { QStringLiteral("unread") }) });
+
+    view->selectRow(0);
+    QVERIFY2(!timer->isActive(), "armed a timer for an already-read thread");
+
+    // And the unread one still arms, so this is not "never arms".
+    view->selectRow(1);
+    QVERIFY(timer->isActive());
+
+    // Moving back to a read thread disarms it again, rather than leaving the
+    // previous thread's timer running to fire against the wrong row.
+    view->selectRow(0);
+    QVERIFY(!timer->isActive());
+}
+
+void TestMainWindow::markReadCanBeDisabled()
+{
+    // A negative delay turns the behaviour off entirely. Documented, so it must
+    // work rather than being clamped to "immediately".
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        file.write("[general]\nmark_read_delay_ms=-1\n");
+    }
+
+    Config config;
+    config.load(path);
+    QCOMPARE(config.markReadDelayMs(), -1);
+
+    MainWindow window(config);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }) });
+    view->selectRow(0);
+
+    QVERIFY2(!timer->isActive(),
+             "a negative mark_read_delay_ms must disable the timer");
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

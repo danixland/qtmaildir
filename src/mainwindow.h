@@ -39,6 +39,7 @@ class QPushButton;
 class QComboBox;
 class QPlainTextEdit;
 class QSplitter;
+class QTimer;
 
 class ThreadListModel;
 class MessageView;
@@ -117,6 +118,15 @@ private:
     void tagSelected(const QStringList &add, const QStringList &remove,
                      const QString &description);
 
+    /// Starts, restarts or cancels the mark-read timer for a newly opened
+    /// thread. Cancels outright for a thread that is not unread, so an already
+    /// read thread never schedules a write that would change nothing.
+    void scheduleMarkRead(const ThreadSummary &thread);
+
+    /// Removes `unread` from the thread the timer was armed for, if it is still
+    /// the one on screen.
+    void markCurrentThreadRead();
+
     /// Sends a tag change for a set of threads without touching the undo stack.
     /// Both tagSelected() and ThreadTagCommand route through this.
     void sendThreadTagChange(const QStringList &threadIds,
@@ -167,6 +177,18 @@ private:
     quint64 m_generation = 0;
     QString m_lastQuery;
     QString m_currentThreadId;
+
+    /// Marks the open thread read once it has been on screen long enough.
+    ///
+    /// Single-shot and RESTARTED on every selection change, never stacked:
+    /// arrowing down a list must mark only the thread still selected when it
+    /// fires, not each one passed through.
+    QTimer *m_markReadTimer = nullptr;
+
+    /// The thread m_markReadTimer will mark read. Compared against the current
+    /// selection when it fires, so a timer that outlives its thread does
+    /// nothing rather than marking the wrong one.
+    QString m_markReadThreadId;
 
     /// The optimistic update awaiting confirmation, kept so a worker error can
     /// put the model back. Only the most recent one: mutations are sent from

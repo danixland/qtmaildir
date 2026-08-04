@@ -458,6 +458,11 @@ void MainWindow::registerActions()
               tr("Load remote images for the current thread"), [this]() {
         m_messageView->loadRemoteContent();
     });
+    addAction(QStringLiteral("message_details"), tr("Message &details"),
+              tr("Show the full headers of every message in the thread"),
+              [this]() {
+        m_messageView->showDetailsDialog();
+    });
     addAction(QStringLiteral("zoom_in"), tr("Zoom &in"),
               tr("Enlarge the message text"), [this]() {
         m_messageView->zoomIn();
@@ -539,6 +544,7 @@ void MainWindow::buildMenus()
     viewMenu->addSeparator();
     viewMenu->addAction(m_actions.value(QStringLiteral("toggle_html")));
     viewMenu->addAction(m_actions.value(QStringLiteral("load_remote")));
+    viewMenu->addAction(m_actions.value(QStringLiteral("message_details")));
     viewMenu->addSeparator();
     viewMenu->addAction(m_actions.value(QStringLiteral("zoom_in")));
     viewMenu->addAction(m_actions.value(QStringLiteral("zoom_out")));

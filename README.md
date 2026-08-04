@@ -237,6 +237,18 @@ an attachment, so it is visible without opening the thread. It comes from the
 `attachment` tag notmuch applies while indexing, not from parsing the message,
 and costs no extra query.
 
+## Message details
+
+The strip above the message pane says what it can say without guessing. A
+thread holding **one message** shows its From, To and Cc under the subject.
+A thread holding **several** shows the subject and the message count only:
+From, To and Cc differ from message to message, and once you have replied there
+is no single recipient the thread is addressed to, so naming one would be a
+guess dressed as a fact.
+
+The **Details...** button beside the subject, or `Ctrl+Shift+D`, opens the full
+headers of every message in the thread, numbered, as read-only plain text.
+
 Under the message pane, one **Attachments (N)** button opens a list of the
 thread's attachments: which message each came from, its filename and its size,
 with a **Save** for each. With more than one, **Save all** writes them into a
@@ -272,6 +284,7 @@ Defaults, all rebindable through `[keys]`:
 | `Ctrl+Space` | `complete_query` | Focus the query bar and offer completions |
 | `Ctrl+H` | `toggle_html` | Switch the thread between HTML and plain text |
 | `Ctrl+M` | `load_remote` | Load remote images for the current thread |
+| `Ctrl+Shift+D` | `message_details` | Show the full headers of every message in the thread |
 | `Ctrl+Z` | `undo` | Undo the last tag change |
 | `Ctrl+G` | `sync` | Run the configured sync command |
 | `Ctrl+Q` | `quit` | Quit |

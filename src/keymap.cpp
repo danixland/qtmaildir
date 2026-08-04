@@ -36,6 +36,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("complete_query"),
         QStringLiteral("toggle_html"),
         QStringLiteral("load_remote"),
+        QStringLiteral("message_details"),
         QStringLiteral("zoom_in"),
         QStringLiteral("zoom_out"),
         QStringLiteral("zoom_reset"),
@@ -71,6 +72,10 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Ctrl+Space"),   QStringLiteral("complete_query") },
         { QStringLiteral("Ctrl+H"),       QStringLiteral("toggle_html") },
         { QStringLiteral("Ctrl+M"),       QStringLiteral("load_remote") },
+        // Shifted because Ctrl+D is delete. Both are "D for details/delete"
+        // words, and the destructive one keeps the unshifted key it already
+        // had rather than being moved to make room.
+        { QStringLiteral("Ctrl+Shift+D"), QStringLiteral("message_details") },
         // Ctrl++ is what the '+' key really delivers on a layout where '+' is
         // unshifted, an Italian one among them, confirmed against the actual
         // keyboard. QTest::keyClick() cannot reproduce it, so a synthetic-input

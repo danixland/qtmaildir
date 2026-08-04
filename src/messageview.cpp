@@ -22,6 +22,8 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFontDatabase>
+#include <QPlainTextEdit>
 #include <QDir>
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -124,6 +126,22 @@ MessageView::MessageView(QWidget *parent)
     m_headerLabel->setWordWrap(true);
     m_headerLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
+    // To the right of the header, per the user's decision: the summary answers
+    // "who is this from", this answers "what actually happened to it". A button
+    // and not only a shortcut, since "everything needs a memorized key" is the
+    // complaint this whole backlog started from.
+    m_detailsButton = new QPushButton(tr("Details..."), this);
+    m_detailsButton->setObjectName(QStringLiteral("messageDetails"));
+    m_detailsButton->setToolTip(tr("Show the full headers of every message"));
+    connect(m_detailsButton, &QPushButton::clicked,
+            this, &MessageView::showDetailsDialog);
+    m_detailsButton->hide();
+
+    auto *headerRow = new QHBoxLayout;
+    headerRow->addWidget(m_headerLabel, 1);
+    // Top-aligned so it stays put as the header grows to four rows.
+    headerRow->addWidget(m_detailsButton, 0, Qt::AlignTop);
+
     m_blockedLabel = new QLabel(tr("Remote content blocked"), this);
     m_loadRemoteButton = new QPushButton(tr("Load remote content"), this);
     connect(m_loadRemoteButton, &QPushButton::clicked,
@@ -135,6 +153,7 @@ MessageView::MessageView(QWidget *parent)
     blockedRow->addStretch();
 
     m_attachmentBar = new QWidget(this);
+    m_attachmentBar->setObjectName(QStringLiteral("attachmentBar"));
     new QHBoxLayout(m_attachmentBar);
 
     // Tags live under the message rather than in the thread list, where
@@ -143,7 +162,7 @@ MessageView::MessageView(QWidget *parent)
     m_tagStrip->hide();
 
     auto *layout = new QVBoxLayout(this);
-    layout->addWidget(m_headerLabel);
+    layout->addLayout(headerRow);
     layout->addLayout(blockedRow);
     layout->addWidget(m_view, 1);
     layout->addWidget(m_attachmentBar);
@@ -260,17 +279,103 @@ void MessageView::updateHeader()
 {
     if (m_items.isEmpty()) {
         m_headerLabel->clear();
+        m_detailsButton->hide();
         return;
     }
+
+    m_detailsButton->show();
 
     // The thread's subject comes from its first message; later replies carry
     // Re: prefixes that add nothing.
     const QString subject = m_items.first().message.subject;
 
-    m_headerLabel->setText(
-        QStringLiteral("<b>%1</b><br><small>%2</small>")
-            .arg(subject.toHtmlEscaped(),
-                 tr("%n message(s) in thread", "", m_items.size())));
+    QString text = QStringLiteral("<b>%1</b>").arg(subject.toHtmlEscaped());
+
+    // The header adapts to what it can say honestly. From, To and Cc are
+    // per-message, and the pane shows a whole thread, so they are only
+    // unambiguous when the thread holds exactly one message. For a real thread
+    // the recipient differs message to message (once the user replies, one is
+    // addressed to them and the next to the other party), and neither the union
+    // nor the intersection is "the" recipient. Rather than pick one or compute
+    // a participants list, the thread case says only the subject and the count,
+    // and the per-message detail belongs to the dialog.
+    if (m_items.size() == 1) {
+        const ParsedMessage &message = m_items.first().message;
+
+        // Every value here is attacker-controlled and the label is RichText, so
+        // escaping is not cosmetic: an unescaped From injects markup into the
+        // application's own chrome rather than into the sandboxed page.
+        auto row = [&text](const QString &label, const QString &value) {
+            if (value.isEmpty())
+                return;   // An empty row reads as a rendering fault.
+            text += QStringLiteral("<br><small>%1 %2</small>")
+                        .arg(label.toHtmlEscaped(), value.toHtmlEscaped());
+        };
+
+        row(tr("From:"), message.from);
+        row(tr("To:"), message.to);
+        row(tr("Cc:"), message.cc);
+    } else {
+        text += QStringLiteral("<br><small>%1</small>")
+                    .arg(tr("%n message(s) in thread", "", m_items.size()));
+    }
+
+    m_headerLabel->setText(text);
+}
+
+void MessageView::showDetailsDialog()
+{
+    if (m_items.isEmpty())
+        return;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Message details"));
+
+    auto *layout = new QVBoxLayout(&dialog);
+
+    auto *details = new QPlainTextEdit(&dialog);
+    details->setReadOnly(true);
+    // A monospaced font keeps a long Received chain readable as the wrapped
+    // record it is.
+    details->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    details->setLineWrapMode(QPlainTextEdit::NoWrap);
+
+    // setPlainText, and a QPlainTextEdit rather than a label: this dialog shows
+    // header values verbatim, and those come from strangers. Plain text cannot
+    // interpret markup, so there is nothing here to escape and nothing that
+    // could render.
+    QString text;
+    for (int i = 0; i < m_items.size(); ++i) {
+        const ParsedMessage &message = m_items.at(i).message;
+
+        if (i > 0)
+            text += QLatin1Char('\n');
+        if (m_items.size() > 1)
+            text += tr("--- Message %1 of %2 ---")
+                        .arg(i + 1).arg(m_items.size()) + QLatin1Char('\n');
+
+        auto line = [&text](const QString &label, const QString &value) {
+            if (!value.isEmpty())
+                text += label + QLatin1Char(' ') + value + QLatin1Char('\n');
+        };
+
+        line(tr("Subject:"), message.subject);
+        line(tr("From:"), message.from);
+        line(tr("To:"), message.to);
+        line(tr("Cc:"), message.cc);
+        line(tr("Date:"), message.date);
+        line(tr("Message-Id:"), message.messageId);
+    }
+    details->setPlainText(text);
+
+    layout->addWidget(details);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    dialog.resize(700, 400);
+    dialog.exec();
 }
 
 void MessageView::render()

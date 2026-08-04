@@ -65,6 +65,15 @@ public:
     /// Tags of the thread on display, shown as chips along the bottom.
     void setTags(const QStringList &tags);
 
+    /// The full headers of every message in the thread, read-only. Also
+    /// reachable from the button beside the header; public so the window's
+    /// message_details action can call it.
+    ///
+    /// Plain text, not rich: header values are attacker-controlled and this
+    /// dialog exists to show them verbatim, so the format that cannot
+    /// interpret markup is the right one.
+    void showDetailsDialog();
+
     /// The body zoom factor. Chromium's own range is roughly 0.25 to 5.0;
     /// these are tighter, since a pane at either extreme is unusable and the
     /// only visible way back is a menu entry the user cannot read.
@@ -126,6 +135,7 @@ private:
     /// Every attachment in the thread, in the order the messages render.
     QList<Attachment> allAttachments() const;
 
+
     QList<ThreadRenderItem> m_items;
     bool m_preferHtml = true;
 
@@ -137,6 +147,7 @@ private:
     QLabel *m_headerLabel = nullptr;
     QLabel *m_blockedLabel = nullptr;
     QPushButton *m_loadRemoteButton = nullptr;
+    QPushButton *m_detailsButton = nullptr;
     QWidget *m_attachmentBar = nullptr;
     TagStrip *m_tagStrip = nullptr;
 };

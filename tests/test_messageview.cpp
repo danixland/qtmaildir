@@ -16,6 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <QLabel>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QWebEngineUrlScheme>
@@ -41,6 +42,11 @@ private slots:
     void zoomSurvivesANewDocument();
     void attachmentBarOffersEveryAttachment();
     void attachmentBarClearsBetweenThreads();
+    void singleMessageHeaderShowsFromToAndCc();
+    void threadHeaderShowsOnlySubjectAndCount();
+    void headerEscapesUntrustedValues();
+    void headerOmitsAnAbsentCc();
+    void detailsDialogIsOfferedForEveryThread();
 
 private:
     QWebEngineView *webViewOf(MessageView *view) const
@@ -233,16 +239,20 @@ void TestMessageView::zoomSurvivesANewDocument()
     QCOMPARE(view.zoomFactor(), 1.5);
 }
 
-/// The buttons in the attachment bar, by their label. Excludes the
-/// "Load remote content" button, which lives in the same pane but is not part
-/// of the bar.
+/// The buttons in the attachment bar, by their label.
+///
+/// Identified by the bar being their parent, not by excluding the labels of
+/// the other buttons in the pane: an exclusion list silently adopts every
+/// button added later, and it did, counting the details button as an
+/// attachment the moment one was added beside the header.
 static QStringList attachmentButtonLabels(MessageView *view)
 {
     QStringList labels;
-    for (QPushButton *button : view->findChildren<QPushButton *>()) {
-        if (button->text() != QStringLiteral("Load remote content"))
-            labels.append(button->text());
-    }
+    QWidget *bar = view->findChild<QWidget *>(QStringLiteral("attachmentBar"));
+    if (!bar)
+        return labels;
+    for (QPushButton *button : bar->findChildren<QPushButton *>())
+        labels.append(button->text());
     return labels;
 }
 
@@ -338,6 +348,148 @@ void TestMessageView::attachmentBarClearsBetweenThreads()
 
     view.clear();
     QVERIFY(attachmentButtonLabels(&view).isEmpty());
+}
+
+/// The header strip's text. It is rich text, so the assertions below are
+/// against markup as well as content.
+static QString headerTextOf(MessageView *view)
+{
+    for (QLabel *label : view->findChildren<QLabel *>()) {
+        if (label->textFormat() == Qt::RichText)
+            return label->text();
+    }
+    return QString();
+}
+
+/// One message, from the same shape the other tests build.
+static ThreadRenderItem oneMessage()
+{
+    ParsedMessage message;
+    message.ok = true;
+    message.from = QStringLiteral("Sender <sender@example.org>");
+    message.to = QStringLiteral("Recipient <recipient@example.org>");
+    message.cc = QStringLiteral("Copied <copied@example.org>");
+    message.subject = QStringLiteral("Quarterly report");
+    message.date = QStringLiteral("Mon, 4 Aug 2026 09:00:00 +0200");
+    message.plainBody = QStringLiteral("body");
+
+    ThreadRenderItem item;
+    item.message = message;
+    item.cidPrefix = QStringLiteral("m0");
+    item.expanded = true;
+    return item;
+}
+
+void TestMessageView::singleMessageHeaderShowsFromToAndCc()
+{
+    // MimeParser filled To and Cc all along; HtmlBuilder simply never
+    // interpolated them, so they were parsed and dropped. With one message in
+    // the thread every field is unambiguous, which is why this is the case that
+    // shows them.
+    MessageView view;
+    view.showThread({ oneMessage() });
+
+    const QString header = headerTextOf(&view);
+    QVERIFY2(header.contains(QStringLiteral("sender@example.org")),
+             qPrintable(QStringLiteral("no From in '%1'").arg(header)));
+    QVERIFY2(header.contains(QStringLiteral("recipient@example.org")),
+             qPrintable(QStringLiteral("no To in '%1'").arg(header)));
+    QVERIFY2(header.contains(QStringLiteral("copied@example.org")),
+             qPrintable(QStringLiteral("no Cc in '%1'").arg(header)));
+    QVERIFY(header.contains(QStringLiteral("Quarterly report")));
+}
+
+void TestMessageView::threadHeaderShowsOnlySubjectAndCount()
+{
+    // A thread's To differs per message: once the user replies, one message is
+    // addressed to them and the next to the other party. Rather than pick a
+    // message arbitrarily or compute a participants list, the thread header
+    // says only what it can say honestly. Per-message detail is the dialog's
+    // job. This test is what stops a recipient line reappearing here.
+    ThreadRenderItem first = oneMessage();
+
+    ThreadRenderItem second = oneMessage();
+    second.message.from = QStringLiteral("Recipient <recipient@example.org>");
+    second.message.to = QStringLiteral("Sender <sender@example.org>");
+    second.message.cc = QString();
+    second.cidPrefix = QStringLiteral("m1");
+
+    MessageView view;
+    view.showThread({ first, second });
+
+    const QString header = headerTextOf(&view);
+    QVERIFY(header.contains(QStringLiteral("Quarterly report")));
+    QVERIFY2(!header.contains(QStringLiteral("recipient@example.org")),
+             qPrintable(QStringLiteral("a recipient leaked into '%1'")
+                            .arg(header)));
+    QVERIFY2(!header.contains(QStringLiteral("copied@example.org")),
+             qPrintable(QStringLiteral("a Cc leaked into '%1'").arg(header)));
+}
+
+void TestMessageView::headerEscapesUntrustedValues()
+{
+    // Every one of these values comes from a stranger, and the label is
+    // Qt::RichText, so an unescaped From is markup injection into the chrome of
+    // the application rather than into the sandboxed page.
+    ThreadRenderItem item = oneMessage();
+    item.message.from =
+        QStringLiteral("<b>bold</b> <script>x</script> <evil@example.org>");
+    item.message.to = QStringLiteral("<i>italic</i> <to@example.org>");
+    item.message.cc = QStringLiteral("<u>under</u> <cc@example.org>");
+    item.message.subject = QStringLiteral("<h1>huge</h1>");
+
+    MessageView view;
+    view.showThread({ item });
+
+    const QString header = headerTextOf(&view);
+    QVERIFY2(!header.contains(QStringLiteral("<b>bold</b>")),
+             qPrintable(QStringLiteral("unescaped From in '%1'").arg(header)));
+    QVERIFY(!header.contains(QStringLiteral("<script>")));
+    QVERIFY(!header.contains(QStringLiteral("<i>italic</i>")));
+    QVERIFY(!header.contains(QStringLiteral("<u>under</u>")));
+    QVERIFY(!header.contains(QStringLiteral("<h1>huge</h1>")));
+
+    // Escaped, not merely stripped: the text must still be readable.
+    QVERIFY(header.contains(QStringLiteral("&lt;b&gt;bold&lt;/b&gt;")));
+}
+
+void TestMessageView::headerOmitsAnAbsentCc()
+{
+    // Most mail carries no Cc. An empty label with nothing after it reads as a
+    // rendering fault, so the row is omitted rather than left blank.
+    ThreadRenderItem item = oneMessage();
+    item.message.cc = QString();
+
+    MessageView view;
+    view.showThread({ item });
+
+    const QString header = headerTextOf(&view);
+    QVERIFY(header.contains(QStringLiteral("recipient@example.org")));
+    QVERIFY2(!header.contains(QStringLiteral("Cc")),
+             qPrintable(QStringLiteral("empty Cc row left in '%1'")
+                            .arg(header)));
+}
+
+void TestMessageView::detailsDialogIsOfferedForEveryThread()
+{
+    // The button is the discoverable half of the feature: the shortcut alone
+    // repeats the complaint that started this backlog. It must be present for a
+    // thread as well as a single message, since a thread is exactly the case
+    // where the header withholds the most.
+    MessageView view;
+    view.showThread({ oneMessage() });
+    QVERIFY(view.findChild<QPushButton *>(QStringLiteral("messageDetails")));
+
+    ThreadRenderItem second = oneMessage();
+    second.cidPrefix = QStringLiteral("m1");
+    view.showThread({ oneMessage(), second });
+    QVERIFY(view.findChild<QPushButton *>(QStringLiteral("messageDetails")));
+
+    // And it goes away when there is nothing to describe.
+    view.clear();
+    QPushButton *button =
+        view.findChild<QPushButton *>(QStringLiteral("messageDetails"));
+    QVERIFY(!button || !button->isVisible());
 }
 
 QTEST_MAIN(TestMessageView)

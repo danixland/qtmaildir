@@ -23,6 +23,10 @@
 # systemd timer, which wants a log file it can read afterwards, and
 # qtmaildir, which runs this as a subprocess and shows what it prints.
 # Output therefore goes to BOTH, and the exit status is real.
+#
+# The script owns the log, so the caller must NOT redirect into it as well. A
+# crontab line ending "> mailsync.log 2>&1" writes every line a second time,
+# because tee has already put it there. Just call the script.
 
 # Defensive: don't rely on cron/systemd/whatever invokes this to have
 # set these correctly. Explicit beats inferred, especially after the
@@ -33,9 +37,14 @@ export GNUPGHOME="${GNUPGHOME:-$HOME/.gnupg}"
 
 LOCKFILE="/tmp/mbsync.lock"
 LOGFILE="$HOME/.local/state/mailsync.log"
-MAX_LOG_BYTES=$((10 * 1024 * 1024))  # rotate past 10MB, see note below
 
 mkdir -p "$(dirname "$LOGFILE")"
+
+# Rotation is NOT this script's job: /etc/logrotate.d/mailsync owns this file,
+# keeping seven compressed days. An earlier version also rotated by size here,
+# and the two fought: the script's "mv $LOGFILE $LOGFILE.1" overwrote whatever
+# logrotate had just put at .1, losing a day of history and leaving an
+# uncompressed file where a compressed one belonged.
 
 exec 200>"$LOCKFILE"
 if ! flock -n 200; then
@@ -45,12 +54,6 @@ if ! flock -n 200; then
     echo "$msg" >> "$LOGFILE"
     echo "$msg" >&2
     exit 1
-fi
-
-# Simple rotation: if the log's gotten big, keep the last run's worth
-# and move the rest aside rather than letting it grow forever.
-if [ -f "$LOGFILE" ] && [ "$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)" -gt "$MAX_LOG_BYTES" ]; then
-    mv "$LOGFILE" "${LOGFILE}.1"
 fi
 
 # Statuses are written to files rather than shell variables because the

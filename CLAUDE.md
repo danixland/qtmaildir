@@ -119,6 +119,27 @@ letting QCompleter overwrite the field. This has been hit twice, in
 either class. A test that uses `setText()` passes against the bug, since
 `setText` does not drive a completer at all: the keys must be typed.
 
+**`QItemSelectionModel::currentRowChanged` is emitted BEFORE the selection model is
+updated.** A handler on it reading `selectedRows()` sees the *previous* selection, not the
+one the user just made. Verified against Qt 6.11. This produced two separate faults in one
+change (987a9e7): a Ctrl+click taking a selection from one row to two arrived reporting
+one, and a click collapsing three rows to one arrived reporting three. Any decision that
+depends on how many rows are selected belongs in a `selectionChanged` handler, which does
+see the true count; `currentRowChanged` is only safe for "which row is current".
+
+The related trap: **`selectAll()` emits no `currentRowChanged` at all** and leaves the
+current index invalid when nothing was current. A test that calls `selectAll()` on a fresh
+view therefore passes against a missing selection guard, because no signal ever fires. Test
+multi-select from a row that is already current, which is also how a user reaches it.
+
+**A queued load can outlive the state that started it.** `loadThread` crosses to the worker
+on a queued connection, so its reply lands after whatever the UI did in the meantime. The
+generation counter covers a superseded *query*, not a superseded *selection*: blanking the
+pane and then receiving an in-flight thread repaints it. `onThreadLoaded` therefore drops a
+reply that arrives while more than one row is selected. This class of bug cannot be
+reproduced in `test_mainwindow`, which has no worker and never fires `threadLoaded`; it
+needs the notmuch fixture or a hand test.
+
 **Do not conclude a key binding is dead from `QTest::keyClick()`.** Whether a symbol needs
 Shift is a layout property, not a Qt one. `Ctrl++` is the shipped `zoom_in` default and is
 exactly what the `+` key emits on an Italian layout, while synthetic input never delivers

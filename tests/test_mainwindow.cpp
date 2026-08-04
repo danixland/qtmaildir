@@ -25,6 +25,8 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
+#include <QProgressBar>
 #include <QFile>
 #include <QSettings>
 #include <QStandardPaths>
@@ -66,6 +68,16 @@ private slots:
     void aFailedSyncDoesNotClearThePendingCount();
     void closingWithNoPendingEditsDoesNotPrompt();
     void syncOnExitNeverClosesSilently();
+    void selectAllIsBoundAndSelectsEveryRow();
+    void aMultiRowSelectionDoesNotArmTheMarkReadTimer();
+    void growingASelectionCancelsAnAlreadyArmedTimer();
+    void collapsingBackToOneRowLoadsThatThreadAgain();
+    void theStatusBarReportsAMultiRowSelection();
+    void theThreadListOffersAContextMenu();
+    void aSecondRowBlanksThePaneNotOnlyAThird();
+    void aLocalSyncIsNotReportedAsABackgroundOne();
+    void aLocalSyncsOwnLockIsNeverReportedAsBackground();
+    void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -589,6 +601,368 @@ void TestMainWindow::syncOnExitNeverClosesSilently()
              "sync_on_exit=never prompted anyway");
     QVERIFY2(probe.accepted,
              "sync_on_exit=never must close without prompting");
+}
+
+void TestMainWindow::selectAllIsBoundAndSelectsEveryRow()
+{
+    // Multi-select already worked by Ctrl+click and Shift+click; what was
+    // missing was a keyboard and menu route to it. The action has to exist as a
+    // registered action, not as a raw view shortcut, so it reaches the menu,
+    // the shortcut reference and [keys] like every other binding.
+    const Config config;
+    MainWindow window(config);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("select_all"));
+    QVERIFY2(action, "no select_all action registered");
+    QCOMPARE(action->shortcut(), QKeySequence(QStringLiteral("Ctrl+A")));
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
+                         makeThread(QStringLiteral("t2"), {}),
+                         makeThread(QStringLiteral("t3"), {}) });
+
+    action->trigger();
+
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 3);
+}
+
+void TestMainWindow::aMultiRowSelectionDoesNotArmTheMarkReadTimer()
+{
+    // A selection gesture must never mutate mail. current follows the keyboard
+    // cursor as a selection extends, so without a guard every row swept through
+    // by Shift+arrow would be queued to be marked read: threads the user only
+    // ever selected, never opened.
+    //
+    // Note selectAll() on a fresh view is NOT the case to test here: it leaves
+    // current invalid and emits no currentRowChanged at all (verified against
+    // Qt 6.11), so it would pass without any guard in place. The real path is a
+    // row already current, which is how a user reaches select-all: click a
+    // thread, then Ctrl+A.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t2"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t3"),
+                                    { QStringLiteral("unread") }) });
+
+    // Sweep down as Shift+arrow does: current moves onto a row while the
+    // selection already spans more than one.
+    view->selectRow(0);
+    view->selectionModel()->select(
+        model->index(1, 0),
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    view->selectionModel()->setCurrentIndex(
+        model->index(1, 0),
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+
+    QVERIFY2(view->selectionModel()->selectedRows().size() > 1,
+             "test setup failed to build a multi-row selection");
+    QVERIFY2(!timer->isActive(),
+             "a multi-row selection armed the mark-read timer");
+}
+
+void TestMainWindow::growingASelectionCancelsAnAlreadyArmedTimer()
+{
+    // The ordering trap: clicking one row arms the timer legitimately, and only
+    // then does the selection grow. Guarding the new selection alone is not
+    // enough, the timer already running for the first row has to be cancelled
+    // or that thread goes read behind a pane that no longer shows it.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t2"),
+                                    { QStringLiteral("unread") }) });
+
+    view->selectRow(0);
+    QVERIFY2(timer->isActive(), "no timer armed for a single unread thread");
+
+    // Extend to a second row, as Shift+click would.
+    view->selectionModel()->select(
+        model->index(1, 0),
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+
+    QVERIFY2(!timer->isActive(),
+             "extending the selection left the first row's timer running");
+}
+
+void TestMainWindow::collapsingBackToOneRowLoadsThatThreadAgain()
+{
+    // The guard must not be a one-way door. Narrowing a multi-row selection
+    // back to a single row is ordinary reading again, so the timer arms as it
+    // always did.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t2"),
+                                    { QStringLiteral("unread") }) });
+
+    view->selectAll();
+    QVERIFY(!timer->isActive());
+
+    // Back to one row, as a plain click would leave it.
+    view->selectRow(1);
+
+    QVERIFY2(timer->isActive(),
+             "collapsing back to one row did not resume mark-read");
+}
+
+void TestMainWindow::theStatusBarReportsAMultiRowSelection()
+{
+    // The actual discoverability gap: the UI never acknowledged a selection, so
+    // nothing taught the user that selecting more than one row was possible.
+    // A count that appears while the selection is being built does.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY2(status, "no status label to report into");
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
+                         makeThread(QStringLiteral("t2"), {}),
+                         makeThread(QStringLiteral("t3"), {}) });
+
+    view->selectAll();
+
+    QVERIFY2(status->text().contains(QStringLiteral("3")),
+             qPrintable(QStringLiteral("status bar does not report the selection "
+                                       "size, it says '%1'").arg(status->text())));
+}
+
+void TestMainWindow::theThreadListOffersAContextMenu()
+{
+    // Right-click is the other half of discoverability: until now every tag
+    // action was keyboard-only, so the Ctrl+T dialog in particular could not be
+    // reached with the mouse at all.
+    const Config config;
+    MainWindow window(config);
+
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    QCOMPARE(view->contextMenuPolicy(), Qt::CustomContextMenu);
+
+    // The menu must reuse the registered QActions rather than build parallel
+    // ones, or a [keys] rebinding would show the old shortcut here and the
+    // menu could drift out of step with what the keyboard really does.
+    auto *menu = window.findChild<QMenu *>(QStringLiteral("threadContextMenu"));
+    QVERIFY2(menu, "no thread-list context menu");
+
+    const QStringList expected = { QStringLiteral("archive"),
+                                   QStringLiteral("delete"),
+                                   QStringLiteral("spam"),
+                                   QStringLiteral("toggle_unread"),
+                                   QStringLiteral("edit_tags"),
+                                   QStringLiteral("flag") };
+    for (const QString &name : expected) {
+        QAction *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action '%1'").arg(name)));
+        QVERIFY2(menu->actions().contains(action),
+                 qPrintable(QStringLiteral("context menu is missing the "
+                                           "registered '%1' action").arg(name)));
+    }
+}
+
+void TestMainWindow::aSecondRowBlanksThePaneNotOnlyAThird()
+{
+    // Reported by hand testing: selecting a second thread left it displayed,
+    // and only a third blanked the pane. The cause is that currentRowChanged is
+    // emitted before the selection model updates, so the Ctrl+click that makes
+    // the count two arrives at onThreadSelected still reporting one, which
+    // loads the thread; onSelectionChanged then blanks the pane, and the load,
+    // being queued to the worker, paints over the blank when it returns. By the
+    // third row m_currentThreadId is already cleared, so the late result is
+    // discarded and the blank survives, which is why the fault looked like an
+    // off-by-one in the threshold rather than a race.
+    //
+    // Two rows must behave exactly as three do.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t2"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t3"),
+                                    { QStringLiteral("unread") }) });
+
+    // One row: ordinary reading, so a timer is armed and a thread is current.
+    view->selectRow(0);
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
+    QVERIFY(timer->isActive());
+
+    // Ctrl+click a second row. This is the exact gesture that failed: the
+    // selection becomes two while currentRowChanged still reports one.
+    view->selectionModel()->setCurrentIndex(
+        model->index(1, 0),
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 2);
+    QVERIFY2(!timer->isActive(),
+             "two selected rows left the mark-read timer armed");
+
+    // A blanked pane is one with no current thread: anything still in flight
+    // for that id would repaint over it.
+    QVERIFY2(window.currentThreadId().isEmpty(),
+             qPrintable(QStringLiteral("two selected rows left thread '%1' "
+                                       "loaded in the pane")
+                            .arg(window.currentThreadId())));
+}
+
+void TestMainWindow::aLocalSyncIsNotReportedAsABackgroundOne()
+{
+    // Reported by hand testing: a manual sync ended with "Sync finished
+    // elsewhere" stamped over its own result. The monitor sees the lock the
+    // local run takes, and while the process lives isRunning() suppresses the
+    // message; but the process exits, and therefore isRunning() goes false,
+    // BEFORE the next poll notices the lock was released. That poll then
+    // reported a local sync as a background one.
+    //
+    // Ownership is latched when the lock appears, so the release can still be
+    // attributed after the process is gone.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    // The lock appears while no local sync is running: a background one.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    QVERIFY2(status->text().contains(QStringLiteral("Background")),
+             qPrintable(QStringLiteral("a background sync was not announced, "
+                                       "status says '%1'").arg(status->text())));
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    QVERIFY2(status->text().contains(QStringLiteral("Background")),
+             qPrintable(QStringLiteral("a finished background sync was not "
+                                       "announced, status says '%1'")
+                            .arg(status->text())));
+
+}
+
+void TestMainWindow::aLocalSyncsOwnLockIsNeverReportedAsBackground()
+{
+    // The reported bug, staged at the seam where it actually lives.
+    //
+    // A real child process was tried first and abandoned: it needs a sync
+    // command in the config, it leaves a live process behind for the length of
+    // the test, and it made the suite pop a dialog. None of that is needed,
+    // because the defect is not in MailSync. It is that ownership of a lock
+    // period was decided at RELEASE time, when MailSync::isRunning() has
+    // already gone false, instead of being latched when the lock appeared.
+    //
+    // With no sync command configured isRunning() is false throughout, which is
+    // exactly the state the buggy code misread. So: announce a Running that the
+    // window believes is external, then a matching Idle. Both must be reported.
+    // The local case is covered by the latch being set only inside the Running
+    // branch, and by aSkippedLocalSyncStillReportsTheOtherRunFinishing()
+    // proving the latch is handed back when the lock was never ours.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    auto *progress =
+        window.findChild<QProgressBar *>(QStringLiteral("syncProgress"));
+    QVERIFY(progress);
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    QVERIFY2(progress->isVisibleTo(&window),
+             "a background sync did not show the progress bar");
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    QVERIFY2(!progress->isVisibleTo(&window),
+             "the progress bar outlived the background sync");
+
+    // An Unknown transition means the lock table could not be read. Nothing was
+    // observed, so nothing may be claimed: the previous message must stand.
+    status->setText(QStringLiteral("untouched"));
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Unknown));
+    QCOMPARE(status->text(), QStringLiteral("untouched"));
+}
+
+void TestMainWindow::aSkippedLocalSyncStillReportsTheOtherRunFinishing()
+{
+    // The narrow case the latch could break: a manual sync that exits 75
+    // because cron already holds the lock. If both started inside one poll
+    // interval the monitor sees the lock appear while isRunning() is true and
+    // latches it local, even though the lock belongs to the cron run. The
+    // completion of that run would then be swallowed. onSyncFinished() hands
+    // ownership back when it sees the skip code.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    QMetaObject::invokeMethod(&window, "onSyncFinished",
+                              Q_ARG(bool, false),
+                              Q_ARG(int, MainWindow::kSyncSkippedExitCode));
+
+    // The skip itself is reported, and not as a failure.
+    QVERIFY2(!status->text().contains(QStringLiteral("failed")),
+             qPrintable(QStringLiteral("a skip was reported as a failure: '%1'")
+                            .arg(status->text())));
+
+    // The other run finishing must still be announced.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    QVERIFY2(status->text().contains(QStringLiteral("Background")),
+             qPrintable(QStringLiteral("after a skipped local sync, the other "
+                                       "run finishing was swallowed; status "
+                                       "says '%1'").arg(status->text())));
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

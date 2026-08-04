@@ -28,11 +28,13 @@
 
 #include "config.h"
 #include "keymap.h"
+#include "syncmonitor.h"
 #include "tagcolors.h"
 #include "types.h"
 
 class QAction;
 class QLineEdit;
+class QMenu;
 class QTableView;
 class QLabel;
 class QPushButton;
@@ -59,6 +61,12 @@ public:
     /// themselves rather than hand-maintained, so it cannot drift from what is
     /// really registered.
     QStringList registeredActionNames() const;
+
+    /// The thread currently shown in the message pane, empty when it is blank.
+    ///
+    /// Empty is what "the pane is blanked" means internally: a late-arriving
+    /// load is discarded rather than painted, so no thread can reappear.
+    QString currentThreadId() const { return m_currentThreadId; }
 
     /// The cid: namespace prefix for the nth message of a thread.
     ///
@@ -95,9 +103,23 @@ private slots:
     void onThreadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void onQueryFinished(int total, quint64 generation);
     void onThreadSelected(const QModelIndex &current, const QModelIndex &previous);
+
+    /// Keeps the status bar's selection count and the multi-select guard in
+    /// step with selections that never move the current index.
+    void onSelectionChanged();
+
+    /// Pops up the thread-list context menu, preserving a multi-row selection
+    /// the click lands inside.
+    void showThreadContextMenu(const QPoint &pos);
     void onThreadLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
+
+    /// Reacts to a sync started outside this window, by cron or by hand.
+    ///
+    /// A private slot rather than a plain method so tests can drive it through
+    /// the meta-object without widening the public API.
+    void onExternalSyncStateChanged(SyncMonitor::State state);
 
     /// A tag mutation the worker has confirmed reached the database. Counts it
     /// as unsynced, since reaching the index is not reaching the mail store.
@@ -153,6 +175,7 @@ private:
     /// says "working, duration unknown", which is the truth.
     void setSyncBusy(bool busy);
 
+
     /// Opens the tag dialog on the current selection and applies its result.
     ///
     /// The only route to an arbitrary tag: every other tag action writes a
@@ -191,11 +214,24 @@ private:
     ThreadListModel *m_model = nullptr;
     MessageView *m_messageView = nullptr;
     MailSync *m_sync = nullptr;
+
+    /// Watches the sync lock for runs this window did not start.
+    SyncMonitor *m_syncMonitor = nullptr;
+
+    /// True while the lock the monitor can see is held by this window's own
+    /// sync. Latched when the lock is taken, because by the time it is released
+    /// MailSync::isRunning() is already false and can no longer answer "was
+    /// that ours?".
+    bool m_localSyncHoldsLock = false;
     QUndoStack m_undoStack;
 
     QLineEdit *m_queryEdit = nullptr;
     QueryCompleter *m_queryCompleter = nullptr;
     QTableView *m_threadView = nullptr;
+
+    /// Right-click menu for the thread list, holding the same QActions the
+    /// menu bar does.
+    QMenu *m_threadContextMenu = nullptr;
     QSplitter *m_splitter = nullptr;
     QComboBox *m_accountBox = nullptr;
     QPushButton *m_syncButton = nullptr;
@@ -229,6 +265,10 @@ private:
     quint64 m_generation = 0;
     QString m_lastQuery;
     QString m_currentThreadId;
+
+    /// The selection count last written to the status bar, so it can be taken
+    /// back without clobbering a message some other action put there.
+    QString m_selectionMessage;
 
     /// Confirmed tag mutations not yet known to have reached the mail store.
     ///

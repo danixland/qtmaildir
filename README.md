@@ -122,11 +122,11 @@ identity.
 ; from its optional description. The two characters differ because QSettings
 ; splits comma lists itself, so a description containing a comma would
 ; otherwise be read as two entries. Neither character is legal in a mimetype.
-extra_mimetypes = application/vnd.oasis.opendocument.text|ODT document, message/rfc822|forwarded mail, text/calendar
+; extra_mimetypes = application/vnd.oasis.opendocument.text|ODT document, message/rfc822|forwarded mail, text/calendar
 
 [sync]
 ; Optional. Omit and the Sync button disables itself with a tooltip.
-command = /home/you/bin/mailsync.sh
+; command = /home/you/bin/mailsync.sh
 
 ; Section names use a dot, not a slash: QSettings treats "/" as its own
 ; group separator, so [account/work] would be parsed as a nested group.

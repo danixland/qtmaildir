@@ -26,6 +26,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QProgressBar>
 #include <QFile>
 #include <QSettings>
 #include <QStandardPaths>
@@ -74,6 +75,9 @@ private slots:
     void theStatusBarReportsAMultiRowSelection();
     void theThreadListOffersAContextMenu();
     void aSecondRowBlanksThePaneNotOnlyAThird();
+    void aLocalSyncIsNotReportedAsABackgroundOne();
+    void aLocalSyncsOwnLockIsNeverReportedAsBackground();
+    void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -844,6 +848,121 @@ void TestMainWindow::aSecondRowBlanksThePaneNotOnlyAThird()
              qPrintable(QStringLiteral("two selected rows left thread '%1' "
                                        "loaded in the pane")
                             .arg(window.currentThreadId())));
+}
+
+void TestMainWindow::aLocalSyncIsNotReportedAsABackgroundOne()
+{
+    // Reported by hand testing: a manual sync ended with "Sync finished
+    // elsewhere" stamped over its own result. The monitor sees the lock the
+    // local run takes, and while the process lives isRunning() suppresses the
+    // message; but the process exits, and therefore isRunning() goes false,
+    // BEFORE the next poll notices the lock was released. That poll then
+    // reported a local sync as a background one.
+    //
+    // Ownership is latched when the lock appears, so the release can still be
+    // attributed after the process is gone.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    // The lock appears while no local sync is running: a background one.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    QVERIFY2(status->text().contains(QStringLiteral("Background")),
+             qPrintable(QStringLiteral("a background sync was not announced, "
+                                       "status says '%1'").arg(status->text())));
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    QVERIFY2(status->text().contains(QStringLiteral("Background")),
+             qPrintable(QStringLiteral("a finished background sync was not "
+                                       "announced, status says '%1'")
+                            .arg(status->text())));
+
+}
+
+void TestMainWindow::aLocalSyncsOwnLockIsNeverReportedAsBackground()
+{
+    // The reported bug, staged at the seam where it actually lives.
+    //
+    // A real child process was tried first and abandoned: it needs a sync
+    // command in the config, it leaves a live process behind for the length of
+    // the test, and it made the suite pop a dialog. None of that is needed,
+    // because the defect is not in MailSync. It is that ownership of a lock
+    // period was decided at RELEASE time, when MailSync::isRunning() has
+    // already gone false, instead of being latched when the lock appeared.
+    //
+    // With no sync command configured isRunning() is false throughout, which is
+    // exactly the state the buggy code misread. So: announce a Running that the
+    // window believes is external, then a matching Idle. Both must be reported.
+    // The local case is covered by the latch being set only inside the Running
+    // branch, and by aSkippedLocalSyncStillReportsTheOtherRunFinishing()
+    // proving the latch is handed back when the lock was never ours.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    auto *progress =
+        window.findChild<QProgressBar *>(QStringLiteral("syncProgress"));
+    QVERIFY(progress);
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    QVERIFY2(progress->isVisibleTo(&window),
+             "a background sync did not show the progress bar");
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    QVERIFY2(!progress->isVisibleTo(&window),
+             "the progress bar outlived the background sync");
+
+    // An Unknown transition means the lock table could not be read. Nothing was
+    // observed, so nothing may be claimed: the previous message must stand.
+    status->setText(QStringLiteral("untouched"));
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Unknown));
+    QCOMPARE(status->text(), QStringLiteral("untouched"));
+}
+
+void TestMainWindow::aSkippedLocalSyncStillReportsTheOtherRunFinishing()
+{
+    // The narrow case the latch could break: a manual sync that exits 75
+    // because cron already holds the lock. If both started inside one poll
+    // interval the monitor sees the lock appear while isRunning() is true and
+    // latches it local, even though the lock belongs to the cron run. The
+    // completion of that run would then be swallowed. onSyncFinished() hands
+    // ownership back when it sees the skip code.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    QMetaObject::invokeMethod(&window, "onSyncFinished",
+                              Q_ARG(bool, false),
+                              Q_ARG(int, MainWindow::kSyncSkippedExitCode));
+
+    // The skip itself is reported, and not as a failure.
+    QVERIFY2(!status->text().contains(QStringLiteral("failed")),
+             qPrintable(QStringLiteral("a skip was reported as a failure: '%1'")
+                            .arg(status->text())));
+
+    // The other run finishing must still be announced.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    QVERIFY2(status->text().contains(QStringLiteral("Background")),
+             qPrintable(QStringLiteral("after a skipped local sync, the other "
+                                       "run finishing was swallowed; status "
+                                       "says '%1'").arg(status->text())));
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

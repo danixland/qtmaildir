@@ -115,6 +115,12 @@ private slots:
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
 
+    /// Reacts to a sync started outside this window, by cron or by hand.
+    ///
+    /// A private slot rather than a plain method so tests can drive it through
+    /// the meta-object without widening the public API.
+    void onExternalSyncStateChanged(SyncMonitor::State state);
+
     /// A tag mutation the worker has confirmed reached the database. Counts it
     /// as unsynced, since reaching the index is not reaching the mail store.
     void onTagsApplied(const TagChange &change);
@@ -169,8 +175,6 @@ private:
     /// says "working, duration unknown", which is the truth.
     void setSyncBusy(bool busy);
 
-    /// Reacts to a sync started outside this window, by cron or by hand.
-    void onExternalSyncStateChanged(SyncMonitor::State state);
 
     /// Opens the tag dialog on the current selection and applies its result.
     ///
@@ -213,6 +217,12 @@ private:
 
     /// Watches the sync lock for runs this window did not start.
     SyncMonitor *m_syncMonitor = nullptr;
+
+    /// True while the lock the monitor can see is held by this window's own
+    /// sync. Latched when the lock is taken, because by the time it is released
+    /// MailSync::isRunning() is already false and can no longer answer "was
+    /// that ours?".
+    bool m_localSyncHoldsLock = false;
     QUndoStack m_undoStack;
 
     QLineEdit *m_queryEdit = nullptr;

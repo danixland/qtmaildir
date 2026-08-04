@@ -1240,6 +1240,12 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         // A sync is the usual way new tags enter the database.
         requestAllTags();
     } else if (exitCode == kSyncSkippedExitCode) {
+        // Skipped means the lock was never ours: some other run holds it. If
+        // both started inside the same poll interval the monitor will have
+        // latched this lock period as local, which would swallow the report
+        // when that other run finishes. Hand it back.
+        m_localSyncHoldsLock = false;
+
         // Not a failure: another run holds the lock and is doing the work.
         // The user's cron fires every ten minutes, so a click landing inside
         // one is routine and must not raise an error or the log pane.
@@ -1300,15 +1306,27 @@ void MainWindow::onTagsApplied(const TagChange &change)
 
 void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
 {
-    // A sync this window started is already reported by setSyncBusy(), and the
-    // monitor sees that lock too. Saying so twice would fight over the status
-    // bar and would re-enable the progress bar as the local run finished.
-    if (m_sync && m_sync->isRunning())
-        return;
-
     if (state == SyncMonitor::State::Running) {
+        // A sync this window started is already reported by setSyncBusy().
+        // Remember that this particular lock period is ours, because the
+        // release at the end of it must be ignored too: the process exits, and
+        // therefore isRunning() goes false, BEFORE the monitor's next poll sees
+        // the lock gone. Testing isRunning() again on that poll would report a
+        // local sync as an external one, stamping "background sync completed"
+        // over the local run's own result up to two seconds later.
+        m_localSyncHoldsLock = (m_sync && m_sync->isRunning());
+        if (m_localSyncHoldsLock)
+            return;
+
         m_syncProgress->setVisible(true);
-        m_statusLabel->setText(tr("Syncing (started elsewhere)..."));
+        m_statusLabel->setText(tr("Background sync running..."));
+        return;
+    }
+
+    // The release of a lock this window took. onSyncFinished() has already
+    // said what happened, including for a failure, so there is nothing to add.
+    if (m_localSyncHoldsLock) {
+        m_localSyncHoldsLock = false;
         return;
     }
 
@@ -1325,7 +1343,7 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
     // this cannot support.
     if (state == SyncMonitor::State::Idle) {
         m_statusLabel->setText(
-            tr("Sync finished elsewhere. Press Enter in the query bar to "
+            tr("Background sync completed. Press Enter in the query bar to "
                "refresh."));
     }
 }

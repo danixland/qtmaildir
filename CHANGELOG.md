@@ -13,6 +13,42 @@ point at which they are stable.
 
 Nothing yet.
 
+## [0.6.0] - 2026-08-04
+
+Two things the app knew and would not say: who a message was addressed to,
+and whether you had read it.
+
+### Added
+
+- **From, To and Cc in the message header.** All three were parsed on every
+  message and then discarded before rendering. A thread holding one message
+  now shows them under the subject.
+- A thread holding **several** messages still shows only the subject and the
+  count. From, To and Cc differ per message, and once you have replied there is
+  no single address the thread is addressed to, so naming one would be a guess
+  presented as a fact. An empty Cc omits its row rather than printing a label
+  with nothing after it.
+- **A details dialog**, behind a `Details...` button beside the subject or
+  `Ctrl+Shift+D`, listing Subject, From, To, Cc, Date and Message-Id for every
+  message in the thread, numbered. Read-only plain text: these values come from
+  strangers, and the format that cannot interpret markup is the right one for
+  showing them verbatim.
+- **An opened thread is marked read after a delay**, 2 seconds by default.
+  Arrowing quickly through a list marks only the thread you stop on, never the
+  ones you pass through. Configurable through `[general] mark_read_delay_ms`:
+  zero marks read at once, and any negative value turns the behaviour off.
+
+### Notes
+
+The automatic mark-read is deliberately **not** on the undo stack. Undoing an
+action you never took is worse than leaving a thread read, and `Ctrl+U` already
+puts it back. Marking a thread unread by hand cancels any pending timer, so the
+key cannot be silently reversed a moment later.
+
+**HTML messages already opened as HTML**, which a backlog item had doubted.
+Verified against real mail; no code changed. No preference was added for
+defaulting to plain text, since `Ctrl+H` already switches a thread by hand.
+
 ## [0.5.0] - 2026-08-04
 
 Completion in the query bar. The point is not to save typing but to make the

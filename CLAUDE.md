@@ -189,6 +189,38 @@ backlog had already specified and that shipped unbuilt (item 29). A note saying
 "X does not work" is a bug report, and it will sit in a personal notes file
 indefinitely unless someone goes looking.
 
+**Then print the open items as a table, and stop.** The user picks what to work
+on; do not start on one, and do not recommend a single item as though the choice
+were made. Read the status table for anything not marked `done`, `dropped` or
+`postponed`, and render:
+
+| # | Item | Size | Note |
+|---|------|------|------|
+
+- **Item** is a short description, not the table's own terse title. Say what the
+  user would notice, not the internal name.
+- **Size** is the backlog's own: XS under an hour, S a sitting, M a session,
+  `?` for an item whose shape is not known yet.
+- **Note** is the one thing that decides whether it can be picked up now: a
+  defect rather than an enhancement, a decision needed from the user first, a
+  dependency on another item, or a constraint that makes it bigger than it
+  looks. Leave it empty when there is nothing of the sort.
+
+Flag defects separately from enhancements. They read alike in a numbered list
+and do not deserve equal billing: item 28 sat as "a counter is wrong" while the
+indicator was quietly lying about whether the user's work was safe to quit on.
+
+Items marked `open, unspecified` (20, 21) cannot be planned from the backlog
+alone; they need the user to describe what they pictured. Say so in the Note
+rather than proposing a design.
+
+Two gotchas when reading the status table. Item 12 lives in the **"Deferred,
+unsized, or split out"** table further down, which has different columns and
+carries no size, so a grep across `^| <n> |` picks it up with its description
+where the size should be. And an item's status cell is prose, not a keyword:
+`open, on demand` (36) and `open, unspecified` (20) are both open. Read the
+cell, do not match on `open` alone.
+
 ## Working on this repo
 
 Implementation follows `docs/superpowers/plans/2026-08-02-qtmaildir-v1.md` (14 tasks)

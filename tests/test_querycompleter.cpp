@@ -73,6 +73,14 @@ private slots:
     void acceptingAPrefixReopensThePopupForValues();
     void acceptingAValueDoesNotReopenAnEmptyPopup();
     void keysFallThroughWhileThePopupIsHidden();
+
+    // The application filter re-entrancy bug: sendEvent() re-runs application
+    // event filters, so forwarding a key to the popup from inside the filter
+    // hands it straight back and the recursion only ends in a stack overflow.
+    void arrowNavigationDoesNotRecurse();
+    void returnRunsTheQueryOnceCompletionIsDone();
+    void returnRunsTheQueryAfterAMouseAccept();
+    void returnRunsTheQueryWhenThePopupMatchesNothing();
 };
 
 // Copied from tests/test_config.cpp rather than shared, so the two test files
@@ -640,6 +648,136 @@ void TestQueryCompleter::keysFallThroughWhileThePopupIsHidden()
     QTest::keyClick(&other, Qt::Key_Return);
 
     QCOMPARE(other.text(), QStringLiteral("hello"));
+    QVERIFY(ran);
+}
+
+void TestQueryCompleter::arrowNavigationDoesNotRecurse()
+{
+    // QCoreApplication::sendEvent re-runs application-level event filters, so a
+    // filter that forwards the key it just claimed to another widget is handed
+    // the same key back. With the popup still visible the guard still passes and
+    // it forwards again: unbounded recursion, and the process dies on the stack
+    // rather than on any assertion. Reaching the end of this test is the check.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+
+    QTest::keyClicks(&edit, QStringLiteral("t"));
+    QVERIFY(findPopup() && findPopup()->isVisible());
+
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Down);
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Down);
+
+    // And navigation actually moved, so the fix is not "swallow the key".
+    QListView *popup = findPopup();
+    QVERIFY(popup);
+    QVERIFY(popup->currentIndex().isValid());
+    QCOMPARE(popup->currentIndex().row(), 1);
+}
+
+void TestQueryCompleter::returnRunsTheQueryOnceCompletionIsDone()
+{
+    // The second half of the user's report: with the query finished, Return has
+    // to reach returnPressed and run it. A popup left visible over a completed
+    // term swallows Return forever, and the query can never be run from the
+    // keyboard at all.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+    completer.setTags({ QStringLiteral("unread"), QStringLiteral("inbox") });
+
+    bool ran = false;
+    connect(&edit, &QLineEdit::returnPressed, &edit, [&ran]() { ran = true; });
+
+    // Drive the whole chain the way the user does: prefix, accept, value, accept.
+    QTest::keyClicks(&edit, QStringLiteral("t"));
+    QVERIFY(findPopup() && findPopup()->isVisible());
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Tab);
+    QCOMPARE(edit.text(), QStringLiteral("tag:"));
+
+    QTest::keyClicks(&edit, QStringLiteral("un"));
+    QVERIFY(findPopup() && findPopup()->isVisible());
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Tab);
+    QCOMPARE(edit.text(), QStringLiteral("tag:unread"));
+
+    // The query is complete. Return must now run it, not be eaten.
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Return);
+    QVERIFY(ran);
+}
+
+void TestQueryCompleter::returnRunsTheQueryAfterAMouseAccept()
+{
+    // The user builds the whole query with the mouse, which never goes through
+    // the key filter, and then Return does not run it. Clicking a row is what
+    // QCompleter reports as activated(), so drive that and then press Return
+    // exactly as the user does.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+    completer.setTags({ QStringLiteral("unread"), QStringLiteral("inbox") });
+
+    bool ran = false;
+    connect(&edit, &QLineEdit::returnPressed, &edit, [&ran]() { ran = true; });
+
+    QTest::keyClicks(&edit, QStringLiteral("t"));
+    QListView *popup = findPopup();
+    QVERIFY(popup && popup->isVisible());
+
+    // Click the "tag:" row.
+    const QModelIndex prefixRow = popup->model()->index(0, 0);
+    QVERIFY(prefixRow.isValid());
+    popup->setCurrentIndex(prefixRow);
+    QTest::mouseClick(popup->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      popup->visualRect(prefixRow).center());
+    QCOMPARE(edit.text(), QStringLiteral("tag:"));
+
+    // Then click a tag value in the popup the accept chained open.
+    popup = findPopup();
+    QVERIFY(popup && popup->isVisible());
+    const QModelIndex valueRow = popup->model()->index(0, 0);
+    QVERIFY(valueRow.isValid());
+    popup->setCurrentIndex(valueRow);
+    QTest::mouseClick(popup->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      popup->visualRect(valueRow).center());
+    QCOMPARE(edit.text(), QStringLiteral("tag:unread"));
+
+    // The query is complete and built entirely with the mouse. Return runs it.
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Return);
+    QVERIFY(ran);
+}
+
+void TestQueryCompleter::returnRunsTheQueryWhenThePopupMatchesNothing()
+{
+    // A query the user finished by hand. The bar is mid-token, so the popup is
+    // still up, but nothing in it matches what was typed. Return must run the
+    // query: there is no completion to accept, and accepting the first row of
+    // an unrelated list would rewrite the query the user just wrote.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&edit));
+    edit.setFocus();
+    QueryCompleter completer(&edit, config);
+    completer.setTags({ QStringLiteral("unread"), QStringLiteral("inbox") });
+
+    bool ran = false;
+    connect(&edit, &QLineEdit::returnPressed, &edit, [&ran]() { ran = true; });
+
+    // "zzz" matches no tag, so the popup has nothing to offer for it.
+    QTest::keyClicks(&edit, QStringLiteral("tag:zzz"));
+
+    QTest::keyClick(keyboardTarget(&edit), Qt::Key_Return);
+
+    QCOMPARE(edit.text(), QStringLiteral("tag:zzz"));
     QVERIFY(ran);
 }
 

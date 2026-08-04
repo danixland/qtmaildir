@@ -422,6 +422,12 @@ bool QueryCompleter::eventFilter(QObject *watched, QEvent *event)
     if (event->type() != QEvent::KeyPress || !popupVisible())
         return QObject::eventFilter(watched, event);
 
+    // A key this filter is itself redelivering. sendEvent re-runs application
+    // event filters, so without this the forwarded key comes straight back and
+    // recurses until the stack is gone.
+    if (m_forwarding)
+        return QObject::eventFilter(watched, event);
+
     auto *keyEvent = static_cast<QKeyEvent *>(event);
     switch (keyEvent->key()) {
     case Qt::Key_Tab:
@@ -452,11 +458,17 @@ bool QueryCompleter::eventFilter(QObject *watched, QEvent *event)
     case Qt::Key_Up:
     case Qt::Key_Down:
     case Qt::Key_PageUp:
-    case Qt::Key_PageDown:
+    case Qt::Key_PageDown: {
         // Navigation belongs to the popup, which is not the focus widget while
         // the user is typing in the bar.
+        //
+        // m_forwarding is what keeps this from recursing; see the guard at the
+        // top of the filter.
+        m_forwarding = true;
         QCoreApplication::sendEvent(m_popup, event);
+        m_forwarding = false;
         return true;
+    }
     default:
         break;
     }

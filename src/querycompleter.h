@@ -135,6 +135,11 @@ private:
     const Config &m_config;
     QStringList m_tags;
 
+    /// Set while the filter is redelivering a key to the popup. The filter is
+    /// installed on the application and sendEvent re-runs application filters,
+    /// so without this the forwarded key returns to the filter that sent it.
+    bool m_forwarding = false;
+
     QCompleter *m_completer = nullptr;
     QStandardItemModel *m_model = nullptr;
     CompletionPopup *m_popup = nullptr;

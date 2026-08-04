@@ -169,6 +169,26 @@ loosen any of these without an explicit decision.
   against the chosen directory, and refuse anything escaping it. Compare resolved paths as
   paths, not with `startsWith` — `/tmp/safe-evil` passes a `startsWith("/tmp/safe")` check.
 
+## At the start of a session: reconcile the backlog with the user's notes
+
+The backlog at `docs/superpowers/plans/2026-08-03-post-0.1.0-usability.md` is
+**downstream** of the user's own notes at
+`~/Documents/Obsidian/note/notes on qtmaildir.md`. The user writes to those notes
+whenever they use the application and hit something, so the backlog goes stale on
+its own between sessions.
+
+**Read both and diff them before picking up work.** Anything in the notes with no
+item in the backlog gets appended with the next free number, in the backlog's
+own format (Observed / Cause / Approach / Constraints), with the cause **verified
+in the code, not copied from the note**. The two documents are numbered
+independently and drifted long ago; never renumber to reconcile them.
+
+This is not busywork. The 2026-08-04 pass found nine unrecorded entries, two of
+them defects rather than enhancements, and one of those was a constraint this
+backlog had already specified and that shipped unbuilt (item 29). A note saying
+"X does not work" is a bug report, and it will sit in a personal notes file
+indefinitely unless someone goes looking.
+
 ## Working on this repo
 
 Implementation follows `docs/superpowers/plans/2026-08-02-qtmaildir-v1.md` (14 tasks)

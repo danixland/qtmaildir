@@ -175,6 +175,14 @@ private:
     /// says "working, duration unknown", which is the truth.
     void setSyncBusy(bool busy);
 
+    /// Applies the sync progress bar and button state from BOTH sync sources.
+    ///
+    /// One function of both, never two assignments: with a local and a
+    /// background sync each writing the widgets independently, whichever
+    /// finished second would win and re-enable the button while the other was
+    /// still running.
+    void updateSyncControls();
+
 
     /// Opens the tag dialog on the current selection and applies its result.
     ///
@@ -223,6 +231,15 @@ private:
     /// MailSync::isRunning() is already false and can no longer answer "was
     /// that ours?".
     bool m_localSyncHoldsLock = false;
+
+    /// True while a sync this window started is running. Half of the input to
+    /// updateSyncControls().
+    bool m_localSyncBusy = false;
+
+    /// True while a sync this window did NOT start holds the lock. The other
+    /// half. Tracked here rather than read back from SyncMonitor so the state
+    /// the UI acted on is the state it was told about.
+    bool m_externalSyncBusy = false;
     QUndoStack m_undoStack;
 
     QLineEdit *m_queryEdit = nullptr;

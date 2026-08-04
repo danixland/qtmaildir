@@ -26,6 +26,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPushButton>
 #include <QProgressBar>
 #include <QFile>
 #include <QSettings>
@@ -78,6 +79,9 @@ private slots:
     void aLocalSyncIsNotReportedAsABackgroundOne();
     void aLocalSyncsOwnLockIsNeverReportedAsBackground();
     void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
+    void theSyncButtonIsDisabledWhileABackgroundSyncHoldsTheLock();
+    void anUnobservableLockTableLeavesTheSyncButtonUsable();
+    void escapeBlanksTheMessagePane();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -963,6 +967,107 @@ void TestMainWindow::aSkippedLocalSyncStillReportsTheOtherRunFinishing()
              qPrintable(QStringLiteral("after a skipped local sync, the other "
                                        "run finishing was swallowed; status "
                                        "says '%1'").arg(status->text())));
+}
+
+void TestMainWindow::theSyncButtonIsDisabledWhileABackgroundSyncHoldsTheLock()
+{
+    // Item 27 specified this and it shipped unbuilt: while a cron sync holds
+    // the lock the button stayed clickable, and pressing it could only produce
+    // the EX_TEMPFAIL skip.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("qtmaildir"))));
+    const QString conf = dir.filePath(QStringLiteral("qtmaildir/qtmaildir.conf"));
+    {
+        QSettings s(conf, QSettings::IniFormat);
+        s.setValue(QStringLiteral("sync/command"), QStringLiteral("/bin/true"));
+    }
+
+    Config config;
+    config.load(conf);
+    MainWindow window(config);
+
+    auto *button = window.findChild<QPushButton *>(QStringLiteral("syncButton"));
+    QVERIFY2(button, "no sync button to check");
+    QVERIFY2(button->isEnabled(), "the button starts disabled with a command set");
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    QVERIFY2(!button->isEnabled(),
+             "the sync button stayed enabled during a background sync");
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    QVERIFY2(button->isEnabled(),
+             "the sync button was not re-enabled after the background sync");
+}
+
+void TestMainWindow::anUnobservableLockTableLeavesTheSyncButtonUsable()
+{
+    // Unknown means /proc/locks could not be read, so nothing was observed. A
+    // button left permanently disabled on a platform that cannot see the lock
+    // is worse than one that occasionally offers a run that gets skipped.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("qtmaildir"))));
+    const QString conf = dir.filePath(QStringLiteral("qtmaildir/qtmaildir.conf"));
+    {
+        QSettings s(conf, QSettings::IniFormat);
+        s.setValue(QStringLiteral("sync/command"), QStringLiteral("/bin/true"));
+    }
+
+    Config config;
+    config.load(conf);
+    MainWindow window(config);
+
+    auto *button = window.findChild<QPushButton *>(QStringLiteral("syncButton"));
+    QVERIFY(button);
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    QVERIFY(!button->isEnabled());
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Unknown));
+    QVERIFY2(button->isEnabled(),
+             "an unobservable lock table left the sync button disabled");
+}
+
+void TestMainWindow::escapeBlanksTheMessagePane()
+{
+    // A registered action like any other, so it reaches the menus, the shortcut
+    // reference and [keys]. Clearing m_currentThreadId with the pane is the
+    // part that matters: a late threadLoaded would otherwise paint the thread
+    // straight back, which is the race fixed in 0.8.0.
+    const Config config;
+    MainWindow window(config);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("clear_pane"));
+    QVERIFY2(action, "no clear_pane action registered");
+    QCOMPARE(action->shortcut(), QKeySequence(Qt::Key_Escape));
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
+                         makeThread(QStringLiteral("t2"), {}) });
+
+    view->selectRow(0);
+    QVERIFY2(!window.currentThreadId().isEmpty(),
+             "no thread was opened to blank");
+
+    action->trigger();
+    QVERIFY2(window.currentThreadId().isEmpty(),
+             "Escape left the thread loaded in the pane");
+
+    // Blanking is a view change, not a mail change: the selection stays.
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

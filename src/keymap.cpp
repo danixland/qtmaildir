@@ -36,6 +36,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("focus_query"),
         QStringLiteral("complete_query"),
         QStringLiteral("select_all"),
+        QStringLiteral("clear_pane"),
         QStringLiteral("toggle_html"),
         QStringLiteral("load_remote"),
         QStringLiteral("message_details"),
@@ -76,6 +77,10 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         // The conventional select-all key, and free here: the thread list is a
         // read-only view, so nothing else in the window wants it.
         { QStringLiteral("Ctrl+A"),       QStringLiteral("select_all") },
+        // Escape is not claimed by anything else at window level. The query
+        // completer handles its own Escape while its popup is up, and a popup
+        // consumes the key before a window shortcut sees it.
+        { QStringLiteral("Esc"),          QStringLiteral("clear_pane") },
         { QStringLiteral("Ctrl+H"),       QStringLiteral("toggle_html") },
         { QStringLiteral("Ctrl+M"),       QStringLiteral("load_remote") },
         // Shifted because Ctrl+D is delete. Both are "D for details/delete"

@@ -410,6 +410,7 @@ void MainWindow::buildUi()
     m_syncLogPane->hide();
 
     m_syncButton = new QPushButton(tr("Sync"), central);
+    m_syncButton->setObjectName(QStringLiteral("syncButton"));
     m_sync = new MailSync(m_config.syncCommand(), this);
     m_syncButton->setEnabled(m_sync->isAvailable());
     if (!m_sync->isAvailable()) {
@@ -678,6 +679,21 @@ void MainWindow::registerActions()
         // reachable from the thread list where the bar has no focus at all.
         m_queryEdit->setFocus();
         m_queryCompleter->triggerCompletion();
+    });
+    addAction(QStringLiteral("clear_pane"), tr("Clear &message pane"),
+              tr("Blank the message pane without changing the selection"),
+              [this]() {
+        // A view change, not a mail change: the selection, the query and the
+        // undo stack are all left alone.
+        //
+        // m_currentThreadId is cleared with the pane, not merely alongside it.
+        // A threadLoaded still in flight for that id would otherwise paint the
+        // thread straight back, which is the queued-reply race documented in
+        // CLAUDE.md.
+        m_currentThreadId.clear();
+        m_messageView->clear();
+        m_markReadTimer->stop();
+        m_markReadThreadId.clear();
     });
     addAction(QStringLiteral("select_all"), tr("Select &all threads"),
               tr("Select every thread in the current result list"), [this]() {
@@ -1318,7 +1334,8 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
         if (m_localSyncHoldsLock)
             return;
 
-        m_syncProgress->setVisible(true);
+        m_externalSyncBusy = true;
+        updateSyncControls();
         m_statusLabel->setText(tr("Background sync running..."));
         return;
     }
@@ -1327,10 +1344,16 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
     // said what happened, including for a failure, so there is nothing to add.
     if (m_localSyncHoldsLock) {
         m_localSyncHoldsLock = false;
+        m_externalSyncBusy = false;
+        updateSyncControls();
         return;
     }
 
-    m_syncProgress->setVisible(false);
+    // Cleared for Idle AND for Unknown. Unknown means /proc/locks could not be
+    // read, so nothing is observed; leaving the button disabled there would
+    // strand it permanently on a platform that cannot see the lock at all.
+    m_externalSyncBusy = false;
+    updateSyncControls();
 
     // Deliberately reports rather than refreshes. runCurrentQuery() clears the
     // undo stack, the selection and the message pane, which is right for a
@@ -1350,14 +1373,33 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
 
 void MainWindow::setSyncBusy(bool busy)
 {
-    m_syncProgress->setVisible(busy);
-    // Disabled rather than left clickable: MailSync::start() already refuses a
-    // second run, but a button that looks live and does nothing is worse than
-    // one that shows it is unavailable.
-    m_syncButton->setEnabled(!busy && m_sync && m_sync->isAvailable());
+    m_localSyncBusy = busy;
+    updateSyncControls();
 
     if (busy)
         m_statusLabel->setText(tr("Syncing..."));
+}
+
+void MainWindow::updateSyncControls()
+{
+    // ONE function of both states, deliberately. Two independent assignments,
+    // one per sync path, means whichever fires second wins: a background sync
+    // ending would re-enable the button in the middle of a local run, and a
+    // local run ending would re-enable it while cron still holds the lock.
+    const bool busy = m_localSyncBusy || m_externalSyncBusy;
+
+    m_syncProgress->setVisible(busy);
+
+    // Disabled rather than left clickable: MailSync::start() already refuses a
+    // second run and the script exits 75 when another holds the lock, but a
+    // button that looks live and does nothing is worse than one that shows it
+    // is unavailable.
+    //
+    // Note this reads Running specifically, not "not Idle". Unknown means
+    // /proc/locks could not be read and nothing was observed, so the button
+    // stays usable: permanently disabling it where the lock cannot be seen is
+    // worse than occasionally offering a run that gets skipped.
+    m_syncButton->setEnabled(!busy && m_sync && m_sync->isAvailable());
 }
 
 void MainWindow::updatePendingIndicator()

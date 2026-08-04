@@ -25,7 +25,7 @@
 cd $(dirname $0) ; CWD=$(pwd)
 
 PRGNAM=qtmaildir
-VERSION=${VERSION:-0.6.0}
+VERSION=${VERSION:-0.7.0}
 BUILD=${BUILD:-1}
 # Not _SBo: this is not an SBo submission. sbolint reports the tag and the
 # package type as errors for that reason; both are deliberate.

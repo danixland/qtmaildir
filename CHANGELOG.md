@@ -13,6 +13,54 @@ point at which they are stable.
 
 Nothing yet.
 
+## [0.7.0] - 2026-08-04
+
+Tagging stops being limited to the five tags someone chose in advance, and the
+application admits when your work has not reached the mail store yet.
+
+### Added
+
+- **An Edit tags dialog**, on **Ctrl+T** or Message > Edit tags. Type tags to
+  add or remove, separated by commas, or clear a checkbox to drop a tag already
+  on the selection without retyping it. Until now archive, delete, spam, flag
+  and toggle-unread were the only tags reachable from the UI, and applying any
+  other one meant leaving for a terminal.
+- Both fields **complete against every tag in the database**, matching on
+  substrings so `amazon` finds `shopping/amazon`. Completion is a guard against
+  typing `shoppping` beside `shopping`, not a restriction: a tag that does not
+  exist yet is exactly what the dialog is for.
+- With several threads selected, a tag on only some of them shows a partially
+  checked box saying how many. **Leaving it alone changes nothing.** Check it to
+  apply to all, clear it to remove from all.
+- Tag names are refused if empty, if they start with `-` (notmuch reads that as
+  "remove this tag", so such a tag is a trap), or if they contain spaces or
+  unprintable characters. Nothing is applied until the whole set is valid, since
+  a half-applied change leaves you unable to tell which half landed.
+- **The status bar counts tag changes a sync has not carried over**, and clears
+  the count when one succeeds. A failed sync leaves it standing.
+- **Quitting with changes outstanding asks what to do**, via the new
+  `[general] sync_on_exit`: `ask` (the default) offers to sync, quit anyway or
+  stay; `always` syncs without asking; `never` quits silently. A sync started at
+  exit holds the window open until it finishes rather than being killed
+  mid-run, and one that fails does not quit.
+
+### Fixed
+
+- In the tag fields, only the first tag completed. `QLineEdit::setCompleter`
+  matches against the widget's entire text, so once a field read `unread, fl`
+  that whole string was matched against the tag names and nothing was offered
+  again. The same defect the query bar hit in 0.5.0, in a second place.
+
+### Notes
+
+The unsynced count is a lower bound rather than a guarantee: an external
+`notmuch new` from your own cron can carry changes over without the application
+noticing.
+
+The exit prompt is not a destructive-action confirmation of the kind this
+project avoids. Those cover tag mutations, which keep undo instead of a dialog.
+This asks about losing work at the one point where undo cannot help.
+
 ## [0.6.0] - 2026-08-04
 
 Two things the app knew and would not say: who a message was addressed to,

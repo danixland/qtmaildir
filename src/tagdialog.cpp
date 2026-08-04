@@ -18,6 +18,7 @@
 
 #include "tagdialog.h"
 
+#include <QAbstractItemView>
 #include <QCompleter>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
@@ -97,6 +98,42 @@ QStringList splitTags(const QString &text)
     return tags;
 }
 
+/// The tag the cursor sits in, which is what completion should match against.
+///
+/// The field holds a comma-separated list, so the last comma before the cursor
+/// bounds the token. Leading space is dropped so "unread, fl" completes on "fl"
+/// rather than on " fl", which would match nothing.
+QString currentToken(const QLineEdit *edit)
+{
+    const QString text = edit->text();
+    const int cursor = qBound(0, edit->cursorPosition(), int(text.size()));
+
+    const int start = text.lastIndexOf(QLatin1Char(','), qMax(0, cursor - 1)) + 1;
+    return text.mid(start, cursor - start).trimmed();
+}
+
+/// Overwrites the token under the cursor with `value`, leaving the rest of the
+/// list alone, and puts the caret after what was inserted.
+void replaceCurrentToken(QLineEdit *edit, const QString &value)
+{
+    const QString text = edit->text();
+    const int cursor = qBound(0, edit->cursorPosition(), int(text.size()));
+
+    const int start = text.lastIndexOf(QLatin1Char(','), qMax(0, cursor - 1)) + 1;
+
+    // Keep the separator's spacing as the user typed it: replacing from `start`
+    // would eat the space after the comma and give "unread,flagged".
+    int tokenStart = start;
+    while (tokenStart < cursor && text.at(tokenStart).isSpace())
+        ++tokenStart;
+
+    QString updated = text;
+    updated.replace(tokenStart, cursor - tokenStart, value);
+
+    edit->setText(updated);
+    edit->setCursorPosition(tokenStart + value.size());
+}
+
 } // namespace
 
 TagDialog::TagDialog(const QStringList &knownTags,
@@ -129,7 +166,39 @@ TagDialog::TagDialog(const QStringList &knownTags,
         // Hierarchies are the reason this matters: typing "amazon" should find
         // "shopping/amazon".
         completer->setFilterMode(Qt::MatchContains);
-        edit->setCompleter(completer);
+
+        // setWidget, NOT QLineEdit::setCompleter. These fields hold a
+        // comma-separated LIST, and setCompleter makes the line edit drive
+        // completion, overwriting the prefix with the widget's ENTIRE text on
+        // every keystroke. Once the field reads "unread, fl" that whole string
+        // is matched against the tag names, nothing matches, and completion
+        // silently stops working after the first tag. Setting the prefix from a
+        // textEdited handler does not help: the line edit sets it again
+        // afterwards.
+        //
+        // setWidget keeps the popup anchored without ceding control of the
+        // prefix, which then becomes ours to drive per token. Exactly the fix
+        // QueryCompleter needed in 01ba356; the trap belongs to
+        // QLineEdit::setCompleter, not to either class.
+        completer->setWidget(edit);
+
+        connect(edit, &QLineEdit::textEdited, this, [edit, completer]() {
+            const QString token = currentToken(edit);
+            completer->setCompletionPrefix(token);
+            if (token.isEmpty() || completer->completionCount() == 0) {
+                completer->popup()->hide();
+                return;
+            }
+            completer->complete();
+        });
+
+        // Accepting a candidate has to replace the token under the cursor
+        // rather than the whole field, or taking "flagged" would discard every
+        // tag already typed.
+        connect(completer, QOverload<const QString &>::of(&QCompleter::activated),
+                this, [edit](const QString &value) {
+            replaceCurrentToken(edit, value);
+        });
     }
 
     form->addRow(tr("Add:"), m_addEdit);

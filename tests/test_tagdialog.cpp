@@ -19,6 +19,7 @@
 #include <QtTest>
 
 #include <QCheckBox>
+#include <QCompleter>
 #include <QLineEdit>
 #include <QListWidget>
 
@@ -42,6 +43,8 @@ private slots:
     void aPartialTagLeftAloneChangesNothing();
     void aPartialTagCheckedIsAddedEverywhere();
     void nothingTouchedYieldsNoChange();
+    void completionFollowsTheTagAfterAComma();
+    void acceptingACandidateKeepsTheOtherTags();
 };
 
 void TestTagDialog::validNamesAreAccepted()
@@ -237,6 +240,83 @@ void TestTagDialog::nothingTouchedYieldsNoChange()
 
     QVERIFY(dialog.tagsToAdd().isEmpty());
     QVERIFY(dialog.tagsToRemove().isEmpty());
+}
+
+void TestTagDialog::completionFollowsTheTagAfterAComma()
+{
+    // Reported by the user: the first tag completes, the second does not.
+    //
+    // QLineEdit::setCompleter matches against the widget's ENTIRE text, so once
+    // the field reads "unread, fl" that whole string becomes the completion
+    // prefix and nothing matches. The completer has to be driven on the token
+    // under the cursor instead. This is the same defect QueryCompleter hit in
+    // 01ba356, in a second place.
+    //
+    // Typed rather than setText(): setText does not drive a completer at all,
+    // so a test using it passes against the broken code.
+    TagDialog dialog({ QStringLiteral("inbox"), QStringLiteral("unread"),
+                       QStringLiteral("flagged") }, {}, 1);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    const QList<QLineEdit *> edits = dialog.findChildren<QLineEdit *>();
+    QVERIFY(edits.size() >= 2);
+    QLineEdit *addEdit = edits.at(0);
+    addEdit->setFocus();
+    QTRY_COMPARE(QApplication::focusWidget(), addEdit);
+
+    // findChild, not QLineEdit::completer(): the completer is attached with
+    // setWidget() rather than setCompleter(), for the reason the fix documents,
+    // so the line edit does not report one. It is parented to the edit, which
+    // is what makes it reachable here.
+    QCompleter *completer = addEdit->findChild<QCompleter *>();
+    QVERIFY(completer);
+
+    // First tag: this much always worked.
+    QTest::keyClicks(addEdit, QStringLiteral("un"));
+    QCOMPARE(completer->completionPrefix(), QStringLiteral("un"));
+    QVERIFY(completer->completionCount() > 0);
+
+    // Second tag, after a comma and a space. The prefix must be the new token,
+    // not the whole line.
+    QTest::keyClicks(addEdit, QStringLiteral("read, fl"));
+    QCOMPARE(addEdit->text(), QStringLiteral("unread, fl"));
+
+    QCOMPARE(completer->completionPrefix(), QStringLiteral("fl"));
+    QVERIFY2(completer->completionCount() > 0,
+             "no candidate for the tag after the comma: the completer is "
+             "matching against the whole line");
+}
+
+void TestTagDialog::acceptingACandidateKeepsTheOtherTags()
+{
+    // Driving the prefix per token is only half the fix. Accepting a candidate
+    // has to overwrite that token too: QCompleter's own insertion replaces the
+    // whole field, so taking "flagged" here would discard "unread" with it.
+    TagDialog dialog({ QStringLiteral("inbox"), QStringLiteral("unread"),
+                       QStringLiteral("flagged") }, {}, 1);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    const QList<QLineEdit *> edits = dialog.findChildren<QLineEdit *>();
+    QVERIFY(edits.size() >= 2);
+    QLineEdit *addEdit = edits.at(0);
+    addEdit->setFocus();
+    QTRY_COMPARE(QApplication::focusWidget(), addEdit);
+
+    QCompleter *completer = addEdit->findChild<QCompleter *>();
+    QVERIFY(completer);
+
+    QTest::keyClicks(addEdit, QStringLiteral("unread, fl"));
+    QCOMPARE(completer->completionPrefix(), QStringLiteral("fl"));
+
+    // What clicking a row emits.
+    emit completer->activated(QStringLiteral("flagged"));
+
+    QCOMPARE(addEdit->text(), QStringLiteral("unread, flagged"));
+    // And the separator's spacing survives: replacing from the comma itself
+    // would have produced "unread,flagged".
+    QVERIFY(addEdit->text().contains(QStringLiteral(", ")));
 }
 
 QTEST_MAIN(TestTagDialog)

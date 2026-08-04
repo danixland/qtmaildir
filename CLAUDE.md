@@ -94,6 +94,21 @@ via `MainWindow::uiStatePath()`. Never write window blobs into the hand-edited c
 Build the path from `QStandardPaths::GenericStateLocation`, not `StateLocation`: the
 latter appends both the organization and the application name, and both are `qtmaildir`.
 
+**`QLineEdit::setCompleter` is wrong for any field holding more than one
+value.** It hands completion to the line edit, which then overwrites the
+completer's `completionPrefix` with the widget's **entire text** on every
+keystroke. In a field holding a list, the first value completes and nothing
+after it ever does, because "unread, fl" is matched whole against the
+candidates. Setting the prefix from a `textEdited` handler does not help: the
+line edit sets it again afterwards. Use `setCompleter` only for a field whose
+whole contents are the thing being completed; otherwise attach with
+`QCompleter::setWidget` and drive `setCompletionPrefix` and `complete()`
+yourself, and replace the token under the cursor on `activated` rather than
+letting QCompleter overwrite the field. This has been hit twice, in
+`QueryCompleter` (01ba356) and in `TagDialog`; the trap belongs to Qt, not to
+either class. A test that uses `setText()` passes against the bug, since
+`setText` does not drive a completer at all: the keys must be typed.
+
 **Do not conclude a key binding is dead from `QTest::keyClick()`.** Whether a symbol needs
 Shift is a layout property, not a Qt one. `Ctrl++` is the shipped `zoom_in` default and is
 exactly what the `+` key emits on an Italian layout, while synthetic input never delivers

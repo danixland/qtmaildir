@@ -84,6 +84,11 @@ public:
     /// `assets/mailsync.sh` is the reference implementation of this contract.
     static constexpr int kSyncSkippedExitCode = 75;
 
+    /// How long a transient status message stays before the bar falls back to
+    /// the thread count. Long enough to read a sentence, short enough that a
+    /// stale "Sync complete" does not sit there describing the present.
+    static constexpr int kStatusMessageMs = 6000;
+
     /// Path of the machine-written UI state file. Deliberately not
     /// Config::defaultPath(): the config is hand-edited and must never gain a
     /// base64 geometry blob, nor be rewritten on exit (QSettings does not
@@ -114,6 +119,14 @@ private slots:
     void onThreadLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
+
+    /// Shows a message that describes an event and takes it back after a few
+    /// seconds, restoring the last query's thread count.
+    ///
+    /// Use this for events ("Sync complete"), never for state: the selection
+    /// count must persist while the selection does. A private slot so tests can
+    /// drive it through the meta-object.
+    void showTransientStatus(const QString &text);
 
     /// Reacts to a sync started outside this window, by cron or by hand.
     ///
@@ -253,6 +266,15 @@ private:
     QComboBox *m_accountBox = nullptr;
     QPushButton *m_syncButton = nullptr;
     QLabel *m_statusLabel = nullptr;
+
+    /// Expires a transient status message. See showTransientStatus().
+    QTimer *m_statusTimer = nullptr;
+
+    /// The message m_statusTimer armed for, so it takes back only its own.
+    QString m_transientMessage;
+
+    /// What the status bar falls back to: the last query's thread count.
+    QString m_defaultStatus;
 
     /// Says how many tag changes have not been seen to reach the mail store.
     /// Hidden entirely at zero rather than reading "0 unsynced", which is noise.

@@ -337,6 +337,26 @@ void MainWindow::buildUi()
     m_statusLabel->setObjectName(QStringLiteral("statusMessage"));
     statusBar()->addWidget(m_statusLabel);
 
+    // Transient messages describe an EVENT and go stale: "Sync complete" reads
+    // as the present tense until something else overwrites it. State messages,
+    // the selection count above all, describe what is true right now and must
+    // not expire while it stays true, so only showTransientStatus() arms this.
+    //
+    // ponytail: one timer beside the label, not QStatusBar::showMessage().
+    // That would mean moving off addWidget() and reworking the permanent
+    // widgets beside it, for the same behaviour.
+    m_statusTimer = new QTimer(this);
+    m_statusTimer->setObjectName(QStringLiteral("statusTimer"));
+    m_statusTimer->setSingleShot(true);
+    m_statusTimer->setInterval(kStatusMessageMs);
+    connect(m_statusTimer, &QTimer::timeout, this, [this]() {
+        // Only take back a message this timer armed. Anything written since is
+        // newer and more relevant than the default.
+        if (m_statusLabel->text() == m_transientMessage)
+            m_statusLabel->setText(m_defaultStatus);
+        m_transientMessage.clear();
+    });
+
     // Beside the sync status rather than as a widget competing with it: the two
     // say related things and reading them apart would be worse than reading
     // them together.
@@ -428,7 +448,7 @@ void MainWindow::buildUi()
     }
     connect(m_syncButton, &QPushButton::clicked, this, [this]() {
         if (!m_sync->start()) {
-            m_statusLabel->setText(tr("Sync already running"));
+            showTransientStatus(tr("Sync already running"));
             return;
         }
         // Fresh run, fresh output: leaving the previous run's lines in place
@@ -594,8 +614,29 @@ void MainWindow::registerActions()
         tagSelected({}, { QStringLiteral("inbox") }, tr("Archive"));
     });
     addAction(QStringLiteral("delete"), tr("&Delete"),
-              tr("Add the deleted tag"), [this]() {
-        tagSelected({ QStringLiteral("deleted") }, {}, tr("Delete"));
+              tr("Add or remove the deleted tag"), [this]() {
+        // A toggle, like toggle_unread: pressing Delete twice is the natural
+        // way to say "no, put it back", and adding a tag that is already there
+        // is a no-op the user cannot see.
+        //
+        // One direction for the WHOLE selection. Toggling each thread
+        // independently would leave one keystroke with the selection in two
+        // states, which is worse than either outcome, so undelete only when
+        // every selected thread is already deleted.
+        const QModelIndexList rows =
+            m_threadView->selectionModel()->selectedRows();
+        bool allDeleted = !rows.isEmpty();
+        for (const QModelIndex &index : rows) {
+            if (!m_model->threadAt(index.row()).isDeleted()) {
+                allDeleted = false;
+                break;
+            }
+        }
+
+        if (allDeleted)
+            tagSelected({}, { QStringLiteral("deleted") }, tr("Undelete"));
+        else
+            tagSelected({ QStringLiteral("deleted") }, {}, tr("Delete"));
     });
     addAction(QStringLiteral("spam"), tr("Mark &spam"),
               tr("Add spam and remove inbox"), [this]() {
@@ -675,7 +716,7 @@ void MainWindow::registerActions()
         if (m_undoStack.canUndo())
             m_undoStack.undo();
         else
-            m_statusLabel->setText(tr("Nothing to undo"));
+            showTransientStatus(tr("Nothing to undo"));
     });
     addAction(QStringLiteral("sync"), tr("&Sync"),
               tr("Run the configured sync command"), [this]() {
@@ -1061,7 +1102,11 @@ void MainWindow::onQueryFinished(int total, quint64 generation)
 {
     if (generation != m_generation)
         return;
-    m_statusLabel->setText(tr("%n thread(s)", "", total));
+    // The query's own result is what the bar says when nothing more pressing
+    // is happening, so a transient message falls back to it rather than to
+    // nothing.
+    m_defaultStatus = tr("%n thread(s)", "", total);
+    m_statusLabel->setText(m_defaultStatus);
 }
 
 void MainWindow::showThreadContextMenu(const QPoint &pos)
@@ -1111,6 +1156,12 @@ void MainWindow::onSelectionChanged()
     // has already been applied to it.
     m_selectionMessage = tr("%n thread(s) selected", "", selected);
     m_statusLabel->setText(m_selectionMessage);
+
+    // State, not an event: it must persist while the selection does. Cancel any
+    // transient message still counting down, or that timer fires and replaces a
+    // count that is still true.
+    m_statusTimer->stop();
+    m_transientMessage.clear();
 
     // Ctrl+click and selectAll() reach a multi-row selection without moving
     // current, so onThreadSelected never runs and its guard never fires. The
@@ -1251,7 +1302,7 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         m_pendingEdits = 0;
         updatePendingIndicator();
 
-        m_statusLabel->setText(tr("Sync complete"));
+        showTransientStatus(tr("Sync complete"));
 
         if (m_syncingForExit) {
             // The work is safely across, so finish the quit the user asked for.
@@ -1274,8 +1325,8 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         // Not a failure: another run holds the lock and is doing the work.
         // The user's cron fires every ten minutes, so a click landing inside
         // one is routine and must not raise an error or the log pane.
-        m_statusLabel->setText(tr("A sync is already running (started "
-                                  "elsewhere); this one was skipped"));
+        showTransientStatus(tr("A sync is already running (started "
+                               "elsewhere); this one was skipped"));
 
         if (m_syncingForExit) {
             // The other run is syncing, but this application cannot see when
@@ -1374,10 +1425,17 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
     // be read, so nothing was observed, and "sync finished" would be a claim
     // this cannot support.
     if (state == SyncMonitor::State::Idle) {
-        m_statusLabel->setText(
+        showTransientStatus(
             tr("Background sync completed. Press Enter in the query bar to "
                "refresh."));
     }
+}
+
+void MainWindow::showTransientStatus(const QString &text)
+{
+    m_transientMessage = text;
+    m_statusLabel->setText(text);
+    m_statusTimer->start();
 }
 
 void MainWindow::setSyncBusy(bool busy)
@@ -1501,7 +1559,7 @@ void MainWindow::editTagsOnSelection()
     const QModelIndexList rows =
         m_threadView->selectionModel()->selectedRows();
     if (rows.isEmpty()) {
-        m_statusLabel->setText(tr("Select a thread first"));
+        showTransientStatus(tr("Select a thread first"));
         return;
     }
 
@@ -1551,7 +1609,7 @@ void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,
     m_undoStack.push(new ThreadTagCommand(this, threadIds, add, remove,
                                           description));
 
-    m_statusLabel->setText(
+    showTransientStatus(
         tr("%1: %n thread(s)", "", threadIds.size()).arg(description));
 }
 

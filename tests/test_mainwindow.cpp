@@ -82,6 +82,10 @@ private slots:
     void theSyncButtonIsDisabledWhileABackgroundSyncHoldsTheLock();
     void anUnobservableLockTableLeavesTheSyncButtonUsable();
     void escapeBlanksTheMessagePane();
+    void deleteTogglesOnAnAlreadyDeletedThread();
+    void deleteOnAMixedSelectionDeletesRatherThanSplittingIt();
+    void aTransientStatusMessageExpires();
+    void theSelectionCountIsStateAndDoesNotExpire();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -1068,6 +1072,112 @@ void TestMainWindow::escapeBlanksTheMessagePane()
 
     // Blanking is a view change, not a mail change: the selection stays.
     QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
+}
+
+void TestMainWindow::deleteTogglesOnAnAlreadyDeletedThread()
+{
+    // Hitting Delete twice is the natural way to say "no, put it back", and
+    // adding a tag that is already present is a no-op the user cannot see.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(action);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("deleted") }) });
+    view->selectRow(0);
+
+    action->trigger();
+
+    // The optimistic model update is synchronous, so the row reflects the
+    // change without a worker.
+    QVERIFY2(!model->threadAt(0).isDeleted(),
+             "delete on an already-deleted thread did not undelete it");
+}
+
+void TestMainWindow::deleteOnAMixedSelectionDeletesRatherThanSplittingIt()
+{
+    // The constraint that makes this more than a one-liner: toggling each
+    // thread independently would leave one keystroke with the selection in two
+    // states, which is worse than either outcome. Undelete only when every
+    // selected thread is already deleted.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(action);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("deleted") }),
+                         makeThread(QStringLiteral("t2"), {}) });
+
+    view->selectAll();
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 2);
+
+    action->trigger();
+
+    QVERIFY2(model->threadAt(0).isDeleted() && model->threadAt(1).isDeleted(),
+             "a mixed selection split instead of deleting the whole selection");
+}
+
+void TestMainWindow::aTransientStatusMessageExpires()
+{
+    // "Sync complete" describes an event, not a state, and reads as though it
+    // describes the present until something else overwrites it.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("statusTimer"));
+    QVERIFY2(timer, "no status expiry timer");
+
+    QMetaObject::invokeMethod(&window, "showTransientStatus",
+                              Q_ARG(QString, QStringLiteral("Sync complete")));
+    QCOMPARE(status->text(), QStringLiteral("Sync complete"));
+    QVERIFY(timer->isActive());
+
+    // Fire it rather than waiting out the real interval.
+    timer->setInterval(0);
+    QTRY_VERIFY_WITH_TIMEOUT(status->text() != QStringLiteral("Sync complete"),
+                             2000);
+}
+
+void TestMainWindow::theSelectionCountIsStateAndDoesNotExpire()
+{
+    // Not everything in the status bar is an event. The selection count
+    // describes what is true right now and must persist while it stays true;
+    // expiring it would undo the 0.8.0 discoverability work.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("statusTimer"));
+    QVERIFY(timer);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
+                         makeThread(QStringLiteral("t2"), {}) });
+    view->selectAll();
+
+    QVERIFY2(status->text().contains(QStringLiteral("2")),
+             "the selection count was not reported");
+    QVERIFY2(!timer->isActive(),
+             "the selection count armed the expiry timer; it is state, "
+             "not an event");
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

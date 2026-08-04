@@ -11,7 +11,23 @@ point at which they are stable.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **`assets/mailsync.sh`**, the reference sync command, moved here from the
+  companion `mailctl` project. It never belonged there: `mailctl` does not call
+  it, while qtmaildir runs it as a subprocess and depends on how it behaves.
+  Symlink it into `~/bin` rather than copying, so one script serves both cron
+  and the application.
+
+### Fixed
+
+- **The sync log pane stayed empty**, listed as a known limitation since 0.1.0.
+  The reference `mailsync.sh` redirected all its output to a log file, so the
+  subprocess printed nothing for the pane to show. It now writes to both.
+- **A failed sync reported success.** That script ended in an unconditional
+  `exit 0`, so qtmaildir could not tell a clean sync from a broken one: it
+  cleared the unsynced-changes count either way, and would have quit on a
+  sync-on-exit that had not synced anything. It now exits with the real status.
 
 ## [0.7.0] - 2026-08-04
 

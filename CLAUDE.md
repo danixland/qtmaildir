@@ -75,6 +75,16 @@ combined `thread:a or thread:b` query rather than one query per thread.
 The only escape hatch is `general/notmuch_config`, pointing at an alternate notmuch config.
 Per-account subdirectories *are* configured, since notmuch does not model accounts at all.
 
+**The sync script lives here, in `assets/mailsync.sh`.** It moved from the
+companion `mailctl` project, which documents that it never calls it: the script
+is `mbsync` plus `notmuch new` with a lock, and qtmaildir is the only thing that
+runs it programmatically. Two properties exist for this application's sake and
+must survive any edit. It **prints to stdout as well as its log file**, because
+`MailSync` shows what the command prints and a self-redirecting script leaves
+the pane empty; and it **exits with the real status**, because a `0` from a
+failed sync makes qtmaildir report success, clear the unsynced-changes count,
+and quit on a sync that never happened.
+
 **Every user-facing string is translatable.** Wrap UI text in `tr()`, including strings
 that are only ever shown in passing: status bar messages, tooltips, dialog prose,
 completion descriptions. Query syntax itself is not user-facing text — notmuch keywords

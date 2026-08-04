@@ -137,6 +137,7 @@ identity.
 
 [sync]
 ; Optional. Omit and the Sync button disables itself with a tooltip.
+; assets/mailsync.sh is the reference implementation; see "The sync command".
 ; command = /home/you/bin/mailsync.sh
 
 ; Section names use a dot, not a slash: QSettings treats "/" as its own
@@ -268,6 +269,30 @@ dialog says which name was refused and why, and applies nothing until the whole
 set is valid.
 
 Every change goes on the undo stack, so `Ctrl+Z` reverses a mistyped tag.
+
+## The sync command
+
+qtmaildir does not fetch mail. `[sync] command` names a script it runs as a
+subprocess, and `assets/mailsync.sh` is the reference implementation: `mbsync -a`
+followed by `notmuch new`, under a `flock` so a cron timer and a click here
+cannot run two `mbsync` processes over one Maildir.
+
+```bash
+ln -s "$PWD/assets/mailsync.sh" ~/bin/mailsync.sh
+```
+
+A symlink rather than a copy, so the same script serves cron and the running
+application and there is only one of it to edit.
+
+Two things any replacement has to get right, both learned the hard way:
+
+- **Print to stdout as well as any log file.** qtmaildir shows what the command
+  prints. A script that redirects its own output to a log leaves the sync pane
+  empty, which is what the previous version of this one did.
+- **Exit non-zero when the sync failed.** qtmaildir believes the exit status:
+  it reports success, clears the unsynced-changes count, and will quit on it
+  during a sync-on-exit. The previous version ended in an unconditional
+  `exit 0`, so a failed `mbsync` was indistinguishable from a clean run.
 
 ## Unsynced changes
 

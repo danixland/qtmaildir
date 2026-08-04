@@ -77,7 +77,7 @@ public:
 
         QTextStream out(&file);
         out << "From: " << from << "\n"
-            << "To: danix@danix.xyz\n"
+            << "To: you@example.org\n"
             << "Subject: " << subject << "\n"
             << "Message-ID: <" << messageId << ">\n"
             << "Date: " << date << "\n";

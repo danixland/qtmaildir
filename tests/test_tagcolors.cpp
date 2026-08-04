@@ -190,18 +190,18 @@ void TestTagColors::accountLabelDefaultsToTheKey()
 
 void TestTagColors::accountLabelCanBeOverridden()
 {
-    // "account-provider-work" is 33 characters of chip for what is
-    // really one bit of information, so the label is configurable.
+    // A real account tag can run to 33 characters of chip for what is really
+    // one bit of information, so the label is configurable.
     TagColors colours;
     colours.setAccountLabel(QStringLiteral("webmail-personal"),
                             QStringLiteral("WM-personal"));
-    colours.setAccountLabel(QStringLiteral("provider-personal"),
-                            QStringLiteral("PR-personal"));
+    colours.setAccountLabel(QStringLiteral("provider-work"),
+                            QStringLiteral("PR-work"));
 
     QCOMPARE(colours.labelForAccountTag(QStringLiteral("account-webmail-personal")),
              QStringLiteral("WM-personal"));
-    QCOMPARE(colours.labelForAccountTag(QStringLiteral("account-provider-personal")),
-             QStringLiteral("PR-personal"));
+    QCOMPARE(colours.labelForAccountTag(QStringLiteral("account-provider-work")),
+             QStringLiteral("PR-work"));
 
     // An account left unlabelled still falls back to its key.
     QCOMPARE(colours.labelForAccountTag(QStringLiteral("account-work")),

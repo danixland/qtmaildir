@@ -206,8 +206,8 @@ identity.
 command = /home/you/bin/mailsync.sh
 
 [account.work]
-name = Danilo M.
-address = danix@danix.xyz
+name = Your Name
+address = you@example.org
 maildir = work-mail             ; relative to notmuch's database.path
 drafts = Drafts
 

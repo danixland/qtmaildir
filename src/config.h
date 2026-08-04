@@ -41,8 +41,8 @@ struct Account
     QColor color;
 
     /// Text shown on the chip. Empty falls back to the key, which can be long:
-    /// "provider-work" is a lot of row for one bit of information.
-    /// This renames nothing in notmuch, only what the chip displays.
+    /// a provider-plus-mailbox key of 25 characters is a lot of row for one
+    /// bit of information. This renames nothing in notmuch, only the display.
     QString label;
 
     bool isValid() const { return !key.isEmpty() && !maildir.isEmpty(); }

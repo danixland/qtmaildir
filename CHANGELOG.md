@@ -11,13 +11,45 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-04
+
+Selecting more than one thread stops being a secret, and the window notices
+the syncs it did not start.
+
 ### Added
 
+- **Select all threads**, on **Ctrl+A** or Edit > Select all threads. Selecting
+  several threads always worked with Ctrl+click and Shift+click, but nothing in
+  the interface said so, and every tag action was reachable only from the
+  keyboard. Rebindable as `select_all` like any other action.
+- **A right-click menu on the thread list**, holding archive, delete, spam,
+  mark read/unread, flag, edit tags and select all. It is built from the same
+  actions as the menu bar, so a rebinding in `[keys]` shows the new shortcut
+  here too. Right-clicking inside a multi-thread selection keeps that
+  selection rather than narrowing it to the row under the pointer.
+- **A selection count in the status bar** while a selection is being built, and
+  a note in Help > Keyboard shortcuts describing Ctrl+click and Shift+click.
+  Mouse gestures belong to the view rather than to any action, so they cannot
+  appear in the generated shortcut table.
+- **Awareness of syncs started elsewhere.** A cron sync every ten minutes used
+  to come and go unnoticed. The status bar now reports a background sync while
+  it runs and when it finishes, and suggests refreshing. It deliberately does
+  not refresh on its own: re-running the query clears the undo stack, the
+  selection and the message pane, which is right for a query you typed and
+  hostile for one a timer fired.
 - **`assets/mailsync.sh`**, the reference sync command, moved here from the
   companion `mailctl` project. It never belonged there: `mailctl` does not call
   it, while qtmaildir runs it as a subprocess and depends on how it behaves.
   Symlink it into `~/bin` rather than copying, so one script serves both cron
   and the application.
+
+### Changed
+
+- **Selecting several threads no longer opens them.** The message pane blanks
+  for a multi-thread selection instead of loading each row as the selection
+  passes over it, and no thread selected that way is marked read. Selecting is
+  not reading, and a selection gesture must never change what is in the
+  Maildir. Narrowing back to a single thread opens it as before.
 
 ### Fixed
 
@@ -28,6 +60,10 @@ point at which they are stable.
   `exit 0`, so qtmaildir could not tell a clean sync from a broken one: it
   cleared the unsynced-changes count either way, and would have quit on a
   sync-on-exit that had not synced anything. It now exits with the real status.
+- **A sync you started reported itself as a background one**, replacing its own
+  result a moment after it finished. Whether a sync was local was decided when
+  its lock was released, by which time the process had already exited and the
+  answer was always "not ours".
 
 ## [0.7.0] - 2026-08-04
 

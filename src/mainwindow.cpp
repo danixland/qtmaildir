@@ -431,6 +431,15 @@ void MainWindow::buildUi()
         m_syncLog->appendPlainText(chunk.trimmed());
     });
 
+    // Syncs this window did not start. The user's cron runs the same script
+    // every ten minutes, so mail arrives and tags change while the window sits
+    // idle, and until now nothing here noticed.
+    m_syncMonitor = new SyncMonitor(SyncMonitor::defaultLockPath(),
+                                    QStringLiteral("/proc/locks"), this);
+    connect(m_syncMonitor, &SyncMonitor::stateChanged,
+            this, &MainWindow::onExternalSyncStateChanged);
+    m_syncMonitor->start();
+
     queryRow->addWidget(m_accountBox);
     queryRow->addWidget(m_queryEdit, 1);
     queryRow->addWidget(m_syncButton);
@@ -1286,6 +1295,38 @@ void MainWindow::onTagsApplied(const TagChange &change)
             requestAllTags();
             break;
         }
+    }
+}
+
+void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
+{
+    // A sync this window started is already reported by setSyncBusy(), and the
+    // monitor sees that lock too. Saying so twice would fight over the status
+    // bar and would re-enable the progress bar as the local run finished.
+    if (m_sync && m_sync->isRunning())
+        return;
+
+    if (state == SyncMonitor::State::Running) {
+        m_syncProgress->setVisible(true);
+        m_statusLabel->setText(tr("Syncing (started elsewhere)..."));
+        return;
+    }
+
+    m_syncProgress->setVisible(false);
+
+    // Deliberately reports rather than refreshes. runCurrentQuery() clears the
+    // undo stack, the selection and the message pane, which is right for a
+    // query the user typed and hostile for one fired by a cron timer: with a
+    // sync every ten minutes it would discard undo history and close the thread
+    // being read, up to six times an hour, with no action from the user.
+    //
+    // Unknown is not worth reporting either. It means the lock table could not
+    // be read, so nothing was observed, and "sync finished" would be a claim
+    // this cannot support.
+    if (state == SyncMonitor::State::Idle) {
+        m_statusLabel->setText(
+            tr("Sync finished elsewhere. Press Enter in the query bar to "
+               "refresh."));
     }
 }
 

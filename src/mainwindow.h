@@ -28,6 +28,7 @@
 
 #include "config.h"
 #include "keymap.h"
+#include "syncmonitor.h"
 #include "tagcolors.h"
 #include "types.h"
 
@@ -168,6 +169,9 @@ private:
     /// says "working, duration unknown", which is the truth.
     void setSyncBusy(bool busy);
 
+    /// Reacts to a sync started outside this window, by cron or by hand.
+    void onExternalSyncStateChanged(SyncMonitor::State state);
+
     /// Opens the tag dialog on the current selection and applies its result.
     ///
     /// The only route to an arbitrary tag: every other tag action writes a
@@ -206,6 +210,9 @@ private:
     ThreadListModel *m_model = nullptr;
     MessageView *m_messageView = nullptr;
     MailSync *m_sync = nullptr;
+
+    /// Watches the sync lock for runs this window did not start.
+    SyncMonitor *m_syncMonitor = nullptr;
     QUndoStack m_undoStack;
 
     QLineEdit *m_queryEdit = nullptr;

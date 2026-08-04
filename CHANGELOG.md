@@ -13,6 +13,60 @@ point at which they are stable.
 
 Nothing yet.
 
+## [0.5.0] - 2026-08-04
+
+Completion in the query bar. The point is not to save typing but to make the
+notmuch query language discoverable: every candidate carries a description, so
+the bar teaches the syntax to someone who has never written a notmuch query.
+
+### Added
+
+- **Query prefixes** complete with a description each: `tag:`, `is:`, `from:`,
+  `to:`, `subject:`, `date:`, `attachment:`, `mimetype:`, `folder:`, `path:`,
+  `thread:`, `id:`, and the `and` / `or` / `not` operators. The list is
+  hardcoded, since notmuch exposes no way to enumerate its own prefixes.
+- **Tag names** after `tag:` and `is:`, which notmuch treats as synonyms. The
+  list is the real set of tags in the database, refreshed at startup, after a
+  sync, and whenever a tag mutation introduces one that was not there before.
+- **Dates** after `date:`, symbolic and relative, completing each bound of a
+  `..` range independently. Entries that are themselves open-ended ranges,
+  like `1week..`, are withheld once a range is already underway, since they
+  would produce malformed queries inside one.
+- **Content types** after `mimetype:`, from a built-in list extensible through
+  the new `[completion] extra_mimetypes` key. Entries are appended to the
+  built-ins rather than replacing them, so a typo cannot leave you with fewer
+  completions than the defaults.
+- **Account directories** after `path:`, in both the plain and the recursive
+  `<maildir>/**` form.
+- `complete_query`, bound to **Ctrl+Space**, opens the popup on demand.
+- `[general] completion_on_focus`, off by default, opens it as soon as an empty
+  query bar takes focus.
+- Accepting a prefix chains straight into its values, so taking `tag:` offers
+  the tag list without a second keystroke.
+
+### Fixed
+
+- Return in the query bar ran nothing and moved focus to the thread list.
+  Return is bound to `open_thread` as a window shortcut, and a shortcut is
+  dispatched before the focused widget sees the key; Qt withholds plain-letter
+  shortcuts from editable widgets, but Return is not a letter and got no such
+  protection. The query bar now claims the key back while it has focus.
+- Tab and the arrow keys crashed the application outright while the popup was
+  open. `QCoreApplication::sendEvent` re-runs application-level event filters,
+  so the filter forwarding a key to the popup was handed the same key straight
+  back, recursing until the stack was exhausted.
+
+### Notes
+
+The example configuration in the README had two keys that were live rather
+than commented, so copying the block activated a sync command and three
+mimetypes the reader never chose. Both are commented now.
+
+`from:` and `to:` complete no addresses: libnotmuch exposes no call to
+enumerate them. `folder:` completes nothing either, as a Maildir folder name
+is not something the configuration can enumerate. Saved query names are
+deliberately absent, a name not being valid notmuch syntax.
+
 ## [0.4.1] - 2026-08-03
 
 Packaging only. No change to the application itself.

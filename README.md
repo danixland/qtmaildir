@@ -284,6 +284,19 @@ ln -s "$PWD/assets/mailsync.sh" ~/bin/mailsync.sh
 A symlink rather than a copy, so the same script serves cron and the running
 application and there is only one of it to edit.
 
+It writes to `~/.local/state/mailsync.log` itself, so a caller must **not**
+redirect into that file as well. The obvious crontab line is the wrong one:
+
+```cron
+*/10 * * * * ~/bin/mailsync.sh                       # right
+*/10 * * * * ~/bin/mailsync.sh >> mailsync.log 2>&1  # every line twice
+```
+
+Rotation is left to `logrotate`, which does it better than a shell script can.
+An earlier version rotated by size on its own and fought `/etc/logrotate.d/`
+over the same file, overwriting a compressed generation with an uncompressed
+one.
+
 Two things any replacement has to get right, both learned the hard way:
 
 - **Print to stdout as well as any log file.** qtmaildir shows what the command

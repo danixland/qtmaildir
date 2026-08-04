@@ -51,9 +51,12 @@ if ! flock -n 200; then
     # Both streams again: a caller that skipped because the cron run holds
     # the lock needs to be told, not left with silence and an error code.
     msg="$(date -Iseconds) === SKIPPED: previous run still in progress ==="
-    echo "$msg" >> "$LOGFILE"
-    echo "$msg" >&2
-    exit 1
+    echo "$msg" | tee -a "$LOGFILE" >&2
+    # 75 (EX_TEMPFAIL), not 1. A skip is not a failure: the other run is
+    # doing the work. qtmaildir reports 1 as "sync failed" and shows its log
+    # pane, which is wrong for a click that landed during the cron run, and
+    # cron fires every ten minutes so that overlap is routine.
+    exit 75
 fi
 
 # Statuses are written to files rather than shell variables because the

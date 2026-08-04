@@ -306,6 +306,17 @@ Two things any replacement has to get right, both learned the hard way:
   it reports success, clears the unsynced-changes count, and will quit on it
   during a sync-on-exit. The previous version ended in an unconditional
   `exit 0`, so a failed `mbsync` was indistinguishable from a clean run.
+- **Exit 75 when another run holds the lock**, rather than 1. A skip is not a
+  failure: the other run is doing the work, and with a timer every ten minutes
+  a click landing inside one is routine. qtmaildir reports 75 as "a sync is
+  already running" and leaves the log pane alone, where any other non-zero code
+  raises an error.
+
+While a sync this window started is running, the status bar shows an
+indeterminate progress bar. It is deliberately not a percentage: `mbsync`
+reports no progress, so a bar filling left to right would be inventing one. A
+sync started outside the application, by your cron timer, is not currently
+visible here at all.
 
 ## Unsynced changes
 

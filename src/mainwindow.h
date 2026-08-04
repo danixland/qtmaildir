@@ -39,6 +39,7 @@ class QPushButton;
 class QComboBox;
 class QPlainTextEdit;
 class QSplitter;
+class QProgressBar;
 class QTimer;
 
 class ThreadListModel;
@@ -65,6 +66,15 @@ public:
     /// must never contain '!', which is the separator that keeps one message's
     /// cid: references from resolving to another's.
     static QString cidPrefixForIndex(int index);
+
+    /// What the sync command returns when another run already holds the lock.
+    ///
+    /// EX_TEMPFAIL from sysexits.h. A skip is not a failure: the other run is
+    /// doing the work, and with a cron timer every ten minutes a click landing
+    /// inside one is routine. Reporting it as an error would show a log pane
+    /// and an alarming status for a situation that needs neither.
+    /// `assets/mailsync.sh` is the reference implementation of this contract.
+    static constexpr int kSyncSkippedExitCode = 75;
 
     /// Path of the machine-written UI state file. Deliberately not
     /// Config::defaultPath(): the config is hand-edited and must never gain a
@@ -134,6 +144,15 @@ private:
     /// Redraws the unsynced-edits indicator from m_pendingEdits.
     void updatePendingIndicator();
 
+    /// Shows or hides the "syncing" state: the progress bar and a disabled
+    /// Sync button.
+    ///
+    /// The bar is INDETERMINATE by design. mbsync reports no percentage and
+    /// the script's output is unstructured, so a bar that filled from left to
+    /// right would be inventing a fraction nobody knows. An indeterminate one
+    /// says "working, duration unknown", which is the truth.
+    void setSyncBusy(bool busy);
+
     /// Opens the tag dialog on the current selection and applies its result.
     ///
     /// The only route to an arbitrary tag: every other tag action writes a
@@ -185,6 +204,12 @@ private:
     /// Says how many tag changes have not been seen to reach the mail store.
     /// Hidden entirely at zero rather than reading "0 unsynced", which is noise.
     QLabel *m_pendingLabel = nullptr;
+
+    /// Indeterminate, shown only while a sync runs. See setSyncBusy().
+    QProgressBar *m_syncProgress = nullptr;
+
+    /// Holds the sync log and its close button, so the pane can be dismissed.
+    QWidget *m_syncLogPane = nullptr;
     QPlainTextEdit *m_syncLog = nullptr;
 
     /// Action name (as used in [keys]) to the QAction implementing it. Owned

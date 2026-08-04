@@ -36,6 +36,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
@@ -193,6 +194,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
             if (box.clickedButton() == sync) {
                 if (m_sync->start()) {
                     m_syncingForExit = true;
+                    m_syncLog->clear();
+                    setSyncBusy(true);
                     m_statusLabel->setText(tr("Syncing before quitting..."));
                     event->ignore();
                     return;
@@ -212,6 +215,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
         } else if (m_config.syncOnExit() == Config::SyncOnExit::Always) {
             if (m_sync->start()) {
                 m_syncingForExit = true;
+                m_syncLog->clear();
+                setSyncBusy(true);
                 m_statusLabel->setText(tr("Syncing before quitting..."));
                 event->ignore();
                 return;
@@ -330,6 +335,18 @@ void MainWindow::buildUi()
     m_pendingLabel->hide();
     statusBar()->addPermanentWidget(m_pendingLabel);
 
+    // Indeterminate: setRange(0, 0). A sync has no measurable progress, since
+    // mbsync reports no percentage and the script's output is unstructured, so
+    // a bar filling left to right would be inventing a fraction. This one
+    // animates to say "working, duration unknown".
+    m_syncProgress = new QProgressBar(this);
+    m_syncProgress->setObjectName(QStringLiteral("syncProgress"));
+    m_syncProgress->setRange(0, 0);
+    m_syncProgress->setTextVisible(false);
+    m_syncProgress->setMaximumWidth(120);
+    m_syncProgress->hide();
+    statusBar()->addPermanentWidget(m_syncProgress);
+
     // Query row.
     auto *queryRow = new QHBoxLayout;
     m_accountBox = new QComboBox(central);
@@ -361,10 +378,35 @@ void MainWindow::buildUi()
     connect(m_markReadTimer, &QTimer::timeout,
             this, &MainWindow::markCurrentThreadRead);
 
-    m_syncLog = new QPlainTextEdit(central);
+    // The pane and its close button travel together: a QPlainTextEdit has
+    // nowhere to put one, and a pane that appears on a failed sync and can
+    // never be dismissed is worse than one that does not appear at all.
+    m_syncLogPane = new QWidget(central);
+    m_syncLogPane->setObjectName(QStringLiteral("syncLogPane"));
+    auto *syncLogLayout = new QVBoxLayout(m_syncLogPane);
+    syncLogLayout->setContentsMargins(0, 0, 0, 0);
+    syncLogLayout->setSpacing(2);
+
+    auto *syncLogHeader = new QHBoxLayout;
+    syncLogHeader->addWidget(new QLabel(tr("Sync output"), m_syncLogPane));
+    syncLogHeader->addStretch();
+
+    auto *closeSyncLog = new QPushButton(tr("Close"), m_syncLogPane);
+    closeSyncLog->setObjectName(QStringLiteral("closeSyncLog"));
+    closeSyncLog->setToolTip(tr("Hide the sync output until the next failure"));
+    connect(closeSyncLog, &QPushButton::clicked,
+            m_syncLogPane, &QWidget::hide);
+    syncLogHeader->addWidget(closeSyncLog);
+    syncLogLayout->addLayout(syncLogHeader);
+
+    m_syncLog = new QPlainTextEdit(m_syncLogPane);
     m_syncLog->setReadOnly(true);
-    m_syncLog->setMaximumHeight(120);
-    m_syncLog->hide();
+    // 200 rather than 120: mbsync's output is wide and repetitive, and the
+    // shorter pane showed too little of it to read.
+    m_syncLog->setMaximumHeight(200);
+    syncLogLayout->addWidget(m_syncLog);
+
+    m_syncLogPane->hide();
 
     m_syncButton = new QPushButton(tr("Sync"), central);
     m_sync = new MailSync(m_config.syncCommand(), this);
@@ -374,8 +416,14 @@ void MainWindow::buildUi()
             tr("No sync command configured ([sync] command in qtmaildir.conf)"));
     }
     connect(m_syncButton, &QPushButton::clicked, this, [this]() {
-        if (!m_sync->start())
+        if (!m_sync->start()) {
             m_statusLabel->setText(tr("Sync already running"));
+            return;
+        }
+        // Fresh run, fresh output: leaving the previous run's lines in place
+        // makes a stale failure look like the current one.
+        m_syncLog->clear();
+        setSyncBusy(true);
     });
     connect(m_sync, &MailSync::finished, this, &MainWindow::onSyncFinished);
     connect(m_sync, &MailSync::outputReceived, this, [this](const QString &chunk) {
@@ -451,7 +499,7 @@ void MainWindow::buildUi()
     m_splitter->setStretchFactor(1, 2);
     layout->addWidget(m_splitter, 1);
 
-    layout->addWidget(m_syncLog);
+    layout->addWidget(m_syncLogPane);
 
     setCentralWidget(central);
 
@@ -1013,6 +1061,8 @@ void MainWindow::onWorkerError(const QString &message)
 
 void MainWindow::onSyncFinished(bool success, int exitCode)
 {
+    setSyncBusy(false);
+
     if (success) {
         // Only a SUCCESSFUL sync clears the count. Clearing on failure would
         // assert the edits had reached the mail store when the sync is exactly
@@ -1033,9 +1083,28 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         runCurrentQuery();
         // A sync is the usual way new tags enter the database.
         requestAllTags();
+    } else if (exitCode == kSyncSkippedExitCode) {
+        // Not a failure: another run holds the lock and is doing the work.
+        // The user's cron fires every ten minutes, so a click landing inside
+        // one is routine and must not raise an error or the log pane.
+        m_statusLabel->setText(tr("A sync is already running (started "
+                                  "elsewhere); this one was skipped"));
+
+        if (m_syncingForExit) {
+            // The other run is syncing, but this application cannot see when
+            // it finishes, so it cannot promise the changes are across. Leave
+            // the window open and say so rather than quitting on a guess.
+            m_syncingForExit = false;
+            QMessageBox::information(
+                this, tr("Sync already running"),
+                tr("Another sync was already in progress, so this one was "
+                   "skipped. Your changes are most likely being carried over "
+                   "by that run, but this window cannot see it finish, so it "
+                   "has been left open."));
+        }
     } else {
         m_statusLabel->setText(tr("Sync failed (exit %1)").arg(exitCode));
-        m_syncLog->show();
+        m_syncLogPane->show();
 
         if (m_syncingForExit) {
             // Do NOT quit: the edits are still unsynced and quitting now would
@@ -1071,6 +1140,18 @@ void MainWindow::onTagsApplied(const TagChange &change)
             break;
         }
     }
+}
+
+void MainWindow::setSyncBusy(bool busy)
+{
+    m_syncProgress->setVisible(busy);
+    // Disabled rather than left clickable: MailSync::start() already refuses a
+    // second run, but a button that looks live and does nothing is worse than
+    // one that shows it is unavailable.
+    m_syncButton->setEnabled(!busy && m_sync && m_sync->isAvailable());
+
+    if (busy)
+        m_statusLabel->setText(tr("Syncing..."));
 }
 
 void MainWindow::updatePendingIndicator()

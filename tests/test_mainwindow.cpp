@@ -86,6 +86,9 @@ private slots:
     void deleteOnAMixedSelectionDeletesRatherThanSplittingIt();
     void aTransientStatusMessageExpires();
     void theSelectionCountIsStateAndDoesNotExpire();
+    void anEditUndoneNettsBackToZero();
+    void aDifferentTagOnTheSameMessageStillCounts();
+    void anEditWithNoMessageIdsStillCounts();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -1178,6 +1181,96 @@ void TestMainWindow::theSelectionCountIsStateAndDoesNotExpire()
     QVERIFY2(!timer->isActive(),
              "the selection count armed the expiry timer; it is state, "
              "not an event");
+}
+
+void TestMainWindow::anEditUndoneNettsBackToZero()
+{
+    // Reported by the user: open a thread, let the 2 s auto-mark-read remove
+    // `unread`, then press Ctrl+U to put it back. The indicator read 2 unsynced
+    // changes when the mail store was exactly where it started.
+    //
+    // The count tracks NET state, not writes. Two writes did happen, but their
+    // effect cancels, and what the user needs to know is whether quitting now
+    // would strand work.
+    const Config config;
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+    QVERIFY(label->isHidden());
+
+    // The automatic mark-read: remove `unread` from one message.
+    TagChange off;
+    off.messageIds = { QStringLiteral("m1") };
+    off.removed = { QStringLiteral("unread") };
+    off.description = QStringLiteral("Mark read");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, off)));
+    QVERIFY2(!label->isHidden(), "one edit must show the indicator");
+
+    // Ctrl+U puts it back on the same message.
+    TagChange on;
+    on.messageIds = { QStringLiteral("m1") };
+    on.added = { QStringLiteral("unread") };
+    on.description = QStringLiteral("Mark unread");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, on)));
+
+    QVERIFY2(label->isHidden(),
+             qPrintable(QStringLiteral("an edit and its inverse left the "
+                                       "indicator showing '%1'")
+                            .arg(label->text())));
+}
+
+void TestMainWindow::aDifferentTagOnTheSameMessageStillCounts()
+{
+    // Netting must be per (message, tag), not per message. Removing `unread`
+    // and adding `flagged` on one message are two independent changes, and
+    // neither cancels the other.
+    const Config config;
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    TagChange a;
+    a.messageIds = { QStringLiteral("m1") };
+    a.removed = { QStringLiteral("unread") };
+    a.description = QStringLiteral("Mark read");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, a)));
+
+    TagChange b;
+    b.messageIds = { QStringLiteral("m1") };
+    b.added = { QStringLiteral("flagged") };
+    b.description = QStringLiteral("Flag");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, b)));
+
+    QVERIFY2(!label->isHidden(),
+             "two different tags on one message cancelled each other");
+}
+
+void TestMainWindow::anEditWithNoMessageIdsStillCounts()
+{
+    // A TagChange carrying no message ids cannot be netted against anything,
+    // and must still register rather than silently counting as zero. Losing an
+    // edit understates the indicator, which is the direction that costs the
+    // user work.
+    const Config config;
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    TagChange change;
+    change.added = { QStringLiteral("deleted") };
+    change.description = QStringLiteral("Delete");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+
+    QVERIFY2(!label->isHidden(),
+             "an edit with no message ids was not counted at all");
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

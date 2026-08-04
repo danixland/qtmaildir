@@ -176,8 +176,16 @@ private:
     /// the one on screen.
     void markCurrentThreadRead();
 
-    /// Redraws the unsynced-edits indicator from m_pendingEdits.
+    /// Redraws the unsynced-edits indicator from pendingEditCount().
     void updatePendingIndicator();
+
+    /// Records one confirmed (message, tag) change, cancelling it against an
+    /// opposite change already outstanding for the same pair.
+    void recordPendingEdit(const QString &messageId, const QString &tag,
+                           bool added);
+
+    /// Net changes the index holds that a sync has not carried over.
+    int pendingEditCount() const;
 
     /// Shows or hides the "syncing" state: the progress bar and a disabled
     /// Sync button.
@@ -318,7 +326,17 @@ private:
     ///
     /// A lower bound on what is outstanding, never a guarantee: the user's cron
     /// can run notmuch new without the application noticing.
-    int m_pendingEdits = 0;
+    ///
+    /// NET state rather than a tally of writes. Keyed "<messageId>\n<tag>",
+    /// value true for added and false for removed; a pair that reverts is
+    /// erased rather than stored, so an edit and its inverse leave nothing
+    /// behind and the map cannot grow without bound.
+    QHash<QString, bool> m_pendingTagEdits;
+
+    /// Confirmed changes carrying no message ids, which cannot be netted
+    /// against anything. Counted separately rather than dropped: understating
+    /// the indicator is the direction that costs the user work.
+    int m_unnettablePendingEdits = 0;
 
     /// Marks the open thread read once it has been on screen long enough.
     ///

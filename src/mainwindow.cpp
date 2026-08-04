@@ -154,7 +154,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
 
-    if (!m_closeApproved && m_pendingEdits > 0
+    if (!m_closeApproved && pendingEditCount() > 0
         && m_config.syncOnExit() != Config::SyncOnExit::Never) {
 
         // Not a destructive-action confirmation, which CLAUDE.md forbids for
@@ -167,7 +167,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
             const auto answer = QMessageBox::warning(
                 this, tr("Unsynced changes"),
                 tr("%n tag change(s) have not been synced, and no sync command "
-                   "is configured. Quit anyway?", "", m_pendingEdits),
+                   "is configured. Quit anyway?", "", pendingEditCount()),
                 QMessageBox::Discard | QMessageBox::Cancel,
                 QMessageBox::Cancel);
             if (answer == QMessageBox::Cancel) {
@@ -181,7 +181,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
             box.setIcon(QMessageBox::Question);
             box.setWindowTitle(tr("Unsynced changes"));
             box.setText(tr("%n tag change(s) have not been synced.", "",
-                           m_pendingEdits));
+                           pendingEditCount()));
             box.setInformativeText(tr("Sync before quitting?"));
             QPushButton *sync =
                 box.addButton(tr("Sync and quit"), QMessageBox::AcceptRole);
@@ -1299,7 +1299,8 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         // Only a SUCCESSFUL sync clears the count. Clearing on failure would
         // assert the edits had reached the mail store when the sync is exactly
         // what failed to put them there.
-        m_pendingEdits = 0;
+        m_pendingTagEdits.clear();
+        m_unnettablePendingEdits = 0;
         updatePendingIndicator();
 
         showTransientStatus(tr("Sync complete"));
@@ -1363,10 +1364,33 @@ void MainWindow::onTagsApplied(const TagChange &change)
     m_pendingChange = {};
     m_pendingThreadIds.clear();
 
-    // Counted here, where a write is CONFIRMED, rather than where one is sent:
+    // Recorded here, where a write is CONFIRMED, rather than where one is sent:
     // an optimistic update the worker later rejects must not leave the
     // indicator claiming an edit that never landed.
-    ++m_pendingEdits;
+    //
+    // NET state, not a count of writes. An edit and its inverse leave the mail
+    // store where it started, so they must leave the indicator at zero: the
+    // automatic mark-read followed by Ctrl+U used to read as 2 unsynced
+    // changes when nothing was outstanding. What the user needs to know is
+    // whether quitting now would strand work.
+    //
+    // Keyed per (message, tag): removing `unread` and adding `flagged` on one
+    // message are two independent changes and must not cancel each other.
+    for (const QString &messageId : change.messageIds) {
+        for (const QString &tag : change.added)
+            recordPendingEdit(messageId, tag, true);
+        for (const QString &tag : change.removed)
+            recordPendingEdit(messageId, tag, false);
+    }
+
+    // A change carrying no message ids cannot be netted against anything, and
+    // must still register: losing an edit understates the indicator, which is
+    // the direction that costs the user work.
+    if (change.messageIds.isEmpty()
+        && !(change.added.isEmpty() && change.removed.isEmpty())) {
+        ++m_unnettablePendingEdits;
+    }
+
     updatePendingIndicator();
 
     // A tag the user has just created is the one they are most likely to type
@@ -1469,16 +1493,40 @@ void MainWindow::updateSyncControls()
     m_syncButton->setEnabled(!busy && m_sync && m_sync->isAvailable());
 }
 
+void MainWindow::recordPendingEdit(const QString &messageId, const QString &tag,
+                                   bool added)
+{
+    const QString key = messageId + QLatin1Char('\n') + tag;
+
+    // A tag put back the way it was is not an outstanding change. Erase rather
+    // than store the new direction, or the ledger grows without bound over a
+    // long session of tagging and untagging.
+    const auto existing = m_pendingTagEdits.constFind(key);
+    if (existing != m_pendingTagEdits.constEnd()) {
+        if (*existing != added)
+            m_pendingTagEdits.erase(m_pendingTagEdits.find(key));
+        return;
+    }
+
+    m_pendingTagEdits.insert(key, added);
+}
+
+int MainWindow::pendingEditCount() const
+{
+    return m_pendingTagEdits.size() + m_unnettablePendingEdits;
+}
+
 void MainWindow::updatePendingIndicator()
 {
-    if (m_pendingEdits <= 0) {
+    const int pending = pendingEditCount();
+    if (pending <= 0) {
         m_pendingLabel->hide();
         return;
     }
 
     // "Changes" and not "mutations": the unit the user thinks in is the tagging
     // they did, not the writes it became.
-    m_pendingLabel->setText(tr("%n unsynced change(s)", "", m_pendingEdits));
+    m_pendingLabel->setText(tr("%n unsynced change(s)", "", pending));
     m_pendingLabel->setToolTip(
         tr("Tag changes made here that a sync has not yet carried to the mail "
            "store. An external notmuch run can clear them without this count "

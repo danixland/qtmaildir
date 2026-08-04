@@ -19,7 +19,9 @@
 #include "mainwindow.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QCloseEvent>
+#include <QKeyEvent>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -146,6 +148,30 @@ void MainWindow::closeEvent(QCloseEvent *event)
     QMainWindow::closeEvent(event);
 }
 
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    // Return is bound to open_thread as a WindowShortcut. A shortcut is
+    // dispatched before the focused widget sees the key, and Qt's protection
+    // for editable widgets covers plain LETTERS only, so from inside the query
+    // bar Return triggered the action, focus jumped to the thread list, and the
+    // query was never run.
+    //
+    // Accepting the ShortcutOverride tells Qt the focused widget wants this key
+    // as ordinary input, which stops the shortcut from being dispatched at all;
+    // QLineEdit then emits returnPressed as usual. Narrow on purpose: one
+    // widget, one key, so open_thread keeps working everywhere else.
+    if (watched == m_queryEdit && event->type() == QEvent::ShortcutOverride) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent->key() == Qt::Key_Return
+            || keyEvent->key() == Qt::Key_Enter) {
+            keyEvent->accept();
+            return true;
+        }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
+}
+
 MainWindow::MainWindow(const Config &config, QWidget *parent)
     : QMainWindow(parent), m_config(config)
 {
@@ -178,12 +204,17 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     wireWorker();
     showWarnings();
 
-    // No event filter: QAction shortcuts are dispatched before the focused
-    // widget sees the key, so they beat QAbstractItemView's type-to-search
-    // without one. Qt also suppresses a plain-letter shortcut while an
-    // editable widget has focus, so typing in the query bar stays typing;
-    // modifier shortcuts such as Ctrl+Q still work there, which the old
+    // No window-wide event filter: QAction shortcuts are dispatched before the
+    // focused widget sees the key, so they beat QAbstractItemView's
+    // type-to-search without one. Qt also suppresses a plain-letter shortcut
+    // while an editable widget has focus, so typing in the query bar stays
+    // typing; modifier shortcuts such as Ctrl+Q still work there, which the old
     // filter blocked.
+    //
+    // That letter rule does NOT cover Return, which is bound to open_thread:
+    // it reached the action from inside the query bar and stole the key. The
+    // narrow filter buildUi() installs on the query bar claims it back. See
+    // eventFilter().
 
     // Not savedQueries().first(): [queries] is read through childKeys(), which
     // sorts alphabetically, so "first" means whatever happens to sort first
@@ -222,6 +253,16 @@ void MainWindow::buildUi()
     m_queryEdit->setPlaceholderText(tr("notmuch query, e.g. tag:inbox"));
     connect(m_queryEdit, &QLineEdit::returnPressed,
             this, &MainWindow::runCurrentQuery);
+
+    // Return is bound to open_thread as a WindowShortcut, and a shortcut is
+    // dispatched before the focused widget sees the key. Qt withholds a plain
+    // LETTER shortcut from an editable widget, which is why every other binding
+    // here is safe, but Return is not a letter and gets no such protection: it
+    // reached the action, focus jumped to the thread list, and the query never
+    // ran. Accepting the ShortcutOverride is what claims the key back, and it
+    // is scoped to the one widget and the one key, so open_thread still works
+    // everywhere else in the window.
+    m_queryEdit->installEventFilter(this);
     m_queryCompleter = new QueryCompleter(m_queryEdit, m_config, this);
 
     m_syncLog = new QPlainTextEdit(central);
@@ -372,6 +413,10 @@ void MainWindow::registerActions()
     });
     addAction(QStringLiteral("open_thread"), tr("&Open thread"),
               tr("Focus the thread list"), [this]() {
+        qDebug("[MW] open_thread action TRIGGERED (focus=%s)",
+               QApplication::focusWidget()
+                   ? QApplication::focusWidget()->metaObject()->className()
+                   : "none");
         m_threadView->setFocus();
     });
     addAction(QStringLiteral("archive"), tr("&Archive"),

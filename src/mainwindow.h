@@ -74,6 +74,11 @@ public:
 protected:
     void closeEvent(QCloseEvent *event) override;
 
+    /// Claims Return back for the query bar. Return is bound to open_thread as
+    /// a WindowShortcut, and a shortcut outranks the focused widget, so without
+    /// this the action fires from inside the bar and the query never runs.
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private slots:
     void runCurrentQuery();
     void onThreadsReady(const QVector<ThreadSummary> &threads, quint64 generation);

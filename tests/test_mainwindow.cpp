@@ -19,7 +19,10 @@
 #include <QtTest>
 
 #include <QAction>
+#include <QApplication>
 #include <QDir>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QFile>
 #include <QSettings>
 #include <QStandardPaths>
@@ -51,6 +54,7 @@ private slots:
     void uiStateSurvivesARestart();
     void missingUiStateLeavesTheDefaults();
     void headerStateFromADifferentColumnLayoutIsDiscarded();
+    void returnInTheQueryBarRunsTheQueryNotOpenThread();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -264,6 +268,47 @@ void TestMainWindow::headerStateFromADifferentColumnLayoutIsDiscarded()
 
     QFile::remove(MainWindow::uiStatePath());
     QStandardPaths::setTestModeEnabled(false);
+}
+
+void TestMainWindow::returnInTheQueryBarRunsTheQueryNotOpenThread()
+{
+    // Return is bound to open_thread as a WindowShortcut, and the query bar has
+    // to win it back while it has focus. Qt withholds a plain-LETTER shortcut
+    // from an editable widget, but Return is not a letter and gets no such
+    // protection, so without an explicit override the action fires, the query
+    // never runs, and focus jumps to the thread list.
+    //
+    // The delivery order matters and is the reason this bug survived earlier
+    // tests: real input sends ShortcutOverride first and only dispatches the
+    // shortcut if nothing accepts it. QTest::keyClick() skips that round trip,
+    // so a test written with it passes against the broken code.
+    const Config config;
+    MainWindow window(config);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *edit = window.findChild<QLineEdit *>();
+    QVERIFY(edit);
+    edit->setFocus();
+    QTRY_COMPARE(QApplication::focusWidget(), edit);
+    edit->setText(QStringLiteral("tag:unread"));
+
+    QAction *openThread = window.findChild<QAction *>(QStringLiteral("open_thread"));
+    QVERIFY(openThread);
+    bool actionFired = false;
+    connect(openThread, &QAction::triggered, &window, [&actionFired]() {
+        actionFired = true;
+    });
+
+    // The query bar must claim the override, which is what stops the shortcut
+    // from ever being dispatched.
+    QKeyEvent override(QEvent::ShortcutOverride, Qt::Key_Return, Qt::NoModifier);
+    override.ignore();
+    QApplication::sendEvent(edit, &override);
+    QVERIFY2(override.isAccepted(),
+             "the query bar let Return through to the open_thread shortcut");
+
+    QVERIFY(!actionFired);
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

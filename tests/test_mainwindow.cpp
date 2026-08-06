@@ -233,7 +233,11 @@ void TestMainWindow::uiStateSurvivesARestart()
     QStandardPaths::setTestModeEnabled(true);
     QFile::remove(MainWindow::uiStatePath());
 
-    const QSize resized(940, 620);
+    // Must fit the smallest screen this ever runs against: the offscreen
+    // platform reports 800x800, and restoreGeometry() clamps to the available
+    // area, so a 940px width came back as 798 and failed only under offscreen.
+    // The number carries no meaning beyond differing from the default size.
+    const QSize resized(640, 560);
     {
         const Config config;
         MainWindow window(config);
@@ -995,6 +999,17 @@ void TestMainWindow::theSyncButtonIsDisabledWhileABackgroundSyncHoldsTheLock()
         s.setValue(QStringLiteral("sync/command"), QStringLiteral("/bin/true"));
     }
 
+    // An empty lock table, so construction observes no sync. Against the real
+    // /proc/locks this assertion fails whenever the user's cron sync happens to
+    // be running: cron fires every ten minutes and a run lasts ~35s, so roughly
+    // 6% of runs landed inside one and the failure looked like flakiness.
+    const QString locks = dir.filePath(QStringLiteral("locks"));
+    {
+        QFile f(locks);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+    }
+    MainWindow::setLocksPathForTesting(locks);
+
     Config config;
     config.load(conf);
     MainWindow window(config);
@@ -1014,6 +1029,11 @@ void TestMainWindow::theSyncButtonIsDisabledWhileABackgroundSyncHoldsTheLock()
                                     SyncMonitor::State::Idle));
     QVERIFY2(button->isEnabled(),
              "the sync button was not re-enabled after the background sync");
+
+    // The override is process-wide, and QTemporaryDir takes the file with it at
+    // the end of this scope: leaving it set would point every later window at a
+    // path that no longer exists.
+    MainWindow::setLocksPathForTesting(QStringLiteral("/proc/locks"));
 }
 
 void TestMainWindow::anUnobservableLockTableLeavesTheSyncButtonUsable()

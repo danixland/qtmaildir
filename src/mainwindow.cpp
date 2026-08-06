@@ -83,6 +83,21 @@ QString MainWindow::uiStatePath()
     return base + QStringLiteral("/qtmaildir/uistate.conf");
 }
 
+namespace {
+/// Overridden only by setLocksPathForTesting(); "/proc/locks" in every real run.
+QString g_locksPath = QStringLiteral("/proc/locks");
+} // namespace
+
+void MainWindow::setLocksPathForTesting(const QString &path)
+{
+    g_locksPath = path;
+}
+
+QString MainWindow::locksPath()
+{
+    return g_locksPath;
+}
+
 void MainWindow::restoreUiState()
 {
     QSettings state(uiStatePath(), QSettings::IniFormat);
@@ -465,7 +480,7 @@ void MainWindow::buildUi()
     // every ten minutes, so mail arrives and tags change while the window sits
     // idle, and until now nothing here noticed.
     m_syncMonitor = new SyncMonitor(SyncMonitor::defaultLockPath(),
-                                    QStringLiteral("/proc/locks"), this);
+                                    locksPath(), this);
     connect(m_syncMonitor, &SyncMonitor::stateChanged,
             this, &MainWindow::onExternalSyncStateChanged);
     m_syncMonitor->start();

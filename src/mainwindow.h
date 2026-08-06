@@ -104,6 +104,18 @@ public:
     /// preserve comments or key order).
     static QString uiStatePath();
 
+    /// Kernel lock table every MainWindow's SyncMonitor watches, "/proc/locks"
+    /// unless a test overrides it.
+    ///
+    /// A test seam, deliberately NOT a config key: /proc/locks is not something
+    /// a user would ever set, and a wrong value silently disables background
+    /// sync detection rather than failing loudly. Without this every window a
+    /// test builds observes the machine's real sync state, so a test asserting
+    /// on the sync button fails whenever the user's cron sync happens to be
+    /// running (item 38).
+    static void setLocksPathForTesting(const QString &path);
+    static QString locksPath();
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 

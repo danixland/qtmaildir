@@ -79,8 +79,8 @@ private slots:
     void aLocalSyncIsNotReportedAsABackgroundOne();
     void aLocalSyncsOwnLockIsNeverReportedAsBackground();
     void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
-    void theSyncButtonIsDisabledWhileABackgroundSyncHoldsTheLock();
     void anUnobservableLockTableLeavesTheSyncButtonUsable();
+    void theSyncActionIsDisabledWhileABackgroundSyncHoldsTheLock();
     void escapeBlanksTheMessagePane();
     void deleteTogglesOnAnAlreadyDeletedThread();
     void deleteOnAMixedSelectionDeletesRatherThanSplittingIt();
@@ -985,11 +985,13 @@ void TestMainWindow::aSkippedLocalSyncStillReportsTheOtherRunFinishing()
                                        "says '%1'").arg(status->text())));
 }
 
-void TestMainWindow::theSyncButtonIsDisabledWhileABackgroundSyncHoldsTheLock()
+void TestMainWindow::theSyncActionIsDisabledWhileABackgroundSyncHoldsTheLock()
 {
-    // Item 27 specified this and it shipped unbuilt: while a cron sync holds
-    // the lock the button stayed clickable, and pressing it could only produce
-    // the EX_TEMPFAIL skip.
+    // Item 29 shipped for the QPushButton only: onExternalSyncStateChanged
+    // disabled m_syncButton and never touched the QAction, so the toolbar and
+    // menu Sync stayed clickable during a cron sync and could only produce the
+    // EX_TEMPFAIL skip. The button-based test passed throughout, because it
+    // drove the half that worked.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("qtmaildir"))));
@@ -999,10 +1001,6 @@ void TestMainWindow::theSyncButtonIsDisabledWhileABackgroundSyncHoldsTheLock()
         s.setValue(QStringLiteral("sync/command"), QStringLiteral("/bin/true"));
     }
 
-    // An empty lock table, so construction observes no sync. Against the real
-    // /proc/locks this assertion fails whenever the user's cron sync happens to
-    // be running: cron fires every ten minutes and a run lasts ~35s, so roughly
-    // 6% of runs landed inside one and the failure looked like flakiness.
     const QString locks = dir.filePath(QStringLiteral("locks"));
     {
         QFile f(locks);
@@ -1014,25 +1012,22 @@ void TestMainWindow::theSyncButtonIsDisabledWhileABackgroundSyncHoldsTheLock()
     config.load(conf);
     MainWindow window(config);
 
-    auto *button = window.findChild<QPushButton *>(QStringLiteral("syncButton"));
-    QVERIFY2(button, "no sync button to check");
-    QVERIFY2(button->isEnabled(), "the button starts disabled with a command set");
+    auto *action = window.findChild<QAction *>(QStringLiteral("sync"));
+    QVERIFY2(action, "no sync action to check");
+    QVERIFY2(action->isEnabled(), "the action starts disabled with a command set");
 
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
                                     SyncMonitor::State::Running));
-    QVERIFY2(!button->isEnabled(),
-             "the sync button stayed enabled during a background sync");
+    QVERIFY2(!action->isEnabled(),
+             "the sync action stayed enabled during a background sync");
 
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
                                     SyncMonitor::State::Idle));
-    QVERIFY2(button->isEnabled(),
-             "the sync button was not re-enabled after the background sync");
+    QVERIFY2(action->isEnabled(),
+             "the sync action was not re-enabled after the background sync");
 
-    // The override is process-wide, and QTemporaryDir takes the file with it at
-    // the end of this scope: leaving it set would point every later window at a
-    // path that no longer exists.
     MainWindow::setLocksPathForTesting(QStringLiteral("/proc/locks"));
 }
 
@@ -1054,19 +1049,19 @@ void TestMainWindow::anUnobservableLockTableLeavesTheSyncButtonUsable()
     config.load(conf);
     MainWindow window(config);
 
-    auto *button = window.findChild<QPushButton *>(QStringLiteral("syncButton"));
-    QVERIFY(button);
+    auto *action = window.findChild<QAction *>(QStringLiteral("sync"));
+    QVERIFY(action);
 
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
                                     SyncMonitor::State::Running));
-    QVERIFY(!button->isEnabled());
+    QVERIFY(!action->isEnabled());
 
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
                                     SyncMonitor::State::Unknown));
-    QVERIFY2(button->isEnabled(),
-             "an unobservable lock table left the sync button disabled");
+    QVERIFY2(action->isEnabled(),
+             "an unobservable lock table left the sync action disabled");
 }
 
 void TestMainWindow::escapeBlanksTheMessagePane()

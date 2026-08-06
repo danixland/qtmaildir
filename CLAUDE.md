@@ -40,12 +40,22 @@ Maildir. **No network protocol work at all** — fetching and sending are extern
 ```
 UI thread                          Worker thread
 MainWindow                         NotmuchWorker
- ├ QueryBar / SavedQueryBar          └ owns the only notmuch_database_t*
- ├ ThreadListView ── ThreadListModel
- └ MessageView (HeaderWidget, QWebEngineView, AttachmentBar)
+ ├ query row: QComboBox, QLineEdit,  └ owns the only notmuch_database_t*
+ │   saved-query QPushButtons
+ ├ QTableView ── ThreadListModel (SubjectDelegate)
+ └ MessageView (header QLabel, QWebEngineView, attachment bar, TagStrip)
 
 Config (INI)   KeyMap   MailSync (QProcess)   MimeParser (GMime)
+SyncMonitor (/proc/locks)   TagColors   QueryCompleter   ThreadCidMap
 ```
+
+The query row and the message-pane header are **built inline in `MainWindow` and
+`MessageView`**, not as named widget classes. Earlier revisions of this diagram
+listed `QueryBar`, `SavedQueryBar`, `HeaderWidget` and `AttachmentBar`; none of
+those types have ever existed, and looking for them wastes a search. The widget
+classes that do exist are `MessageView`, `TagStrip`, `TagDialog` and
+`SubjectDelegate`; `TagChip` is a namespace of painting helpers, not a widget,
+and `ThreadCidMap` is a struct.
 
 **No `notmuch_*` pointer ever crosses the thread boundary.** Data crosses as the plain
 value structs in `src/types.h` (`ThreadSummary`, `MessageRef`, `TagChange`), over queued

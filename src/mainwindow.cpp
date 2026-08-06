@@ -401,6 +401,10 @@ void MainWindow::buildUi()
 
     m_queryEdit = new QLineEdit(central);
     m_queryEdit->setPlaceholderText(tr("notmuch query, e.g. tag:inbox"));
+    // Qt draws the clear button inside the field and shows it only when there
+    // is text, themed by the desktop. A hand-rolled button beside the bar would
+    // read as "Search" and duplicate Return, which is how item 45 started.
+    m_queryEdit->setClearButtonEnabled(true);
     connect(m_queryEdit, &QLineEdit::returnPressed,
             this, &MainWindow::runCurrentQuery);
 
@@ -453,24 +457,11 @@ void MainWindow::buildUi()
 
     m_syncLogPane->hide();
 
-    m_syncButton = new QPushButton(tr("Sync"), central);
-    m_syncButton->setObjectName(QStringLiteral("syncButton"));
+    // Sync is reached from the toolbar, the File menu and the shortcut, all of
+    // them one QAction. A second QPushButton sat beside the query bar until
+    // 0.9.x, where it read as a Search button given what it stood next to, and
+    // carried behaviour the action did not: item 45.
     m_sync = new MailSync(m_config.syncCommand(), this);
-    m_syncButton->setEnabled(m_sync->isAvailable());
-    if (!m_sync->isAvailable()) {
-        m_syncButton->setToolTip(
-            tr("No sync command configured ([sync] command in qtmaildir.conf)"));
-    }
-    connect(m_syncButton, &QPushButton::clicked, this, [this]() {
-        if (!m_sync->start()) {
-            showTransientStatus(tr("Sync already running"));
-            return;
-        }
-        // Fresh run, fresh output: leaving the previous run's lines in place
-        // makes a stale failure look like the current one.
-        m_syncLog->clear();
-        setSyncBusy(true);
-    });
     connect(m_sync, &MailSync::finished, this, &MainWindow::onSyncFinished);
     connect(m_sync, &MailSync::outputReceived, this, [this](const QString &chunk) {
         m_syncLog->appendPlainText(chunk.trimmed());
@@ -485,23 +476,25 @@ void MainWindow::buildUi()
             this, &MainWindow::onExternalSyncStateChanged);
     m_syncMonitor->start();
 
+    // One row: the account dropdown, the query field, then the saved queries.
+    // The field is the only stretching item, so it is framed on both sides
+    // rather than running flush to the window edge, which is what the removed
+    // Sync button used to terminate.
+    //
+    // ponytail: no overflow handling. [queries] is unbounded and enough entries
+    // would squeeze the field, but three is the real-world case today. Item 23
+    // already specifies buttons-plus-menu and is where that belongs.
     queryRow->addWidget(m_accountBox);
     queryRow->addWidget(m_queryEdit, 1);
-    queryRow->addWidget(m_syncButton);
-    layout->addLayout(queryRow);
-
-    // Saved query buttons.
-    auto *savedRow = new QHBoxLayout;
     for (const SavedQuery &saved : m_config.savedQueries()) {
         auto *button = new QPushButton(saved.name, central);
         connect(button, &QPushButton::clicked, this, [this, saved]() {
             m_queryEdit->setText(saved.query);
             runCurrentQuery();
         });
-        savedRow->addWidget(button);
+        queryRow->addWidget(button);
     }
-    savedRow->addStretch();
-    layout->addLayout(savedRow);
+    layout->addLayout(queryRow);
 
     // Thread list and message pane.
     m_model = new ThreadListModel(this);
@@ -735,8 +728,7 @@ void MainWindow::registerActions()
     });
     addAction(QStringLiteral("sync"), tr("&Sync"),
               tr("Run the configured sync command"), [this]() {
-        if (m_sync->isAvailable())
-            m_sync->start();
+        startSync();
     });
     addAction(QStringLiteral("complete_query"), tr("&Complete query"),
               tr("Offer completions for the query bar"), [this]() {
@@ -870,7 +862,16 @@ void MainWindow::buildMenus()
     auto *toolBar = addToolBar(tr("Main"));
     toolBar->setObjectName(QStringLiteral("main_toolbar"));
     toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    toolBar->addAction(m_actions.value(QStringLiteral("sync")));
+    QAction *syncAction = m_actions.value(QStringLiteral("sync"));
+    // Carried over from the QPushButton this replaced: with no command
+    // configured the control is disabled, and the tooltip is the only thing
+    // that says why.
+    if (syncAction && m_sync && !m_sync->isAvailable()) {
+        syncAction->setEnabled(false);
+        syncAction->setToolTip(
+            tr("No sync command configured ([sync] command in qtmaildir.conf)"));
+    }
+    toolBar->addAction(syncAction);
     toolBar->addSeparator();
     toolBar->addAction(m_actions.value(QStringLiteral("archive")));
     toolBar->addAction(m_actions.value(QStringLiteral("delete")));
@@ -1603,7 +1604,33 @@ void MainWindow::updateSyncControls()
     // /proc/locks could not be read and nothing was observed, so the button
     // stays usable: permanently disabling it where the lock cannot be seen is
     // worse than occasionally offering a run that gets skipped.
-    m_syncButton->setEnabled(!busy && m_sync && m_sync->isAvailable());
+    // The QAction is the only Sync control now, and setEnabled on it reaches
+    // the toolbar button, the menu entry and the shortcut at once. Item 29
+    // originally set a separate QPushButton and missed the action entirely, so
+    // the toolbar stayed clickable through a background sync.
+    if (QAction *action = m_actions.value(QStringLiteral("sync")))
+        action->setEnabled(!busy && m_sync && m_sync->isAvailable());
+}
+
+void MainWindow::startSync()
+{
+    // One handler for every route in: the toolbar, the menu, the shortcut and
+    // the button. They previously had two, and only the button's cleared the
+    // log, showed the pane and disabled the control, so a sync started from the
+    // toolbar ran with no visible sign it had.
+    if (!m_sync->isAvailable()) {
+        showTransientStatus(
+            tr("No sync command configured ([sync] command in qtmaildir.conf)"));
+        return;
+    }
+    if (!m_sync->start()) {
+        showTransientStatus(tr("Sync already running"));
+        return;
+    }
+    // Fresh run, fresh output: leaving the previous run's lines in place
+    // makes a stale failure look like the current one.
+    m_syncLog->clear();
+    setSyncBusy(true);
 }
 
 void MainWindow::recordPendingEdit(const QString &messageId, const QString &tag,

@@ -217,6 +217,10 @@ private:
     /// says "working, duration unknown", which is the truth.
     void setSyncBusy(bool busy);
 
+    /// Starts a sync and shows that it started. Every route in goes through
+    /// here: the toolbar, the menu, the shortcut and the button.
+    void startSync();
+
     /// Applies the sync progress bar and button state from BOTH sync sources.
     ///
     /// One function of both, never two assignments: with a local and a
@@ -322,7 +326,6 @@ private:
     QMenu *m_threadContextMenu = nullptr;
     QSplitter *m_splitter = nullptr;
     QComboBox *m_accountBox = nullptr;
-    QPushButton *m_syncButton = nullptr;
     QLabel *m_statusLabel = nullptr;
 
     /// Expires a transient status message. See showTransientStatus().

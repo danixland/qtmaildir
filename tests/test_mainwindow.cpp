@@ -89,6 +89,11 @@ private slots:
     void anEditUndoneNettsBackToZero();
     void aDifferentTagOnTheSameMessageStillCounts();
     void anEditWithNoMessageIdsStillCounts();
+    void anEditDuringABackgroundSyncIsNotSentYet();
+    void aHeldEditIsSentWhenTheBackgroundSyncEnds();
+    void aHeldEditCountsAsUnsynced();
+    void anUnreadableLockTableStillSendsTheEdit();
+    void aRejectedWriteKeepsEarlierUndoHistory();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -1271,6 +1276,200 @@ void TestMainWindow::anEditWithNoMessageIdsStillCounts()
 
     QVERIFY2(!label->isHidden(),
              "an edit with no message ids was not counted at all");
+}
+
+// Item 37. A tag edit made while a background sync holds notmuch's write lock
+// used to stall the worker: the read-write open BLOCKS until the lock frees
+// (measured 9.158s against a 12s hold, returning NOTMUCH_STATUS_SUCCESS), so
+// every later query and thread load queued behind it. These cases pin the fix:
+// do not send the write while a sync is running, send it when the sync ends.
+
+void TestMainWindow::anEditDuringABackgroundSyncIsNotSentYet()
+{
+    // The defect. Sending during the sync is what stalls the worker, so the
+    // edit is held instead. The rows still show it: it is what the user asked
+    // for and it is going to be applied.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY2(action, "no flag action registered");
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
+    view->selectRow(0);
+
+    // A cron sync takes the lock.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+
+    action->trigger();
+
+    QVERIFY2(window.hasEditAwaitingSend(),
+             "the edit was sent straight into a running sync, which is the "
+             "blocking open that stalls the worker");
+    QVERIFY2(model->threadAt(0).tags.contains(QStringLiteral("flagged")),
+             "holding the edit also dropped it from the rows");
+}
+
+void TestMainWindow::aHeldEditIsSentWhenTheBackgroundSyncEnds()
+{
+    // The release. SyncMonitor already reports this transition for item 27, so
+    // the held edit rides a signal that exists rather than a timer.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(action);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
+    view->selectRow(0);
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    action->trigger();
+    QVERIFY(window.hasEditAwaitingSend());
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+
+    QVERIFY2(!window.hasEditAwaitingSend(),
+             "the sync ending did not send the held edit");
+    QVERIFY2(model->threadAt(0).tags.contains(QStringLiteral("flagged")),
+             "sending the held edit lost the tag from the rows");
+}
+
+void TestMainWindow::aHeldEditCountsAsUnsynced()
+{
+    // A held edit has not reached the index, so onTagsApplied() never counted
+    // it. It must still count here, because this is what the exit prompt reads:
+    // quitting on a held edit loses it outright, which is the whole failure the
+    // prompt exists to prevent.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(action);
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+    QVERIFY2(label->isHidden(), "the indicator starts hidden at zero");
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
+    view->selectRow(0);
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    action->trigger();
+
+    QVERIFY2(!label->isHidden(),
+             "an edit held for a running sync was not counted as unsynced, so "
+             "the exit prompt would let the user quit on it");
+}
+
+void TestMainWindow::anUnreadableLockTableStillSendsTheEdit()
+{
+    // State::Unknown means /proc/locks could not be read, so nothing is
+    // observed. Holding writes there would strand every edit forever on a
+    // platform that cannot see the lock at all. Unknown is not "running".
+    //
+    // Driven from Running, not from a fresh window: the guard is that Unknown
+    // CLEARS the busy flag, and a window that was never busy would pass this
+    // whatever Unknown did. Reaching Unknown by way of Running is also the only
+    // way a real monitor gets there, when /proc/locks becomes unreadable
+    // mid-session.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(action);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
+                         makeThread(QStringLiteral("t2"), {}) });
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    view->selectRow(0);
+    action->trigger();
+    QVERIFY2(window.hasEditAwaitingSend(),
+             "the edit was not held during a running sync, so this test is not "
+             "exercising the Unknown transition it claims to");
+
+    // The lock table becomes unreadable. That is not evidence of a sync, so
+    // writing must resume and the held edit must go out.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Unknown));
+    QVERIFY2(!window.hasEditAwaitingSend(),
+             "an unreadable lock table kept the edit held, stranding it on any "
+             "platform without /proc/locks");
+
+    // And a NEW edit is sent rather than held.
+    view->selectRow(1);
+    action->trigger();
+    QVERIFY2(!window.hasEditAwaitingSend(),
+             "an unreadable lock table held a new edit, so writes never resume");
+}
+
+void TestMainWindow::aRejectedWriteKeepsEarlierUndoHistory()
+{
+    // revertPendingTagChange() used to undo the failed command and then CLEAR
+    // the whole stack, so one rejected write threw away every undo step the
+    // user had built up. Undoing the failed command is enough: it is already
+    // off the stack afterwards.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *flag = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(flag);
+    auto *archive = window.findChild<QAction *>(QStringLiteral("archive"));
+    QVERIFY2(archive, "no archive action registered");
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("inbox") }) });
+    view->selectRow(0);
+
+    // One edit that succeeds, so there is history worth keeping.
+    archive->trigger();
+    TagChange applied;
+    applied.messageIds = { QStringLiteral("m1") };
+    applied.removed = { QStringLiteral("inbox") };
+    applied.description = QStringLiteral("Archive");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, applied)));
+
+    // A second edit that the worker rejects outright.
+    flag->trigger();
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "onWorkerError",
+        Q_ARG(QString, QStringLiteral("Cannot resolve threads"))));
+
+    QVERIFY2(window.canUndo(),
+             "a rejected write cleared the undo history of edits that had "
+             "already succeeded");
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

@@ -296,8 +296,17 @@ void NotmuchWorker::applyTags(const TagChange &change)
         &error);
 
     if (status != NOTMUCH_STATUS_SUCCESS) {
+        // NOT reached by lock contention, despite the wording. Measured
+        // 2026-08-04: this call BLOCKS on a held write lock and then returns
+        // SUCCESS (9.158s against a 12s hold), so a running sync never lands
+        // here. What does land here is a genuinely broken open: bad
+        // permissions, a corrupt index, a missing database. None of those are
+        // helped by waiting, so the UI reverts rather than retrying.
+        //
+        // The stall a running sync DOES cause is avoided upstream, in
+        // MainWindow, by not sending the write at all while the lock is held.
         emit errorOccurred(
-            QStringLiteral("Cannot open database for writing (is a sync running?): %1")
+            QStringLiteral("Cannot open database for writing: %1")
                 .arg(QString::fromUtf8(error ? error
                                              : notmuch_status_to_string(status))));
         free(error);

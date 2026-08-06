@@ -1275,9 +1275,15 @@ void MainWindow::revertPendingTagChange()
 
     // The undo entry describes a change that never landed, so it would apply a
     // spurious inverse if the user pressed undo.
+    //
+    // undo() alone, deliberately. This used to clear() the whole stack
+    // afterwards, which threw away every earlier step the user had built up
+    // because one later write was rejected: undoing an archive of fifty
+    // threads became impossible if the flag after it happened to land during a
+    // sync. undo() has already taken the failed command off the redo side of
+    // the stack, and the commands under it describe changes that did land.
     if (m_undoStack.canUndo())
         m_undoStack.undo();
-    m_undoStack.clear();
 
     m_pendingChange = {};
     m_pendingThreadIds.clear();
@@ -1287,13 +1293,77 @@ void MainWindow::onWorkerError(const QString &message)
 {
     // Spec: the UI updates optimistically and reverts if the write fails.
     // Without this the list would keep showing a tag the database never got.
+    //
+    // A running sync does NOT arrive here. The read-write open blocks on the
+    // lock and then succeeds rather than failing (measured; see the comment at
+    // the open in notmuchworker.cpp), so anything reaching this point is a real
+    // failure that waiting cannot fix. The stall a running sync does cause is
+    // avoided by not sending the write at all, in sendThreadTagChange().
     revertPendingTagChange();
+    updatePendingIndicator();
     m_statusLabel->setText(message);
+}
+
+bool MainWindow::aSyncHoldsTheWriteLock() const
+{
+    // Both sources, exactly as updateSyncControls() reads them. A local sync
+    // holds the same exclusive lock a cron one does, so an edit made during it
+    // would block on precisely the same open.
+    return m_localSyncBusy || m_externalSyncBusy;
+}
+
+void MainWindow::flushHeldEdits()
+{
+    if (m_heldEdits.isEmpty())
+        return;
+
+    // Taken by value and cleared first: sendThreadTagChange() writes
+    // m_pendingThreadIds, and re-entering partway through the queue must not
+    // find the same edits still waiting.
+    const QVector<HeldEdit> edits = m_heldEdits;
+    m_heldEdits.clear();
+
+    for (const HeldEdit &edit : edits) {
+        // Take the optimistic update back before sending, because
+        // sendThreadTagChange() applies it again. applyTagChange() is
+        // idempotent per tag so the rows do not visibly flicker; without this
+        // the change is applied twice and a later revert undoes only one of
+        // them, leaving a row showing a tag the database never got.
+        for (const QString &threadId : edit.threadIds) {
+            m_model->applyTagChange(threadId, edit.change.removed,
+                                    edit.change.added);
+        }
+
+        sendThreadTagChange(edit.threadIds, edit.change.added,
+                            edit.change.removed, edit.change.description);
+    }
+
+    // Held edits stop counting as held; what counts now is whatever
+    // onTagsApplied() confirms.
+    updatePendingIndicator();
+
+    showTransientStatus(
+        tr("%n held change(s) sent now that the sync has finished", "",
+           int(edits.size())));
 }
 
 void MainWindow::onSyncFinished(bool success, int exitCode)
 {
     setSyncBusy(false);
+
+    // The local sync no longer holds the write lock, whatever its outcome, so
+    // edits held during it can go now.
+    //
+    // The count below is safe: applyTagsToThreads is a QUEUED call, so the
+    // onTagsApplied() that records these edits arrives after this function has
+    // returned, and therefore after the success branch has cleared the map.
+    // They are counted, not wiped.
+    //
+    // These edits reach the index after the sync that would have carried them,
+    // so they go to the mail store on the NEXT run. That is the same one-run
+    // delay any edit made mid-sync gets, bounded by the cron interval.
+    const bool sentHeldEdits = !m_heldEdits.isEmpty();
+    flushHeldEdits();
 
     if (success) {
         // Only a SUCCESSFUL sync clears the count. Clearing on failure would
@@ -1306,6 +1376,21 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         showTransientStatus(tr("Sync complete"));
 
         if (m_syncingForExit) {
+            // Edits held during THIS sync were only just sent, on a queued
+            // connection, so they have not reached the index yet and this sync
+            // certainly did not carry them. Quitting here would discard exactly
+            // the work the prompt exists to protect. Tell the user and stay
+            // open; the indicator shows what is still outstanding.
+            if (sentHeldEdits) {
+                m_syncingForExit = false;
+                QMessageBox::information(
+                    this, tr("Changes still to sync"),
+                    tr("Changes you made while the sync was running have only "
+                       "now been applied, so that sync did not carry them. "
+                       "Sync once more before quitting."));
+                return;
+            }
+
             // The work is safely across, so finish the quit the user asked for.
             m_syncingForExit = false;
             m_closeApproved = true;
@@ -1430,6 +1515,11 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
         m_localSyncHoldsLock = false;
         m_externalSyncBusy = false;
         updateSyncControls();
+
+        // A local sync releases the write lock exactly as a background one
+        // does, and an edit made during it is held the same way. Without this
+        // the held edits would wait for the NEXT sync to come and go.
+        flushHeldEdits();
         return;
     }
 
@@ -1453,6 +1543,14 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
             tr("Background sync completed. Press Enter in the query bar to "
                "refresh."));
     }
+
+    // OUTSIDE the Idle branch, deliberately. Unknown clears the busy flag above,
+    // so writes resume from here on; leaving the flush inside Idle would let a
+    // new edit go straight out while the ones already held sat waiting for an
+    // Idle that a broken /proc/locks will never report. After the status
+    // message, which flushHeldEdits() overwrites with its own when it sent
+    // something.
+    flushHeldEdits();
 }
 
 void MainWindow::showTransientStatus(const QString &text)
@@ -1513,7 +1611,13 @@ void MainWindow::recordPendingEdit(const QString &messageId, const QString &tag,
 
 int MainWindow::pendingEditCount() const
 {
-    return m_pendingTagEdits.size() + m_unnettablePendingEdits;
+    // A held edit has NOT reached the index, so onTagsApplied() never counted
+    // it. It still has to count here: this is what the exit prompt reads, and
+    // an edit waiting on a lock is precisely the work quitting would lose.
+    // Each held edit counts as one whatever its size, since it carries thread
+    // ids rather than message ids and cannot be netted against the map.
+    const int held = int(m_heldEdits.size());
+    return m_pendingTagEdits.size() + m_unnettablePendingEdits + held;
 }
 
 void MainWindow::updatePendingIndicator()
@@ -1677,6 +1781,30 @@ void MainWindow::sendThreadTagChange(const QStringList &threadIds,
         const QModelIndex current = m_threadView->currentIndex();
         if (current.isValid())
             m_messageView->setTags(m_model->threadAt(current.row()).tags);
+    }
+
+    // A sync holds notmuch's exclusive write lock, and the worker's read-write
+    // open BLOCKS on it rather than failing: measured 9.158s against a 12s
+    // hold, returning SUCCESS. Sending now would freeze the worker thread for
+    // the rest of the sync, queueing every later query and thread load behind
+    // it. Hold the edit and send it when the lock frees.
+    //
+    // The rows keep the optimistic update applied above, which is honest: it is
+    // what the user asked for and it is going to be applied.
+    if (aSyncHoldsTheWriteLock()) {
+        m_heldEdits.append(HeldEdit{
+            threadIds, TagChange{ {}, add, remove, description } });
+
+        // NOT transient. This describes state that lasts until the sync ends,
+        // and a message that expired would leave the user with rows showing a
+        // tag the database has not got and no explanation of why.
+        m_statusLabel->setText(
+            tr("A sync is running; your change will be applied when it "
+               "finishes."));
+
+        // A held edit is outstanding work, so the indicator has to show it.
+        updatePendingIndicator();
+        return;
     }
 
     m_pendingThreadIds = threadIds;

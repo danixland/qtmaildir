@@ -80,6 +80,7 @@ signals:
     void threadLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void tagsApplied(const TagChange &change);
     void allTagsReady(const QStringList &tags, quint64 generation);
+
     void errorOccurred(const QString &message);
 
 private:

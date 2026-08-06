@@ -68,6 +68,15 @@ public:
     /// load is discarded rather than painted, so no thread can reappear.
     QString currentThreadId() const { return m_currentThreadId; }
 
+    /// True while an edit is held back because a sync holds the write lock.
+    /// Exposed for tests: the deferral is otherwise only observable by watching
+    /// the worker, which test_mainwindow has no database to drive.
+    bool hasEditAwaitingSend() const { return !m_heldEdits.isEmpty(); }
+
+    /// Whether the undo stack still holds anything. Exposed so a test can show
+    /// that a rejected write did not take unrelated history down with it.
+    bool canUndo() const { return m_undoStack.canUndo(); }
+
     /// The cid: namespace prefix for the nth message of a thread.
     ///
     /// MainWindow is the only producer of this value in the application. It
@@ -230,6 +239,35 @@ private:
 
     /// Undoes the optimistic model update for a write the worker rejected.
     void revertPendingTagChange();
+
+    /// Whether a write sent now would block the worker on notmuch's write lock.
+    ///
+    /// True only for a sync KNOWN to be running. `SyncMonitor::State::Unknown`
+    /// deliberately does not count: it means `/proc/locks` could not be read,
+    /// and holding every edit on a platform that cannot observe the lock at all
+    /// would strand them permanently.
+    bool aSyncHoldsTheWriteLock() const;
+
+    /// Sends every edit held while the lock was busy, oldest first.
+    void flushHeldEdits();
+
+    /// A tag change not yet sent to the worker, because a sync held the write
+    /// lock when the user made it.
+    ///
+    /// Held rather than sent because the read-write open BLOCKS: measured
+    /// 9.158s against a 12s lock hold, returning SUCCESS, not an error. Sending
+    /// into that freezes the worker thread, so every later query and thread
+    /// load queues behind it. The rows show the change meanwhile, which is
+    /// honest: it is what the user asked for and it is going to be applied.
+    struct HeldEdit {
+        QStringList threadIds;
+        TagChange change;
+    };
+
+    /// FIFO, because a sync lasts ~35s and the user can keep tagging through
+    /// it. Order matters: two edits touching one thread must reach the database
+    /// in the order they were made, or the later one does not win.
+    QVector<HeldEdit> m_heldEdits;
 
     friend class ThreadTagCommand;
 

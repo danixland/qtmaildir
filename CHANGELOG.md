@@ -11,6 +11,49 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-06
+
+Tag edits no longer stall the window when a background sync is running, and
+Sync is one control instead of two that disagreed.
+
+### Changed
+
+- **A tag edit made while a background sync runs is held and sent when the sync
+  finishes**, instead of being sent straight into a database open that blocks.
+  The open never failed, it blocked and then succeeded, and because the worker
+  is a single thread everything queued behind it waited too: the message pane
+  froze on whichever thread was selected first and replayed the queue on
+  release. The row keeps its tag in the meantime and the edit still counts as
+  unsynced, so the quit prompt cannot let work leave silently.
+- **One Sync control.** The button beside the query bar is gone; Sync lives on
+  the toolbar, the File menu and its shortcut. The two used to behave
+  differently, and only the button showed the sync log, disabled itself, or
+  reported that a sync was already running.
+- **The saved-query buttons moved onto the query row**, after the query field,
+  so the bar is framed by the account selector on one side and the saved
+  queries on the other. The row they occupied is gone and the thread list has
+  that space.
+
+### Added
+
+- **A clear button in the query field**, Qt's own, drawn inside the field and
+  shown only when there is something to clear.
+
+### Fixed
+
+- **Sync stayed clickable from the toolbar and the menu during a background
+  sync.** 0.9.0 disabled the button beside the query bar and nothing else, so
+  every other route to Sync could still start a run that could only be skipped.
+- **A rejected tag write no longer clears the whole undo stack**, only the edit
+  that was rejected.
+
+### Internal
+
+- Two tests depended on the machine they ran on: one read the live
+  `/proc/locks` and failed whenever a real sync happened to be running, the
+  other asserted a window wider than the offscreen platform's screen. Neither
+  indicated a fault in the application.
+
 ## [0.9.0] - 2026-08-04
 
 Small corrections from using 0.8.0, most of them things the application was

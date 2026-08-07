@@ -18,7 +18,9 @@
 
 #pragma once
 
+#include <QColor>
 #include <QList>
+#include <QPalette>
 
 #include "mimeparser.h"
 
@@ -60,11 +62,46 @@ public:
         ForcePlain,  ///< Always render the plain part, escaped.
     };
 
+    /// The colours the document's own stylesheet uses.
+    ///
+    /// Passed in rather than read from qApp inside the builder, so the CSS can
+    /// be tested against a known palette without a running application, and so
+    /// nothing here depends on widget state.
+    ///
+    /// **Scope.** These style the chrome around messages and the plain-text
+    /// render. A message that brings its own HTML brings its own colours, and
+    /// those are deliberately left alone: rewriting a sender's styling would
+    /// break layouts that depend on it, and a newsletter that sets a white
+    /// background is entitled to stay white.
+    struct Palette {
+        QColor background;  ///< The pane itself.
+        QColor text;        ///< Body text.
+        QColor dim;         ///< Headers and stubs: present but secondary.
+        QColor border;      ///< Rules between messages.
+        QColor quote;       ///< Quoted lines in plain text.
+    };
+
+    /// Derives the document palette from a widget palette.
+    ///
+    /// The dim and border colours are blends rather than fixed greys, which is
+    /// what makes this work on a dark theme: a hardcoded #555 that reads as
+    /// "subtle" on white is nearly invisible on near-black.
+    static Palette paletteFrom(const QPalette &palette);
+
+    /// The palette used when a caller supplies none: the running application's.
+    /// Falls back to a light default with no QApplication, which only happens
+    /// in a test that did not ask for a palette.
+    static Palette defaultPalette();
+
     /// Single message, used for the error card and for tests.
     static QString build(const ParsedMessage &message, Mode mode);
+    static QString build(const ParsedMessage &message, Mode mode,
+                         const Palette &palette);
 
     /// The whole thread, oldest first.
     static QString buildThread(const QList<ThreadRenderItem> &items, Mode mode);
+    static QString buildThread(const QList<ThreadRenderItem> &items, Mode mode,
+                               const Palette &palette);
 
     /// Rewrites cid: URLs in an HTML body to their namespaced form.
     static QString namespaceCids(const QString &html, const QString &prefix);
@@ -73,5 +110,6 @@ private:
     static QString renderPlain(const QString &text);
     static QString renderBody(const ThreadRenderItem &item, Mode mode);
     static QString renderStub(const ParsedMessage &message);
-    static QString document(const QString &bodyHtml);
+    static QString document(const QString &bodyHtml, const Palette &palette);
+    static QString styleSheet(const Palette &palette);
 };

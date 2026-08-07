@@ -378,12 +378,26 @@ void MessageView::showDetailsDialog()
     dialog.exec();
 }
 
+void MessageView::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+
+    // Only when there is something to re-render: rendering an empty item list
+    // would replace a deliberately blank pane with an empty document.
+    if (event->type() == QEvent::PaletteChange && !m_items.isEmpty())
+        render();
+}
+
 void MessageView::render()
 {
     const HtmlBuilder::Mode mode =
         m_preferHtml ? HtmlBuilder::PreferHtml : HtmlBuilder::ForcePlain;
 
-    setDocument(HtmlBuilder::buildThread(m_items, mode));
+    // This widget's palette, not the application's: a style sheet or a themed
+    // parent can give the pane different colours from qApp, and the document
+    // has to match the frame it sits in rather than the app default.
+    setDocument(HtmlBuilder::buildThread(m_items, mode,
+                                         HtmlBuilder::paletteFrom(palette())));
     rebuildAttachmentBar();
 
     // Blocking is discovered during load, so check shortly afterwards.

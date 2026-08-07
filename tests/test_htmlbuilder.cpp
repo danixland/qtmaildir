@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <QPalette>
+#include <QRegularExpression>
 #include <QSet>
 #include <QtTest>
 #include "cidschemehandler.h"
@@ -42,6 +44,12 @@ private slots:
     void namespacesMultipleCidRefsOnOneLine();
     void namespacesWhitespaceAroundEquals();
     void namespacedKeyRejectsPrefixContainingSeparator();
+
+    // Theming.
+    void aDarkPaletteProducesADarkDocument();
+    void everyColourComesFromThePalette();
+    void theBodyAlwaysGetsABackground();
+    void aSendersOwnHtmlIsNotRecoloured();
 };
 
 void TestHtmlBuilder::escapesPlainText()
@@ -274,6 +282,119 @@ void TestHtmlBuilder::namespacedKeyRejectsPrefixContainingSeparator()
     const QString expectedKey = CidSchemeHandler::namespacedKey(
         QStringLiteral("m0"), QStringLiteral("a!b@x"));
     QVERIFY(html.contains(QStringLiteral("cid:%1").arg(expectedKey)));
+}
+
+/// A palette with unmistakable colours, so a hardcoded value cannot pass by
+/// coincidentally resembling a real theme.
+static QPalette makeTestPalette(const QColor &window, const QColor &text)
+{
+    QPalette palette;
+    palette.setColor(QPalette::Base, window);
+    palette.setColor(QPalette::Window, window);
+    palette.setColor(QPalette::Text, text);
+    palette.setColor(QPalette::WindowText, text);
+    return palette;
+}
+
+void TestHtmlBuilder::aDarkPaletteProducesADarkDocument()
+{
+    // The whole point of the item: the CSS was hardcoded light, so a user on a
+    // dark desktop read plain-text mail as black on white inside a dark window.
+    ParsedMessage msg;
+    msg.plainBody = QStringLiteral("hello");
+
+    const HtmlBuilder::Palette dark = HtmlBuilder::paletteFrom(
+        makeTestPalette(QColor(0x12, 0x34, 0x56), QColor(0xab, 0xcd, 0xef)));
+
+    const QString html =
+        HtmlBuilder::build(msg, HtmlBuilder::ForcePlain, dark);
+
+    QVERIFY2(html.contains(QStringLiteral("#123456")), qPrintable(html));
+    QVERIFY2(html.contains(QStringLiteral("#abcdef")), qPrintable(html));
+}
+
+void TestHtmlBuilder::everyColourComesFromThePalette()
+{
+    // A single leftover literal is the whole defect, and it survives a test
+    // that only checks the palette colours are present. Assert the negative:
+    // no hex colour appears that the palette did not put there.
+    ParsedMessage msg;
+    msg.plainBody = QStringLiteral("> quoted\nplain");
+
+    const HtmlBuilder::Palette dark = HtmlBuilder::paletteFrom(
+        makeTestPalette(QColor(0x12, 0x34, 0x56), QColor(0xab, 0xcd, 0xef)));
+    const QString html =
+        HtmlBuilder::build(msg, HtmlBuilder::ForcePlain, dark);
+
+    // Only the <style> block: a sender's own HTML is not ours to police, and
+    // the body of this message carries no colours anyway.
+    const qsizetype start = html.indexOf(QStringLiteral("<style>"));
+    const qsizetype end = html.indexOf(QStringLiteral("</style>"));
+    QVERIFY(start >= 0 && end > start);
+    const QString style = html.mid(start, end - start);
+
+    static const QRegularExpression hex(QStringLiteral("#[0-9a-fA-F]{3,8}\\b"));
+    auto it = hex.globalMatch(style);
+    QSet<QString> found;
+    while (it.hasNext())
+        found.insert(it.next().captured(0).toLower());
+
+    // Every colour in the stylesheet must be one the palette supplied. The
+    // derived ones (a border, a dimmed label) are blends of those, so they are
+    // listed by the builder rather than being free-floating literals.
+    const QSet<QString> allowed = {
+        dark.background.name().toLower(), dark.text.name().toLower(),
+        dark.dim.name().toLower(),        dark.border.name().toLower(),
+        dark.quote.name().toLower(),
+    };
+
+    for (const QString &colour : found) {
+        QVERIFY2(allowed.contains(colour),
+                 qPrintable(QStringLiteral("stylesheet carries '%1', which the "
+                                           "palette did not supply: a "
+                                           "hardcoded colour survives")
+                                .arg(colour)));
+    }
+}
+
+void TestHtmlBuilder::theBodyAlwaysGetsABackground()
+{
+    // The original CSS set no background at all, which is why the pane was
+    // white: the web view's default showed through regardless of the desktop.
+    ParsedMessage msg;
+    msg.plainBody = QStringLiteral("hello");
+
+    const HtmlBuilder::Palette dark = HtmlBuilder::paletteFrom(
+        makeTestPalette(QColor(0x12, 0x34, 0x56), QColor(0xab, 0xcd, 0xef)));
+    const QString html =
+        HtmlBuilder::build(msg, HtmlBuilder::ForcePlain, dark);
+
+    const qsizetype start = html.indexOf(QStringLiteral("<style>"));
+    const qsizetype end = html.indexOf(QStringLiteral("</style>"));
+    const QString style = html.mid(start, end - start);
+
+    static const QRegularExpression bodyRule(
+        QStringLiteral("body\\s*\\{[^}]*background[^}]*\\}"));
+    QVERIFY2(bodyRule.match(style).hasMatch(),
+             qPrintable(QStringLiteral("body has no background rule:\n") + style));
+}
+
+void TestHtmlBuilder::aSendersOwnHtmlIsNotRecoloured()
+{
+    // Scope, asserted so it does not drift: an HTML message brings its own
+    // styling and this change must not start rewriting it. A newsletter that
+    // sets its own white background stays white, and that is correct.
+    ParsedMessage msg;
+    msg.htmlBody = QStringLiteral(
+        "<div style=\"background:#ffffff;color:#000000\">hi</div>");
+
+    const HtmlBuilder::Palette dark = HtmlBuilder::paletteFrom(
+        makeTestPalette(QColor(0x12, 0x34, 0x56), QColor(0xab, 0xcd, 0xef)));
+    const QString html =
+        HtmlBuilder::build(msg, HtmlBuilder::PreferHtml, dark);
+
+    QVERIFY(html.contains(QStringLiteral("background:#ffffff")));
+    QVERIFY(html.contains(QStringLiteral("color:#000000")));
 }
 
 QTEST_MAIN(TestHtmlBuilder)

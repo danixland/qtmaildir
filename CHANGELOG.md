@@ -33,6 +33,13 @@ point at which they are stable.
 
 ### Fixed
 
+- **The message pane follows the desktop theme.** Its stylesheet hardcoded
+  light-theme greys and set no background at all, so plain-text mail rendered
+  as black on white inside a dark window. The colours now derive from the
+  palette, with the secondary ones blended from it rather than fixed, since a
+  grey chosen to read as subtle on white is nearly invisible on near-black. A
+  message that brings its own HTML still brings its own colours: that styling
+  is deliberately left alone.
 - **A message whose HTML body carries a `Content-Id` renders**, instead of
   opening blank with the app reporting no HTML part. A content id makes a part
   referenceable, not undisplayable, and setting one on the body is legal and

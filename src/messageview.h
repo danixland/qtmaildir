@@ -105,6 +105,14 @@ protected:
     /// rather than one widget.
     bool eventFilter(QObject *watched, QEvent *event) override;
 
+    /// Re-renders when the desktop theme changes.
+    ///
+    /// The document's colours are baked into its stylesheet at build time, so
+    /// unlike a widget it does not restyle itself: switching the desktop from
+    /// light to dark would otherwise leave the open thread on the old palette
+    /// until the next selection.
+    void changeEvent(QEvent *event) override;
+
 private:
     void render();
     void updateHeader();

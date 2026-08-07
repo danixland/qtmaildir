@@ -49,6 +49,31 @@ void paint(QPainter *painter, const QRect &rect, const QString &text,
 
 }  // namespace TagChip
 
+void SubjectDelegate::initStyleOption(QStyleOptionViewItem *option,
+                                      const QModelIndex &index) const
+{
+    QStyledItemDelegate::initStyleOption(option, index);
+
+    // Qt resolves Qt::ForegroundRole into the palette's Text roles, and its
+    // own painting then prefers those over HighlightedText: a model that
+    // supplies a foreground wins even on a selected row.
+    //
+    // That is wrong for the read/unread dimming. A read thread's colour is
+    // blended against the UNSELECTED background, so over the selection
+    // highlight it lands as grey on purple, near unreadable. The highlight
+    // already says "this row", so the dimming can yield to it while selected.
+    //
+    // Doomed threads are unaffected in practice: their fill is drawn beneath
+    // the selection and their white is a contrast requirement, which
+    // HighlightedText also satisfies.
+    if (option->state & QStyle::State_Selected) {
+        const QColor highlighted =
+            option->palette.color(QPalette::HighlightedText);
+        option->palette.setColor(QPalette::Text, highlighted);
+        option->palette.setColor(QPalette::WindowText, highlighted);
+    }
+}
+
 void SubjectDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                             const QModelIndex &index) const
 {
@@ -87,13 +112,21 @@ void SubjectDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         return;
 
     painter->save();
-    // The model supplies the row's colours; honouring them keeps a deleted
-    // thread white-on-red here as everywhere else.
+    // Selection outranks the model's colour, and that order matters. A read
+    // thread carries a dimmed foreground blended against the UNSELECTED
+    // background, so painting it over the highlight leaves grey-on-purple,
+    // which is close to unreadable. The highlight already carries the "this
+    // row" signal, so the read/unread distinction can yield to it for as long
+    // as the row is selected.
+    //
+    // A doomed thread is the exception that proves the rule: its white is not
+    // a dimming but a contrast requirement against its own fill, and the fill
+    // is drawn under the selection too.
     const QVariant foreground = index.data(Qt::ForegroundRole);
-    if (foreground.isValid())
-        painter->setPen(foreground.value<QBrush>().color());
-    else if (option.state & QStyle::State_Selected)
+    if (option.state & QStyle::State_Selected)
         painter->setPen(option.palette.highlightedText().color());
+    else if (foreground.isValid())
+        painter->setPen(foreground.value<QBrush>().color());
     else
         painter->setPen(option.palette.text().color());
 

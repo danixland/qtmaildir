@@ -33,6 +33,9 @@ private slots:
     void reportsSubjectAndAuthors();
     void subjectShowsMessageCountOnlyForRealThreads();
     void unreadThreadsRenderBold();
+    void readThreadsAreDimmedAndUnreadAreNot();
+    void theUnreadCueDoesNotDependOnFontWeight();
+    void aDoomedThreadKeepsItsContrastEvenWhenRead();
     void tagsAreTheFirstColumnAndSubjectTheLast();
     void accountTagBecomesAChipLabel();
     void unreadStylingSurvivesAnAccountChip();
@@ -162,6 +165,79 @@ void TestThreadListModel::unreadThreadsRenderBold()
         model.data(model.index(1, ThreadListModel::SubjectColumn), Qt::FontRole);
     QVERIFY(unreadFont.isValid());
     QVERIFY(unreadFont.value<QFont>().bold());
+}
+
+void TestThreadListModel::readThreadsAreDimmedAndUnreadAreNot()
+{
+    // Bold was unread's ONLY cue, and on the user's system it renders
+    // identically to regular: verified with a bare QTableView and a plain
+    // QStandardItemModel, so the fault is below this application, in Qt or
+    // fontconfig, and no model change can reach it. Bold is kept, since it
+    // works elsewhere, but the state can no longer depend on it.
+    //
+    // Read rows are dimmed instead, which inverts the emphasis: unread sits at
+    // full contrast and the bulk of a mostly-read list recedes.
+    ThreadListModel model;
+    ThreadSummary read = makeThread(QStringLiteral("t1"), QStringLiteral("read"));
+    read.tags = QStringList{ QStringLiteral("inbox") };
+    model.appendBatch(
+        { read, makeThread(QStringLiteral("t2"), QStringLiteral("unread")) });
+
+    const QVariant readFg =
+        model.data(model.index(0, ThreadListModel::SubjectColumn),
+                   Qt::ForegroundRole);
+    const QVariant unreadFg =
+        model.data(model.index(1, ThreadListModel::SubjectColumn),
+                   Qt::ForegroundRole);
+
+    QVERIFY2(readFg.isValid(), "a read thread carries no dimming");
+    QVERIFY2(!unreadFg.isValid(),
+             "an unread thread must be left at the palette's own colour, so it "
+             "is the one that stands out");
+}
+
+void TestThreadListModel::theUnreadCueDoesNotDependOnFontWeight()
+{
+    // The property that matters, stated directly: strip every font from the
+    // model's answer and the two states must still be distinguishable. A test
+    // asserting only that bold is set passes on a system where bold paints
+    // exactly like regular, which is precisely how this went unnoticed.
+    ThreadListModel model;
+    ThreadSummary read = makeThread(QStringLiteral("t1"), QStringLiteral("read"));
+    read.tags = QStringList{ QStringLiteral("inbox") };
+    model.appendBatch(
+        { read, makeThread(QStringLiteral("t2"), QStringLiteral("unread")) });
+
+    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
+        const QVariant readFg =
+            model.data(model.index(0, column), Qt::ForegroundRole);
+        const QVariant unreadFg =
+            model.data(model.index(1, column), Qt::ForegroundRole);
+
+        QVERIFY2(readFg != unreadFg,
+                 qPrintable(QStringLiteral("column %1 renders read and unread "
+                                           "identically once the font is "
+                                           "ignored").arg(column)));
+    }
+}
+
+void TestThreadListModel::aDoomedThreadKeepsItsContrastEvenWhenRead()
+{
+    // Both cues write ForegroundRole, so they share one channel and the order
+    // matters. A deleted row forces white text onto its crimson fill; dimming
+    // it because it also happens to be read would drop that contrast to
+    // unreadable.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"),
+                                      QStringLiteral("doomed and read"));
+    thread.tags = QStringList{ QStringLiteral("inbox") };
+    model.appendBatch({ thread });
+
+    model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
+
+    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    QCOMPARE(model.data(subject, Qt::ForegroundRole).value<QBrush>().color(),
+             QColor(Qt::white));
 }
 
 void TestThreadListModel::tagsAreTheFirstColumnAndSubjectTheLast()
@@ -325,9 +401,17 @@ void TestThreadListModel::ordinaryThreadsCarryNoRowColour()
 
     const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
     QVERIFY(!model.data(subject, Qt::BackgroundRole).isValid());
-    QVERIFY(!model.data(subject, Qt::ForegroundRole).isValid());
     const QVariant font = model.data(subject, Qt::FontRole);
     QVERIFY(!font.isValid() || !font.value<QFont>().strikeOut());
+
+    // The foreground goes back to the dimming a read thread carries, NOT to
+    // nothing: this thread has no unread tag, so plain for it means dimmed.
+    // What matters is that the doomed white is gone.
+    const QVariant foreground = model.data(subject, Qt::ForegroundRole);
+    if (foreground.isValid()) {
+        QVERIFY2(foreground.value<QBrush>().color() != QColor(Qt::white),
+                 "the doomed white text survived the undo");
+    }
 }
 
 void TestThreadListModel::threadIdIsReachableFromAnIndex()

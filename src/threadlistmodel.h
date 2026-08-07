@@ -75,6 +75,15 @@ public:
     static QColor deletedColour();
     static QColor spamColour();
 
+    /// The dimmed text colour a READ thread carries.
+    ///
+    /// Unread rows are left at the palette's own colour and read ones recede,
+    /// rather than unread being emphasised. Bold used to be the only cue and
+    /// cannot be relied on: on at least one system it renders identically to
+    /// regular, which is a Qt or fontconfig matter this application cannot
+    /// reach. Derived from the palette, never hardcoded.
+    static QColor readColour();
+
     explicit ThreadListModel(QObject *parent = nullptr);
 
     /// Supplies the account chip colours. Not owned; must outlive the model.

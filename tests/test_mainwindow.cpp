@@ -81,6 +81,7 @@ private slots:
     void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
     void anUnobservableLockTableLeavesTheSyncButtonUsable();
     void theStatusBarFollowsTheSyncPhase();
+    void aSelectedReadThreadIsNotDimmedIntoTheHighlight();
     void markAllReadIsDisabledUntilTheQueryFinishes();
     void markAllReadActsOnEveryRowAndUndoesInOneStep();
     void markAllReadDoesNothingWhenNothingIsUnread();
@@ -368,6 +369,60 @@ static ThreadSummary makeThread(const QString &id, const QStringList &tags)
     thread.authors = QStringLiteral("Someone <someone@example.org>");
     thread.tags = tags;
     return thread;
+}
+
+void TestMainWindow::aSelectedReadThreadIsNotDimmedIntoTheHighlight()
+{
+    // Read threads carry a dimmed Qt::ForegroundRole, blended against the
+    // UNSELECTED background. Qt's own painting prefers a model foreground over
+    // HighlightedText, so without SubjectDelegate::initStyleOption reversing
+    // that, selecting a read row paints it grey on the selection colour, which
+    // is close to unreadable. Seen in a screenshot before it was caught here.
+    //
+    // Rendered rather than asserted on roles: the model is right either way,
+    // and the defect lives entirely in how the delegate resolves them.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    // Identical but for the unread tag, so any pixel difference between the
+    // two selected rows is the dimming leaking through.
+    ThreadSummary read = makeThread(QStringLiteral("t1"), {});
+    ThreadSummary unread =
+        makeThread(QStringLiteral("t2"), { QStringLiteral("unread") });
+    read.subject = unread.subject = QStringLiteral("Same subject both rows");
+    read.authors = unread.authors = QStringLiteral("Someone <s@example.org>");
+    model->appendBatch({ read, unread });
+
+    window.resize(900, 300);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    view->selectAll();
+    QApplication::processEvents();
+
+    const int rowHeight = view->rowHeight(0);
+    QVERIFY(rowHeight > 0);
+
+    QImage shot(view->viewport()->size(), QImage::Format_ARGB32);
+    shot.fill(Qt::transparent);
+    view->viewport()->render(&shot);
+
+    int differing = 0;
+    for (int y = 0; y < rowHeight && y + rowHeight < shot.height(); ++y)
+        for (int x = 0; x < shot.width(); ++x)
+            if (shot.pixel(x, y) != shot.pixel(x, y + rowHeight))
+                ++differing;
+
+    QVERIFY2(differing == 0,
+             qPrintable(QStringLiteral("a selected read row paints differently "
+                                       "from a selected unread one (%1 pixels): "
+                                       "the dimming is overriding the selection "
+                                       "highlight").arg(differing)));
 }
 
 void TestMainWindow::markAllReadIsDisabledUntilTheQueryFinishes()

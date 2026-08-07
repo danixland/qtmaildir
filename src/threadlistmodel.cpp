@@ -20,6 +20,8 @@
 
 #include <QBrush>
 #include <QFont>
+#include <QGuiApplication>
+#include <QPalette>
 #include <QFontDatabase>
 #include <QFontMetrics>
 
@@ -55,6 +57,29 @@ QColor ThreadListModel::spamColour()
     // Distinct hue rather than a lighter red, so spam and deleted are told
     // apart by colour and not by shade.
     return QColor(0xa8, 0x5c, 0x18);
+}
+
+QColor ThreadListModel::readColour()
+{
+    // Derived from the palette, never hardcoded: a fixed grey that reads as
+    // "quiet" on a light theme is nearly invisible on a dark one, which is the
+    // rule item 12 established for the message pane.
+    //
+    // Mixed toward the background rather than simply made transparent, so it
+    // composites the same over a selected row as over an unselected one.
+    const QPalette palette = QGuiApplication::palette();
+    const QColor text = palette.color(QPalette::Text);
+    const QColor background = palette.color(QPalette::Base);
+
+    // 0.55 of the text colour: clearly recessive beside an undimmed row, and
+    // still comfortably readable on its own. A read thread is not disabled,
+    // it is simply not the thing being pointed at.
+    constexpr qreal kWeight = 0.55;
+    const qreal inverse = 1.0 - kWeight;
+    return QColor::fromRgbF(
+        text.redF() * kWeight + background.redF() * inverse,
+        text.greenF() * kWeight + background.greenF() * inverse,
+        text.blueF() * kWeight + background.blueF() * inverse);
 }
 
 ThreadListModel::ThreadListModel(QObject *parent)
@@ -144,6 +169,27 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         if (role == Qt::ForegroundRole)
             return QBrush(QColor(Qt::white));
     }
+
+    // Unread's cue, and it deliberately does NOT rely on the bold below.
+    //
+    // Bold was the only cue until 2026-08-07, when it turned out to render
+    // identically to regular on the user's system: confirmed with a bare
+    // QTableView and a plain QStandardItemModel, so the fault is in Qt or
+    // fontconfig, below this application, and nothing here can reach it.
+    //
+    // So the emphasis is inverted instead. Unread rows are left at the
+    // palette's own text colour, and READ rows are dimmed toward the
+    // background. That way the cue rides on ForegroundRole, which the delegate
+    // already honours, and it costs no column. It also suits the real ratio:
+    // with a few dozen unread among thousands read, dimming the bulk is calmer
+    // than highlighting it.
+    //
+    // BELOW the doomed branch on purpose, and that ordering is the whole
+    // protection: a deleted or spam thread has already returned white text for
+    // this role above, and dimming it because it is also read would drop that
+    // to unreadable against the crimson. Do not hoist this.
+    if (role == Qt::ForegroundRole && !thread.isUnread())
+        return QBrush(readColour());
 
     if (role == Qt::FontRole) {
         QFont font;

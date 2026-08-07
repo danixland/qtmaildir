@@ -30,6 +30,12 @@ point at which they are stable.
   until it exits, then a single summary line, so a run of over a minute was
   silent and there was nothing for the status bar to report. This is not a
   buffering problem and `stdbuf` does not help.
+- **Read threads are dimmed in the list, rather than unread being bold.** Bold
+  was the only thing distinguishing the two, and on some systems it renders
+  identically to regular, which is a Qt or fontconfig matter this application
+  cannot reach: read and unread mail looked exactly alike. The distinction now
+  rides on colour, with unread left at the palette's own text colour and read
+  receding toward the background. Bold is still applied where it works.
 
 ### Fixed
 

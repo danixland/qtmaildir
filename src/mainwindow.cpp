@@ -514,9 +514,14 @@ void MainWindow::buildUi()
             column, QHeaderView::Interactive);
     }
 
-    // The subject cell carries the account chip in front of its text.
-    m_threadView->setItemDelegateForColumn(ThreadListModel::SubjectColumn,
-                                           new SubjectDelegate(this));
+    // The subject cell carries the account chip in front of its text, and
+    // every cell needs the delegate's selection handling: the read/unread
+    // dimming arrives as a Qt::ForegroundRole, which Qt's default painting
+    // prefers over the highlight, leaving a selected read row grey on the
+    // selection colour. SubjectDelegate::initStyleOption reverses that, and
+    // its paint() falls through to the base class wherever there is no chip,
+    // so the other columns keep their ordinary rendering.
+    m_threadView->setItemDelegate(new SubjectDelegate(this));
     // Widening a column past the viewport scrolls rather than squeezing the
     // others. Per-pixel so the scroll does not jump a whole column at a time.
     m_threadView->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);

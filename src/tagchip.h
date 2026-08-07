@@ -59,4 +59,12 @@ public:
                const QModelIndex &index) const override;
     QSize sizeHint(const QStyleOptionViewItem &option,
                    const QModelIndex &index) const override;
+
+protected:
+    /// Makes the selection highlight outrank a model-supplied foreground.
+    ///
+    /// Qt's own resolution does the opposite, which leaves a dimmed read
+    /// thread painting grey over the selection colour.
+    void initStyleOption(QStyleOptionViewItem *option,
+                         const QModelIndex &index) const override;
 };

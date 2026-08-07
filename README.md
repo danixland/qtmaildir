@@ -449,6 +449,34 @@ strangers, and it is treated that way.
 
 GPL-2.0-only. See `LICENSE` for the full text.
 
+### Bundled fonts
+
+Two fonts are bundled under `assets/fonts/`, both licensed **SIL Open Font
+License 1.1**, which is compatible with the GPL and permits redistribution.
+Each ships with its own licence text beside it.
+
+| Font | Used for | Licence |
+|------|----------|---------|
+| Oxanium ExtraBold | the `qtMailDir` wordmark | `assets/fonts/OFL-Oxanium.txt` |
+| IBM Plex Sans Regular | the placeholder pane's text | `assets/fonts/OFL-IBMPlexSans.txt` |
+
+Both are **subsets**, not the complete fonts, because they are embedded into a
+rendered document as data URIs and the whole family would be far larger than
+the page using it. Oxanium is instanced to weight 800 and cut to the nine
+characters of the wordmark, 43K down to 1.2K. IBM Plex Sans is cut to Latin-1
+plus common punctuation rather than to the exact strings in use, 525K down to
+13K: it carries interface text that will change, and a subset matching only
+today's wording would break the moment a string is edited.
+
+To regenerate either after changing what is drawn:
+
+```bash
+fonttools varLib.instancer Oxanium[wght].ttf wght=800 -o Oxanium-800.ttf
+pyftsubset Oxanium-800.ttf --text="qtMailDir" --flavor=woff2 \
+    --layout-features='' --desubroutinize \
+    --output-file=assets/fonts/Oxanium-ExtraBold-subset.woff2
+```
+
 ## Development Approach
 
 This project is developed using AI-assisted tools. Code is generated with the help of AI based on human-provided specifications, design decisions, and iterative feedback.

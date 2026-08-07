@@ -818,6 +818,29 @@ void TestQueryCompleter::theDescriptionSurvivesAModestPopupWidth()
     QVERIFY(row.isValid());
     QCOMPARE(row.data(Qt::DisplayRole).toString(), QStringLiteral("path:"));
 
+    // The geometry this test depends on, asserted rather than assumed.
+    //
+    // The whole point here is that the description survives a MODEST popup, so
+    // a popup the windowing system decided to make wide would pass while
+    // proving nothing about the 550px case. Under Wayland the compositor gave
+    // this popup a 1278x0 viewport: the zero height made the grab below return
+    // a null pixmap and the failure was at least loud, but the width would have
+    // been a silent false pass had the height been usable. The tests are pinned
+    // to the offscreen platform in tests/CMakeLists.txt for this reason; this
+    // guard is what makes a run outside ctest fail honestly instead.
+    const QSize viewport = popup->viewport()->size();
+    QVERIFY2(viewport.height() > 0,
+             qPrintable(QStringLiteral("popup viewport has no height (%1x%2): "
+                                       "the platform never laid the popup out, "
+                                       "so any grab of it is empty")
+                            .arg(viewport.width()).arg(viewport.height())));
+    QVERIFY2(viewport.width() <= 700,
+             qPrintable(QStringLiteral("popup viewport is %1px wide, far more "
+                                       "than the ~550px this test exists to "
+                                       "check: it would measure a different "
+                                       "popup and pass for the wrong reason")
+                            .arg(viewport.width())));
+
     const QRect rect = popup->visualRect(row);
     QVERIFY(rect.isValid());
     QPixmap shot = popup->viewport()->grab(rect);

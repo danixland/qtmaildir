@@ -362,3 +362,33 @@ void NotmuchWorker::requestAllTags(quint64 generation)
     result.sort();
     emit allTagsReady(result, generation);
 }
+
+void NotmuchWorker::requestCounts(const QStringList &queries, quint64 generation)
+{
+    if (!openReadOnly())
+        return;
+
+    QVector<int> counts;
+    counts.reserve(queries.size());
+
+    for (const QString &query : queries) {
+        NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+
+        unsigned int count = 0;
+        // -1 rather than a skipped entry: the caller pairs these with its own
+        // labels positionally, so a dropped answer would put a real number
+        // against the wrong name, which is worse than showing none.
+        if (!nmQuery ||
+            notmuch_query_count_threads(nmQuery.get(), &count)
+                != NOTMUCH_STATUS_SUCCESS) {
+            counts.append(-1);
+            continue;
+        }
+
+        // Threads, matching what the thread list shows. A message count would
+        // disagree with the number of rows a click on this line produces.
+        counts.append(static_cast<int>(count));
+    }
+
+    emit countsReady(counts, generation);
+}

@@ -58,6 +58,9 @@ private slots:
     void requestAllTagsReturnsSortedTags();
     void requestAllTagsOnUnreadableConfigEmitsError();
 
+    void requestCountsAnswersOneCountPerQuery();
+    void requestCountsKeepsPositionOnAnInvalidQuery();
+
 private:
     /// Tags of one message, read back through a fresh worker query.
     QStringList tagsOf(const QString &messageId);
@@ -470,6 +473,54 @@ void TestNotmuchWorker::requestAllTagsOnUnreadableConfigEmitsError()
 
     QCOMPARE(errors.size(), 1);
     QVERIFY(ready.isEmpty());
+}
+
+void TestNotmuchWorker::requestCountsAnswersOneCountPerQuery()
+{
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::countsReady);
+
+    worker.requestCounts({ QStringLiteral("tag:unread"),
+                           QStringLiteral("tag:inbox"),
+                           QStringLiteral("tag:flagged") }, 9);
+
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(1).value<quint64>(), quint64(9));
+
+    // Threads, not messages: thread A holds two messages and must count once,
+    // which is the number the pane's "N in inbox" line claims to be showing.
+    const QVector<int> counts = spy.at(0).at(0).value<QVector<int>>();
+    QCOMPARE(counts, QVector<int>({ 1, 3, 0 }));
+}
+
+void TestNotmuchWorker::requestCountsKeepsPositionOnAnInvalidQuery()
+{
+    // The caller pairs answers with its own labels by index, so every query
+    // must produce exactly one entry at its own position. Dropping one would
+    // shift every later count onto the wrong label, and the pane would show a
+    // real number against the wrong name rather than visibly breaking.
+    //
+    // **notmuch's query parser rejects almost nothing.** malformedQuery...
+    // above records the same finding: an unbalanced quote parses and matches
+    // nothing. `((((` behaves the same way and counts 0 rather than failing,
+    // which is why this asserts the positional contract rather than a -1 that
+    // no query string can actually provoke. The -1 branch remains for a
+    // notmuch_query_create allocation failure, which a test cannot reach.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::countsReady);
+
+    worker.requestCounts({ QStringLiteral("tag:unread"),
+                           QStringLiteral("(((("),
+                           QStringLiteral("tag:inbox") }, 1);
+
+    QCOMPARE(spy.count(), 1);
+    const QVector<int> counts = spy.at(0).at(0).value<QVector<int>>();
+    QCOMPARE(counts.size(), 3);
+
+    // The queries either side keep their own answers, which is the property
+    // the pane depends on.
+    QCOMPARE(counts.at(0), 1);
+    QCOMPARE(counts.at(2), 3);
 }
 
 QTEST_MAIN(TestNotmuchWorker)

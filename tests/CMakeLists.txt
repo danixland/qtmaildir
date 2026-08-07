@@ -1,6 +1,12 @@
 # add_qtmaildir_test(<name>) builds tests/test_<name>.cpp and registers it.
+#
+# resources.qrc is compiled into each test binary for the same reason the app
+# compiles it rather than the static library: a qrc inside a .a registers from
+# a global initialiser the linker then drops. Library code reads :/fonts/ when
+# it builds the placeholder pane, so a test that never links the qrc would
+# exercise only the missing-resource fallback and pass against a broken build.
 function(add_qtmaildir_test name)
-    add_executable(test_${name} test_${name}.cpp)
+    add_executable(test_${name} test_${name}.cpp ${CMAKE_SOURCE_DIR}/src/resources.qrc)
     target_link_libraries(test_${name} PRIVATE qtmaildir_lib Qt6::Test)
     add_test(NAME ${name} COMMAND test_${name})
 endfunction()

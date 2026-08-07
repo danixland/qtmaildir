@@ -43,12 +43,15 @@
 #include <QWebEngineView>
 
 #include <algorithm>
+#include <functional>
+#include <utility>
 
 #include "cidschemehandler.h"
 #include "htmlbuilder.h"
 #include "requestinterceptor.h"
 #include "tagstrip.h"
 #include "threadcidmap.h"
+#include "version.h"
 
 namespace {
 
@@ -56,8 +59,11 @@ namespace {
 class MessagePage : public QWebEnginePage
 {
 public:
-    MessagePage(QWebEngineProfile *profile, QObject *parent)
-        : QWebEnginePage(profile, parent) {}
+    using QueryHandler = std::function<bool(const QString &)>;
+
+    MessagePage(QWebEngineProfile *profile, QObject *parent,
+                QueryHandler onQuery)
+        : QWebEnginePage(profile, parent), m_onQuery(std::move(onQuery)) {}
 
 protected:
     bool acceptNavigationRequest(const QUrl &url, NavigationType type,
@@ -78,6 +84,24 @@ protected:
             return true;
 
         if (type == NavigationTypeLinkClicked) {
+            // The placeholder's helper lines. JavaScript is off in this
+            // profile, so a clickable count can only be a real link, and this
+            // is where it is turned back into an action.
+            //
+            // The handler decides whether to accept it, not this function: the
+            // view refuses unless the placeholder is what is actually
+            // displayed, so a qtmaildir-query: link inside a message body is
+            // dropped rather than handed a query to run.
+            if (url.scheme() == QLatin1String("qtmaildir-query")) {
+                // path() already percent-decodes; verified against Qt 6.11,
+                // which returns tag:unread for qtmaildir-query:tag%3Aunread.
+                // Decoding it a second time would corrupt a query carrying a
+                // literal '%', which notmuch accepts in a quoted term.
+                if (m_onQuery)
+                    m_onQuery(url.path());
+                return false;
+            }
+
             QDesktopServices::openUrl(url);
             return false;
         }
@@ -86,6 +110,9 @@ protected:
         // navigation would replace the pane, which no message may do.
         return !isMainFrame;
     }
+
+private:
+    QueryHandler m_onQuery;
 };
 
 } // namespace
@@ -105,7 +132,16 @@ MessageView::MessageView(QWidget *parent)
     m_profile->installUrlSchemeHandler(QByteArrayLiteral("cid"), m_cidHandler);
 
     m_view = new QWebEngineView(this);
-    m_view->setPage(new MessagePage(m_profile, m_view));
+    // The gate the queryRequested() documentation describes: a helper link is
+    // only honoured while the placeholder is what is on screen, so the same
+    // URL inside a message body reaches here and is dropped.
+    m_view->setPage(new MessagePage(m_profile, m_view,
+                                    [this](const QString &query) {
+        if (!m_showingPlaceholder)
+            return false;
+        emit queryRequested(query);
+        return true;
+    }));
 
     QWebEngineSettings *settings = m_view->settings();
     settings->setAttribute(QWebEngineSettings::JavascriptEnabled, false);
@@ -196,9 +232,40 @@ void MessageView::setDocument(const QString &html)
     m_view->setHtml(html, documentUrl());
 }
 
+void MessageView::showPlaceholder(
+    const QList<HtmlBuilder::PlaceholderHelper> &helpers)
+{
+    // Everything clear() drops, dropped again: this is reachable directly and
+    // must not leave a previous thread's parts serveable behind the logo.
+    m_items.clear();
+    m_tagStrip->setTags({});
+    m_cidHandler->setParts({});
+    m_interceptor->setAllowedCids({});
+    m_interceptor->resetForNewMessage();
+
+    m_headerLabel->clear();
+    m_detailsButton->hide();
+    m_blockedLabel->hide();
+    m_loadRemoteButton->hide();
+    rebuildAttachmentBar();
+
+    // Set before the document loads, not after: acceptNavigationRequest reads
+    // it, and a click cannot arrive before setDocument() returns, but ordering
+    // it this way makes that independent of how the load is scheduled.
+    m_showingPlaceholder = true;
+
+    // The widget's own palette, not qApp's, for the reason the render path
+    // uses it: a style sheet or a themed parent can give this pane different
+    // colours from the application.
+    setDocument(HtmlBuilder::buildPlaceholder(
+        helpers, QStringLiteral(QTMAILDIR_VERSION),
+        HtmlBuilder::brandPaletteFrom(palette())));
+}
+
 void MessageView::clear()
 {
     m_items.clear();
+    m_showingPlaceholder = false;
     m_tagStrip->setTags({});
 
     // No thread is displayed, so nothing may be served or allowed. Without
@@ -221,6 +288,7 @@ void MessageView::showThread(const QList<ThreadRenderItem> &items)
 {
     m_items = items;
     m_preferHtml = true;
+    m_showingPlaceholder = false;
 
     // Every thread starts from a clean policy: no remote grant carries over.
     m_interceptor->resetForNewMessage();
@@ -258,6 +326,7 @@ void MessageView::showThread(const QList<ThreadRenderItem> &items)
 void MessageView::showError(const QString &text, const QString &filePath)
 {
     m_items.clear();
+    m_showingPlaceholder = false;
 
     // An error card references nothing, so the policy is emptied rather than
     // left holding the previous thread's parts.

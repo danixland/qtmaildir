@@ -2,5 +2,10 @@
 <RCC version="1.0">
   <qresource prefix="/">
     <file alias="icons/qtmaildir.svg">../assets/icons/qtmaildir.svg</file>
+    <!-- Subset, and embedded as data: URIs by HtmlBuilder::buildPlaceholder.
+         The web view's interceptor blocks every remote request, so the
+         mockup's Google Fonts @import cannot be ported. -->
+    <file alias="fonts/Oxanium-ExtraBold.woff2">../assets/fonts/Oxanium-ExtraBold-subset.woff2</file>
+    <file alias="fonts/IBMPlexSans-Regular.woff2">../assets/fonts/IBMPlexSans-Regular-subset.woff2</file>
   </qresource>
 </RCC>

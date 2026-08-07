@@ -81,6 +81,58 @@ public:
         QColor quote;       ///< Quoted lines in plain text.
     };
 
+    /// The brand colours of the placeholder pane.
+    ///
+    /// **A deliberate exception to the Palette above**, which derives from the
+    /// desktop theme. A logo is brand rather than chrome, so these are the
+    /// values from the user's mockup and are not blended toward anything. The
+    /// desktop theme still decides WHICH set is used, so the pane never renders
+    /// a light lockup on a dark desktop.
+    struct BrandPalette {
+        QColor background;   ///< The pane, behind the radial wash.
+        QColor backgroundIn; ///< The lighter centre of that wash.
+        QColor grid;         ///< Grid rules, and the icon tile's border.
+        QColor tile;         ///< The icon tile's fill.
+        QColor tileBorder;   ///< The icon tile's edge. Separate from `grid`,
+                             ///< which needs a different strength on light.
+        QColor accent;       ///< "Mail" in the wordmark, and the envelope.
+        QColor accentEdge;   ///< The envelope's stroke.
+        QColor title;        ///< The wordmark, apart from the accent span.
+        QColor subtitle;     ///< The tagline, the helpers and the footer.
+
+        /// Percent alpha of the accent glow. Deliberately different between the
+        /// two sets: on dark the glow adds light and can be generous, on light
+        /// it subtracts and the same value washes the whole pane.
+        int glowAlpha = 0;
+
+        /// Percent opacity of the grid, for the same reason.
+        int gridOpacity = 35;
+    };
+
+    /// Picks the dark or the light brand set from the desktop palette.
+    ///
+    /// Decided on the window's Base lightness, the same surface the document
+    /// Palette reads, so the two agree about which way round the theme is.
+    static BrandPalette brandPaletteFrom(const QPalette &palette);
+
+    /// One helper line under the wordmark: a count, and the query it runs.
+    ///
+    /// An empty query renders as text rather than as a link, which is what the
+    /// sync line uses: it reports a state rather than naming a search.
+    struct PlaceholderHelper {
+        QString label;  ///< Already-translated, e.g. "12 unread".
+        QString query;  ///< notmuch query, or empty for a non-link line.
+    };
+
+    /// The pane shown when no thread is displayed.
+    ///
+    /// Rendered into the same web view as a message rather than into a second
+    /// widget stacked behind it, so there is one document path and one set of
+    /// security rules.
+    static QString buildPlaceholder(const QList<PlaceholderHelper> &helpers,
+                                    const QString &version,
+                                    const BrandPalette &brand);
+
     /// Derives the document palette from a widget palette.
     ///
     /// The dim and border colours are blends rather than fixed greys, which is

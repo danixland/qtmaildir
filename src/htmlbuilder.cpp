@@ -19,8 +19,10 @@
 #include "htmlbuilder.h"
 
 #include <QCoreApplication>
+#include <QFile>
 #include <QGuiApplication>
 #include <QRegularExpression>
+#include <QUrl>
 
 namespace {
 
@@ -82,6 +84,259 @@ HtmlBuilder::Palette HtmlBuilder::paletteFrom(const QPalette &palette)
         : blend(quoteHue, background, 0.85);
 
     return result;
+}
+
+HtmlBuilder::BrandPalette HtmlBuilder::brandPaletteFrom(const QPalette &palette)
+{
+    // Base, the same surface paletteFrom() reads, so the placeholder and a
+    // rendered message never disagree about which way round the theme is.
+    const bool dark = palette.color(QPalette::Base).lightnessF() < 0.5;
+
+    BrandPalette brand;
+    if (dark) {
+        brand.background   = QColor(0x06, 0x0b, 0x10);
+        brand.backgroundIn = QColor(0x0c, 0x15, 0x20);
+        brand.grid         = QColor(0x18, 0x28, 0x40);
+        brand.tile         = QColor(0x10, 0x1e, 0x2d);
+        brand.tileBorder   = QColor(0x18, 0x28, 0x40);
+        brand.accent       = QColor(0xa8, 0x55, 0xf7);
+        brand.accentEdge   = QColor(0x7c, 0x3a, 0xed);
+        brand.title        = QColor(0xc4, 0xd6, 0xe8);
+        brand.subtitle     = QColor(0x7a, 0x9b, 0xb8);
+        brand.glowAlpha    = 16;
+    } else {
+        // **Not the mockup's light values as written.** Rendered side by side
+        // with the dark set, three of them did not survive contact with a real
+        // pane, because the same nominal contrast behaves differently against
+        // white than against near-black:
+        //
+        // - The grid at #d9dfe8 on white is about a 2% luminance step and
+        //   vanished entirely, where #182840 on #060b10 reads clearly. Darkened
+        //   here, and the opacity is raised for this set alone below.
+        // - The glow SUBTRACTS light on white instead of adding it, so 14%
+        //   washed most of the pane purple rather than hinting at a glow. The
+        //   dark set keeps 16 for the opposite reason.
+        // - The tile at #f0f3f7 inside a #d9dfe8 border did not separate from
+        //   the background, leaving the icon floating.
+        //
+        // The hues are the mockup's throughout; only their strength changed.
+        brand.background   = QColor(0xff, 0xff, 0xff);
+        brand.backgroundIn = QColor(0xf4, 0xf6, 0xfa);
+        brand.grid         = QColor(0xb9, 0xc4, 0xd4);
+        brand.tile         = QColor(0xf0, 0xf3, 0xf7);
+        brand.tileBorder   = QColor(0xc7, 0xd0, 0xdd);
+        brand.accent       = QColor(0x93, 0x33, 0xea);
+        brand.accentEdge   = QColor(0x7c, 0x3a, 0xed);
+        brand.title        = QColor(0x1f, 0x29, 0x37);
+        brand.subtitle     = QColor(0x37, 0x41, 0x51);
+        brand.glowAlpha    = 6;
+        brand.gridOpacity  = 45;
+    }
+    return brand;
+}
+
+namespace {
+
+/// A bundled font as a data: URI.
+///
+/// The mockup reaches Google Fonts with an @import, which the interceptor
+/// blocks by design and which would be a network request from a mail client
+/// besides. The faces ship in the binary and are inlined here, so the document
+/// fetches nothing at all.
+QString fontDataUri(const char *resource)
+{
+    QFile file(QString::fromLatin1(resource));
+    if (!file.open(QIODevice::ReadOnly)) {
+        // Falls back to the generic family in the font stack rather than
+        // failing to render. A missing resource is a build fault, not
+        // something the user can act on mid-session.
+        return QString();
+    }
+    return QStringLiteral("data:font/woff2;base64,")
+        + QString::fromLatin1(file.readAll().toBase64());
+}
+
+/// rgba() from a colour and a percentage, for the translucent washes.
+QString rgba(const QColor &c, int percent)
+{
+    return QStringLiteral("rgba(%1,%2,%3,%4)")
+        .arg(c.red()).arg(c.green()).arg(c.blue())
+        .arg(percent / 100.0);
+}
+
+/// The placeholder's stylesheet.
+///
+/// Sizes are clamped rather than fixed or purely fluid: this is a splitter
+/// panel whose width varies from a couple of hundred pixels to most of a
+/// screen. A fixed wordmark is lost in a wide pane and overflows a narrow one;
+/// a purely fluid one is unreadable at one end and absurd at the other. The
+/// vw term scales it, the clamp bounds stop it going either way.
+///
+/// Substituted by NAME, not by QString::arg positions. The stylesheet is full
+/// of CSS percentages, and **arg() does NOT collapse "%%" into "%"**: every
+/// percentage written that way stayed literally "50%%", which is invalid, so
+/// the browser dropped each declaration containing one. That silently killed
+/// the mask, the glow and both radial gradients while the pane still rendered
+/// and still looked plausible, and a probe measuring only the properties
+/// without percentages reported everything correct. Named tokens cannot
+/// collide with a percent sign at all.
+const char *kPlaceholderStyleTemplate = R"CSS(
+@font-face { font-family: 'Oxanium qtmaildir'; font-weight: 800;
+             font-style: normal; font-display: block;
+             src: url('@FONT_OXANIUM@') format('woff2'); }
+@font-face { font-family: 'Plex qtmaildir'; font-weight: 400;
+             font-style: normal; font-display: block;
+             src: url('@FONT_PLEX@') format('woff2'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden;
+             background: @BG@; }
+.bg { position: absolute; inset: 0;
+      background: radial-gradient(circle at 30% 20%, @BG_IN@ 0%, @BG@ 55%, @BG@ 100%);
+      display: flex; align-items: center; justify-content: center; }
+/* The grid and the glow are sized RELATIVE TO THE PANE, which is the one place
+   this departs from the mockup's numbers rather than porting them.
+
+   The mockup draws into a fixed 1920x1080 box and scales the whole box to fit.
+   Its mask is `circle at 50% 45%` fading out by 70%, which in a box that shape
+   means the fade completes well inside the frame and the grid dissolves into
+   darkness around the lockup. Taking those same values into a box the size of
+   this pane keeps the RATIO but loses the effect: `circle` with no explicit
+   extent resolves to farthest-corner, so in a pane roughly 990x650 the fade
+   only completes past the corners and the grid reads as uniform to the edges,
+   which is what it looked like. The same applies to the 900px glow, which is
+   larger than a short pane is tall, so its falloff never appears.
+
+   `closest-side` pins the fade to the nearer edge instead, so the vignette
+   completes inside the pane at any splitter position, and the glow is a
+   percentage of the pane rather than a pixel count. */
+.grid { position: absolute; inset: 0;
+        background-image: linear-gradient(@GRID@ 1px, transparent 1px),
+                          linear-gradient(90deg, @GRID@ 1px, transparent 1px);
+        background-size: 64px 64px; opacity: @GRID_OPACITY@;
+        mask-image: radial-gradient(closest-side circle at 50% 45%,
+                    rgba(0,0,0,0.9) 0%, transparent 75%);
+        -webkit-mask-image: radial-gradient(closest-side circle at 50% 45%,
+                    rgba(0,0,0,0.9) 0%, transparent 75%); }
+.glow { position: absolute;
+        width: min(95%, 900px); aspect-ratio: 1;
+        background: radial-gradient(circle, @GLOW@ 0%, transparent 70%);
+        top: 50%; left: 50%; transform: translate(-50%, -55%); }
+/* Natural height, centred. The user rejected a fixed vertical split: this
+   pane's height varies enormously and a ratio breaks at one extreme. */
+.content { position: relative; z-index: 2; width: 100%;
+           padding: 0 clamp(12px, 4vw, 48px);
+           display: flex; flex-direction: column; align-items: center;
+           gap: clamp(10px, 2.2vw, 22px); }
+/* Header ROW, per the decision of 2026-08-07: icon left, wordmark right,
+   with the glow and grid still centred behind. */
+.lockup { display: flex; align-items: center;
+          gap: clamp(10px, 2.4vw, 26px); }
+.icon-tile { flex: none;
+             width: clamp(48px, 11vw, 104px); height: clamp(48px, 11vw, 104px);
+             border-radius: clamp(12px, 2.6vw, 26px);
+             background: @TILE@; border: 1px solid @TILE_BORDER@;
+             display: flex; align-items: center; justify-content: center;
+             box-shadow: 0 0 60px @TILE_SHADOW@; }
+.icon-tile svg { width: 68%; height: 68%; }
+.wordmark { display: flex; flex-direction: column; gap: 0.25em; }
+.title { font-family: 'Oxanium qtmaildir', sans-serif; font-weight: 800;
+         font-size: clamp(26px, 6.4vw, 60px); letter-spacing: 0.01em;
+         color: @TITLE@; line-height: 1; white-space: nowrap; }
+.title .accent { color: @ACCENT@; }
+.subtitle { font-family: 'Plex qtmaildir', sans-serif; font-weight: 400;
+            font-size: clamp(9px, 1.7vw, 15px); letter-spacing: 0.04em;
+            color: @SUBTITLE@; text-transform: uppercase; }
+.helpers { display: flex; flex-wrap: wrap; justify-content: center;
+           gap: clamp(8px, 1.8vw, 18px);
+           font-family: 'Plex qtmaildir', sans-serif;
+           font-size: clamp(10px, 1.8vw, 15px); }
+.helpers a, .helpers span { color: @SUBTITLE@; text-decoration: none;
+                            border-bottom: 1px solid transparent;
+                            padding-bottom: 1px; }
+.helpers a:hover { color: @ACCENT@; border-bottom-color: @ACCENT@; }
+.footer { font-family: 'Plex qtmaildir', sans-serif;
+          font-size: clamp(8px, 1.4vw, 12px); color: @SUBTITLE@; opacity: 0.75;
+          text-align: center; line-height: 1.6; }
+.footer a { color: @SUBTITLE@; text-decoration: none;
+            border-bottom: 1px solid @GRID@; }
+.footer a:hover { color: @ACCENT@; }
+)CSS";
+
+} // namespace
+
+QString HtmlBuilder::buildPlaceholder(const QList<PlaceholderHelper> &helpers,
+                                      const QString &version,
+                                      const BrandPalette &brand)
+{
+    QString style = QString::fromUtf8(kPlaceholderStyleTemplate);
+    const QList<QPair<QString, QString>> tokens = {
+        { QStringLiteral("@BG@"),           brand.background.name() },
+        { QStringLiteral("@BG_IN@"),        brand.backgroundIn.name() },
+        { QStringLiteral("@GRID@"),         brand.grid.name() },
+        { QStringLiteral("@TILE_BORDER@"),  brand.tileBorder.name() },
+        { QStringLiteral("@GRID_OPACITY@"),
+          QString::number(brand.gridOpacity / 100.0) },
+        { QStringLiteral("@TILE@"),         brand.tile.name() },
+        { QStringLiteral("@ACCENT@"),       brand.accent.name() },
+        { QStringLiteral("@TITLE@"),        brand.title.name() },
+        { QStringLiteral("@SUBTITLE@"),     brand.subtitle.name() },
+        { QStringLiteral("@GLOW@"),         rgba(brand.accent, brand.glowAlpha) },
+        { QStringLiteral("@TILE_SHADOW@"),  rgba(brand.accent, brand.glowAlpha - 4) },
+        { QStringLiteral("@FONT_OXANIUM@"), fontDataUri(":/fonts/Oxanium-ExtraBold.woff2") },
+        { QStringLiteral("@FONT_PLEX@"),    fontDataUri(":/fonts/IBMPlexSans-Regular.woff2") },
+    };
+    for (const auto &token : tokens)
+        style.replace(token.first, token.second);
+
+    QString helperHtml;
+    for (const PlaceholderHelper &helper : helpers) {
+        const QString label = helper.label.toHtmlEscaped();
+        if (helper.query.isEmpty()) {
+            // A state, not a search. Rendering it as a link would invite a
+            // click that runs an empty query and empties the thread list.
+            helperHtml += QStringLiteral("<span>%1</span>").arg(label);
+            continue;
+        }
+
+        // Percent-encoded into the URL, then escaped into the attribute. A
+        // saved query is user-written and reaches here verbatim, so both
+        // layers are needed: one keeps it a single URL, the other keeps it
+        // inside the attribute.
+        const QString href = QString::fromLatin1(
+            QUrl::toPercentEncoding(helper.query)).toHtmlEscaped();
+        helperHtml += QStringLiteral(
+            "<a href=\"qtmaildir-query:%1\">%2</a>").arg(href, label);
+    }
+
+    return QStringLiteral(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+        "<style>%1</style></head><body><div class=\"bg\">"
+        "<div class=\"grid\"></div><div class=\"glow\"></div>"
+        "<div class=\"content\">"
+        "<div class=\"lockup\">"
+        "<div class=\"icon-tile\">"
+        "<svg viewBox=\"0 0 256 256\" xmlns=\"http://www.w3.org/2000/svg\">"
+        "<path d=\"M100,70 L176,70 A14,14 0 0 1 190,84 L190,172 "
+        "A14,14 0 0 1 176,186 L100,186 L40,128 Z\" fill=\"%2\" stroke=\"%3\" "
+        "stroke-width=\"6\" stroke-linejoin=\"round\"/>"
+        "<circle cx=\"100\" cy=\"128\" r=\"15\" fill=\"%4\"/>"
+        "</svg></div>"
+        "<div class=\"wordmark\">"
+        "<div class=\"title\">qt<span class=\"accent\">Mail</span>Dir</div>"
+        "<div class=\"subtitle\">%5</div>"
+        "</div></div>"
+        "<div class=\"helpers\">%6</div>"
+        "<div class=\"footer\">%7<br>"
+        "<a href=\"https://danix.xyz/qtmaildir\">danix.xyz/qtmaildir</a>"
+        "</div></div></div></body></html>")
+        .arg(style, brand.accent.name(), brand.accentEdge.name(),
+             brand.tile.name(),
+             QCoreApplication::translate(
+                 "HtmlBuilder", "local mail, tagged and searched"),
+             helperHtml,
+             QCoreApplication::translate(
+                 "HtmlBuilder", "Copyright &copy; 2026 Danilo M. &middot; "
+                                "version %1").arg(version.toHtmlEscaped()));
 }
 
 HtmlBuilder::Palette HtmlBuilder::defaultPalette()

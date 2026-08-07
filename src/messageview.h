@@ -59,6 +59,22 @@ public:
     void showError(const QString &text, const QString &filePath);
     void clear();
 
+    /// Shows the branded pane used when no thread is displayed.
+    ///
+    /// Separate from clear(), which still exists and still blanks: clear()
+    /// drops the previous thread's state, and a caller that wants the
+    /// placeholder asks for it afterwards. Keeping them apart is what stops
+    /// the pane flashing a logo between selecting a thread and rendering it,
+    /// which the item lists as a constraint.
+    ///
+    /// helpers are already-translated lines; an empty query makes one plain
+    /// text rather than a link.
+    void showPlaceholder(const QList<HtmlBuilder::PlaceholderHelper> &helpers);
+
+    /// True while the placeholder is what the view is showing. Lets the window
+    /// re-render it with fresh counts without guessing what is on screen.
+    bool showingPlaceholder() const { return m_showingPlaceholder; }
+
     /// Supplies the tag strip's colours. Not owned; must outlive the view.
     void setTagColors(const TagColors *colours);
 
@@ -97,6 +113,17 @@ public slots:
 
 signals:
     void statusMessage(const QString &text);
+
+    /// A helper line on the placeholder was clicked. The window runs the query;
+    /// the view has no business driving the query bar itself.
+    ///
+    /// **Gated on the placeholder being what is displayed.** A message body is
+    /// attacker-controlled HTML and can carry a qtmaildir-query: link as easily
+    /// as any other; without the gate, clicking one would let a stranger's mail
+    /// drive the thread list. The consequence is mild (a query runs, nothing is
+    /// mutated or sent), but "a link in a message does something inside the
+    /// app" is a boundary worth keeping shut rather than arguing about.
+    void queryRequested(const QString &query);
 
 protected:
     /// Turns Ctrl+wheel over the body into zoom, and Ctrl+middle-click into a
@@ -146,6 +173,9 @@ private:
 
     QList<ThreadRenderItem> m_items;
     bool m_preferHtml = true;
+
+    /// Gates queryRequested(), so a link in a message body cannot run a query.
+    bool m_showingPlaceholder = false;
 
     QWebEngineProfile *m_profile = nullptr;
     QWebEngineView *m_view = nullptr;

@@ -74,12 +74,26 @@ public slots:
     /// after a sync, and after a tag mutation introduces an unknown tag.
     void requestAllTags(quint64 generation);
 
+    /// Thread counts for the placeholder pane's helper lines, one per query,
+    /// answered in the order asked. Counts rather than results: the pane says
+    /// how much there is, and clicking a line runs the query properly.
+    ///
+    /// Requested when the pane is about to go blank rather than kept fresh in
+    /// the background. A count goes stale the moment a tag is edited, and
+    /// refreshing one nobody is looking at is work for nothing.
+    void requestCounts(const QStringList &queries, quint64 generation);
+
 signals:
     void threadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void queryFinished(int totalThreads, quint64 generation);
     void threadLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void tagsApplied(const TagChange &change);
     void allTagsReady(const QStringList &tags, quint64 generation);
+
+    /// One entry per requested query, in the order they were asked for. A query
+    /// notmuch rejects yields -1 rather than dropping the entry, so the
+    /// positional correspondence the caller relies on always holds.
+    void countsReady(const QVector<int> &counts, quint64 generation);
 
     void errorOccurred(const QString &message);
 

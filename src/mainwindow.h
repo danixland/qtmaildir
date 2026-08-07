@@ -27,6 +27,7 @@
 #include <functional>
 
 #include "config.h"
+#include "htmlbuilder.h"
 #include "keymap.h"
 // Included rather than forward-declared: SyncPhaseTracker is held by value, so
 // its size must be known here. MailSync itself stays a forward declaration.
@@ -184,6 +185,13 @@ private slots:
     void onTagsApplied(const TagChange &change);
     void onAllTagsReady(const QStringList &tags);
 
+    /// Thread counts for the placeholder's helper lines, in the order
+    /// requestPlaceholderCounts() asked for them.
+    void onCountsReady(const QVector<int> &counts, quint64 generation);
+
+    /// Runs a query the user clicked on the placeholder pane.
+    void onPlaceholderQueryRequested(const QString &query);
+
 private:
     void buildUi();
 
@@ -198,6 +206,20 @@ private:
 
     /// Asks the worker to re-enumerate the database tags for the completer.
     void requestAllTags();
+
+    /// Shows the placeholder pane and asks the worker to refresh its counts.
+    ///
+    /// **The single route to a blank pane.** Every site that used to call
+    /// MessageView::clear() goes through here, so the pane is never left empty
+    /// by accident and the counts are refreshed exactly when they are about to
+    /// be looked at. A count goes stale the moment a tag is edited, and one
+    /// nobody is looking at is not worth keeping fresh.
+    void showPlaceholderPane();
+
+    /// The helper lines, built from the last counts received. Rendered with
+    /// whatever the previous answer was until the new one lands, so the pane
+    /// never flashes empty while the worker replies.
+    QList<HtmlBuilder::PlaceholderHelper> placeholderHelpers() const;
 
     void showWarnings();
     void showShortcutReference();
@@ -384,6 +406,21 @@ private:
 
     /// Indeterminate, shown only while a sync runs. See setSyncBusy().
     QProgressBar *m_syncProgress = nullptr;
+
+    /// The last counts the worker answered, one per kPlaceholderQueries entry.
+    /// Empty until the first reply, which renders the pane without its helper
+    /// lines rather than with three zeroes that would be a lie.
+    QVector<int> m_placeholderCounts;
+
+    /// Discriminates a counts reply from a superseded request, the same way the
+    /// query generation does. A reply for an older request is dropped rather
+    /// than repainting the pane with counts taken before the last edit.
+    quint64 m_countsGeneration = 0;
+
+    /// Set when a sync ends in failure, cleared when one succeeds. Drives the
+    /// placeholder's sync line, which appears only when something needs
+    /// attention, so it must survive until the next successful run.
+    bool m_lastSyncFailed = false;
 
     /// Holds the sync log and its close button, so the pane can be dismissed.
     QWidget *m_syncLogPane = nullptr;

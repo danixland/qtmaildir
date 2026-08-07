@@ -48,6 +48,15 @@ private slots:
     // Theming.
     void aDarkPaletteProducesADarkDocument();
     void everyColourComesFromThePalette();
+
+    // The placeholder pane (item 30).
+    void placeholderPicksTheBrandSetFromTheDesktopTheme();
+    void placeholderHelperBecomesALinkOnItsQuery();
+    void placeholderHelperWithoutAQueryIsNotALink();
+    void placeholderEscapesHelperText();
+    void placeholderEmbedsItsFontsRatherThanFetchingThem();
+    void placeholderReferencesNoRemoteResource();
+    void placeholderStyleHasNoUnsubstitutedTokens();
     void theBodyAlwaysGetsABackground();
     void aSendersOwnHtmlIsNotRecoloured();
 };
@@ -355,6 +364,168 @@ void TestHtmlBuilder::everyColourComesFromThePalette()
                                            "hardcoded colour survives")
                                 .arg(colour)));
     }
+}
+
+void TestHtmlBuilder::placeholderPicksTheBrandSetFromTheDesktopTheme()
+{
+    // The brand colours are fixed, deliberately: this is the one place where
+    // the desktop palette does NOT supply the values. What the desktop decides
+    // is which of the two sets is used, and getting that backwards is the
+    // failure the item warns about, a light lockup on a dark desktop.
+    const HtmlBuilder::BrandPalette dark = HtmlBuilder::brandPaletteFrom(
+        makeTestPalette(QColor(0x1a, 0x1a, 0x1a), QColor(0xee, 0xee, 0xee)));
+    const HtmlBuilder::BrandPalette light = HtmlBuilder::brandPaletteFrom(
+        makeTestPalette(QColor(0xff, 0xff, 0xff), QColor(0x11, 0x11, 0x11)));
+
+    QCOMPARE(dark.background.name(), QStringLiteral("#060b10"));
+    QCOMPARE(light.background.name(), QStringLiteral("#ffffff"));
+
+    // Not merely different: the right way round. A set whose background is
+    // darker than its text is the dark set, whichever values it holds.
+    QVERIFY(dark.background.lightnessF() < dark.title.lightnessF());
+    QVERIFY(light.background.lightnessF() > light.title.lightnessF());
+}
+
+void TestHtmlBuilder::placeholderHelperBecomesALinkOnItsQuery()
+{
+    // JavaScript is off in this profile, so a helper can only be actionable by
+    // being a real link that the page's navigation handler intercepts.
+    const QString html = HtmlBuilder::buildPlaceholder(
+        { { QStringLiteral("12 unread"), QStringLiteral("tag:unread") } },
+        QStringLiteral("0.10.0"),
+        HtmlBuilder::brandPaletteFrom(QPalette()));
+
+    QVERIFY(html.contains(QStringLiteral("href=\"qtmaildir-query:tag%3Aunread\"")));
+    QVERIFY(html.contains(QStringLiteral("12 unread")));
+}
+
+void TestHtmlBuilder::placeholderHelperWithoutAQueryIsNotALink()
+{
+    // The sync line reports a state rather than naming a search, so clicking it
+    // must not run an empty query and wipe the thread list.
+    const QString html = HtmlBuilder::buildPlaceholder(
+        { { QStringLiteral("3 edits waiting to sync"), QString() } },
+        QStringLiteral("0.10.0"),
+        HtmlBuilder::brandPaletteFrom(QPalette()));
+
+    QVERIFY(html.contains(QStringLiteral("3 edits waiting to sync")));
+    QVERIFY(!html.contains(QStringLiteral("qtmaildir-query:")));
+}
+
+void TestHtmlBuilder::placeholderEscapesHelperText()
+{
+    // A helper label carries a count this code produced, but the query half is
+    // built from configuration and a saved query is user-written. Neither may
+    // reach the document unescaped, and the query is doubly encoded: percent
+    // for the URL, then HTML for the attribute.
+    const QString html = HtmlBuilder::buildPlaceholder(
+        { { QStringLiteral("<script>alert(1)</script>"),
+            QStringLiteral("tag:\"a\"><script>") } },
+        QStringLiteral("0.10.0"),
+        HtmlBuilder::brandPaletteFrom(QPalette()));
+
+    QVERIFY(!html.contains(QStringLiteral("<script>")));
+    QVERIFY(html.contains(QStringLiteral("&lt;script&gt;")));
+}
+
+void TestHtmlBuilder::placeholderEmbedsItsFontsRatherThanFetchingThem()
+{
+    // The mockup @imports Google Fonts, which the interceptor blocks by design.
+    // The fonts ship in the binary and must arrive as data: URIs, or the pane
+    // silently falls back to a system font and stops looking like the brand.
+    const QString html = HtmlBuilder::buildPlaceholder(
+        {}, QStringLiteral("0.10.0"),
+        HtmlBuilder::brandPaletteFrom(QPalette()));
+
+    QVERIFY(!html.contains(QStringLiteral("fonts.googleapis.com")));
+
+    // BOTH faces, each with a real payload. Counting @font-face rules or
+    // checking the document's total size passes with one face missing, since
+    // the other is large enough on its own to carry either check: a mutation
+    // pointing one src at a nonexistent resource survived exactly that test.
+    // A missing resource yields an empty src, so the length is what catches it.
+    static const QRegularExpression src(
+        QStringLiteral("src: url\\('data:font/woff2;base64,([^']*)'\\)"));
+    auto it = src.globalMatch(html);
+    int faces = 0;
+    while (it.hasNext()) {
+        ++faces;
+        QVERIFY(it.next().captured(1).size() > 1000);
+    }
+    QCOMPARE(faces, 2);
+}
+
+void TestHtmlBuilder::placeholderReferencesNoRemoteResource()
+{
+    // The load-bearing security check, asserted as a negative for the same
+    // reason everyColourComesFromThePalette is: one leftover reference is the
+    // entire defect, and it would be invisible because the interceptor blocks
+    // it and the pane just renders slightly wrong.
+    const QString html = HtmlBuilder::buildPlaceholder(
+        { { QStringLiteral("12 unread"), QStringLiteral("tag:unread") } },
+        QStringLiteral("0.10.0"),
+        HtmlBuilder::brandPaletteFrom(QPalette()));
+
+    QVERIFY(!html.contains(QStringLiteral("//fonts")));
+    QVERIFY(!html.contains(QStringLiteral("@import")));
+
+    // The one http: URL is the SVG namespace, which is an identifier and never
+    // fetched. Asserting its exact value rather than excluding the scheme
+    // wholesale: a second http: URL appearing later would be a real resource.
+    static const QRegularExpression http(QStringLiteral("http://[^\"' ]*"));
+    auto plain = http.globalMatch(html);
+    while (plain.hasNext()) {
+        QCOMPARE(plain.next().captured(0),
+                 QStringLiteral("http://www.w3.org/2000/svg"));
+    }
+
+    // Every https: URL must be the footer's website link, which is a link the
+    // user clicks and not a resource the document fetches.
+    static const QRegularExpression https(QStringLiteral("https://[^\"' ]*"));
+    auto it = https.globalMatch(html);
+    while (it.hasNext()) {
+        QCOMPARE(it.next().captured(0),
+                 QStringLiteral("https://danix.xyz/qtmaildir"));
+    }
+}
+
+void TestHtmlBuilder::placeholderStyleHasNoUnsubstitutedTokens()
+{
+    // The defect this exists for shipped once and was invisible. The template
+    // used QString::arg with "%%" for every CSS percentage, and arg() does NOT
+    // collapse "%%" into "%", so the stylesheet reached the browser carrying
+    // "50%%". Each declaration holding one was dropped as invalid, which
+    // silently disabled the grid mask, the glow and both radial gradients. The
+    // pane still rendered, still looked plausible, and a geometry probe that
+    // happened to measure only percentage-free properties reported it correct.
+    const QString html = HtmlBuilder::buildPlaceholder(
+        { { QStringLiteral("12 unread"), QStringLiteral("tag:unread") } },
+        QStringLiteral("0.10.0"),
+        HtmlBuilder::brandPaletteFrom(QPalette()));
+
+    const qsizetype start = html.indexOf(QStringLiteral("<style>"));
+    const qsizetype end = html.indexOf(QStringLiteral("</style>"));
+    QVERIFY(start >= 0 && end > start);
+    const QString style = html.mid(start, end - start);
+
+    // No doubled percent survives into the document.
+    QVERIFY2(!style.contains(QStringLiteral("%%")),
+             "the stylesheet carries '%%', which CSS rejects: every rule "
+             "containing one is silently dropped");
+
+    // No token went unreplaced. A renamed colour would otherwise leave
+    // '@ACCENT@' sitting in the CSS as a dropped declaration.
+    static const QRegularExpression token(QStringLiteral("@[A-Z_]+@"));
+    const QRegularExpressionMatch leftover = token.match(style);
+    QVERIFY2(!leftover.hasMatch(),
+             qPrintable(QStringLiteral("unsubstituted token '%1' in the "
+                                       "stylesheet").arg(leftover.captured(0))));
+
+    // The three effects the bug disabled, each asserted by name so that
+    // deleting one is a test failure rather than a silent visual regression.
+    QVERIFY(style.contains(QStringLiteral("mask-image")));
+    QVERIFY(style.contains(QStringLiteral("radial-gradient")));
+    QVERIFY(style.contains(QStringLiteral("aspect-ratio")));
 }
 
 void TestHtmlBuilder::theBodyAlwaysGetsABackground()

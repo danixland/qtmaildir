@@ -47,6 +47,8 @@ private slots:
     void headerEscapesUntrustedValues();
     void headerOmitsAnAbsentCc();
     void detailsDialogIsOfferedForEveryThread();
+    void placeholderRendersAndReportsItself();
+    void aMessageBodyCannotRunAQuery();
 
 private:
     QWebEngineView *webViewOf(MessageView *view) const
@@ -490,6 +492,78 @@ void TestMessageView::detailsDialogIsOfferedForEveryThread()
     QPushButton *button =
         view.findChild<QPushButton *>(QStringLiteral("messageDetails"));
     QVERIFY(!button || !button->isVisible());
+}
+
+void TestMessageView::placeholderRendersAndReportsItself()
+{
+    MessageView view;
+    QWebEngineView *web = webViewOf(&view);
+    QVERIFY(web);
+
+    QSignalSpy loaded(web, &QWebEngineView::loadFinished);
+    view.showPlaceholder({ { QStringLiteral("7 unread"),
+                             QStringLiteral("tag:unread") } });
+
+    QVERIFY2(loaded.wait(15000), "the placeholder document never loaded");
+    QVERIFY2(loaded.last().at(0).toBool(),
+             "loadFinished reported failure: the navigation was rejected, "
+             "which is what a base-URL mismatch looks like");
+
+    // Rendered, not merely loaded. The wordmark is split across elements by
+    // the accent span, so the helper line is what proves the content arrived.
+    QString text;
+    bool done = false;
+    web->page()->toPlainText([&](const QString &result) {
+        text = result;
+        done = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(done, 15000);
+    QVERIFY2(text.contains(QStringLiteral("7 unread")), qPrintable(text));
+
+    QVERIFY(view.showingPlaceholder());
+}
+
+void TestMessageView::aMessageBodyCannotRunAQuery()
+{
+    // The gate behind queryRequested(). A message body is attacker-controlled
+    // HTML and can carry a qtmaildir-query: link; the view only honours one
+    // while the placeholder is what is displayed, so this asserts the state
+    // that decides it rather than synthesising a click, which would need the
+    // page's protected navigation handler.
+    MessageView view;
+    QSignalSpy queries(&view, &MessageView::queryRequested);
+
+    view.showPlaceholder({ { QStringLiteral("7 unread"),
+                             QStringLiteral("tag:unread") } });
+    QVERIFY(view.showingPlaceholder());
+
+    ParsedMessage message;
+    message.ok = true;
+    message.from = QStringLiteral("Mallory <mallory@example.org>");
+    message.subject = QStringLiteral("Click me");
+    message.htmlBody = QStringLiteral(
+        "<a href=\"qtmaildir-query:tag%3Adeleted\">a link</a>");
+
+    ThreadRenderItem item;
+    item.message = message;
+    item.cidPrefix = QStringLiteral("m0");
+    item.expanded = true;
+
+    view.showThread({ item });
+
+    // Showing any message closes the gate, so a link in that message's own
+    // body has nothing to reach.
+    QVERIFY2(!view.showingPlaceholder(),
+             "the gate stayed open while a message was displayed: a link in a "
+             "message body could run a query");
+
+    view.clear();
+    QVERIFY(!view.showingPlaceholder());
+
+    view.showError(QStringLiteral("broken"), QStringLiteral("/tmp/x"));
+    QVERIFY(!view.showingPlaceholder());
+
+    QVERIFY(queries.isEmpty());
 }
 
 QTEST_MAIN(TestMessageView)

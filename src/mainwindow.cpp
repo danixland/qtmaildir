@@ -577,6 +577,8 @@ void MainWindow::buildUi()
     m_messageView->setTagColors(&m_tagColors);
     connect(m_messageView, &MessageView::statusMessage,
             this, [this](const QString &text) { m_statusLabel->setText(text); });
+    connect(m_messageView, &MessageView::queryRequested,
+            this, &MainWindow::onPlaceholderQueryRequested);
 
     m_splitter = new QSplitter(Qt::Horizontal, central);
     m_splitter->addWidget(m_threadView);
@@ -781,6 +783,7 @@ void MainWindow::registerActions()
         // CLAUDE.md.
         m_currentThreadId.clear();
         m_messageView->clear();
+        showPlaceholderPane();
         m_markReadTimer->stop();
         m_markReadThreadId.clear();
     });
@@ -1060,6 +1063,8 @@ void MainWindow::wireWorker()
             this, &MainWindow::onWorkerError);
     connect(m_worker, &NotmuchWorker::allTagsReady,
             this, &MainWindow::onAllTagsReady);
+    connect(m_worker, &NotmuchWorker::countsReady,
+            this, &MainWindow::onCountsReady);
 
     // A confirmed write clears the pending revert: without this, a later
     // unrelated error would roll back a change that actually succeeded.
@@ -1090,6 +1095,92 @@ void MainWindow::onAllTagsReady(const QStringList &tags)
     // throw away a good list.
     m_knownTags = tags;
     m_queryCompleter->setTags(tags);
+}
+
+namespace {
+
+/// The queries behind the placeholder's helper lines, in render order.
+///
+/// Wire format, deliberately untranslated: `tag:` is notmuch syntax, not user
+/// -facing prose. Only the labels beside them are translated.
+const std::array<const char *, 3> kPlaceholderQueries = {
+    "tag:unread",
+    "tag:flagged",
+    "tag:inbox",
+};
+
+} // namespace
+
+QList<HtmlBuilder::PlaceholderHelper> MainWindow::placeholderHelpers() const
+{
+    QList<HtmlBuilder::PlaceholderHelper> helpers;
+
+    // Empty until the first reply lands. Rendering three zeroes meanwhile
+    // would be worse than rendering nothing: a zero is a claim.
+    if (m_placeholderCounts.size() == int(kPlaceholderQueries.size())) {
+        const QStringList labels = {
+            tr("%n unread", "", m_placeholderCounts.at(0)),
+            tr("%n flagged", "", m_placeholderCounts.at(1)),
+            tr("%n in inbox", "", m_placeholderCounts.at(2)),
+        };
+
+        for (int i = 0; i < labels.size(); ++i) {
+            // A query notmuch could not count yields -1; skip that line rather
+            // than print a negative number at the user.
+            if (m_placeholderCounts.at(i) < 0)
+                continue;
+            helpers.append({ labels.at(i),
+                             QString::fromLatin1(kPlaceholderQueries[i]) });
+        }
+    }
+
+    // The sync line, and only when something needs attention: a line that is
+    // always there becomes wallpaper and stops being read.
+    if (m_lastSyncFailed) {
+        helpers.append({ tr("last sync failed"), QString() });
+    } else if (const int pending = pendingEditCount(); pending > 0) {
+        helpers.append({ tr("%n change(s) waiting to sync", "", pending),
+                         QString() });
+    }
+
+    return helpers;
+}
+
+void MainWindow::showPlaceholderPane()
+{
+    m_messageView->showPlaceholder(placeholderHelpers());
+
+    QStringList queries;
+    for (const char *query : kPlaceholderQueries)
+        queries.append(QString::fromLatin1(query));
+
+    QMetaObject::invokeMethod(m_worker, "requestCounts", Qt::QueuedConnection,
+                              Q_ARG(QStringList, queries),
+                              Q_ARG(quint64, ++m_countsGeneration));
+}
+
+void MainWindow::onCountsReady(const QVector<int> &counts, quint64 generation)
+{
+    // A reply for a superseded request carries counts taken before whatever
+    // prompted the newer one, so accepting it would repaint the pane with
+    // older numbers than it already has.
+    if (generation != m_countsGeneration)
+        return;
+
+    m_placeholderCounts = counts;
+
+    // Only repaint what is actually on screen. Without this, a reply arriving
+    // after the user opened a thread would replace the message with the logo.
+    if (m_messageView->showingPlaceholder())
+        m_messageView->showPlaceholder(placeholderHelpers());
+}
+
+void MainWindow::onPlaceholderQueryRequested(const QString &query)
+{
+    // Through the query bar rather than straight to the worker, so the bar
+    // shows what is being displayed and the user can edit it from there.
+    m_queryEdit->setText(query);
+    runCurrentQuery();
 }
 
 void MainWindow::showWarnings()
@@ -1132,6 +1223,7 @@ void MainWindow::runCurrentQuery()
     ++m_generation;
     m_model->clear();
     m_messageView->clear();
+    showPlaceholderPane();
 
     // Undo entries refer to rows that are about to be discarded. The model
     // update they invert would be a no-op against the new result set, leaving
@@ -1287,6 +1379,7 @@ void MainWindow::onSelectionChanged()
     m_markReadThreadId.clear();
     m_currentThreadId.clear();
     m_messageView->clear();
+    showPlaceholderPane();
 }
 
 void MainWindow::onThreadSelected(const QModelIndex &current,
@@ -1317,6 +1410,7 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
         m_markReadThreadId.clear();
         m_currentThreadId.clear();
         m_messageView->clear();
+        showPlaceholderPane();
         return;
     }
 
@@ -1488,6 +1582,7 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         // what failed to put them there.
         m_pendingTagEdits.clear();
         m_unnettablePendingEdits = 0;
+        m_lastSyncFailed = false;
         updatePendingIndicator();
 
         showTransientStatus(tr("Sync complete"));
@@ -1544,6 +1639,12 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
                    "has been left open."));
         }
     } else {
+        // Latched until a sync succeeds, so the placeholder's sync line still
+        // says so on the next blank pane rather than only in a status message
+        // the user may not have been looking at. A skipped run does not set
+        // this: it is a branch of its own above, and a skip means another
+        // process is doing the work rather than that the work failed.
+        m_lastSyncFailed = true;
         m_statusLabel->setText(tr("Sync failed (exit %1)").arg(exitCode));
         m_syncLogPane->show();
 

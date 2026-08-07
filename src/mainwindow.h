@@ -20,6 +20,7 @@
 
 #include <QHash>
 #include <QMainWindow>
+#include <QPointer>
 #include <QThread>
 #include <QUndoCommand>
 #include <QUndoStack>
@@ -133,6 +134,13 @@ public:
     /// stale, so a test standing in for the worker has to know the current one.
     quint64 currentGenerationForTesting() const { return m_generation; }
 
+    /// The generation a database-stats reply must carry to be accepted.
+    ///
+    /// A test seam, for the same reason as the one above: onDatabaseStatsReady
+    /// discards a reply belonging to a dialog that has since been closed and
+    /// reopened, so a test standing in for the worker needs the current value.
+    quint64 statsGenerationForTesting() const { return m_statsGeneration; }
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
@@ -189,6 +197,10 @@ private slots:
     /// requestPlaceholderCounts() asked for them.
     void onCountsReady(const QVector<int> &counts, quint64 generation);
 
+    /// Fills in the overview dialog's counts when the worker answers. Does
+    /// nothing if the dialog has since been closed.
+    void onDatabaseStatsReady(const DatabaseStats &stats, quint64 generation);
+
     /// Runs a query the user clicked on the placeholder pane.
     void onPlaceholderQueryRequested(const QString &query);
 
@@ -224,6 +236,16 @@ private:
     void showWarnings();
     void showShortcutReference();
     void showAbout();
+
+    /// The Maildir overview (item 34): what notmuch knows about the database,
+    /// plus the account list, which comes from config since notmuch does not
+    /// model accounts at all.
+    ///
+    /// Opens immediately showing the counts as pending and fills them in when
+    /// the worker answers, rather than blocking: counting every message is not
+    /// free on a large database and a dialog that hangs first is worse than one
+    /// that populates.
+    void showMaildirOverview();
 
     /// Creates a QAction, binds it to the sequence KeyMap holds for `name`,
     /// and registers it. `name` is the action name used in [keys].
@@ -421,6 +443,17 @@ private:
     /// placeholder's sync line, which appears only when something needs
     /// attention, so it must survive until the next successful run.
     bool m_lastSyncFailed = false;
+
+    /// The overview dialog's counts label while that dialog is open, null
+    /// otherwise. A QPointer because the dialog is deleted on close and the
+    /// worker's reply can arrive afterwards: a raw pointer would dangle for
+    /// exactly as long as the count takes on a large database, which is
+    /// precisely when the user is most likely to close it first.
+    QPointer<QLabel> m_overviewCounts;
+
+    /// Discriminates a stats reply from a dialog that has since been closed
+    /// and reopened, so an old answer cannot fill in a newer dialog.
+    quint64 m_statsGeneration = 0;
 
     /// Holds the sync log and its close button, so the pane can be dismissed.
     QWidget *m_syncLogPane = nullptr;

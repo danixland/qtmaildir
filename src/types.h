@@ -78,6 +78,20 @@ struct TagChange
     }
 };
 
+/// Database-level facts for the Maildir overview.
+///
+/// Every field is -1 until answered, so a dialog opened against a database that
+/// cannot be read shows "unknown" rather than a confident zero. A zero is a
+/// claim, and "no mail at all" is exactly the wrong thing to tell someone whose
+/// index failed to open.
+struct DatabaseStats
+{
+    int messages = -1;  ///< Every message notmuch has indexed.
+    int threads = -1;   ///< Every thread. Differs from messages by reply depth.
+    int tags = -1;      ///< Distinct tag names in the database.
+};
+
 Q_DECLARE_METATYPE(ThreadSummary)
 Q_DECLARE_METATYPE(MessageRef)
 Q_DECLARE_METATYPE(TagChange)
+Q_DECLARE_METATYPE(DatabaseStats)

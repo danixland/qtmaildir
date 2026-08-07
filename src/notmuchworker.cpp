@@ -363,6 +363,48 @@ void NotmuchWorker::requestAllTags(quint64 generation)
     emit allTagsReady(result, generation);
 }
 
+void NotmuchWorker::requestDatabaseStats(quint64 generation)
+{
+    if (!openReadOnly())
+        return;
+
+    DatabaseStats stats;
+
+    // "*" is notmuch's match-everything query. Counting messages and threads
+    // needs two calls on it: the numbers differ by the reply depth of the
+    // database and there is no single call that yields both.
+    NmQuery all(notmuch_query_create(m_db, "*"));
+    if (all) {
+        unsigned int messages = 0;
+        if (notmuch_query_count_messages(all.get(), &messages)
+            == NOTMUCH_STATUS_SUCCESS) {
+            stats.messages = static_cast<int>(messages);
+        }
+    }
+
+    // A second query object rather than reusing the one above: notmuch caches
+    // results on a query, and counting both ways from one has bitten people.
+    NmQuery allThreads(notmuch_query_create(m_db, "*"));
+    if (allThreads) {
+        unsigned int threads = 0;
+        if (notmuch_query_count_threads(allThreads.get(), &threads)
+            == NOTMUCH_STATUS_SUCCESS) {
+            stats.threads = static_cast<int>(threads);
+        }
+    }
+
+    // Already enumerated for the completer, so this costs nothing extra.
+    NmTags tags(notmuch_database_get_all_tags(m_db));
+    if (tags) {
+        int count = 0;
+        for (; notmuch_tags_valid(tags.get()); notmuch_tags_move_to_next(tags.get()))
+            ++count;
+        stats.tags = count;
+    }
+
+    emit databaseStatsReady(stats, generation);
+}
+
 void NotmuchWorker::requestCounts(const QStringList &queries, quint64 generation)
 {
     if (!openReadOnly())

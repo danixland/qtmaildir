@@ -288,6 +288,7 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     qRegisterMetaType<ThreadSummary>();
     qRegisterMetaType<MessageRef>();
     qRegisterMetaType<TagChange>();
+    qRegisterMetaType<DatabaseStats>();
     qRegisterMetaType<QVector<ThreadSummary>>();
     qRegisterMetaType<QVector<MessageRef>>();
 
@@ -885,6 +886,13 @@ void MainWindow::buildMenus()
     auto *shortcuts = helpMenu->addAction(tr("&Keyboard shortcuts"));
     connect(shortcuts, &QAction::triggered,
             this, &MainWindow::showShortcutReference);
+    // A dialog the user asks for, per item 34: counting every message is not
+    // free on a large database, so this must not be anything that refreshes on
+    // its own.
+    auto *maildirInfo = helpMenu->addAction(tr("&Maildir overview"));
+    maildirInfo->setObjectName(QStringLiteral("maildirOverview"));
+    connect(maildirInfo, &QAction::triggered,
+            this, &MainWindow::showMaildirOverview);
     auto *about = helpMenu->addAction(tr("&About"));
     connect(about, &QAction::triggered, this, &MainWindow::showAbout);
 
@@ -1031,6 +1039,89 @@ void MainWindow::showShortcutReference()
     dialog.exec();
 }
 
+void MainWindow::showMaildirOverview()
+{
+    auto *dialog = new QDialog(this);
+    dialog->setWindowTitle(tr("Maildir overview"));
+    dialog->setObjectName(QStringLiteral("maildirOverviewDialog"));
+    // Deleted on close, which is what makes m_overviewCounts a QPointer: the
+    // worker's reply can arrive after the user has dismissed it.
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    auto *counts = new QLabel(dialog);
+    counts->setObjectName(QStringLiteral("maildirCounts"));
+    counts->setTextFormat(Qt::RichText);
+    // Shown as pending rather than as zero. The dialog opens before the answer
+    // arrives, and a zero would read as "no mail", which is a claim rather than
+    // an absence of one.
+    counts->setText(tr("<b>Counting...</b>"));
+    m_overviewCounts = counts;
+
+    // From config, never from notmuch, which does not model accounts at all.
+    // That is the whole reason per-account subdirectories are configured.
+    QString accountText;
+    const QList<Account> accounts = m_config.accounts();
+    accountText += tr("<b>%n account(s)</b>", "", int(accounts.size()));
+    if (!accounts.isEmpty()) {
+        accountText += QStringLiteral("<ul>");
+        for (const Account &account : accounts) {
+            // Account names are user-written config, and this label is rich
+            // text, so they are escaped like any other untrusted value.
+            const QString label = account.label.isEmpty() ? account.key
+                                                          : account.label;
+            accountText += QStringLiteral("<li>%1</li>")
+                               .arg(label.toHtmlEscaped());
+        }
+        accountText += QStringLiteral("</ul>");
+    }
+
+    auto *accountLabel = new QLabel(accountText, dialog);
+    accountLabel->setObjectName(QStringLiteral("maildirAccounts"));
+    accountLabel->setTextFormat(Qt::RichText);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+
+    auto *layout = new QVBoxLayout(dialog);
+    layout->addWidget(counts);
+    layout->addWidget(accountLabel);
+    layout->addStretch();
+    layout->addWidget(buttons);
+
+    // Asked for when the dialog opens and never on a timer: counting every
+    // message in a large database is not free, which is the constraint that
+    // made this a dialog rather than a status-bar field.
+    QMetaObject::invokeMethod(m_worker, "requestDatabaseStats",
+                              Qt::QueuedConnection,
+                              Q_ARG(quint64, ++m_statsGeneration));
+
+    dialog->show();
+}
+
+void MainWindow::onDatabaseStatsReady(const DatabaseStats &stats,
+                                      quint64 generation)
+{
+    // Closed and reopened while the count ran: this answer belongs to the old
+    // dialog. The QPointer covers "closed", this covers "closed and reopened".
+    if (generation != m_statsGeneration)
+        return;
+
+    if (!m_overviewCounts)
+        return;
+
+    // A field notmuch could not answer stays unknown. Printing 0 would say the
+    // database is empty, which is the opposite of "we could not tell".
+    const auto number = [](int value) {
+        return value < 0 ? tr("unknown") : QLocale().toString(value);
+    };
+
+    m_overviewCounts->setText(
+        tr("<b>%1</b> messages in <b>%2</b> threads<br>"
+           "<b>%3</b> tags")
+            .arg(number(stats.messages), number(stats.threads),
+                 number(stats.tags)));
+}
+
 void MainWindow::showAbout()
 {
     QDialog dialog(this);
@@ -1098,6 +1189,8 @@ void MainWindow::wireWorker()
             this, &MainWindow::onAllTagsReady);
     connect(m_worker, &NotmuchWorker::countsReady,
             this, &MainWindow::onCountsReady);
+    connect(m_worker, &NotmuchWorker::databaseStatsReady,
+            this, &MainWindow::onDatabaseStatsReady);
 
     // A confirmed write clears the pending revert: without this, a later
     // unrelated error would roll back a change that actually succeeded.

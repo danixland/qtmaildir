@@ -60,6 +60,8 @@ private slots:
 
     void requestCountsAnswersOneCountPerQuery();
     void requestCountsKeepsPositionOnAnInvalidQuery();
+    void requestDatabaseStatsCountsMessagesNotThreads();
+    void requestDatabaseStatsOnUnreadableConfigEmitsError();
 
 private:
     /// Tags of one message, read back through a fresh worker query.
@@ -521,6 +523,48 @@ void TestNotmuchWorker::requestCountsKeepsPositionOnAnInvalidQuery()
     // the pane depends on.
     QCOMPARE(counts.at(0), 1);
     QCOMPARE(counts.at(2), 3);
+}
+
+void TestNotmuchWorker::requestDatabaseStatsCountsMessagesNotThreads()
+{
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::databaseStatsReady);
+
+    worker.requestDatabaseStats(11);
+
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(1).value<quint64>(), quint64(11));
+    const auto stats = spy.at(0).at(0).value<DatabaseStats>();
+
+    // The fixture holds four messages in three threads: thread A is a message
+    // and its reply. **That difference is the whole point of this call.**
+    // requestCounts() counts threads, to match the row count of a query; this
+    // one counts messages, which is what a user means by "how much mail". A
+    // reimplementation that reused the thread count would report 3 here and be
+    // confidently wrong under the label "messages".
+    QCOMPARE(stats.messages, 4);
+    QCOMPARE(stats.threads, 3);
+    QVERIFY2(stats.messages != stats.threads,
+             "messages and threads are equal, so this fixture cannot prove the "
+             "two counts are distinct: add a reply to it");
+
+    // Every tag the fixture creates, plus notmuch's own.
+    QVERIFY(stats.tags > 0);
+}
+
+void TestNotmuchWorker::requestDatabaseStatsOnUnreadableConfigEmitsError()
+{
+    // Fails closed like every other entry point. The dialog then shows its
+    // fields as unknown rather than as zero, since "no mail at all" is the
+    // wrong thing to tell someone whose index failed to open.
+    NotmuchWorker worker(QStringLiteral("/nonexistent/qtmaildir-test/config"));
+    QSignalSpy ready(&worker, &NotmuchWorker::databaseStatsReady);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.requestDatabaseStats(1);
+
+    QCOMPARE(errors.size(), 1);
+    QVERIFY(ready.isEmpty());
 }
 
 QTEST_MAIN(TestNotmuchWorker)

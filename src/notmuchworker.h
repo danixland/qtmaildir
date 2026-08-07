@@ -83,6 +83,19 @@ public slots:
     /// refreshing one nobody is looking at is work for nothing.
     void requestCounts(const QStringList &queries, quint64 generation);
 
+    /// Database-level facts for the Maildir overview (item 34): total messages,
+    /// total threads, and the number of tags.
+    ///
+    /// **Messages, not threads**, which is what distinguishes this from
+    /// requestCounts above. That one answers "how many rows will this query
+    /// produce" and counts threads to match the list; this one describes the
+    /// database, where the message total is the number a user means by "how
+    /// much mail is in here".
+    ///
+    /// Counting every message is not free on a large database, so this is
+    /// called when the dialog is opened and never on a timer.
+    void requestDatabaseStats(quint64 generation);
+
 signals:
     void threadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void queryFinished(int totalThreads, quint64 generation);
@@ -94,6 +107,10 @@ signals:
     /// notmuch rejects yields -1 rather than dropping the entry, so the
     /// positional correspondence the caller relies on always holds.
     void countsReady(const QVector<int> &counts, quint64 generation);
+
+    /// Fields left at -1 are ones notmuch could not answer, which the dialog
+    /// renders as unknown rather than as zero.
+    void databaseStatsReady(const DatabaseStats &stats, quint64 generation);
 
     void errorOccurred(const QString &message);
 

@@ -78,6 +78,8 @@ private slots:
     void theStatusBarReportsAMultiRowSelection();
     void clearSelectionBlanksThePaneAndDeselects();
     void clearPaneLeavesTheSelectionAlone();
+    void maildirOverviewShowsUnknownRatherThanZero();
+    void maildirOverviewIgnoresAStaleReply();
     void theThreadListOffersAContextMenu();
     void aSecondRowBlanksThePaneNotOnlyAThird();
     void aLocalSyncIsNotReportedAsABackgroundOne();
@@ -1177,6 +1179,101 @@ void TestMainWindow::clearPaneLeavesTheSelectionAlone()
     action->trigger();
 
     QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
+}
+
+void TestMainWindow::maildirOverviewShowsUnknownRatherThanZero()
+{
+    // A field notmuch could not answer must not render as 0. "0 messages" says
+    // the Maildir is empty, which is a claim; the truth is that the count
+    // failed, and telling someone their mail is gone is the worst available
+    // way to report an unreadable index.
+    const Config config;
+    MainWindow window(config);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("maildirOverview"));
+    QVERIFY2(action, "no maildirOverview action");
+    action->trigger();
+
+    auto *counts = window.findChild<QLabel *>(QStringLiteral("maildirCounts"));
+    QVERIFY2(counts, "the overview dialog has no counts label");
+
+    // The worker never answers in this fixture, so drive the slot directly
+    // with the all-unknown stats a failed open produces.
+    QMetaObject::invokeMethod(
+        &window, "onDatabaseStatsReady", Qt::DirectConnection,
+        Q_ARG(DatabaseStats, DatabaseStats{}),
+        Q_ARG(quint64, window.statsGenerationForTesting()));
+
+    QVERIFY2(counts->text().contains(QStringLiteral("unknown")),
+             qPrintable(QStringLiteral("counts label says '%1'")
+                            .arg(counts->text())));
+    QVERIFY2(!counts->text().contains(QStringLiteral(">0<")),
+             qPrintable(QStringLiteral("an unanswered count rendered as zero: "
+                                       "'%1'").arg(counts->text())));
+
+    // WA_DeleteOnClose, so closing is what frees it. Left open, each test
+    // leaks a window for the rest of the run.
+    counts->window()->close();
+}
+
+void TestMainWindow::maildirOverviewIgnoresAStaleReply()
+{
+    // Counting every message is slow enough that closing and reopening the
+    // dialog while one runs is realistic. The older answer must not fill in the
+    // newer dialog, or the numbers silently predate whatever prompted the
+    // reopen.
+    const Config config;
+    MainWindow window(config);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("maildirOverview"));
+    QVERIFY(action);
+    action->trigger();
+
+    const quint64 stale = window.statsGenerationForTesting();
+
+    // Reopening bumps the generation, which is what makes the first reply old.
+    action->trigger();
+    QVERIFY2(window.statsGenerationForTesting() != stale,
+             "reopening the dialog did not bump the generation, so a reply for "
+             "the previous one cannot be told apart");
+
+    auto *counts = window.findChild<QLabel *>(QStringLiteral("maildirCounts"));
+    QVERIFY(counts);
+    const QString before = counts->text();
+
+    DatabaseStats old;
+    old.messages = 4321;
+    old.threads = 999;
+    old.tags = 42;
+    QMetaObject::invokeMethod(&window, "onDatabaseStatsReady",
+                              Qt::DirectConnection,
+                              Q_ARG(DatabaseStats, old),
+                              Q_ARG(quint64, stale));
+
+    QCOMPARE(counts->text(), before);
+    QVERIFY2(!counts->text().contains(QStringLiteral("4321")),
+             "a reply for the previous dialog filled in the current one");
+
+    QPointer<QLabel> watch(counts);
+    counts->window()->close();
+
+    // WA_DeleteOnClose deletes through deleteLater, so the label outlives
+    // close() until the event loop runs. Drain it, or the "reply after the
+    // dialog is gone" case below is not actually being tested.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY2(watch.isNull(),
+             "the dialog was not destroyed, so the case below is not the one "
+             "this test means to exercise");
+
+    // The QPointer's reason for being: counting a large database takes long
+    // enough that closing the dialog first is ordinary, and the reply then
+    // arrives for a label that has been deleted. A raw pointer would dangle
+    // here, so this must not crash.
+    QMetaObject::invokeMethod(&window, "onDatabaseStatsReady",
+                              Qt::DirectConnection,
+                              Q_ARG(DatabaseStats, old),
+                              Q_ARG(quint64,
+                                    window.statsGenerationForTesting()));
 }
 
 void TestMainWindow::theThreadListOffersAContextMenu()

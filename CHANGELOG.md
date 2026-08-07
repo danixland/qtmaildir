@@ -11,6 +11,22 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- **A sync now fetches only the accounts you have edited.** Tagging mail in one
+  account and syncing no longer pulls every other account as well. A sync with
+  nothing outstanding is a plain fetch and still covers everything, since
+  narrowing that to wherever the last edit happened to be would quietly stop
+  collecting mail everywhere else.
+- **An optional `channel` key per account**, naming the mbsync channel when it
+  differs from the section key. It defaults to the key, so accounts whose two
+  names already agree need no change. The two can genuinely diverge: a QSettings
+  section key may carry dots that the channel does not, and mbsync treats an
+  unknown channel as fatal rather than skipping it.
+- **`assets/mailsync.sh` takes channel names as arguments**, syncing all
+  channels when given none. A replacement sync script that ignores its arguments
+  still works, it just always syncs everything.
+
 ## [0.11.0] - 2026-08-07
 
 The empty message pane now carries the application's own identity and the

@@ -51,6 +51,8 @@ private slots:
     void extraMimetypesAppendToBuiltins();
     void extraMimetypeDescriptionMayContainComma();
     void malformedExtraMimetypeIsSkipped();
+    void syncChannelDefaultsToTheAccountKey();
+    void syncChannelIsActuallyRead();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -522,6 +524,37 @@ void TestConfig::malformedExtraMimetypeIsSkipped()
     QCOMPARE(extra.size(), 1);
     QCOMPARE(extra.at(0).value, QStringLiteral("message/rfc822"));
     QVERIFY(!config.problems().isEmpty());
+}
+
+void TestConfig::syncChannelDefaultsToTheAccountKey()
+{
+    // Most accounts name their mbsync channel exactly as their section key, so
+    // the common case must need no config edit at all.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir = work\n")));
+
+    QCOMPARE(config.accounts().size(), 1);
+    QCOMPARE(config.accounts().at(0).syncChannel(), QStringLiteral("work"));
+}
+
+void TestConfig::syncChannelIsActuallyRead()
+{
+    // The key exists because the two names genuinely diverge: a QSettings
+    // section key may carry dots that the mbsync channel does not, and passing
+    // the section key to mbsync would name a channel that does not exist.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.mail-first.last]\n"
+        "maildir = mail-first.last\n"
+        "channel = mail-firstlast\n")));
+
+    QCOMPARE(config.accounts().size(), 1);
+    QCOMPARE(config.accounts().at(0).syncChannel(),
+             QStringLiteral("mail-firstlast"));
 }
 
 QTEST_MAIN(TestConfig)

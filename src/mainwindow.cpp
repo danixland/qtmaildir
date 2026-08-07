@@ -217,7 +217,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
             box.exec();
 
             if (box.clickedButton() == sync) {
-                if (m_sync->start()) {
+                if (m_sync->start(pendingSyncChannels())) {
                     m_syncingForExit = true;
                     m_syncLog->clear();
                     setSyncBusy(true);
@@ -238,7 +238,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
                 return;
             }
         } else if (m_config.syncOnExit() == Config::SyncOnExit::Always) {
-            if (m_sync->start()) {
+            if (m_sync->start(pendingSyncChannels())) {
                 m_syncingForExit = true;
                 m_syncLog->clear();
                 setSyncBusy(true);
@@ -1700,6 +1700,16 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
     // so they go to the mail store on the NEXT run. That is the same one-run
     // delay any edit made mid-sync gets, bounded by the cron interval.
     const bool sentHeldEdits = !m_heldEdits.isEmpty();
+
+    // Snapshotted BEFORE the flush, and this ordering is load-bearing.
+    // flushHeldEdits() calls sendThreadTagChange(), which inserts into
+    // m_editedAccounts SYNCHRONOUSLY, unlike the pending-edit map below which
+    // is written on the worker's queued reply and so is safely counted rather
+    // than wiped. Clearing the whole set after the flush would therefore
+    // discard accounts whose edits this run did not carry, and those edits
+    // would sync only when some later edit happened to name the same account.
+    const QSet<QString> accountsThisRunCarried = m_editedAccounts;
+
     flushHeldEdits();
 
     if (success) {
@@ -1708,6 +1718,12 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         // what failed to put them there.
         m_pendingTagEdits.clear();
         m_unnettablePendingEdits = 0;
+
+        // Only what this run actually carried, per the snapshot above. An
+        // account added by flushHeldEdits() stays, because its edit reaches the
+        // index after the sync that would have taken it and goes out on the
+        // next run.
+        m_editedAccounts.subtract(accountsThisRunCarried);
         m_lastSyncFailed = false;
         updatePendingIndicator();
 
@@ -1997,7 +2013,7 @@ void MainWindow::startSync()
     m_syncPhase.reset();
     m_syncLineBuffer.clear();
 
-    if (!m_sync->start()) {
+    if (!m_sync->start(pendingSyncChannels())) {
         showTransientStatus(tr("Sync already running"));
         return;
     }
@@ -2020,6 +2036,34 @@ void MainWindow::recordPendingEdit(const QString &messageId, const QString &tag,
     }
 
     m_pendingTagEdits.insert(key, added);
+}
+
+QStringList MainWindow::pendingSyncChannels() const
+{
+    // Nothing pending means this run is a FETCH, and a fetch must cover every
+    // account: narrowing it to wherever the last edit happened to be would
+    // quietly stop collecting mail everywhere else. Empty is the signal for
+    // that, and MailSync::start() appends nothing.
+    if (m_editedAccounts.isEmpty())
+        return {};
+
+    QStringList channels;
+    for (const Account &account : m_config.accounts()) {
+        if (m_editedAccounts.contains(account.key))
+            channels.append(account.syncChannel());
+    }
+
+    // An account tag with no matching [account.<key>] section yields no
+    // channel, and syncing a subset that omits it would leave its edits behind
+    // with nothing to say so. Fall back to a full sync, which is correct if
+    // wasteful; the alternative is silently stranding an edit.
+    if (channels.size() != m_editedAccounts.size())
+        return {};
+
+    // Stable order so a run is reproducible and the log reads the same way
+    // twice. QSet has no order of its own.
+    channels.sort();
+    return channels;
 }
 
 int MainWindow::pendingEditCount() const
@@ -2187,6 +2231,18 @@ void MainWindow::sendThreadTagChange(const QStringList &threadIds,
     // feels instant. Recorded so onWorkerError() can put them back.
     for (const QString &threadId : threadIds)
         m_model->applyTagChange(threadId, add, remove);
+
+    // Which accounts this touches, recorded HERE and not in onTagsApplied():
+    // TagChange carries message ids, while the account is a property of the
+    // thread, and by the time the worker confirms, the rows may be gone. A
+    // write that is later rejected leaves an account listed here that needed no
+    // sync, which costs one redundant channel on the next run; missing one
+    // would strand the user's edits, which is the failure worth avoiding.
+    for (const QString &threadId : threadIds) {
+        const QStringList keys = m_model->accountKeysForThread(threadId);
+        for (const QString &key : keys)
+            m_editedAccounts.insert(key);
+    }
 
     // The strip shows the open thread's tags, so it has to follow a change to
     // that thread rather than waiting for the next selection.

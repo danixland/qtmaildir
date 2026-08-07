@@ -43,6 +43,9 @@ private slots:
     void missingBinaryReportsFailureNotSilence();
     void startDoesNotBlock();
     void argumentsAreNotShellInterpreted();
+    void channelsAreAppendedToTheCommand();
+    void noChannelsMeansNoExtraArguments();
+    void channelNamesAreNotShellInterpreted();
 
     void phaseStartsAsMbsync();
     void notmuchLineSwitchesPhase();
@@ -260,6 +263,55 @@ void TestMailSync::argumentsAreNotShellInterpreted()
 
     QVERIFY(!QFile::exists(m_dir.filePath(QStringLiteral("pwned"))));
     QVERIFY(sync.log().contains(QStringLiteral("; touch")));
+}
+
+void TestMailSync::channelsAreAppendedToTheCommand()
+{
+    // Item 49: a sync that knows which accounts were touched passes their
+    // channel names, and they must reach the script as separate arguments
+    // after whatever the config line already carries.
+    const QString script = makeScript(QStringLiteral("chan.sh"),
+                                      QStringLiteral("echo \"[$@]\""));
+
+    MailSync sync(script);
+    QSignalSpy spy(&sync, &MailSync::finished);
+    QVERIFY(sync.start({ QStringLiteral("work"), QStringLiteral("personal") }));
+    QVERIFY(spy.wait(5000));
+
+    QVERIFY(sync.log().contains(QStringLiteral("[work personal]")));
+}
+
+void TestMailSync::noChannelsMeansNoExtraArguments()
+{
+    // Empty means "sync everything", which is the script's own default. It must
+    // not become an empty string argument: mbsync would read that as a channel
+    // named "" and fail the run.
+    const QString script = makeScript(QStringLiteral("nochan.sh"),
+                                      QStringLiteral("echo \"count=$#\""));
+
+    MailSync sync(script);
+    QSignalSpy spy(&sync, &MailSync::finished);
+    QVERIFY(sync.start());
+    QVERIFY(spy.wait(5000));
+
+    QVERIFY(sync.log().contains(QStringLiteral("count=0")));
+}
+
+void TestMailSync::channelNamesAreNotShellInterpreted()
+{
+    // Channel names are derived from config, same trust boundary as the command
+    // itself, and reach the same QProcess argument list. The injection test
+    // above covers the command; this covers the half added for item 49.
+    const QString script = makeScript(QStringLiteral("chanargs.sh"),
+                                      QStringLiteral("echo \"$1\""));
+
+    MailSync sync(script);
+    QSignalSpy spy(&sync, &MailSync::finished);
+    QVERIFY(sync.start({ QStringLiteral("; touch %1/chanpwned")
+                             .arg(m_dir.path()) }));
+    QVERIFY(spy.wait(5000));
+
+    QVERIFY(!QFile::exists(m_dir.filePath(QStringLiteral("chanpwned"))));
 }
 
 void TestMailSync::phaseStartsAsMbsync()

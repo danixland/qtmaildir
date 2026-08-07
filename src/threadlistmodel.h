@@ -120,6 +120,16 @@ public:
 
     ThreadSummary threadAt(int row) const;
 
+    /// The account keys behind a thread's account tags, for item 49's
+    /// per-account sync.
+    ///
+    /// Returns every one of them, not the first: the thread list shows only one
+    /// chip per row, but a thread whose messages landed in two mailboxes really
+    /// does span two accounts, and tagging it touches files under both. Syncing
+    /// only the one that happens to be shown would strand the other's edits.
+    /// Empty when the thread is unknown or carries no account tag.
+    QStringList accountKeysForThread(const QString &threadId) const;
+
     /// Applies a tag change locally so the UI updates before the worker
     /// confirms. To revert a failed write, call again with added and removed
     /// swapped.

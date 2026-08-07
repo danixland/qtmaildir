@@ -19,6 +19,7 @@
 #pragma once
 
 #include <QHash>
+#include <QSet>
 #include <QMainWindow>
 #include <QPointer>
 #include <QThread>
@@ -524,6 +525,25 @@ private:
     /// the UI thread one user action at a time.
     TagChange m_pendingChange;
     QStringList m_pendingThreadIds;
+
+    /// Account keys whose mail store has edits a sync has not yet carried,
+    /// for item 49's per-account sync.
+    ///
+    /// Deliberately NOT netted the way m_pendingTagEdits is. That map tracks
+    /// the INDEX, where removing a tag and re-adding it leaves nothing
+    /// outstanding; this tracks the MAIL STORE, where both writes have already
+    /// renamed files that mbsync still has to propagate. Netting this to empty
+    /// would skip the very account whose files changed.
+    ///
+    /// Populated where the threads are known, since TagChange carries message
+    /// ids and the account is a property of the thread. Cleared only by a
+    /// SUCCESSFUL sync, alongside the pending-edit map.
+    QSet<QString> m_editedAccounts;
+
+    /// The channel names for m_editedAccounts, resolved through the config.
+    /// Empty means sync everything, which is what a fetch with nothing pending
+    /// has to do.
+    QStringList pendingSyncChannels() const;
 };
 
 /// Undo entry for a tag change over a set of threads.

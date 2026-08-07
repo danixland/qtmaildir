@@ -167,7 +167,7 @@ bool MailSync::isRunning() const
     return m_process.state() != QProcess::NotRunning;
 }
 
-bool MailSync::start()
+bool MailSync::start(const QStringList &channels)
 {
     if (!isAvailable() || isRunning())
         return false;
@@ -180,8 +180,20 @@ bool MailSync::start()
 
     m_log.clear();
 
+    QStringList arguments = parts.mid(1);
+
+    // Appended as separate list entries, never spliced into the command string:
+    // these names come from config, the same trust boundary as the command
+    // itself, and QProcess passes an argument list without a shell.
+    for (const QString &channel : channels) {
+        // An empty name would reach mbsync as a channel called "", failing the
+        // whole run, so a stray blank costs the user nothing here.
+        if (!channel.trimmed().isEmpty())
+            arguments.append(channel);
+    }
+
     m_process.setProgram(parts.first());
-    m_process.setArguments(parts.mid(1));
+    m_process.setArguments(arguments);
 
     // Deliberately no waitForStarted(): the spec requires the UI stay usable
     // during sync, and a failed launch arrives via errorOccurred() instead.

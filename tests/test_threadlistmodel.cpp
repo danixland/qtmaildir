@@ -28,6 +28,9 @@ class TestThreadListModel : public QObject
     Q_OBJECT
 private slots:
     void startsEmpty();
+    void accountKeysComeFromTheAccountTags();
+    void accountKeysCoverAThreadSpanningTwoAccounts();
+    void accountKeysAreEmptyForAnUnknownThread();
     void appendsBatches();
     void appendingEmptyBatchIsNoOp();
     void clearResetsModel();
@@ -71,6 +74,46 @@ static ThreadSummary makeThread(const QString &id, const QString &subject)
     t.matchedCount = 1;
     t.tags = QStringList{ QStringLiteral("inbox"), QStringLiteral("unread") };
     return t;
+}
+
+void TestThreadListModel::accountKeysComeFromTheAccountTags()
+{
+    // Item 49 reads this to decide which mbsync channels a sync needs. Only
+    // account tags count: a functional tag names no mailbox.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("Hi"));
+    t.tags.append(TagColors::tagForAccountKey(QStringLiteral("work")));
+    model.appendBatch({ t });
+
+    QCOMPARE(model.accountKeysForThread(QStringLiteral("t1")),
+             QStringList{ QStringLiteral("work") });
+}
+
+void TestThreadListModel::accountKeysCoverAThreadSpanningTwoAccounts()
+{
+    // The row shows one chip, but tagging this thread touches files under both
+    // mailboxes. Returning only the first would strand the other's edits.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("Hi"));
+    t.tags.append(TagColors::tagForAccountKey(QStringLiteral("work")));
+    t.tags.append(TagColors::tagForAccountKey(QStringLiteral("personal")));
+    model.appendBatch({ t });
+
+    QStringList keys = model.accountKeysForThread(QStringLiteral("t1"));
+    keys.sort();
+    QCOMPARE(keys, (QStringList{ QStringLiteral("personal"),
+                                 QStringLiteral("work") }));
+}
+
+void TestThreadListModel::accountKeysAreEmptyForAnUnknownThread()
+{
+    // A thread the model no longer holds must yield nothing rather than
+    // matching some other row.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("Hi")) });
+
+    QVERIFY(model.accountKeysForThread(QStringLiteral("nope")).isEmpty());
 }
 
 void TestThreadListModel::startsEmpty()

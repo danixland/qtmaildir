@@ -45,6 +45,19 @@ struct Account
     /// bit of information. This renames nothing in notmuch, only the display.
     QString label;
 
+    /// mbsync channel name, when it differs from the key. Optional, and empty
+    /// for most accounts: see syncChannel().
+    QString channel;
+
+    /// The mbsync channel to sync this account, for item 49's per-account sync.
+    ///
+    /// Defaults to the key, which is right for most accounts, but the two are
+    /// genuinely separate names and cannot be collapsed. A QSettings section
+    /// key may carry dots that the channel does not ([account.mail-first.last]
+    /// against the channel `mail-firstlast`), and mbsync exits nonzero on a
+    /// channel it does not know, which qtmaildir would report as a failed sync.
+    QString syncChannel() const { return channel.isEmpty() ? key : channel; }
+
     bool isValid() const { return !key.isEmpty() && !maildir.isEmpty(); }
 
     /// Restricts a notmuch query to this account's subtree.

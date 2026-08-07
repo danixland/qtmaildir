@@ -149,6 +149,7 @@ maildir = work-mail        ; relative to notmuch's database.path
 drafts = Drafts            ; recorded for v2; unused today
 label = W                  ; optional chip text; defaults to the key
 color = #2f6fa8            ; optional chip colour; generated when unset
+channel = work             ; optional mbsync channel; defaults to the key
 
 [account.personal]
 name = Your Name
@@ -311,6 +312,34 @@ Two things any replacement has to get right, both learned the hard way:
   a click landing inside one is routine. qtmaildir reports 75 as "a sync is
   already running" and leaves the log pane alone, where any other non-zero code
   raises an error.
+- **Accept channel names as arguments, and sync everything when given none.**
+  qtmaildir passes the mbsync channels of the accounts it has edited, so a sync
+  after tagging one account's mail does not fetch all of them. A script that
+  ignores its arguments still works, it just always syncs everything.
+
+### Per-account sync
+
+When tag changes are outstanding, a sync passes only the affected accounts'
+channel names to the command. When nothing is outstanding the run is a plain
+fetch and no names are passed, so every account is synced: narrowing a fetch to
+wherever the last edit happened to be would quietly stop collecting mail
+everywhere else.
+
+The name passed is the **mbsync channel**, which is not always the account's
+section key. `[account.mail-first.last]` may well be the channel
+`mail-firstlast`, since a section key can carry dots that the channel does not.
+Set `channel` in the account section wherever the two differ:
+
+```ini
+[account.mail-first.last]
+maildir = mail-first.last
+channel = mail-firstlast
+```
+
+Getting this wrong is not silent: `mbsync` fails on a channel it does not know,
+and qtmaildir reports the sync as failed rather than clearing the count. An
+account tag with no matching section falls back to syncing everything, since
+skipping it would strand its edits with nothing to say so.
 
 While a sync this window started is running, the status bar shows an
 indeterminate progress bar. It is deliberately not a percentage: `mbsync`

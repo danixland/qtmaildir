@@ -325,6 +325,24 @@ ThreadSummary ThreadListModel::threadAt(int row) const
     return m_threads.at(row);
 }
 
+QStringList ThreadListModel::accountKeysForThread(const QString &threadId) const
+{
+    QStringList keys;
+    for (const ThreadSummary &thread : m_threads) {
+        if (thread.threadId != threadId)
+            continue;
+        for (const QString &tag : thread.tags) {
+            if (!TagColors::isAccountTag(tag))
+                continue;
+            const QString key = TagColors::accountKeyForTag(tag);
+            if (!key.isEmpty() && !keys.contains(key))
+                keys.append(key);
+        }
+        break;
+    }
+    return keys;
+}
+
 void ThreadListModel::applyTagChange(const QString &threadId,
                                      const QStringList &added,
                                      const QStringList &removed)

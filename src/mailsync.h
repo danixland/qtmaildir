@@ -21,6 +21,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QString>
+#include <QStringList>
 
 /// Which half of the sync script is running.
 ///
@@ -84,7 +85,15 @@ public:
     /// Returns false if unavailable or already running. A true return means the
     /// process was handed to the event loop, not that it launched successfully:
     /// a missing binary surfaces asynchronously through finished(false, ...).
-    bool start();
+    ///
+    /// \p channels names the mbsync channels to sync, appended to the
+    /// configured command as separate arguments. Empty, the default, appends
+    /// nothing and leaves the script to sync everything: a sync with nothing
+    /// pending is a fetch, and fetching only the account that happened to hold
+    /// the last edit would silently stop collecting mail for the others.
+    /// Blank entries are dropped rather than passed, since mbsync reads an
+    /// empty argument as a channel name and fails the whole run on it.
+    bool start(const QStringList &channels = {});
 
     QString log() const { return m_log; }
 

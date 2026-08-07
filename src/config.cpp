@@ -199,6 +199,11 @@ void Config::load(const QString &path)
         // is in, so these live here rather than in [tagcolors].
         account.label = settings.value(QStringLiteral("label")).toString();
 
+        // Optional, and absent for most accounts: syncChannel() falls back to
+        // the key. Needed only where the section key and the mbsync channel
+        // name diverge.
+        account.channel = settings.value(QStringLiteral("channel")).toString();
+
         const QString colour = settings.value(QStringLiteral("color")).toString();
         if (!colour.isEmpty()) {
             account.color = QColor(colour);

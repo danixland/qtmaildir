@@ -27,6 +27,14 @@
 # The script owns the log, so the caller must NOT redirect into it as well. A
 # crontab line ending "> mailsync.log 2>&1" writes every line a second time,
 # because tee has already put it there. Just call the script.
+#
+# Usage: mailsync.sh [channel ...]
+#
+# With no arguments it syncs every channel, which is what a cron timer wants
+# and what every existing caller already does. Given channel names it syncs
+# only those, which is how qtmaildir syncs just the accounts it edited. The
+# names are mbsync CHANNEL names from ~/.mbsyncrc, which are not necessarily
+# the account names qtmaildir shows: see the `channel` key in qtmaildir.conf.
 
 # Defensive: don't rely on cron/systemd/whatever invokes this to have
 # set these correctly. Explicit beats inferred, especially after the
@@ -80,7 +88,17 @@ START_TS="$(date -Iseconds)"
     # which is both the progress and the account name the status bar shows.
     # This is not a buffering problem and stdbuf does not help: the output
     # streams fine, there simply is none to stream.
-    mbsync -V -a 2>&1 | while IFS= read -r line; do
+    # "$@" when channels were named, -a otherwise. Quoted and passed as
+    # separate words, never flattened into a string: a channel name is an
+    # argument, and mbsync takes an unknown one as a fatal error rather than
+    # skipping it, which would fail the whole run.
+    #
+    # -a is NOT equivalent to naming every channel and cannot be dropped: with
+    # no arguments at all mbsync syncs nothing and exits, which would look like
+    # a clean sync that moved no mail.
+    [ "$#" -gt 0 ] || set -- -a
+
+    mbsync -V "$@" 2>&1 | while IFS= read -r line; do
         echo "$(date '+%H:%M:%S') $line"
     done
     echo "${PIPESTATUS[0]}" > "$STATUS_DIR/mbsync"

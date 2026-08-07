@@ -160,8 +160,23 @@ TagDialog::TagDialog(const QStringList &knownTags,
     // Completion is a guard against typos, never a whitelist: a tag absent from
     // this list is exactly what the dialog exists to create, so the completer
     // suggests and does not constrain.
-    for (QLineEdit *edit : { m_addEdit, m_removeEdit }) {
-        auto *completer = new QCompleter(knownTags, edit);
+    //
+    // The two fields complete against different vocabularies. Add reaches the
+    // whole database, since naming a tag that does not exist yet is what it is
+    // for. Remove offers only what the selection actually carries: on a
+    // multi-thread selection that is the union with counts, not the
+    // intersection, because removing a tag two of three threads have is a
+    // meaningful thing to ask for.
+    QStringList removeCandidates = currentTags.keys();
+    removeCandidates.sort();
+
+    const QList<QPair<QLineEdit *, QStringList>> fields = {
+        { m_addEdit, knownTags },
+        { m_removeEdit, removeCandidates },
+    };
+
+    for (const auto &[edit, candidates] : fields) {
+        auto *completer = new QCompleter(candidates, edit);
         completer->setCaseSensitivity(Qt::CaseInsensitive);
         // Hierarchies are the reason this matters: typing "amazon" should find
         // "shopping/amazon".

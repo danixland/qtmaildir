@@ -45,6 +45,8 @@ private slots:
     void nothingTouchedYieldsNoChange();
     void completionFollowsTheTagAfterAComma();
     void acceptingACandidateKeepsTheOtherTags();
+    void removeCompletesOnlyTheSelectionsOwnTags();
+    void removeStillAcceptsATagItDoesNotSuggest();
 };
 
 void TestTagDialog::validNamesAreAccepted()
@@ -317,6 +319,66 @@ void TestTagDialog::acceptingACandidateKeepsTheOtherTags()
     // And the separator's spacing survives: replacing from the comma itself
     // would have produced "unread,flagged".
     QVERIFY(addEdit->text().contains(QStringLiteral(", ")));
+}
+
+void TestTagDialog::removeCompletesOnlyTheSelectionsOwnTags()
+{
+    // Reported by the user: removing a tag suggested every tag in the database.
+    // Only the tags the selection already carries can be removed, and those are
+    // already in the dialog as currentTags.
+    //
+    // Typed rather than setText(), which does not drive a completer at all.
+    TagDialog dialog({ QStringLiteral("inbox"), QStringLiteral("unread"),
+                       QStringLiteral("flagged"), QStringLiteral("archive") },
+                     { { QStringLiteral("inbox"), 1 } }, 1);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+
+    const QList<QLineEdit *> edits = dialog.findChildren<QLineEdit *>();
+    QVERIFY(edits.size() >= 2);
+    QLineEdit *removeEdit = edits.at(1);
+    removeEdit->setFocus();
+    QTRY_COMPARE(QApplication::focusWidget(), removeEdit);
+
+    QCompleter *completer = removeEdit->findChild<QCompleter *>();
+    QVERIFY(completer);
+
+    // "fl" matches "flagged", which the database has and the selection does not.
+    QTest::keyClicks(removeEdit, QStringLiteral("fl"));
+    QCOMPARE(completer->completionPrefix(), QStringLiteral("fl"));
+    QCOMPARE(completer->completionCount(), 0);
+
+    // A tag the selection does carry still completes.
+    removeEdit->clear();
+    QTest::keyClicks(removeEdit, QStringLiteral("inb"));
+    QCOMPARE(completer->completionPrefix(), QStringLiteral("inb"));
+    QCOMPARE(completer->completionCount(), 1);
+    QCOMPARE(completer->currentCompletion(), QStringLiteral("inbox"));
+
+    // Add is unchanged: it must still reach the whole vocabulary, since
+    // creating a tag is what that field is for.
+    QLineEdit *addEdit = edits.at(0);
+    addEdit->setFocus();
+    QTRY_COMPARE(QApplication::focusWidget(), addEdit);
+    QCompleter *addCompleter = addEdit->findChild<QCompleter *>();
+    QVERIFY(addCompleter);
+    QTest::keyClicks(addEdit, QStringLiteral("fl"));
+    QVERIFY(addCompleter->completionCount() > 0);
+}
+
+void TestTagDialog::removeStillAcceptsATagItDoesNotSuggest()
+{
+    // Completion is a suggestion, never a whitelist. Narrowing the candidates
+    // must not start validating input against them.
+    TagDialog dialog({ QStringLiteral("inbox") },
+                     { { QStringLiteral("inbox"), 1 } }, 1);
+
+    const QList<QLineEdit *> edits = dialog.findChildren<QLineEdit *>();
+    QVERIFY(edits.size() >= 2);
+    edits.at(1)->setText(QStringLiteral("flagged"));
+    dialog.accept();
+
+    QVERIFY(dialog.tagsToRemove().contains(QStringLiteral("flagged")));
 }
 
 QTEST_MAIN(TestTagDialog)

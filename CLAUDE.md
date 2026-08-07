@@ -195,6 +195,19 @@ configured **Bold** in qt6ct, so every row rendered bold and `setBold(true)` cha
 nothing. Before concluding a Qt facility is broken, check the desktop's own font and theme
 configuration.
 
+**`QString::arg()` does not collapse `%%` into `%`.** `printf` does, and the habit
+transfers silently. In generated CSS this is quietly destructive: every percentage written
+`%%` to escape it reaches the browser malformed, and a browser does not report a bad
+declaration, it **drops that one rule and renders the rest**. The 0.11.0 placeholder lost
+its mask, its glow and both radial gradients this way while still painting a plausible
+pane, so nothing looked broken. Write `%` directly; `arg()` only ever consumes `%1`..`%99`.
+
+The reason it survived review is worth more than the rule: **a geometry probe endorsed the
+layout**, because it measured only properties that carried no percentage. A probe that
+cannot see the thing that breaks will report success forever. When asserting on generated
+CSS, assert on the **generated string** as well as on the rendered result, and make sure
+the assertion covers the declarations that actually went missing.
+
 ## Web view security
 
 The most security-sensitive area: a browser engine pointed at input from strangers. Do not

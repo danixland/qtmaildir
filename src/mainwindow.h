@@ -28,6 +28,9 @@
 
 #include "config.h"
 #include "keymap.h"
+// Included rather than forward-declared: SyncPhaseTracker is held by value, so
+// its size must be known here. MailSync itself stays a forward declaration.
+#include "mailsync.h"
 #include "syncmonitor.h"
 #include "tagcolors.h"
 #include "types.h"
@@ -155,6 +158,14 @@ private slots:
     /// the meta-object without widening the public API.
     void onExternalSyncStateChanged(SyncMonitor::State state);
 
+    /// Starts a sync and shows that it started. Every route in goes through
+    /// here: the toolbar, the menu, the shortcut and the button.
+    ///
+    /// A private slot for the same reason as the two above: a test needs to
+    /// start a real run through the meta-object to exercise the output
+    /// handling, without this becoming public API.
+    void startSync();
+
     /// A tag mutation the worker has confirmed reached the database. Counts it
     /// as unsynced, since reaching the index is not reaching the mail store.
     void onTagsApplied(const TagChange &change);
@@ -217,9 +228,9 @@ private:
     /// says "working, duration unknown", which is the truth.
     void setSyncBusy(bool busy);
 
-    /// Starts a sync and shows that it started. Every route in goes through
-    /// here: the toolbar, the menu, the shortcut and the button.
-    void startSync();
+    /// Reassembles lines from a sync output chunk and updates the status label
+    /// when the phase or its detail changes.
+    void feedSyncPhase(const QString &chunk);
 
     /// Applies the sync progress bar and button state from BOTH sync sources.
     ///
@@ -297,6 +308,15 @@ private:
     ThreadListModel *m_model = nullptr;
     MessageView *m_messageView = nullptr;
     MailSync *m_sync = nullptr;
+
+    /// Derives "which half of the sync is running" from the output stream, so
+    /// the status bar says more than "Syncing...". Reset at the start of each
+    /// local run.
+    SyncPhaseTracker m_syncPhase;
+
+    /// Holds the tail of a chunk that did not end on a newline, since
+    /// QProcess::readAll() splits wherever it happens to.
+    QString m_syncLineBuffer;
 
     /// Watches the sync lock for runs this window did not start.
     SyncMonitor *m_syncMonitor = nullptr;

@@ -72,7 +72,15 @@ START_TS="$(date -Iseconds)"
     # Timestamp every line of mbsync/notmuch output as it streams,
     # rather than only marking run boundaries, this is what actually
     # lets you tell which errors are from which run at a glance.
-    mbsync -a 2>&1 | while IFS= read -r line; do
+    #
+    # -V, deliberately. Without it mbsync prints NOTHING until it exits, then
+    # one summary line: a 100-second run is silent for all of it, so qtmaildir
+    # has nothing to report and its status bar can only say "Syncing...". With
+    # it, mbsync announces each channel as it reaches it ("Channel work"),
+    # which is both the progress and the account name the status bar shows.
+    # This is not a buffering problem and stdbuf does not help: the output
+    # streams fine, there simply is none to stream.
+    mbsync -V -a 2>&1 | while IFS= read -r line; do
         echo "$(date '+%H:%M:%S') $line"
     done
     echo "${PIPESTATUS[0]}" > "$STATUS_DIR/mbsync"

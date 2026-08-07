@@ -80,6 +80,7 @@ private slots:
     void aLocalSyncsOwnLockIsNeverReportedAsBackground();
     void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
     void anUnobservableLockTableLeavesTheSyncButtonUsable();
+    void theStatusBarFollowsTheSyncPhase();
     void theSyncActionIsDisabledWhileABackgroundSyncHoldsTheLock();
     void escapeBlanksTheMessagePane();
     void deleteTogglesOnAnAlreadyDeletedThread();
@@ -1027,6 +1028,122 @@ void TestMainWindow::theSyncActionIsDisabledWhileABackgroundSyncHoldsTheLock()
                                     SyncMonitor::State::Idle));
     QVERIFY2(action->isEnabled(),
              "the sync action was not re-enabled after the background sync");
+
+    MainWindow::setLocksPathForTesting(QStringLiteral("/proc/locks"));
+}
+
+void TestMainWindow::theStatusBarFollowsTheSyncPhase()
+{
+    // Item 42: "Syncing..." said nothing about what was happening, while the
+    // script was already streaming its phase into the log pane and the app was
+    // throwing it away.
+    //
+    // Driven through a real script rather than by calling the tracker directly,
+    // because the defect this guards is in the wiring: the chunks QProcess
+    // hands over split mid-line, so a handler that fed them straight to the
+    // tracker would stall on the first partial line.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("qtmaildir"))));
+
+    const QString script = dir.filePath(QStringLiteral("fakesync.sh"));
+    {
+        QFile f(script);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        // Shaped like the real thing: timestamped lines, the noise that makes
+        // up the bulk of a run, mbsync's one summary, then notmuch's output.
+        // Paced, not dumped. A script that prints everything at once is
+        // delivered in a single readyRead, so the tracker sees the whole run in
+        // one call and only its final phase is ever painted: the intermediate
+        // ones would be unobservable and the test would assert nothing. A real
+        // sync takes tens of seconds and arrives in separate chunks, which the
+        // sleeps stand in for.
+        f.write("#!/bin/sh\n"
+                "echo '===== RUN START: 2026-08-07T11:00:00+02:00 ====='\n"
+                "echo '11:00:01 Note: Ignoring non-mail file: /home/you/Mail/x/.uidvalidity'\n"
+                "sleep 0.2\n"
+                "echo '11:00:02 Channels: 5    Boxes: 39    Far: +0 *1 #0 -0    Near: +1 *0 #0 -0'\n"
+                "sleep 0.2\n"
+                "echo '11:00:03 Processed 79 total files in almost no time.'\n"
+                "echo '11:00:03 Added 1 new message to the database.'\n"
+                "sleep 0.2\n"
+                "echo '===== RUN END: 2026-08-07T11:00:03+02:00  status=OK ====='\n");
+        f.close();
+        QVERIFY(QFile::setPermissions(script,
+                                      QFile::ReadOwner | QFile::WriteOwner
+                                          | QFile::ExeOwner));
+    }
+
+    const QString conf = dir.filePath(QStringLiteral("qtmaildir/qtmaildir.conf"));
+    {
+        QSettings s(conf, QSettings::IniFormat);
+        s.setValue(QStringLiteral("sync/command"), script);
+    }
+
+    const QString locks = dir.filePath(QStringLiteral("locks"));
+    {
+        QFile f(locks);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+    }
+    MainWindow::setLocksPathForTesting(locks);
+
+    Config config;
+    config.load(conf);
+    QCOMPARE(config.syncCommand(), script);
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    // Every value the label takes, recorded as it changes. A run this small
+    // finishes in well under a second, so polling for an intermediate phase
+    // races the process and usually sees only "Sync complete": the sequence has
+    // to be captured, not sampled.
+    // QLabel has no textChanged signal, so the label is sampled on a fast timer
+    // rather than watched. Each distinct value is recorded once.
+    QStringList seen;
+    QTimer sampler;
+    sampler.setInterval(1);
+    connect(&sampler, &QTimer::timeout, &sampler, [&seen, status]() {
+        const QString text = status->text();
+        if (seen.isEmpty() || seen.constLast() != text)
+            seen.append(text);
+    });
+    sampler.start();
+
+    QVERIFY(QMetaObject::invokeMethod(&window, "startSync"));
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        std::any_of(seen.cbegin(), seen.cend(), [](const QString &s) {
+            return s.contains(QStringLiteral("Sync complete"));
+        }),
+        10000);
+
+    const QString trace = seen.join(QStringLiteral(" | "));
+
+    // mbsync's summary is the only concrete thing the stream carries, since it
+    // names no channel unless run verbose. The counts must reach the label.
+    QVERIFY2(std::any_of(seen.cbegin(), seen.cend(), [](const QString &s) {
+                 return s.contains(QStringLiteral("39"))
+                     && s.contains(QStringLiteral("5"));
+             }),
+             qPrintable(QStringLiteral("the mbsync summary never reached the "
+                                       "status bar. Saw: ") + trace));
+
+    // Then the reindex phase, which is a different message entirely. Without
+    // the wiring the label went from "Syncing..." straight to "Sync complete",
+    // which is exactly what the defect looked like.
+    QVERIFY2(std::any_of(seen.cbegin(), seen.cend(), [](const QString &s) {
+                 return s.contains(QStringLiteral("notmuch"));
+             }),
+             qPrintable(QStringLiteral("the notmuch phase never reached the "
+                                       "status bar. Saw: ") + trace));
+
+    // The banners are not a phase and must never appear in the status bar.
+    for (const QString &s : seen) {
+        QVERIFY2(!s.contains(QStringLiteral("RUN ")), qPrintable(s));
+        QVERIFY2(!s.contains(QStringLiteral("status=")), qPrintable(s));
+    }
 
     MainWindow::setLocksPathForTesting(QStringLiteral("/proc/locks"));
 }

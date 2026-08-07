@@ -44,6 +44,15 @@ private slots:
     void startDoesNotBlock();
     void argumentsAreNotShellInterpreted();
 
+    void phaseStartsAsMbsync();
+    void notmuchLineSwitchesPhase();
+    void mbsyncSummaryIsReported();
+    void noiseLeavesThePhaseAlone();
+    void aHostileLineCannotGrowTheStatus();
+    void runMarkersAreNotAPhase();
+    void theChannelNameIsShown();
+    void aChannelNameIsNotLetInVerbatim();
+
 private:
     /// Writes an executable shell script into the temp dir, returns its path.
     QString makeScript(const QString &name, const QString &body);
@@ -251,6 +260,144 @@ void TestMailSync::argumentsAreNotShellInterpreted()
 
     QVERIFY(!QFile::exists(m_dir.filePath(QStringLiteral("pwned"))));
     QVERIFY(sync.log().contains(QStringLiteral("; touch")));
+}
+
+void TestMailSync::phaseStartsAsMbsync()
+{
+    // A fresh tracker has nothing to report until it is fed, and a run is
+    // mbsync's until notmuch announces itself.
+    SyncPhaseTracker tracker;
+    QCOMPARE(tracker.phase(), SyncPhase::Starting);
+
+    // A timestamped mbsync line, as the script emits it.
+    QVERIFY(tracker.feed(QStringLiteral("10:44:11 Socket error on imap.example.org (192.0.2.1:993): timeout.")));
+    QCOMPARE(tracker.phase(), SyncPhase::Mbsync);
+    QVERIFY(!tracker.statusText().isEmpty());
+}
+
+void TestMailSync::notmuchLineSwitchesPhase()
+{
+    // "notmuch new" announces itself with its own progress wording. Matching is
+    // loose on purpose: the exact phrasing varies by version, and a status that
+    // goes blank because a string moved is worse than a fixed one.
+    SyncPhaseTracker tracker;
+    tracker.feed(QStringLiteral("10:44:32 Channels: 5    Boxes: 39    Far: +0 *15 #0 -0    Near: +1 *0 #0 -0"));
+    QCOMPARE(tracker.phase(), SyncPhase::Mbsync);
+
+    QVERIFY(tracker.feed(QStringLiteral("10:44:33 Processed 77 total files in almost no time.")));
+    QCOMPARE(tracker.phase(), SyncPhase::Notmuch);
+
+    // Both spellings notmuch uses when it finishes.
+    SyncPhaseTracker other;
+    other.feed(QStringLiteral("11:00:33 Added 1 new message to the database."));
+    QCOMPARE(other.phase(), SyncPhase::Notmuch);
+
+    SyncPhaseTracker third;
+    third.feed(QStringLiteral("11:11:33 No new mail."));
+    QCOMPARE(third.phase(), SyncPhase::Notmuch);
+}
+
+void TestMailSync::mbsyncSummaryIsReported()
+{
+    // mbsync prints one summary at the end of its run and nothing per channel,
+    // so this line is the only concrete thing there is to show. The counts are
+    // worth surfacing; the raw "Far: +0 *15 #0 -0" tail is not.
+    SyncPhaseTracker tracker;
+    QVERIFY(tracker.feed(QStringLiteral("10:44:32 Channels: 5    Boxes: 39    Far: +0 *15 #0 -0    Near: +1 *0 #0 -0")));
+
+    const QString text = tracker.statusText();
+    QVERIFY2(text.contains(QStringLiteral("5")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("39")), qPrintable(text));
+}
+
+void TestMailSync::noiseLeavesThePhaseAlone()
+{
+    // The overwhelming majority of a real run is this one line repeated, and it
+    // must not be shown or counted as a phase change.
+    SyncPhaseTracker tracker;
+    tracker.feed(QStringLiteral("10:44:32 Channels: 5    Boxes: 39    Far: +0 *0 #0 -0    Near: +0 *0 #0 -0"));
+    const QString before = tracker.statusText();
+
+    QVERIFY(!tracker.feed(QStringLiteral(
+        "11:11:33 Note: Ignoring non-mail file: /home/you/Mail/example/Inbox/.uidvalidity")));
+    QCOMPARE(tracker.statusText(), before);
+    QCOMPARE(tracker.phase(), SyncPhase::Mbsync);
+}
+
+void TestMailSync::aHostileLineCannotGrowTheStatus()
+{
+    // Sync output is local but unstructured, and it lands in a status label.
+    // A long line must be truncated rather than resizing the status bar, and
+    // control characters must not survive into it.
+    SyncPhaseTracker tracker;
+    tracker.feed(QStringLiteral("10:00:00 Channels: %1    Boxes: 2")
+                     .arg(QString(500, QLatin1Char('9'))));
+
+    const QString text = tracker.statusText();
+    QVERIFY2(text.size() <= 120, qPrintable(QString::number(text.size())));
+    QVERIFY(!text.contains(QLatin1Char('\n')));
+    QVERIFY(!text.contains(QLatin1Char('\r')));
+}
+
+void TestMailSync::runMarkersAreNotAPhase()
+{
+    // The script's own banners bracket the run. RUN START must not read as
+    // mbsync output, and RUN END must not leave a phase claiming work is still
+    // going: the exit status decides the outcome, deliberately, so nothing here
+    // may be parsed into success or failure.
+    SyncPhaseTracker tracker;
+    QVERIFY(!tracker.feed(QStringLiteral("===== RUN START: 2026-08-07T11:10:47+02:00 =====")));
+    QCOMPARE(tracker.phase(), SyncPhase::Starting);
+
+    tracker.feed(QStringLiteral("11:11:33 No new mail."));
+    QCOMPARE(tracker.phase(), SyncPhase::Notmuch);
+
+    QVERIFY(!tracker.feed(QStringLiteral(
+        "===== RUN END: 2026-08-07T11:11:33+02:00  status=FAILED  mbsync=1 notmuch=0 =====")));
+    // Unchanged: the banner says nothing the status bar should repeat, and the
+    // caller reports the outcome from the exit code.
+    QCOMPARE(tracker.phase(), SyncPhase::Notmuch);
+}
+
+void TestMailSync::theChannelNameIsShown()
+{
+    // What the user actually asked for: which account is being synced right
+    // now. mbsync -V announces each channel as it reaches it, and the channel
+    // name is the account name.
+    SyncPhaseTracker tracker;
+
+    QVERIFY(tracker.feed(QStringLiteral("11:31:16 Channel provider-work")));
+    QCOMPARE(tracker.phase(), SyncPhase::Mbsync);
+    QVERIFY2(tracker.statusText().contains(QStringLiteral("provider-work")),
+             qPrintable(tracker.statusText()));
+
+    // The per-box chatter between channels must not displace it: the account
+    // is the useful thing, and a box name changing several times a second
+    // would make the status bar unreadable.
+    const QString onChannel = tracker.statusText();
+    QVERIFY(!tracker.feed(QStringLiteral("11:31:16 Opening far side box INBOX...")));
+    QCOMPARE(tracker.statusText(), onChannel);
+    QVERIFY(!tracker.feed(QStringLiteral("11:32:20 near side: 14758 messages, 0 recent")));
+    QCOMPARE(tracker.statusText(), onChannel);
+
+    // The next channel does replace it.
+    QVERIFY(tracker.feed(QStringLiteral("11:33:04 Channel provider-personal")));
+    QVERIFY(tracker.statusText().contains(QStringLiteral("provider-personal")));
+    QVERIFY(!tracker.statusText().contains(QStringLiteral("provider-work")));
+}
+
+void TestMailSync::aChannelNameIsNotLetInVerbatim()
+{
+    // The channel name comes from a config file this app does not own, and it
+    // lands in a status label. A long one must not be able to stretch the
+    // status bar, whatever mbsync was told to call it.
+    SyncPhaseTracker tracker;
+    tracker.feed(QStringLiteral("11:31:16 Channel %1")
+                     .arg(QString(400, QLatin1Char('x'))));
+
+    const QString text = tracker.statusText();
+    QVERIFY2(text.size() <= 120, qPrintable(QString::number(text.size())));
+    QVERIFY(!text.contains(QLatin1Char('\n')));
 }
 
 QTEST_MAIN(TestMailSync)

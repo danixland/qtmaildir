@@ -465,6 +465,7 @@ void MainWindow::buildUi()
     connect(m_sync, &MailSync::finished, this, &MainWindow::onSyncFinished);
     connect(m_sync, &MailSync::outputReceived, this, [this](const QString &chunk) {
         m_syncLog->appendPlainText(chunk.trimmed());
+        feedSyncPhase(chunk);
     });
 
     // Syncs this window did not start. The user's cron runs the same script
@@ -1576,12 +1577,46 @@ void MainWindow::showTransientStatus(const QString &text)
     m_statusTimer->start();
 }
 
+void MainWindow::feedSyncPhase(const QString &chunk)
+{
+    // readAll() returns whatever happened to be buffered, which splits mid-line
+    // as often as not, so lines are reassembled here rather than in the tracker:
+    // a half-line fed to it would match nothing and the phase would stall.
+    m_syncLineBuffer += chunk;
+
+    int newline;
+    bool changed = false;
+    while ((newline = m_syncLineBuffer.indexOf(QLatin1Char('\n'))) >= 0) {
+        const QString line = m_syncLineBuffer.left(newline);
+        m_syncLineBuffer.remove(0, newline + 1);
+        if (m_syncPhase.feed(line))
+            changed = true;
+    }
+
+    // The tail without a newline is deliberately left in the buffer: mbsync can
+    // sit on a line for a while, and feeding a partial one would report a phase
+    // from half a word.
+
+    if (!changed)
+        return;
+
+    // Not showTransientStatus(): a phase is state, not an event, and must not
+    // expire out from under a sync that is still running. Writing the label
+    // directly also leaves m_transientMessage alone, so the timer will not
+    // reclaim a phase it did not arm.
+    m_statusLabel->setText(m_syncPhase.statusText());
+}
+
 void MainWindow::setSyncBusy(bool busy)
 {
     m_localSyncBusy = busy;
     updateSyncControls();
 
-    if (busy)
+    // The phase tracker is reset in startSync(), before the process launches,
+    // not here: this runs after start() and a fast run has already produced
+    // output by then. Setting the label is still right, since the tracker has
+    // nothing to say until a line it recognises arrives.
+    if (busy && m_syncPhase.statusText().isEmpty())
         m_statusLabel->setText(tr("Syncing..."));
 }
 
@@ -1623,13 +1658,22 @@ void MainWindow::startSync()
             tr("No sync command configured ([sync] command in qtmaildir.conf)"));
         return;
     }
+
+    // Fresh run, fresh output: leaving the previous run's lines in place
+    // makes a stale failure look like the current one.
+    m_syncLog->clear();
+
+    // BEFORE start(), not after. A short run can deliver its whole output
+    // before control returns here, and resetting afterwards would wipe the
+    // phase those lines had already produced, leaving a fast sync showing
+    // nothing between "Syncing..." and "Sync complete".
+    m_syncPhase.reset();
+    m_syncLineBuffer.clear();
+
     if (!m_sync->start()) {
         showTransientStatus(tr("Sync already running"));
         return;
     }
-    // Fresh run, fresh output: leaving the previous run's lines in place
-    // makes a stale failure look like the current one.
-    m_syncLog->clear();
     setSyncBusy(true);
 }
 

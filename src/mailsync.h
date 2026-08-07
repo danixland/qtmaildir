@@ -22,6 +22,48 @@
 #include <QProcess>
 #include <QString>
 
+/// Which half of the sync script is running.
+///
+/// The script runs mbsync and then `notmuch new`, so the phase is derived from
+/// the output rather than announced: there is no side channel, and adding one
+/// would mean the script and the app had to agree on a protocol.
+enum class SyncPhase {
+    Starting,   ///< Launched, nothing recognised yet.
+    Mbsync,     ///< Fetching mail.
+    Notmuch,    ///< Reindexing.
+};
+
+/// Derives a short status line from the sync script's output as it streams.
+///
+/// Kept separate from MailSync so it can be tested against captured output
+/// without running a process, and free of any widget so the matching rules stay
+/// one thing rather than being spread through a UI handler.
+///
+/// **Matching is deliberately loose.** mbsync's and notmuch's exact wording
+/// varies by version, and a status line that goes blank because a string moved
+/// is worse than the fixed "Syncing..." this replaces. Nothing here decides
+/// whether the run succeeded: the exit status is the only authority on that, and
+/// a second opinion derived from text would eventually disagree with it.
+class SyncPhaseTracker
+{
+public:
+    /// Feeds one line. Returns true when the status text changed as a result,
+    /// so the caller can avoid rewriting the label for every line of noise.
+    bool feed(const QString &line);
+
+    /// Clears back to Starting for a new run.
+    void reset();
+
+    SyncPhase phase() const { return m_phase; }
+
+    /// Plain text, already truncated, safe to put straight into a label.
+    QString statusText() const { return m_status; }
+
+private:
+    SyncPhase m_phase = SyncPhase::Starting;
+    QString m_status;
+};
+
 /// Runs the configured external sync command.
 ///
 /// qtmaildir deliberately does not implement sync itself. The existing script

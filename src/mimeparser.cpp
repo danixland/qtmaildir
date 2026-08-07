@@ -130,13 +130,20 @@ void collectParts(GMimeObject *object, ParsedMessage &out)
         return;
     }
 
+    // A content id makes a part referenceable; it does not make it
+    // undisplayable. The two are independent, so register it and then fall
+    // through to the body branches: setting a Content-Id on the text/html body
+    // is legal and common in bulk-sender output, and returning here left such a
+    // message with both body slots empty and a blank pane.
+    //
+    // Register before assigning, so a part that is both the body and a cid:
+    // target stays reachable under its id for any sibling referencing it.
     if (contentId) {
         // Strip the angle brackets so the key matches a cid: URL body.
         QString id = QString::fromUtf8(contentId);
         if (id.startsWith(QLatin1Char('<')) && id.endsWith(QLatin1Char('>')))
             id = id.mid(1, id.size() - 2);
         out.inlineParts.insert(id, InlinePart{ mimeType, decodePart(part) });
-        return;
     }
 
     if (mimeType == QLatin1String("text/plain") && out.plainBody.isEmpty()) {

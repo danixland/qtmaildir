@@ -31,6 +31,7 @@ private slots:
     void prefersHtmlWhenAvailable();
     void fallsBackToPlainWhenHtmlDisabled();
     void collectsInlineCidParts();
+    void aBodyCarryingAContentIdStillRenders();
     void decodesQuotedPrintableAttachment();
     void decodesEncodedHeaders();
     void malformedMessageDoesNotCrash();
@@ -107,6 +108,36 @@ void TestMimeParser::collectsInlineCidParts()
     QCOMPARE(part.mimeType, QStringLiteral("image/png"));
     // Decoded 1x1 PNG starts with the PNG magic bytes.
     QVERIFY(part.data.startsWith(QByteArray("\x89PNG", 4)));
+}
+
+void TestMimeParser::aBodyCarryingAContentIdStillRenders()
+{
+    // Reported by the user: a bulk sender's message opened blank, with the app
+    // saying it had no HTML part.
+    //
+    // A Content-Id makes a part referenceable, not non-displayable, and setting
+    // one on the text/html body is legal and common. collectParts filed any
+    // part with an id into inlineParts and returned before the body branches,
+    // so such a message parsed with both body slots empty.
+    MimeParser parser;
+    const ParsedMessage msg =
+        parser.parse(fixture(QStringLiteral("body_with_content_id.eml")));
+
+    QVERIFY(msg.ok);
+
+    // The body fills its slot despite the id.
+    QVERIFY2(msg.hasHtml(), "the html body was swallowed by its own content id");
+    QVERIFY(msg.htmlBody.contains(QStringLiteral("Body text.")));
+
+    // And it stays reachable under that id, so a sibling referencing it still
+    // resolves. Register first, then assign: the two are independent.
+    QVERIFY(msg.inlineParts.contains(QStringLiteral("body@example.org")));
+    QCOMPARE(msg.inlineParts.value(QStringLiteral("body@example.org")).mimeType,
+             QStringLiteral("text/html"));
+
+    // The genuinely inline image is untouched by the change.
+    QVERIFY(msg.inlineParts.contains(QStringLiteral("logo@example.org")));
+    QCOMPARE(msg.inlineParts.size(), 2);
 }
 
 void TestMimeParser::decodesQuotedPrintableAttachment()

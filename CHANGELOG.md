@@ -11,8 +11,30 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-07
+
+The empty message pane now carries the application's own identity and the
+counts worth knowing, and Escape finally does what it does everywhere else.
+
 ### Added
 
+- **The blank message pane shows a placeholder** instead of nothing: the
+  wordmark over a soft grid, the number of unread, flagged and inbox threads,
+  and a footer with the version and a link to the website. Each count is a link
+  that runs its query. A sync line appears only when something needs attention,
+  either that the last sync failed or that edits are waiting to go out, so the
+  pane cannot turn into wallpaper that stops being read. It follows the desktop
+  between a light and a dark version of the brand palette.
+- **A Maildir overview**, under Help. Total messages, threads and tags from
+  notmuch, plus the configured accounts, since notmuch does not model accounts
+  at all. It opens straight away and fills the counts in when they arrive,
+  rather than making the window wait: counting every message in a large
+  database is not instant. A count that cannot be answered reads as unknown,
+  never as zero.
+- **Escape clears the selection as well as blanking the pane.** Blanking while
+  the row stayed highlighted read as half an action. The narrower behaviour is
+  still there on `Shift+Esc` for anyone who wants it, and either can be rebound
+  in `[keys]` as `clear_selection` and `clear_pane`.
 - **The thread list shows each thread's tags**, as small coloured chips in a
   strip under the row, using the same colours as the message pane. Rows are
   taller to make room, and alternate in colour so one can be followed across
@@ -64,6 +86,16 @@ point at which they are stable.
 - **A sync that finishes quickly no longer loses its own progress.** The
   per-run reset happened after the process launched, so a run that delivered
   its output before control returned wiped the state those lines had produced.
+
+### Internal
+
+- The test suite pinned itself to the offscreen platform. `ctest` sets no
+  platform of its own, so the result depended on how the suite was invoked:
+  green when run by hand with `QT_QPA_PLATFORM=offscreen` and red under `ctest`
+  in the same tree. The popup test at the centre of it also now checks its own
+  geometry, because the compositor had been handing it a popup more than twice
+  the width it exists to test, which would have passed for the wrong reason had
+  the grab succeeded.
 
 ## [0.10.0] - 2026-08-06
 

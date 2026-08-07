@@ -76,6 +76,8 @@ private slots:
     void growingASelectionCancelsAnAlreadyArmedTimer();
     void collapsingBackToOneRowLoadsThatThreadAgain();
     void theStatusBarReportsAMultiRowSelection();
+    void clearSelectionBlanksThePaneAndDeselects();
+    void clearPaneLeavesTheSelectionAlone();
     void theThreadListOffersAContextMenu();
     void aSecondRowBlanksThePaneNotOnlyAThird();
     void aLocalSyncIsNotReportedAsABackgroundOne();
@@ -1096,6 +1098,87 @@ void TestMainWindow::theStatusBarReportsAMultiRowSelection()
                                        "size, it says '%1'").arg(status->text())));
 }
 
+void TestMainWindow::clearSelectionBlanksThePaneAndDeselects()
+{
+    // Item 50: the user asked for "two actions instead of one", so this is the
+    // new action and clearPaneLeavesTheSelectionAlone() below pins the old one.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
+                         makeThread(QStringLiteral("t2"), {}) });
+
+    // From a row that is already current, which is both how a user reaches this
+    // and what CLAUDE.md requires: selectAll() on a fresh view emits no
+    // currentRowChanged at all, so a test starting there passes against a
+    // missing guard.
+    view->selectRow(0);
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("clear_selection"));
+    QVERIFY2(action, "no clear_selection action");
+    action->trigger();
+
+    QVERIFY2(view->selectionModel()->selectedRows().isEmpty(),
+             "the row is still selected: this action's whole point is that it "
+             "deselects as well as blanking");
+
+    // The hazard: clearSelection() leaves currentIndex() VALID, so
+    // onSelectionChanged() takes its "one or fewer rows" branch, sees a current
+    // row whose id differs from the just-cleared m_currentThreadId, and calls
+    // onThreadSelected for it, which sets m_currentThreadId again and sends a
+    // loadThread. The pane would then repaint itself a moment later.
+    //
+    // **currentThreadId() is what detects that, not the pane.** This fixture
+    // has no worker, so loadThread never replies and nothing ever repaints;
+    // asserting showingPlaceholder() here passes whatever the code does, which
+    // CLAUDE.md records as the standing limit of test_mainwindow. What IS
+    // observable is the id the window set on its way to that request.
+    QVERIFY2(window.currentThreadId().isEmpty(),
+             qPrintable(QStringLiteral("a thread was re-adopted after the "
+                                       "selection was cleared: currentThreadId "
+                                       "is '%1', and a loadThread for it is "
+                                       "already in flight")
+                            .arg(window.currentThreadId())));
+
+    // And current itself is gone, so no later collapse-to-one-row can reload
+    // it either.
+    QVERIFY2(!view->currentIndex().isValid(),
+             "currentIndex is still valid, so onSelectionChanged can reload "
+             "that row on the next selection change");
+}
+
+void TestMainWindow::clearPaneLeavesTheSelectionAlone()
+{
+    // The pre-existing action keeps its behaviour. Item 32 built it to blank
+    // WITHOUT touching the selection, and a user who binds it is entitled to
+    // that; item 50 adds a second action rather than changing this one.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
+                         makeThread(QStringLiteral("t2"), {}) });
+
+    view->selectRow(0);
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("clear_pane"));
+    QVERIFY2(action, "no clear_pane action");
+    action->trigger();
+
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
+}
+
 void TestMainWindow::theThreadListOffersAContextMenu()
 {
     // Right-click is the other half of discoverability: until now every tag
@@ -1503,7 +1586,12 @@ void TestMainWindow::escapeBlanksTheMessagePane()
 
     auto *action = window.findChild<QAction *>(QStringLiteral("clear_pane"));
     QVERIFY2(action, "no clear_pane action registered");
-    QCOMPARE(action->shortcut(), QKeySequence(Qt::Key_Escape));
+
+    // Shift+Esc since item 50: plain Escape now clears the selection too, and
+    // this narrower action kept the same key with a modifier. The behaviour
+    // asserted below is unchanged, which is the point of keeping both.
+    QCOMPARE(action->shortcut(),
+             QKeySequence(Qt::ShiftModifier | Qt::Key_Escape));
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);

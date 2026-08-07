@@ -38,6 +38,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("complete_query"),
         QStringLiteral("select_all"),
         QStringLiteral("clear_pane"),
+        QStringLiteral("clear_selection"),
         QStringLiteral("toggle_html"),
         QStringLiteral("load_remote"),
         QStringLiteral("message_details"),
@@ -85,7 +86,17 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         // Escape is not claimed by anything else at window level. The query
         // completer handles its own Escape while its popup is up, and a popup
         // consumes the key before a window shortcut sees it.
-        { QStringLiteral("Esc"),          QStringLiteral("clear_pane") },
+        //
+        // It clears the SELECTION as well as the pane (item 50). Deselecting is
+        // what Escape means nearly everywhere else, and blanking a pane while
+        // leaving the row highlighted reads as half an action.
+        //
+        // clear_pane keeps the narrower behaviour on Shift+Esc: same key, and
+        // the modifier reads as "less than the plain one". It needs SOME
+        // default rather than being left unbound, since every action carries
+        // one and everyActionHasAShortcut enforces exactly that.
+        { QStringLiteral("Esc"),          QStringLiteral("clear_selection") },
+        { QStringLiteral("Shift+Esc"),    QStringLiteral("clear_pane") },
         { QStringLiteral("Ctrl+H"),       QStringLiteral("toggle_html") },
         { QStringLiteral("Ctrl+M"),       QStringLiteral("load_remote") },
         // Shifted because Ctrl+D is delete. Both are "D for details/delete"

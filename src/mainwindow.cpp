@@ -787,6 +787,39 @@ void MainWindow::registerActions()
         m_markReadTimer->stop();
         m_markReadThreadId.clear();
     });
+    addAction(QStringLiteral("clear_selection"), tr("Clear &selection"),
+              tr("Blank the message pane and deselect every thread"),
+              [this]() {
+        // Item 50, and the user's wording was "two actions instead of one":
+        // clear_pane above still blanks without touching the selection, this
+        // one does both. Esc defaults here, since deselecting is what Esc means
+        // nearly everywhere else.
+        //
+        // BOTH LINES BELOW ARE LOAD-BEARING, AND SO IS THEIR PLACE ABOVE THE
+        // BLANKING. clearSelection() leaves currentIndex() VALID, and
+        // onSelectionChanged() then takes its "one or fewer rows" branch, finds
+        // a current row whose id differs from m_currentThreadId, and calls
+        // onThreadSelected for it: the thread is re-adopted and a loadThread
+        // sent for the row that was just being cleared.
+        //
+        // Clearing the selection FIRST means that runs while m_currentThreadId
+        // still names the displayed thread, so the ids match and nothing is
+        // reloaded; setCurrentIndex() then stops any later collapse-to-one-row
+        // reaching the same row again.
+        //
+        // All four arrangements were tried against
+        // clearSelectionBlanksThePaneAndDeselects, and only this one passes:
+        // dropping setCurrentIndex() fails, and moving either line after the
+        // blanking fails.
+        m_threadView->clearSelection();
+        m_threadView->setCurrentIndex(QModelIndex());
+
+        m_currentThreadId.clear();
+        m_messageView->clear();
+        showPlaceholderPane();
+        m_markReadTimer->stop();
+        m_markReadThreadId.clear();
+    });
     addAction(QStringLiteral("select_all"), tr("Select &all threads"),
               tr("Select every thread in the current result list"), [this]() {
         // A registered action rather than the view's built-in SelectAll key, so

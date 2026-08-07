@@ -119,6 +119,19 @@ public:
     static void setLocksPathForTesting(const QString &path);
     static QString locksPath();
 
+    /// How many commands are on the undo stack.
+    ///
+    /// A test seam. The undo QAction is always enabled and checks canUndo()
+    /// when triggered, so its enabled state says nothing about whether a
+    /// command was pushed, which is what "this did nothing" has to assert.
+    int undoDepthForTesting() const { return m_undoStack.count(); }
+
+    /// The generation a worker reply must carry to be accepted.
+    ///
+    /// A test seam: onQueryFinished() discards a reply whose generation is
+    /// stale, so a test standing in for the worker has to know the current one.
+    quint64 currentGenerationForTesting() const { return m_generation; }
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
@@ -231,6 +244,14 @@ private:
     /// Reassembles lines from a sync output chunk and updates the status label
     /// when the phase or its detail changes.
     void feedSyncPhase(const QString &chunk);
+
+    /// Removes `unread` from every thread in the current view, as one write and
+    /// one undo entry, ignoring the selection.
+    void markAllRead();
+
+    /// Enables or disables the actions that claim to act on a whole view,
+    /// according to whether the result set is complete.
+    void updateViewWideActions();
 
     /// Applies the sync progress bar and button state from BOTH sync sources.
     ///
@@ -383,6 +404,11 @@ private:
     QStringList m_knownTags;
 
     quint64 m_generation = 0;
+
+    /// True once the running query has reported its total, so the model holds
+    /// the whole result set rather than the batches that have arrived so far.
+    /// Gates mark_all_read, which cannot honestly say "all" before then.
+    bool m_queryComplete = false;
     QString m_lastQuery;
     QString m_currentThreadId;
 

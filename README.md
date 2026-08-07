@@ -376,6 +376,7 @@ Defaults, all rebindable through `[keys]`:
 | `Ctrl+D` | `delete` | Add `deleted` |
 | `Ctrl+Shift+S` | `spam` | Add `spam`, remove `inbox` |
 | `Ctrl+U` | `toggle_unread` | Toggle `unread` |
+| `Ctrl+Shift+U` | `mark_all_read` | Remove `unread` from every thread in the view |
 | `Ctrl+I` | `flag` | Add `flagged` |
 | `Ctrl+L` | `focus_query` | Focus and select the query bar |
 | `Ctrl+Space` | `complete_query` | Focus the query bar and offer completions |

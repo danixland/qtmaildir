@@ -11,6 +11,39 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- **Mark all read**, on the toolbar, the Message menu and `Ctrl+Shift+U`. It
+  acts on every thread in the current view rather than the selection, as one
+  write and one undo entry, so a single `Ctrl+Z` puts back a view of 400
+  threads. It stays disabled until the query has reported its total: threads
+  arrive in batches, and an action that says "all" must not run against
+  whatever happened to have loaded. A view with nothing unread does nothing and
+  says so, rather than pushing an undo entry that restores nothing.
+- **The status bar says which account is syncing**, then that notmuch is
+  reindexing, instead of "Syncing..." for the whole run. The account name and
+  the progress both come from mbsync's own output as it streams.
+
+### Changed
+
+- **The sync script runs `mbsync -V`.** Without it mbsync prints nothing at all
+  until it exits, then a single summary line, so a run of over a minute was
+  silent and there was nothing for the status bar to report. This is not a
+  buffering problem and `stdbuf` does not help.
+
+### Fixed
+
+- **A message whose HTML body carries a `Content-Id` renders**, instead of
+  opening blank with the app reporting no HTML part. A content id makes a part
+  referenceable, not undisplayable, and setting one on the body is legal and
+  common in bulk-sender output.
+- **Removing a tag suggests only the tags the selected threads carry**, rather
+  than every tag in the database. Adding still reaches the whole vocabulary,
+  since naming a tag that does not exist yet is what that field is for.
+- **A sync that finishes quickly no longer loses its own progress.** The
+  per-run reset happened after the process launched, so a run that delivered
+  its output before control returned wiped the state those lines had produced.
+
 ## [0.10.0] - 2026-08-06
 
 Tag edits no longer stall the window when a background sync is running, and

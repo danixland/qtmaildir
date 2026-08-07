@@ -31,6 +31,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("delete"),
         QStringLiteral("spam"),
         QStringLiteral("toggle_unread"),
+        QStringLiteral("mark_all_read"),
         QStringLiteral("edit_tags"),
         QStringLiteral("flag"),
         QStringLiteral("focus_query"),
@@ -67,6 +68,10 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Ctrl+D"),       QStringLiteral("delete") },
         { QStringLiteral("Ctrl+Shift+S"), QStringLiteral("spam") },
         { QStringLiteral("Ctrl+U"),       QStringLiteral("toggle_unread") },
+        // Shifted against Ctrl+U, which toggles unread on the selection: this
+        // is the same idea applied to the whole view, and the wider-reaching
+        // action takes the harder chord rather than the easier one.
+        { QStringLiteral("Ctrl+Shift+U"), QStringLiteral("mark_all_read") },
         { QStringLiteral("Ctrl+I"),       QStringLiteral("flag") },
         { QStringLiteral("Ctrl+T"),       QStringLiteral("edit_tags") },
         { QStringLiteral("Ctrl+L"),       QStringLiteral("focus_query") },

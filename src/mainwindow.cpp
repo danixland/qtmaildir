@@ -677,6 +677,11 @@ void MainWindow::registerActions()
         else
             tagSelected({ QStringLiteral("unread") }, {}, tr("Mark unread"));
     });
+    addAction(QStringLiteral("mark_all_read"), tr("Mark all &read"),
+              tr("Remove the unread tag from every thread in this view"),
+              [this]() {
+        markAllRead();
+    });
     addAction(QStringLiteral("edit_tags"), tr("Edit &tags..."),
               tr("Add or remove any tag on the selected threads"), [this]() {
         editTagsOnSelection();
@@ -768,6 +773,13 @@ void MainWindow::registerActions()
     // silently dead. KeyMap warns about unknown names, but only a check here
     // catches the reverse: a known action nothing implements.
     Q_ASSERT(m_actions.size() == KeyMap::knownActions().size());
+
+    // QAction starts enabled, so the view-wide actions have to be put into
+    // their real state here rather than waiting for the first query: a window
+    // that has not run one yet has an empty model and no complete result set,
+    // and offering "Mark all read" against nothing is a live control that does
+    // nothing.
+    updateViewWideActions();
 }
 
 void MainWindow::buildMenus()
@@ -791,6 +803,7 @@ void MainWindow::buildMenus()
     messageMenu->addAction(m_actions.value(QStringLiteral("spam")));
     messageMenu->addSeparator();
     messageMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("mark_all_read")));
     messageMenu->addAction(m_actions.value(QStringLiteral("edit_tags")));
     messageMenu->addAction(m_actions.value(QStringLiteral("flag")));
 
@@ -876,6 +889,7 @@ void MainWindow::buildMenus()
     toolBar->addSeparator();
     toolBar->addAction(m_actions.value(QStringLiteral("archive")));
     toolBar->addAction(m_actions.value(QStringLiteral("delete")));
+    toolBar->addAction(m_actions.value(QStringLiteral("mark_all_read")));
     toolBar->addSeparator();
     toolBar->addAction(m_actions.value(QStringLiteral("undo")));
 }
@@ -1102,6 +1116,11 @@ void MainWindow::runCurrentQuery()
 
     m_statusLabel->setText(tr("Searching..."));
 
+    // The result set is incomplete from here until queryFinished arrives, so
+    // anything claiming to act on the whole view must wait.
+    m_queryComplete = false;
+    updateViewWideActions();
+
     QMetaObject::invokeMethod(m_worker, "runQuery", Qt::QueuedConnection,
                               Q_ARG(QString, query),
                               Q_ARG(quint64, m_generation));
@@ -1124,6 +1143,61 @@ void MainWindow::onQueryFinished(int total, quint64 generation)
     // nothing.
     m_defaultStatus = tr("%n thread(s)", "", total);
     m_statusLabel->setText(m_defaultStatus);
+
+    // The model now holds every row the query matched, so "the whole view" is
+    // a thing that can honestly be acted on.
+    m_queryComplete = true;
+    updateViewWideActions();
+}
+
+void MainWindow::updateViewWideActions()
+{
+    // Threads arrive in batches of kBatchSize, so before the query reports its
+    // total the model holds only what has landed. An action that says "all"
+    // must not run against a partial set and silently skip the rest, and a
+    // disabled control says so without a dialog.
+    if (QAction *action = m_actions.value(QStringLiteral("mark_all_read")))
+        action->setEnabled(m_queryComplete && m_model->rowCount() > 0);
+}
+
+void MainWindow::markAllRead()
+{
+    // Every row, not the selection: this is the one action in the window that
+    // deliberately ignores what is selected.
+    QStringList threadIds;
+    const int rows = m_model->rowCount();
+    threadIds.reserve(rows);
+    for (int row = 0; row < rows; ++row) {
+        const ThreadSummary thread = m_model->threadAt(row);
+        // Only the threads that would actually change. Sending the rest would
+        // inflate the pending-edit count with writes that do nothing, and the
+        // quit prompt reads that count.
+        if (thread.isUnread())
+            threadIds.append(thread.threadId);
+    }
+
+    if (threadIds.isEmpty()) {
+        showTransientStatus(tr("Nothing unread in this view"));
+        return;
+    }
+
+    // An automatic mark-read armed for the open thread would fire after this
+    // and push a second, redundant command onto the stack.
+    m_markReadTimer->stop();
+    m_markReadThreadId.clear();
+
+    const QString description = tr("Mark all read");
+    sendThreadTagChange(threadIds, {}, { QStringLiteral("unread") },
+                        description);
+
+    // ONE command for the batch, exactly as tagSelected does: a user who marks
+    // 400 threads read expects a single Ctrl+Z to put them back.
+    m_undoStack.push(new ThreadTagCommand(this, threadIds, {},
+                                          { QStringLiteral("unread") },
+                                          description));
+
+    showTransientStatus(
+        tr("%1: %n thread(s)", "", threadIds.size()).arg(description));
 }
 
 void MainWindow::showThreadContextMenu(const QPoint &pos)

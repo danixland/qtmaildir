@@ -81,6 +81,9 @@ private slots:
     void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
     void anUnobservableLockTableLeavesTheSyncButtonUsable();
     void theStatusBarFollowsTheSyncPhase();
+    void markAllReadIsDisabledUntilTheQueryFinishes();
+    void markAllReadActsOnEveryRowAndUndoesInOneStep();
+    void markAllReadDoesNothingWhenNothingIsUnread();
     void theSyncActionIsDisabledWhileABackgroundSyncHoldsTheLock();
     void escapeBlanksTheMessagePane();
     void deleteTogglesOnAnAlreadyDeletedThread();
@@ -365,6 +368,146 @@ static ThreadSummary makeThread(const QString &id, const QStringList &tags)
     thread.authors = QStringLiteral("Someone <someone@example.org>");
     thread.tags = tags;
     return thread;
+}
+
+void TestMainWindow::markAllReadIsDisabledUntilTheQueryFinishes()
+{
+    // Threads arrive in batches, so acting mid-load would silently skip
+    // whatever had not arrived. Rather than acting on part of the view and
+    // calling it "all", or stalling on a wait the user cannot see, the action
+    // is simply unavailable until the result set is complete.
+    const Config config;
+    MainWindow window(config);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("mark_all_read"));
+    QVERIFY2(action, "no mark_all_read action registered");
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+
+    // A query in flight: rows are arriving but the worker has not said it is
+    // done, so the action must stay out of reach.
+    // A query is needed for runCurrentQuery to do anything: it returns early
+    // on an empty one, which would leave the flag untouched.
+    window.findChild<QLineEdit *>()->setText(QStringLiteral("tag:inbox"));
+    QMetaObject::invokeMethod(&window, "runCurrentQuery");
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }) });
+    QVERIFY2(!action->isEnabled(),
+             "the action was live while the query was still loading");
+
+    // The generation must match or the reply is discarded as stale, which is
+    // how a superseded query is ignored everywhere else in this window.
+    const quint64 generation = window.currentGenerationForTesting();
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 1), Q_ARG(quint64, generation));
+    QVERIFY2(action->isEnabled(),
+             "the action stayed disabled after the query finished");
+}
+
+void TestMainWindow::markAllReadActsOnEveryRowAndUndoesInOneStep()
+{
+    // Every row in the view, not just the selected ones, and one undo entry for
+    // the batch: a user who marks 400 threads read expects one Ctrl+Z to be
+    // enough.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("mark_all_read"));
+    QVERIFY(action);
+
+    // A query is needed for runCurrentQuery to do anything: it returns early
+    // on an empty one, which would leave the flag untouched.
+    window.findChild<QLineEdit *>()->setText(QStringLiteral("tag:inbox"));
+    QMetaObject::invokeMethod(&window, "runCurrentQuery");
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t2"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t3"),
+                                    { QStringLiteral("unread"),
+                                      QStringLiteral("flagged") }) });
+    QMetaObject::invokeMethod(&window, "onQueryFinished", Q_ARG(int, 3),
+                              Q_ARG(quint64,
+                                    window.currentGenerationForTesting()));
+
+    // One row selected, to prove the action ignores the selection rather than
+    // acting on it.
+    view->selectRow(0);
+
+    action->trigger();
+
+    for (int row = 0; row < 3; ++row) {
+        QVERIFY2(!model->threadAt(row).tags.contains(QStringLiteral("unread")),
+                 qPrintable(QStringLiteral("row %1 kept its unread tag")
+                                .arg(row)));
+    }
+    // An unrelated tag on a row is untouched: only unread is removed.
+    QVERIFY(model->threadAt(2).tags.contains(QStringLiteral("flagged")));
+
+    // ONE undo entry for the whole batch, not one per thread. Asserted as a
+    // depth, since triggering undo once and finding everything restored would
+    // also pass if three commands had been pushed and the model happened to
+    // recover on the first.
+    QCOMPARE(window.undoDepthForTesting(), 1);
+
+    auto *undo = window.findChild<QAction *>(QStringLiteral("undo"));
+    QVERIFY(undo);
+    undo->trigger();
+
+    for (int row = 0; row < 3; ++row) {
+        QVERIFY2(model->threadAt(row).tags.contains(QStringLiteral("unread")),
+                 qPrintable(QStringLiteral("row %1 was not restored by one undo")
+                                .arg(row)));
+    }
+}
+
+void TestMainWindow::markAllReadDoesNothingWhenNothingIsUnread()
+{
+    // No write, no undo entry, and no pending edit for a view that is already
+    // read: an undo entry that restores nothing is worse than none, since it
+    // absorbs a Ctrl+Z the user meant for their previous action.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *action = window.findChild<QAction *>(QStringLiteral("mark_all_read"));
+    QVERIFY(action);
+
+    // A query is needed for runCurrentQuery to do anything: it returns early
+    // on an empty one, which would leave the flag untouched.
+    window.findChild<QLineEdit *>()->setText(QStringLiteral("tag:inbox"));
+    QMetaObject::invokeMethod(&window, "runCurrentQuery");
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("flagged") }),
+                         makeThread(QStringLiteral("t2"), {}) });
+    QMetaObject::invokeMethod(&window, "onQueryFinished", Q_ARG(int, 2),
+                              Q_ARG(quint64,
+                                    window.currentGenerationForTesting()));
+
+    QCOMPARE(window.undoDepthForTesting(), 0);
+
+    action->trigger();
+
+    // The real assertion: no command was pushed. Checking only that the tags
+    // did not change would pass against a version that sent a no-op write for
+    // every row, which still costs an undo entry and a pending edit each. The
+    // undo QAction cannot answer this: it is always enabled and tests canUndo()
+    // when triggered.
+    QVERIFY2(window.undoDepthForTesting() == 0,
+             "an undo entry was pushed for a view with nothing unread");
+    QVERIFY(model->threadAt(0).tags.contains(QStringLiteral("flagged")));
+
+    // And it says so rather than appearing to have done something.
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    QVERIFY2(status->text().contains(QStringLiteral("Nothing unread")),
+             qPrintable(status->text()));
 }
 
 void TestMainWindow::markReadTimerRestartsRatherThanStacking()

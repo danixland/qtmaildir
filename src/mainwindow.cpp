@@ -55,6 +55,7 @@
 #include "tagchip.h"
 #include "tagdialog.h"
 #include "threadlistmodel.h"
+#include "threadlistview.h"
 #include "version.h"
 
 QStringList MainWindow::registeredActionNames() const
@@ -500,7 +501,10 @@ void MainWindow::buildUi()
     // Thread list and message pane.
     m_model = new ThreadListModel(this);
     m_model->setTagColors(&m_tagColors);
-    m_threadView = new QTableView(central);
+    // ThreadListView, not a plain QTableView: it paints the row-wide tag
+    // strip under each row's cells, which no delegate can do because a
+    // delegate is confined to one column's rectangle.
+    m_threadView = new ThreadListView(central);
     m_threadView->setModel(m_model);
     m_threadView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_threadView->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -514,16 +518,32 @@ void MainWindow::buildUi()
             column, QHeaderView::Interactive);
     }
 
-    // The subject cell carries the account chip in front of its text, and
-    // every cell needs the delegate's selection handling: the read/unread
-    // dimming arrives as a Qt::ForegroundRole, which Qt's default painting
-    // prefers over the highlight, leaving a selected read row grey on the
-    // selection colour. SubjectDelegate::initStyleOption reverses that, and
-    // its paint() falls through to the base class wherever there is no chip,
-    // so the other columns keep their ordinary rendering.
-    m_threadView->setItemDelegate(new SubjectDelegate(this));
+    // Two delegates, and the split is not cosmetic. RowStyleDelegate carries
+    // only the selection fix every column needs: the read/unread dimming
+    // arrives as a Qt::ForegroundRole, which Qt's painting prefers over the
+    // highlight, leaving a selected read row grey on the selection colour.
+    //
+    // SubjectDelegate adds the account chip and the tag pills, and must go on
+    // the subject column ALONE. It reads AccountLabelRole, a property of the
+    // row rather than of a cell, so installed view-wide it draws the chip into
+    // every column: tried once, and the list came out with a chip repeated
+    // four times per row.
+    m_threadView->setItemDelegate(new RowStyleDelegate(this));
+    m_threadView->setItemDelegateForColumn(ThreadListModel::SubjectColumn,
+                                           new SubjectDelegate(this));
+
+    // One height for every row, set here rather than left to a column's
+    // sizeHint: a QTableView takes a single height per row, so a hint from the
+    // subject column alone would only apply if the view happened to ask it.
+    m_threadView->verticalHeader()->setDefaultSectionSize(
+        SubjectDelegate::rowHeightFor(m_threadView->font()));
     // Widening a column past the viewport scrolls rather than squeezing the
     // others. Per-pixel so the scroll does not jump a whole column at a time.
+    // Banding, so the eye can follow a row across four columns and a pill
+    // strip without losing it. The colour comes from the palette's
+    // AlternateBase, so it follows the desktop theme.
+    m_threadView->setAlternatingRowColors(true);
+
     m_threadView->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_threadView->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
 
@@ -534,6 +554,7 @@ void MainWindow::buildUi()
     // clamps to it silently rather than reporting the smaller value back.
     m_threadView->horizontalHeader()->setMinimumSectionSize(24);
     m_threadView->setColumnWidth(ThreadListModel::AttachmentColumn, 28);
+    m_threadView->setColumnWidth(ThreadListModel::FlagColumn, 28);
     m_threadView->setColumnWidth(ThreadListModel::DateColumn, 130);
     m_threadView->setColumnWidth(ThreadListModel::AuthorsColumn, 180);
     m_threadView->setColumnWidth(ThreadListModel::SubjectColumn, 520);

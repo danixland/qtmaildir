@@ -20,6 +20,7 @@
 #include <QSignalSpy>
 #include <QtTest>
 
+#include "tagcolors.h"
 #include "threadlistmodel.h"
 
 class TestThreadListModel : public QObject
@@ -34,6 +35,9 @@ private slots:
     void subjectShowsMessageCountOnlyForRealThreads();
     void unreadThreadsRenderBold();
     void readThreadsAreDimmedAndUnreadAreNot();
+    void flaggedThreadsShowAStar();
+    void pillTagsExcludeWhatTheRowAlreadyShows();
+    void theStarColumnIsNarrowAndCarriesNoText();
     void theUnreadCueDoesNotDependOnFontWeight();
     void aDoomedThreadKeepsItsContrastEvenWhenRead();
     void tagsAreTheFirstColumnAndSubjectTheLast();
@@ -169,14 +173,15 @@ void TestThreadListModel::unreadThreadsRenderBold()
 
 void TestThreadListModel::readThreadsAreDimmedAndUnreadAreNot()
 {
-    // Bold was unread's ONLY cue, and on the user's system it renders
-    // identically to regular: verified with a bare QTableView and a plain
-    // QStandardItemModel, so the fault is below this application, in Qt or
-    // fontconfig, and no model change can reach it. Bold is kept, since it
-    // works elsewhere, but the state can no longer depend on it.
+    // Bold was unread's ONLY cue, which leaves nothing to see when the
+    // desktop's own font is configured bold: every row renders bold and
+    // setBold() changes nothing. That is what the original report turned out
+    // to be, a qt6ct setting rather than a defect here, but a cue with one
+    // point of failure is worth reinforcing.
     //
-    // Read rows are dimmed instead, which inverts the emphasis: unread sits at
-    // full contrast and the bulk of a mostly-read list recedes.
+    // Read rows are dimmed as well, which inverts the emphasis: unread sits at
+    // full contrast and the bulk of a mostly-read list recedes. Bold still
+    // applies on top.
     ThreadListModel model;
     ThreadSummary read = makeThread(QStringLiteral("t1"), QStringLiteral("read"));
     read.tags = QStringList{ QStringLiteral("inbox") };
@@ -194,6 +199,105 @@ void TestThreadListModel::readThreadsAreDimmedAndUnreadAreNot()
     QVERIFY2(!unreadFg.isValid(),
              "an unread thread must be left at the palette's own colour, so it "
              "is the one that stands out");
+}
+
+void TestThreadListModel::flaggedThreadsShowAStar()
+{
+    // "flagged" is an ordinary notmuch tag already carried in ThreadSummary,
+    // so this needs no worker query, exactly as the paperclip did not.
+    ThreadListModel model;
+    ThreadSummary plain = makeThread(QStringLiteral("t1"), QStringLiteral("plain"));
+    plain.tags = QStringList{ QStringLiteral("inbox") };
+    ThreadSummary starred = makeThread(QStringLiteral("t2"),
+                                       QStringLiteral("starred"));
+    starred.tags = QStringList{ QStringLiteral("inbox"),
+                                QStringLiteral("flagged") };
+    model.appendBatch({ plain, starred });
+
+    const QString none =
+        model.data(model.index(0, ThreadListModel::FlagColumn),
+                   Qt::DisplayRole).toString();
+    const QString star =
+        model.data(model.index(1, ThreadListModel::FlagColumn),
+                   Qt::DisplayRole).toString();
+
+    QVERIFY2(none.isEmpty(), "an unflagged thread shows something in the column");
+    QVERIFY2(!star.isEmpty(), "a flagged thread shows nothing");
+    QCOMPARE(star, ThreadListModel::flagGlyph());
+}
+
+void TestThreadListModel::pillTagsExcludeWhatTheRowAlreadyShows()
+{
+    // The pills exist to say what the row does not already say. Repeating the
+    // account, the flag, the attachment or the read state as text beside the
+    // chip, the star, the paperclip and the dimming would spend the new space
+    // on things already visible.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"),
+                                      QStringLiteral("noisy"));
+    thread.tags = QStringList{
+        QStringLiteral("inbox"),      // structural, always true here
+        QStringLiteral("unread"),     // shown by not being dimmed
+        QStringLiteral("flagged"),    // shown by the star column
+        QStringLiteral("attachment"), // shown by the paperclip column
+        QStringLiteral("account-work"),  // shown as the chip
+        QStringLiteral("SBo"),        // worth showing
+        QStringLiteral("shopping/amazon"),
+    };
+    model.appendBatch({ thread });
+
+    const QStringList pills =
+        model.data(model.index(0, ThreadListModel::SubjectColumn),
+                   ThreadListModel::PillTagsRole).toStringList();
+
+    QVERIFY2(pills.contains(QStringLiteral("SBo")), qPrintable(pills.join(',')));
+    QVERIFY2(pills.contains(QStringLiteral("shopping/amazon")),
+             qPrintable(pills.join(',')));
+
+    for (const QString &hidden : { QStringLiteral("inbox"),
+                                   QStringLiteral("unread"),
+                                   QStringLiteral("flagged"),
+                                   QStringLiteral("attachment") }) {
+        QVERIFY2(!pills.contains(hidden),
+                 qPrintable(QStringLiteral("'%1' is repeated as a pill")
+                                .arg(hidden)));
+    }
+
+    // The account tag is matched by shape rather than by name, since the key
+    // varies per user: whatever TagColors calls an account tag is excluded.
+    for (const QString &tag : pills) {
+        QVERIFY2(!TagColors::isAccountTag(tag),
+                 qPrintable(QStringLiteral("account tag '%1' repeated as a pill")
+                                .arg(tag)));
+    }
+
+    // Stable order, so a row does not reshuffle its own pills between repaints.
+    QStringList sorted = pills;
+    sorted.sort();
+    QCOMPARE(pills, sorted);
+}
+
+void TestThreadListModel::theStarColumnIsNarrowAndCarriesNoText()
+{
+    // A marker column, like the paperclip beside it: centred, and never
+    // carrying the subject or anything else that would want width.
+    ThreadListModel model;
+    ThreadSummary starred = makeThread(QStringLiteral("t1"),
+                                       QStringLiteral("starred"));
+    starred.tags = QStringList{ QStringLiteral("flagged") };
+    model.appendBatch({ starred });
+
+    const QModelIndex index = model.index(0, ThreadListModel::FlagColumn);
+    QCOMPARE(model.data(index, Qt::TextAlignmentRole).toInt(),
+             int(Qt::AlignCenter));
+
+    // The glyph is one character, whether it is the star or its fallback: a
+    // column sized for a marker cannot hold a word.
+    QCOMPARE(ThreadListModel::flagGlyph().size(), 1);
+
+    // And it says what it means, for anyone who cannot tell the glyph apart
+    // from the paperclip beside it.
+    QVERIFY(!model.data(index, Qt::ToolTipRole).toString().isEmpty());
 }
 
 void TestThreadListModel::theUnreadCueDoesNotDependOnFontWeight()

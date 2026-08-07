@@ -13,6 +13,15 @@ point at which they are stable.
 
 ### Added
 
+- **The thread list shows each thread's tags**, as small coloured chips in a
+  strip under the row, using the same colours as the message pane. Rows are
+  taller to make room, and alternate in colour so one can be followed across
+  the width. The strip spans the whole row rather than sitting inside the
+  subject column, so a well-tagged thread does not lose its last tags off the
+  edge. Tags the row already shows another way are left out: the account, the
+  flag, the attachment, and read state.
+- **A star column for flagged threads**, beside the existing attachment
+  paperclip.
 - **Mark all read**, on the toolbar, the Message menu and `Ctrl+Shift+U`. It
   acts on every thread in the current view rather than the selection, as one
   write and one undo entry, so a single `Ctrl+Z` puts back a view of 400
@@ -30,12 +39,11 @@ point at which they are stable.
   until it exits, then a single summary line, so a run of over a minute was
   silent and there was nothing for the status bar to report. This is not a
   buffering problem and `stdbuf` does not help.
-- **Read threads are dimmed in the list, rather than unread being bold.** Bold
-  was the only thing distinguishing the two, and on some systems it renders
-  identically to regular, which is a Qt or fontconfig matter this application
-  cannot reach: read and unread mail looked exactly alike. The distinction now
-  rides on colour, with unread left at the palette's own text colour and read
-  receding toward the background. Bold is still applied where it works.
+- **Read threads are dimmed in the list**, so unread mail stands out by colour
+  as well as by weight. Bold alone was the only distinction, which leaves
+  nothing to see when the desktop's own font is configured bold. Unread keeps
+  the palette's text colour and read recedes toward the background; bold still
+  applies on top.
 
 ### Fixed
 

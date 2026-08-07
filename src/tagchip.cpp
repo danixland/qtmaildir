@@ -40,7 +40,13 @@ void paint(QPainter *painter, const QRect &rect, const QString &text,
     painter->setRenderHint(QPainter::Antialiasing, true);
     painter->setPen(Qt::NoPen);
     painter->setBrush(background);
-    painter->drawRoundedRect(rect, kRadius, kRadius);
+    // Radius from the chip's own height rather than the fixed kRadius: a 3px
+    // corner on a 17px chip reads as a slightly-softened rectangle, which is
+    // hard to tell from the square cells of the columns behind it. Half the
+    // height gives fully rounded ends, so a chip reads as an object sitting on
+    // the row instead of as another compartment of it.
+    const qreal radius = rect.height() / 2.0;
+    painter->drawRoundedRect(rect, radius, radius);
 
     painter->setPen(TagColors::textColourOn(background));
     painter->drawText(rect, Qt::AlignCenter, text);
@@ -49,8 +55,44 @@ void paint(QPainter *painter, const QRect &rect, const QString &text,
 
 }  // namespace TagChip
 
-void SubjectDelegate::initStyleOption(QStyleOptionViewItem *option,
-                                      const QModelIndex &index) const
+int SubjectDelegate::subjectBandHeight(const QStyleOptionViewItem &option)
+{
+    return QFontMetrics(option.font).height();
+}
+
+QFont SubjectDelegate::pillFont(const QFont &rowFont)
+{
+    QFont font = rowFont;
+
+    // Two points down, floored. One point was measured to change nothing at a
+    // 12pt desktop font: 12 and 11 both render 17px tall, so the pills came
+    // out the same size as the subject and read as competing content rather
+    // than as annotation.
+    //
+    // pointSize() is -1 when the font was specified in pixels, which
+    // subtracting from would be nonsense, hence the two branches.
+    if (rowFont.pointSize() > 0)
+        font.setPointSize(qMax(6, rowFont.pointSize() - 2));
+    else if (rowFont.pixelSize() > 0)
+        font.setPixelSize(qMax(8, rowFont.pixelSize() - 3));
+
+    return font;
+}
+
+int SubjectDelegate::rowHeightFor(const QFont &rowFont)
+{
+    // The text band uses the ROW's font and the strip its own smaller one.
+    // Measuring both with one font is what put the pills over the date text.
+    const QFontMetrics rowMetrics(rowFont);
+    const QFontMetrics pillMetrics(pillFont(rowFont));
+
+    return rowMetrics.height()
+         + TagChip::sizeFor(pillMetrics, QStringLiteral("x")).height()
+         + kRowPadding * 2 + TagChip::kSpacing;
+}
+
+void RowStyleDelegate::initStyleOption(QStyleOptionViewItem *option,
+                                       const QModelIndex &index) const
 {
     QStyledItemDelegate::initStyleOption(option, index);
 
@@ -72,15 +114,57 @@ void SubjectDelegate::initStyleOption(QStyleOptionViewItem *option,
         option->palette.setColor(QPalette::Text, highlighted);
         option->palette.setColor(QPalette::WindowText, highlighted);
     }
+
+    // Top-aligned and on one line, matching the subject beside them.
+    //
+    // The row is tall enough for a pill strip under the text, and Qt centres a
+    // cell's text in the whole rectangle by default: date and sender floated
+    // into the middle while the subject sat at the top, so the three did not
+    // share a baseline. Confining the rectangle to the text band puts them all
+    // on one.
+    //
+    // Wrapping matters more than it looks. A long sender ran to a second line,
+    // which reached down into the strip's band and collided with the pills; a
+    // cell cannot know they are there, since the view paints them afterwards.
+    // Eliding keeps every row's text inside its own band whatever it holds.
+    // Top of the row rather than centre of it, so the alignment is expressed
+    // without shrinking the rectangle: the rect is also what the background
+    // and selection fill are drawn into, and clipping it to the text band
+    // would leave the highlight covering only the upper part of the row.
+    option->features &= ~QStyleOptionViewItem::WrapText;
+    option->textElideMode = Qt::ElideRight;
+
+    // The marker columns keep their centring. Their glyphs are the row's
+    // symbols rather than its text, so aligning them with the subject's
+    // baseline would strand them at the top of a tall row with the pill strip
+    // empty beneath; centred, they read as marking the whole row.
+    const bool marker = index.column() == ThreadListModel::AttachmentColumn
+                     || index.column() == ThreadListModel::FlagColumn;
+    option->displayAlignment = marker
+        ? Qt::AlignCenter
+        : (Qt::AlignLeft | Qt::AlignTop);
 }
 
 void SubjectDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                             const QModelIndex &index) const
 {
+    // AccountLabelRole is a property of the ROW, not of a cell, so this
+    // delegate must only ever be installed on the subject column. Installed
+    // view-wide it draws the account chip into every column, which is exactly
+    // what happened when that was tried.
+    Q_ASSERT(index.column() == ThreadListModel::SubjectColumn);
+
     const QString account =
         index.data(ThreadListModel::AccountLabelRole).toString();
     if (account.isEmpty()) {
-        QStyledItemDelegate::paint(painter, option, index);
+        // No chip to draw, so the base class renders the text, confined to the
+        // upper band: the lower one belongs to the row-wide pill strip that
+        // ThreadListView paints after every cell.
+        QStyleOptionViewItem chrome = option;
+        initStyleOption(&chrome, index);
+        chrome.rect.setHeight(subjectBandHeight(option));
+        QStyledItemDelegate::paint(painter, chrome, index);
+
         return;
     }
 
@@ -95,9 +179,15 @@ void SubjectDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
 
     const QFontMetrics metrics(option.font);
     const QSize chipSize = TagChip::sizeFor(metrics, account);
+
+    // The subject and its chip occupy the upper band; ThreadListView paints
+    // the pill strip across the lower one. Centring the chip in the whole row
+    // would leave it floating beside that gap rather than beside its text.
+    const int textBandHeight = subjectBandHeight(option);
+    const int textTop = option.rect.top() + kRowPadding;
+
     const QRect chipRect(option.rect.left() + TagChip::kSpacing,
-                         option.rect.top()
-                             + (option.rect.height() - chipSize.height()) / 2,
+                         textTop + (textBandHeight - chipSize.height()) / 2,
                          chipSize.width(), chipSize.height());
 
     const QColor colour =
@@ -108,6 +198,8 @@ void SubjectDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     // The subject follows the chip, elided so a long one cannot overflow.
     QRect textRect = option.rect;
     textRect.setLeft(chipRect.right() + TagChip::kSpacing * 2);
+    textRect.setTop(textTop);
+    textRect.setHeight(textBandHeight);
     if (textRect.width() <= 0)
         return;
 
@@ -155,5 +247,11 @@ QSize SubjectDelegate::sizeHint(const QStyleOptionViewItem &option,
         size.setWidth(size.width() + TagChip::sizeFor(metrics, account).width()
                       + TagChip::kSpacing * 3);
     }
+
+    // Height comes from rowHeightFor(), applied by the view to every row at
+    // once. A QTableView takes ONE height per row, so a hint returned here
+    // would only win if the view happened to ask this column, and this
+    // delegate is on the subject column alone.
+    size.setHeight(rowHeightFor(option.font));
     return size;
 }

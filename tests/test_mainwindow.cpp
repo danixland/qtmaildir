@@ -29,6 +29,7 @@
 #include <QPushButton>
 #include <QProgressBar>
 #include <QFile>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -41,6 +42,7 @@
 #include "mainwindow.h"
 #include "messageview.h"
 #include "notmuchworker.h"
+#include "tagchip.h"
 #include "threadlistmodel.h"
 
 /// MainWindow is mostly wiring, and the parts that need a real database are
@@ -82,6 +84,7 @@ private slots:
     void anUnobservableLockTableLeavesTheSyncButtonUsable();
     void theStatusBarFollowsTheSyncPhase();
     void aSelectedReadThreadIsNotDimmedIntoTheHighlight();
+    void thePillRowSpansTheWholeWidthNotOneColumn();
     void markAllReadIsDisabledUntilTheQueryFinishes();
     void markAllReadActsOnEveryRowAndUndoesInOneStep();
     void markAllReadDoesNothingWhenNothingIsUnread();
@@ -371,6 +374,83 @@ static ThreadSummary makeThread(const QString &id, const QStringList &tags)
     return thread;
 }
 
+void TestMainWindow::thePillRowSpansTheWholeWidthNotOneColumn()
+{
+    // The pills are a row-wide strip under the cells, not content of the
+    // subject cell. Drawn from the subject column's delegate they stop at that
+    // column's edge, so a thread with several tags loses the last of them; and
+    // they inherit the column's left edge, which puts them under the subject
+    // rather than under the row.
+    //
+    // The property: pills appear to the LEFT of where the subject column
+    // starts, which no per-cell delegate on that column could produce.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), {});
+    thread.tags = QStringList{ QStringLiteral("mailing-list/SBo"),
+                               QStringLiteral("signed") };
+    model->appendBatch({ thread });
+
+    window.resize(1400, 300);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QApplication::processEvents();
+
+    const int subjectLeft =
+        view->columnViewportPosition(ThreadListModel::SubjectColumn);
+    QVERIFY2(subjectLeft > 40,
+             qPrintable(QStringLiteral("the subject column starts at x=%1, too "
+                                       "close to the left edge to tell a "
+                                       "row-wide strip from a subject-cell one")
+                            .arg(subjectLeft)));
+    // The strip must have somewhere to paint that the subject cell does not
+    // reach, or this test cannot fail.
+    QVERIFY2(subjectLeft < view->viewport()->width(),
+             qPrintable(QStringLiteral("the subject column is off-screen "
+                                       "(x=%1, viewport %2), so nothing it "
+                                       "draws is measurable")
+                            .arg(subjectLeft)
+                            .arg(view->viewport()->width())));
+
+    QImage shot(view->viewport()->size(), QImage::Format_ARGB32);
+    shot.fill(Qt::transparent);
+    view->viewport()->render(&shot);
+
+    // Count pixels matching the tag colours EXACTLY, not "saturated" pixels.
+    // A looser test counts the antialiased edge of the selection highlight
+    // blending into the background, which is several hundred distinct
+    // near-background colours and passes whatever the strip does. Both earlier
+    // versions of this test did precisely that.
+    QSet<QRgb> pillColours;
+    const QVariantList colours =
+        model->index(0, ThreadListModel::SubjectColumn)
+            .data(ThreadListModel::PillColoursRole).toList();
+    QVERIFY2(!colours.isEmpty(), "the model supplied no pill colours");
+    for (const QVariant &colour : colours)
+        pillColours.insert(colour.value<QColor>().rgb());
+
+    const int rowHeight = view->rowHeight(0);
+    QVERIFY(rowHeight > 0);
+
+    int chipPixels = 0;
+    for (int y = 0; y < qMin(rowHeight, shot.height()); ++y) {
+        for (int x = 0; x < qMin(subjectLeft, shot.width()); ++x) {
+            if (pillColours.contains(shot.pixel(x, y) | 0xff000000))
+                ++chipPixels;
+        }
+    }
+
+    QVERIFY2(chipPixels > 0,
+             "no pill-coloured pixels left of the subject column: the strip is "
+             "still confined to that cell rather than spanning the row");
+}
+
 void TestMainWindow::aSelectedReadThreadIsNotDimmedIntoTheHighlight()
 {
     // Read threads carry a dimmed Qt::ForegroundRole, blended against the
@@ -389,20 +469,30 @@ void TestMainWindow::aSelectedReadThreadIsNotDimmedIntoTheHighlight()
     auto *view = window.findChild<QTableView *>();
     QVERIFY(view);
 
-    // Identical but for the unread tag, so any pixel difference between the
-    // two selected rows is the dimming leaking through.
-    ThreadSummary read = makeThread(QStringLiteral("t1"), {});
-    ThreadSummary unread =
-        makeThread(QStringLiteral("t2"), { QStringLiteral("unread") });
-    read.subject = unread.subject = QStringLiteral("Same subject both rows");
-    read.authors = unread.authors = QStringLiteral("Someone <s@example.org>");
-    model->appendBatch({ read, unread });
+    // Both rows READ, so both are dimmed and neither is bold: the only thing
+    // that could differ is how the dimming composites against the selection.
+    //
+    // Comparing a read row against an unread one would not work, and an
+    // earlier version of this test did exactly that. Unread also paints bold,
+    // so the rows differ legitimately and the comparison says nothing about
+    // the selection. That version passed only because the machine it was
+    // written on had its Qt font configured Bold, which made every row bold
+    // and hid the difference.
+    ThreadSummary first = makeThread(QStringLiteral("t1"), {});
+    ThreadSummary second = makeThread(QStringLiteral("t2"), {});
+    first.subject = second.subject = QStringLiteral("Same subject both rows");
+    first.authors = second.authors = QStringLiteral("Someone <s@example.org>");
+    model->appendBatch({ first, second });
 
     window.resize(900, 300);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
 
-    view->selectAll();
+    // Row 0 selected, row 1 not. The property under test is that selecting a
+    // dimmed row switches it to the highlight's own text colour, so the two
+    // rows MUST differ; comparing two identically-styled rows would pass
+    // against a delegate that did nothing at all.
+    view->selectRow(0);
     QApplication::processEvents();
 
     const int rowHeight = view->rowHeight(0);
@@ -412,17 +502,40 @@ void TestMainWindow::aSelectedReadThreadIsNotDimmedIntoTheHighlight()
     shot.fill(Qt::transparent);
     view->viewport()->render(&shot);
 
-    int differing = 0;
-    for (int y = 0; y < rowHeight && y + rowHeight < shot.height(); ++y)
-        for (int x = 0; x < shot.width(); ++x)
-            if (shot.pixel(x, y) != shot.pixel(x, y + rowHeight))
-                ++differing;
+    // What the delegate resolves for each row, which is the thing the fix
+    // changes. Rendering alone cannot separate "used the highlight colour"
+    // from "used the dim over a highlighted background".
+    QStyleOptionViewItem selected;
+    selected.initFrom(view);
+    selected.state |= QStyle::State_Selected;
+    QStyleOptionViewItem unselected;
+    unselected.initFrom(view);
+    unselected.state &= ~QStyle::State_Selected;
 
-    QVERIFY2(differing == 0,
-             qPrintable(QStringLiteral("a selected read row paints differently "
-                                       "from a selected unread one (%1 pixels): "
-                                       "the dimming is overriding the selection "
-                                       "highlight").arg(differing)));
+    auto *delegate = qobject_cast<QStyledItemDelegate *>(view->itemDelegate());
+    QVERIFY2(delegate, "the thread view has no styled delegate");
+
+    const QModelIndex index =
+        model->index(0, ThreadListModel::SubjectColumn);
+
+    // initStyleOption is protected, so the resolved palette is reached the way
+    // the painter does: through a subclass that exposes it.
+    struct Probe : SubjectDelegate {
+        using SubjectDelegate::initStyleOption;
+    };
+    const auto *probe = static_cast<const Probe *>(
+        static_cast<const SubjectDelegate *>(delegate));
+
+    probe->initStyleOption(&selected, index);
+    probe->initStyleOption(&unselected, index);
+
+    QVERIFY2(selected.palette.color(QPalette::Text)
+                 == selected.palette.color(QPalette::HighlightedText),
+             "a selected row still resolves to the dimmed text colour, so the "
+             "dimming will paint over the selection highlight");
+    QVERIFY2(unselected.palette.color(QPalette::Text)
+                 != selected.palette.color(QPalette::Text),
+             "an unselected read row lost its dimming");
 }
 
 void TestMainWindow::markAllReadIsDisabledUntilTheQueryFinishes()

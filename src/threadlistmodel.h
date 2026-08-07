@@ -40,6 +40,11 @@ public:
         /// without opening the thread. Icon only and deliberately narrow;
         /// it carries no text.
         AttachmentColumn = 0,
+
+        /// A star when the thread carries the flagged tag. Beside the
+        /// paperclip and the same shape: icon only, narrow, no text.
+        FlagColumn,
+
         DateColumn,
         AuthorsColumn,
         SubjectColumn,
@@ -62,6 +67,16 @@ public:
 
         /// Every tag on the thread, for the strip under the message pane.
         TagsRole,
+
+        /// The tags worth drawing as pills under the subject: every tag except
+        /// the ones the row already shows another way. Sorted, so a row does
+        /// not reshuffle its own pills between repaints.
+        PillTagsRole,
+
+        /// The colours for PillTagsRole, in the same order. Supplied by the
+        /// model because it owns the TagColors instance; a delegate reading
+        /// config itself would be a second source of truth.
+        PillColoursRole,
     };
 
     /// Row fill for a thread tagged `deleted`, and for one tagged `spam`.
@@ -72,16 +87,20 @@ public:
     /// A paperclip when the system font can draw it, "*" otherwise.
     static QString attachmentGlyph();
 
+    /// The character shown in FlagColumn for a flagged thread.
+    /// A star when the system font can draw it, "*" otherwise.
+    static QString flagGlyph();
+
     static QColor deletedColour();
     static QColor spamColour();
 
     /// The dimmed text colour a READ thread carries.
     ///
     /// Unread rows are left at the palette's own colour and read ones recede,
-    /// rather than unread being emphasised. Bold used to be the only cue and
-    /// cannot be relied on: on at least one system it renders identically to
-    /// regular, which is a Qt or fontconfig matter this application cannot
-    /// reach. Derived from the palette, never hardcoded.
+    /// rather than unread being emphasised. Bold alone used to be the only
+    /// cue, which leaves nothing to see when the desktop font is itself
+    /// configured bold; colour is a second cue that survives that. Derived
+    /// from the palette, never hardcoded.
     static QColor readColour();
 
     explicit ThreadListModel(QObject *parent = nullptr);

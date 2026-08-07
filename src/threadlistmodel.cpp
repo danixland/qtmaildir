@@ -59,6 +59,22 @@ QColor ThreadListModel::spamColour()
     return QColor(0xa8, 0x5c, 0x18);
 }
 
+QString ThreadListModel::flagGlyph()
+{
+    // U+2605 BLACK STAR, with the same fallback reasoning as the paperclip: an
+    // unrenderable codepoint shows as tofu, which reads as breakage rather
+    // than as "flagged". The solid star, not the outlined U+2606, since it has
+    // to register at column width beside a paperclip.
+    static const QString glyph = [] {
+        const char32_t star = 0x2605;
+        const QString preferred = QString::fromUcs4(&star, 1);
+        const QFontMetrics metrics{QFontDatabase::systemFont(
+            QFontDatabase::GeneralFont)};
+        return metrics.inFontUcs4(star) ? preferred : QStringLiteral("*");
+    }();
+    return glyph;
+}
+
 QColor ThreadListModel::readColour()
 {
     // Derived from the palette, never hardcoded: a fixed grey that reads as
@@ -114,6 +130,45 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     if (role == TagsRole)
         return thread.tags;
 
+    if (role == PillTagsRole || role == PillColoursRole) {
+        // Everything the row already says another way is dropped: the account
+        // is the chip in the subject cell, flagged is the star column,
+        // attachment is the paperclip, unread is the row not being dimmed, and
+        // inbox is structural rather than informative. Spending the pill row on
+        // any of those would repeat what is already on screen.
+        //
+        // deleted and spam are kept: they repaint the whole row, so a pill is
+        // redundant there too, but a doomed thread is rare and worth naming.
+        static const QStringList hidden = {
+            QStringLiteral("inbox"),
+            QStringLiteral("unread"),
+            QStringLiteral("flagged"),
+            QStringLiteral("attachment"),
+        };
+
+        QStringList pills;
+        for (const QString &tag : thread.tags) {
+            if (hidden.contains(tag) || TagColors::isAccountTag(tag))
+                continue;
+            pills.append(tag);
+        }
+        // Sorted rather than in notmuch's order, which is not guaranteed
+        // stable: a row whose pills reordered between repaints would flicker.
+        pills.sort();
+
+        if (role == PillTagsRole)
+            return pills;
+
+        // Same order as the names, so the delegate can walk the two together.
+        QVariantList colours;
+        colours.reserve(pills.size());
+        for (const QString &tag : pills) {
+            colours.append(m_tagColors ? m_tagColors->colourFor(tag)
+                                       : TagColors().colourFor(tag));
+        }
+        return colours;
+    }
+
     if (role == AccountLabelRole || role == AccountColourRole) {
         // At most one account tag per thread in practice, but a thread whose
         // messages landed in two mailboxes carries both; the first is shown.
@@ -134,8 +189,15 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     if (role == Qt::ToolTipRole && index.column() == AttachmentColumn)
         return thread.hasAttachment() ? tr("Has an attachment") : QVariant();
 
-    if (role == Qt::TextAlignmentRole && index.column() == AttachmentColumn)
+    if (role == Qt::ToolTipRole && index.column() == FlagColumn)
+        return thread.isFlagged() ? tr("Flagged") : QVariant();
+
+    // Both marker columns: a glyph reads as a marker only when it sits in the
+    // middle of its column rather than against the text beside it.
+    if (role == Qt::TextAlignmentRole
+        && (index.column() == AttachmentColumn || index.column() == FlagColumn)) {
         return QVariant::fromValue(Qt::AlignCenter);
+    }
 
     if (role == Qt::DisplayRole) {
         switch (index.column()) {
@@ -144,6 +206,11 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             // it inherits the row's font, so it strikes through with a doomed
             // thread like every other cell.
             return thread.hasAttachment() ? attachmentGlyph() : QString();
+        case FlagColumn:
+            // A glyph rather than an icon, for the same reasons as the
+            // paperclip: no asset to ship, and it inherits the row's font so
+            // it strikes through with a doomed thread.
+            return thread.isFlagged() ? flagGlyph() : QString();
         case DateColumn:
             return thread.date.toString(QStringLiteral("yyyy-MM-dd hh:mm"));
         case AuthorsColumn:
@@ -170,19 +237,20 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             return QBrush(QColor(Qt::white));
     }
 
-    // Unread's cue, and it deliberately does NOT rely on the bold below.
+    // Unread's second cue, independent of the bold below.
     //
-    // Bold was the only cue until 2026-08-07, when it turned out to render
-    // identically to regular on the user's system: confirmed with a bare
-    // QTableView and a plain QStandardItemModel, so the fault is in Qt or
-    // fontconfig, below this application, and nothing here can reach it.
+    // Bold alone was the only distinction until 2026-08-07, which leaves
+    // nothing to see when the desktop's own font is configured bold: every row
+    // renders bold and setBold() changes nothing. That is a font setting
+    // rather than a defect here, but a cue with a single point of failure is
+    // worth reinforcing.
     //
-    // So the emphasis is inverted instead. Unread rows are left at the
+    // So the emphasis is inverted as well. Unread rows are left at the
     // palette's own text colour, and READ rows are dimmed toward the
-    // background. That way the cue rides on ForegroundRole, which the delegate
-    // already honours, and it costs no column. It also suits the real ratio:
-    // with a few dozen unread among thousands read, dimming the bulk is calmer
-    // than highlighting it.
+    // background. The cue rides on ForegroundRole, which the delegate already
+    // honours, and costs no column. It also suits the real ratio: with a few
+    // dozen unread among thousands read, dimming the bulk is calmer than
+    // highlighting it.
     //
     // BELOW the doomed branch on purpose, and that ordering is the whole
     // protection: a deleted or spam thread has already returned white text for
@@ -222,9 +290,10 @@ QVariant ThreadListModel::headerData(int section, Qt::Orientation orientation,
     // No label: any text would set a minimum width far wider than the icon,
     // which defeats the point of a narrow column.
     case AttachmentColumn: return QString();
-    case DateColumn:    return QStringLiteral("Date");
-    case AuthorsColumn: return QStringLiteral("From");
-    case SubjectColumn: return QStringLiteral("Subject");
+    case FlagColumn:       return QString();
+    case DateColumn:    return tr("Date");
+    case AuthorsColumn: return tr("From");
+    case SubjectColumn: return tr("Subject");
     default:            return {};
     }
 }

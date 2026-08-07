@@ -42,7 +42,8 @@ UI thread                          Worker thread
 MainWindow                         NotmuchWorker
  ├ query row: QComboBox, QLineEdit,  └ owns the only notmuch_database_t*
  │   saved-query QPushButtons
- ├ QTableView ── ThreadListModel (SubjectDelegate)
+ ├ ThreadListView ── ThreadListModel
+ │   (RowStyleDelegate every column, SubjectDelegate on Subject)
  └ MessageView (header QLabel, QWebEngineView, attachment bar, TagStrip)
 
 Config (INI)   KeyMap   MailSync (QProcess)   MimeParser (GMime)
@@ -53,9 +54,21 @@ The query row and the message-pane header are **built inline in `MainWindow` and
 `MessageView`**, not as named widget classes. Earlier revisions of this diagram
 listed `QueryBar`, `SavedQueryBar`, `HeaderWidget` and `AttachmentBar`; none of
 those types have ever existed, and looking for them wastes a search. The widget
-classes that do exist are `MessageView`, `TagStrip`, `TagDialog` and
-`SubjectDelegate`; `TagChip` is a namespace of painting helpers, not a widget,
-and `ThreadCidMap` is a struct.
+classes that do exist are `MessageView`, `ThreadListView`, `TagStrip`,
+`TagDialog`, `RowStyleDelegate` and `SubjectDelegate`; `TagChip` is a namespace
+of painting helpers, not a widget, and `ThreadCidMap` is a struct.
+
+**`ThreadListView` exists because a delegate cannot paint outside its column.**
+The tag chips under each row are one strip spanning the whole width, so they
+are drawn in the view's `paintEvent` after the cells. Consequences that are
+easy to undo by accident: `SubjectDelegate` reads `AccountLabelRole`, which
+belongs to the ROW, so installing it view-wide draws the account chip into
+every column (a `Q_ASSERT` catches this); row height must be set on the
+vertical header, since a table takes one height per row and a column's
+`sizeHint` only applies if the view happens to ask that column; and because
+alternating colours, the selection and the model's `BackgroundRole` are all
+painted per cell, the view has to fill the strip's band itself, honouring all
+three or a deleted row is cut in half and every other row shows a bare stripe.
 
 **No `notmuch_*` pointer ever crosses the thread boundary.** Data crosses as the plain
 value structs in `src/types.h` (`ThreadSummary`, `MessageRef`, `TagChange`), over queued
@@ -156,6 +169,31 @@ exactly what the `+` key emits on an Italian layout, while synthetic input never
 it. Verify against a real keyboard before changing a default on reachability grounds. The
 separate, real trap `normalizeSequence()` handles is a **bare capital** (`N` parses to
 unshifted Key_N, which no keystroke emits).
+
+**Rendering probes lie in specific, repeatable ways.** A whole session was spent chasing
+a defect that did not exist because of these; each was believed until it was contradicted.
+
+- **Counting lit pixels cannot tell bold from regular.** Antialiasing lights a similar
+  number either way, so an "ink count" reads identical whichever is true, in both
+  directions. It measures nothing. **Text width** distinguishes weights (277px against
+  306px for one string at 12pt), and a **strict pixel diff** distinguishes renders.
+- **`viewport()->render()` returns a blank image** in several ordinary situations: before
+  the widget is exposed, when the content sits outside a viewport narrower than the
+  columns, and sometimes with no discernible cause. A probe that reports "no ink anywhere"
+  is far more likely broken than the code it is testing. Check that it finds the thing it
+  expects to find *before* trusting it to report the thing it expects to miss.
+- **A "saturated pixel" threshold catches antialiased edges of the selection highlight**,
+  hundreds of distinct near-background colours, and will pass whatever the code does. Match
+  the exact colours the model supplies instead. Two versions of one test passed under
+  mutation before this was noticed.
+- Every rendering test needs a **mutation check** and a guard proving it *can* fail: assert
+  the geometry it depends on (a column is on screen, a row has non-zero height) rather than
+  assuming it.
+
+The bug that started all this was not in the code at all: the desktop's Qt font was
+configured **Bold** in qt6ct, so every row rendered bold and `setBold(true)` changed
+nothing. Before concluding a Qt facility is broken, check the desktop's own font and theme
+configuration.
 
 ## Web view security
 

@@ -18,7 +18,7 @@
 
 #pragma once
 
-#include <QTableView>
+#include <QTreeView>
 
 /// The thread list, with a row-wide strip of tag chips under each row's cells.
 ///
@@ -36,11 +36,23 @@
 /// The cells confine themselves to the upper band so the lower one is free;
 /// SubjectDelegate::kRowPadding and rowHeightFor() are the shared measurements
 /// that keep the two halves agreeing.
-class ThreadListView : public QTableView
+///
+/// A QTreeView rather than a QTableView since item 20: a thread's replies are
+/// child rows, and a table can neither indent nor expand. The strip survived
+/// the port because every geometry call it needs (visualRect,
+/// columnViewportPosition, indexAt, indexBelow) exists on both. What did NOT
+/// survive is anything keyed on a row NUMBER: a tree numbers rows per parent,
+/// so row 0 exists once per expanded thread and a flat 0..N walk paints the
+/// first thread's strip over every one of them. The walk below goes by index.
+///
+/// The strip is painted for THREAD rows only. It carries the thread's tags, so
+/// one under each reply would stripe the list and repeat identical tags down
+/// the whole expansion.
+class ThreadListView : public QTreeView
 {
     Q_OBJECT
 public:
-    using QTableView::QTableView;
+    using QTreeView::QTreeView;
 
 protected:
     void paintEvent(QPaintEvent *event) override;

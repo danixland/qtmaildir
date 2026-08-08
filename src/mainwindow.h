@@ -41,7 +41,7 @@
 class QAction;
 class QLineEdit;
 class QMenu;
-class QTableView;
+class ThreadListView;
 class QLabel;
 class QPushButton;
 class QComboBox;
@@ -211,6 +211,16 @@ private:
     /// Restores window geometry, splitter and thread-list header widths.
     /// A missing or rejected blob leaves the buildUi() defaults in place.
     void restoreUiState();
+
+    /// The thread row containing an index: itself for a thread row, its parent
+    /// for a message row.
+    QModelIndex threadRowOf(const QModelIndex &index) const;
+
+    /// Selects a whole row. QTreeView has no selectRow of its own.
+    void selectRowAt(const QModelIndex &index);
+
+    /// Selects the top-level thread row at `row`.
+    void selectThreadRow(int row);
     void saveUiState() const;
 
     void registerActions();
@@ -405,7 +415,10 @@ private:
 
     QLineEdit *m_queryEdit = nullptr;
     QueryCompleter *m_queryCompleter = nullptr;
-    QTableView *m_threadView = nullptr;
+    /// Its own type, not the QTreeView base. The strip painting and the
+    /// expander column are ThreadListView's, and holding the base here only
+    /// hid that from every reader.
+    ThreadListView *m_threadView = nullptr;
 
     /// Right-click menu for the thread list, holding the same QActions the
     /// menu bar does.

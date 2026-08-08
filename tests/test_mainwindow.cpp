@@ -35,6 +35,7 @@
 #include <QTemporaryDir>
 
 #include <QTableView>
+#include <QTreeView>
 #include <QTimer>
 
 #include "config.h"
@@ -44,6 +45,7 @@
 #include "notmuchworker.h"
 #include "tagchip.h"
 #include "threadlistmodel.h"
+#include "threadlistview.h"
 
 /// MainWindow is mostly wiring, and the parts that need a real database are
 /// still verified manually. What is checked here is the action registry: the
@@ -89,6 +91,8 @@ private slots:
     void theStatusBarFollowsTheSyncPhase();
     void aSelectedReadThreadIsNotDimmedIntoTheHighlight();
     void thePillRowSpansTheWholeWidthNotOneColumn();
+    void childRowsAreIndentedUnderTheirThread();
+    void noTagStripIsPaintedUnderAMessageRow();
     void markAllReadIsDisabledUntilTheQueryFinishes();
     void markAllReadActsOnEveryRowAndUndoesInOneStep();
     void markAllReadDoesNothingWhenNothingIsUnread();
@@ -315,7 +319,7 @@ void TestMainWindow::headerStateFromADifferentColumnLayoutIsDiscarded()
     const Config config;
     MainWindow reopened(config);
 
-    auto *view = reopened.findChild<QTableView *>();
+    auto *view = reopened.findChild<QTreeView *>();
     QVERIFY(view);
     QCOMPARE(view->columnWidth(ThreadListModel::AttachmentColumn), 28);
     QCOMPARE(view->columnWidth(ThreadListModel::DateColumn), 130);
@@ -366,6 +370,27 @@ void TestMainWindow::returnInTheQueryBarRunsTheQueryNotOpenThread()
     QVERIFY(!actionFired);
 }
 
+/// Selects a top-level THREAD row, replacing QTableView::selectRow which a
+/// QTreeView does not have.
+///
+/// Not merely a rename: setCurrentIndex alone leaves the selection model empty,
+/// and select() alone leaves current invalid, so every test asserting on either
+/// would break in a different way. Both are set here, exactly as
+/// QTableView::selectRow did.
+static void selectThreadRow(QTreeView *view, int row)
+{
+    const QModelIndex index = view->model()->index(row, 0, QModelIndex());
+    view->selectionModel()->select(
+        index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(index);
+}
+
+/// The height of a top-level row, replacing QTableView::rowHeight(int).
+static int threadRowHeight(QTreeView *view, int row)
+{
+    return view->visualRect(view->model()->index(row, 0, QModelIndex())).height();
+}
+
 /// A thread summary carrying the tags a test needs. Enough to drive selection;
 /// nothing here touches a database.
 static ThreadSummary makeThread(const QString &id, const QStringList &tags)
@@ -393,7 +418,7 @@ void TestMainWindow::thePillRowSpansTheWholeWidthNotOneColumn()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     ThreadSummary thread = makeThread(QStringLiteral("t1"), {});
@@ -439,7 +464,7 @@ void TestMainWindow::thePillRowSpansTheWholeWidthNotOneColumn()
     for (const QVariant &colour : colours)
         pillColours.insert(colour.value<QColor>().rgb());
 
-    const int rowHeight = view->rowHeight(0);
+    const int rowHeight = threadRowHeight(view, 0);
     QVERIFY(rowHeight > 0);
 
     int chipPixels = 0;
@@ -453,6 +478,174 @@ void TestMainWindow::thePillRowSpansTheWholeWidthNotOneColumn()
     QVERIFY2(chipPixels > 0,
              "no pill-coloured pixels left of the subject column: the strip is "
              "still confined to that cell rather than spanning the row");
+}
+
+void TestMainWindow::childRowsAreIndentedUnderTheirThread()
+{
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY2(view, "the thread list is not a QTreeView, so it cannot indent");
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
+
+    MessageNode first;
+    first.messageId = QStringLiteral("m0@example.org");
+    first.threadId = QStringLiteral("t1");
+    first.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("t1");
+    reply.from = QStringLiteral("A Replier <replier@example.org>");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("t1"), { first, reply });
+
+    window.resize(1400, 300);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    const QModelIndex root = model->index(0, 0, QModelIndex());
+    view->expand(root);
+    QApplication::processEvents();
+
+    // Measured on the TREE POSITION column, not on column 0. A QTreeView
+    // indents only the column carrying the expander, verified against Qt 6.11:
+    // with setTreePosition(4), column 0 reports the same left edge for a thread
+    // and its reply (0 and 0) while column 4 reports 420 and 440. Asserting on
+    // column 0 therefore fails against a perfectly indented tree.
+    const int treeColumn = ThreadListModel::SubjectColumn;
+    const QModelIndex rootCell = model->index(0, treeColumn, QModelIndex());
+    const QModelIndex child = model->index(0, treeColumn, root);
+    QVERIFY(child.isValid());
+
+    // Guards before the claim: a probe that cannot see both rows can report
+    // anything it likes about their relative position.
+    QVERIFY2(view->visualRect(rootCell).height() > 0,
+             "the thread row has no height, so nothing about it is measurable");
+    QVERIFY2(view->visualRect(child).height() > 0,
+             "the reply row has no height: it is collapsed or off-screen, and "
+             "an indent test against it would pass without drawing anything");
+
+    QVERIFY2(view->visualRect(child).left() > view->visualRect(rootCell).left(),
+             "the reply is not indented relative to its thread");
+}
+
+void TestMainWindow::noTagStripIsPaintedUnderAMessageRow()
+{
+    // The strip is a row-wide band of the THREAD's tags. Painted under every
+    // reply as well it would stripe the list and repeat identical tags down the
+    // whole expansion.
+    //
+    // TWO independent guards stop that, and this test is aimed at the SECOND:
+    // the model returns no pills for a child row, and the view skips child rows
+    // in its walk. Asserting against the real model tests only the first, and
+    // the view's guard can be deleted without the test noticing: verified by
+    // mutation, which passed with the skip removed. So the model is replaced
+    // here by one that hands out pills for EVERY row, thread and reply alike,
+    // leaving the view's own skip as the only thing that can keep the reply
+    // rows clean.
+    /// Hands out the same pills for a message row as for a thread row, which
+    /// the real model never does. Without this the view's skip is unobservable.
+    class PillsEverywhereModel : public ThreadListModel
+    {
+    public:
+        QVariant data(const QModelIndex &index, int role) const override
+        {
+            if (role == PillTagsRole) {
+                return QStringList{ QStringLiteral("mailing-list/SBo"),
+                                    QStringLiteral("signed") };
+            }
+            if (role == PillColoursRole) {
+                return QVariantList{ QVariant::fromValue(QColor(Qt::magenta)),
+                                     QVariant::fromValue(QColor(Qt::cyan)) };
+            }
+            return ThreadListModel::data(index, role);
+        }
+    };
+
+    PillsEverywhereModel model;
+    ThreadListView view;
+    view.setModel(&model);
+    view.setTreePosition(ThreadListModel::SubjectColumn);
+    view.setUniformRowHeights(true);
+
+    // The delegates MainWindow installs, and not optional here. The strip's
+    // band is measured against SubjectDelegate::rowHeightFor; without the
+    // delegate the rows take the default height, the band overflows into the
+    // row below, and the thread's own strip paints across the reply. That
+    // reads exactly like a missing skip in the walk and is not one.
+    view.setItemDelegate(new RowStyleDelegate(&view));
+    view.setItemDelegateForColumn(ThreadListModel::SubjectColumn,
+                                  new SubjectDelegate(&view));
+    view.setColumnWidth(ThreadListModel::AttachmentColumn, 28);
+    view.setColumnWidth(ThreadListModel::FlagColumn, 28);
+    view.setColumnWidth(ThreadListModel::DateColumn, 130);
+    view.setColumnWidth(ThreadListModel::AuthorsColumn, 180);
+    view.setColumnWidth(ThreadListModel::SubjectColumn, 520);
+
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), {});
+    thread.tags = QStringList{ QStringLiteral("mailing-list/SBo"),
+                               QStringLiteral("signed") };
+    model.appendBatch({ thread });
+
+    MessageNode first;
+    first.messageId = QStringLiteral("m0@example.org");
+    first.threadId = QStringLiteral("t1");
+    first.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("t1");
+    reply.depth = 1;
+    model.setThreadMessages(QStringLiteral("t1"), { first, reply });
+
+    view.resize(1400, 300);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    view.expand(root);
+    QApplication::processEvents();
+
+    const QModelIndex child = model.index(0, 0, root);
+    const QRect childRect = view.visualRect(child);
+    QVERIFY2(childRect.height() > 0, "the reply row is not on screen");
+
+    // The exact colours the stub supplies, so an antialiased edge of anything
+    // else cannot be counted as a pill.
+    QSet<QRgb> pillColours;
+    pillColours.insert(QColor(Qt::magenta).rgb());
+    pillColours.insert(QColor(Qt::cyan).rgb());
+
+    QImage shot(view.viewport()->size(), QImage::Format_ARGB32);
+    shot.fill(Qt::transparent);
+    view.viewport()->render(&shot);
+
+    // Guard proving the probe can see pills at all: the THREAD row must have
+    // them, or a zero count under the reply proves nothing about the reply.
+    const QRect rootRect = view.visualRect(root);
+    int threadPills = 0;
+    for (int y = rootRect.top(); y < qMin(rootRect.bottom(), shot.height()); ++y) {
+        for (int x = 0; x < shot.width(); ++x) {
+            if (pillColours.contains(shot.pixel(x, y) | 0xff000000))
+                ++threadPills;
+        }
+    }
+    QVERIFY2(threadPills > 0,
+             "no pill pixels under the THREAD row either, so this probe cannot "
+             "tell a missing strip from a broken render");
+
+    int replyPills = 0;
+    for (int y = childRect.top(); y < qMin(childRect.bottom(), shot.height()); ++y) {
+        for (int x = 0; x < shot.width(); ++x) {
+            if (pillColours.contains(shot.pixel(x, y) | 0xff000000))
+                ++replyPills;
+        }
+    }
+
+    QCOMPARE(replyPills, 0);
 }
 
 void TestMainWindow::aSelectedReadThreadIsNotDimmedIntoTheHighlight()
@@ -470,7 +663,7 @@ void TestMainWindow::aSelectedReadThreadIsNotDimmedIntoTheHighlight()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     // Both rows READ, so both are dimmed and neither is bold: the only thing
@@ -496,10 +689,10 @@ void TestMainWindow::aSelectedReadThreadIsNotDimmedIntoTheHighlight()
     // dimmed row switches it to the highlight's own text colour, so the two
     // rows MUST differ; comparing two identically-styled rows would pass
     // against a delegate that did nothing at all.
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     QApplication::processEvents();
 
-    const int rowHeight = view->rowHeight(0);
+    const int rowHeight = threadRowHeight(view, 0);
     QVERIFY(rowHeight > 0);
 
     QImage shot(view->viewport()->size(), QImage::Format_ARGB32);
@@ -587,7 +780,7 @@ void TestMainWindow::markAllReadActsOnEveryRowAndUndoesInOneStep()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *action = window.findChild<QAction *>(QStringLiteral("mark_all_read"));
     QVERIFY(action);
@@ -609,7 +802,7 @@ void TestMainWindow::markAllReadActsOnEveryRowAndUndoesInOneStep()
 
     // One row selected, to prove the action ignores the selection rather than
     // acting on it.
-    view->selectRow(0);
+    selectThreadRow(view, 0);
 
     action->trigger();
 
@@ -694,7 +887,7 @@ void TestMainWindow::markReadTimerRestartsRatherThanStacking()
     QVERIFY(model);
     auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
     QVERIFY(timer);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"),
@@ -704,13 +897,13 @@ void TestMainWindow::markReadTimerRestartsRatherThanStacking()
                          makeThread(QStringLiteral("t3"),
                                     { QStringLiteral("unread") }) });
 
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     QVERIFY2(timer->isActive(), "no timer armed for an unread thread");
 
     // Move on before it can fire. One timer stays armed, not three.
-    view->selectRow(1);
+    selectThreadRow(view, 1);
     QVERIFY(timer->isActive());
-    view->selectRow(2);
+    selectThreadRow(view, 2);
     QVERIFY(timer->isActive());
 
     // Exactly one timer exists at all, which is what "restarted, not stacked"
@@ -730,7 +923,7 @@ void TestMainWindow::markReadTimerIsNotArmedForAReadThread()
     QVERIFY(model);
     auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
     QVERIFY(timer);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     model->appendBatch({ makeThread(QStringLiteral("read"),
@@ -738,16 +931,16 @@ void TestMainWindow::markReadTimerIsNotArmedForAReadThread()
                          makeThread(QStringLiteral("unread"),
                                     { QStringLiteral("unread") }) });
 
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     QVERIFY2(!timer->isActive(), "armed a timer for an already-read thread");
 
     // And the unread one still arms, so this is not "never arms".
-    view->selectRow(1);
+    selectThreadRow(view, 1);
     QVERIFY(timer->isActive());
 
     // Moving back to a read thread disarms it again, rather than leaving the
     // previous thread's timer running to fire against the wrong row.
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     QVERIFY(!timer->isActive());
 }
 
@@ -772,12 +965,12 @@ void TestMainWindow::markReadCanBeDisabled()
     QVERIFY(model);
     auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
     QVERIFY(timer);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"),
                                     { QStringLiteral("unread") }) });
-    view->selectRow(0);
+    selectThreadRow(view, 0);
 
     QVERIFY2(!timer->isActive(),
              "a negative mark_read_delay_ms must disable the timer");
@@ -954,7 +1147,7 @@ void TestMainWindow::selectAllIsBoundAndSelectsEveryRow()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
@@ -983,7 +1176,7 @@ void TestMainWindow::aMultiRowSelectionDoesNotArmTheMarkReadTimer()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
     QVERIFY(timer);
@@ -997,7 +1190,7 @@ void TestMainWindow::aMultiRowSelectionDoesNotArmTheMarkReadTimer()
 
     // Sweep down as Shift+arrow does: current moves onto a row while the
     // selection already spans more than one.
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     view->selectionModel()->select(
         model->index(1, 0),
         QItemSelectionModel::Select | QItemSelectionModel::Rows);
@@ -1022,7 +1215,7 @@ void TestMainWindow::growingASelectionCancelsAnAlreadyArmedTimer()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
     QVERIFY(timer);
@@ -1032,7 +1225,7 @@ void TestMainWindow::growingASelectionCancelsAnAlreadyArmedTimer()
                          makeThread(QStringLiteral("t2"),
                                     { QStringLiteral("unread") }) });
 
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     QVERIFY2(timer->isActive(), "no timer armed for a single unread thread");
 
     // Extend to a second row, as Shift+click would.
@@ -1054,7 +1247,7 @@ void TestMainWindow::collapsingBackToOneRowLoadsThatThreadAgain()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
     QVERIFY(timer);
@@ -1068,7 +1261,7 @@ void TestMainWindow::collapsingBackToOneRowLoadsThatThreadAgain()
     QVERIFY(!timer->isActive());
 
     // Back to one row, as a plain click would leave it.
-    view->selectRow(1);
+    selectThreadRow(view, 1);
 
     QVERIFY2(timer->isActive(),
              "collapsing back to one row did not resume mark-read");
@@ -1084,7 +1277,7 @@ void TestMainWindow::theStatusBarReportsAMultiRowSelection()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
     QVERIFY2(status, "no status label to report into");
@@ -1109,7 +1302,7 @@ void TestMainWindow::clearSelectionBlanksThePaneAndDeselects()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
@@ -1119,7 +1312,7 @@ void TestMainWindow::clearSelectionBlanksThePaneAndDeselects()
     // and what CLAUDE.md requires: selectAll() on a fresh view emits no
     // currentRowChanged at all, so a test starting there passes against a
     // missing guard.
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
 
     auto *action = window.findChild<QAction *>(QStringLiteral("clear_selection"));
@@ -1165,13 +1358,13 @@ void TestMainWindow::clearPaneLeavesTheSelectionAlone()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
                          makeThread(QStringLiteral("t2"), {}) });
 
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
 
     auto *action = window.findChild<QAction *>(QStringLiteral("clear_pane"));
@@ -1284,7 +1477,7 @@ void TestMainWindow::theThreadListOffersAContextMenu()
     const Config config;
     MainWindow window(config);
 
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     QCOMPARE(view->contextMenuPolicy(), Qt::CustomContextMenu);
 
@@ -1327,7 +1520,7 @@ void TestMainWindow::aSecondRowBlanksThePaneNotOnlyAThird()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
     QVERIFY(timer);
@@ -1340,7 +1533,7 @@ void TestMainWindow::aSecondRowBlanksThePaneNotOnlyAThird()
                                     { QStringLiteral("unread") }) });
 
     // One row: ordinary reading, so a timer is armed and a thread is current.
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     QCOMPARE(view->selectionModel()->selectedRows().size(), 1);
     QVERIFY(timer->isActive());
 
@@ -1692,13 +1885,13 @@ void TestMainWindow::escapeBlanksTheMessagePane()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"), {}),
                          makeThread(QStringLiteral("t2"), {}) });
 
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     QVERIFY2(!window.currentThreadId().isEmpty(),
              "no thread was opened to blank");
 
@@ -1719,14 +1912,14 @@ void TestMainWindow::deleteTogglesOnAnAlreadyDeletedThread()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
     QVERIFY(action);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"),
                                     { QStringLiteral("deleted") }) });
-    view->selectRow(0);
+    selectThreadRow(view, 0);
 
     action->trigger();
 
@@ -1747,7 +1940,7 @@ void TestMainWindow::deleteOnAMixedSelectionDeletesRatherThanSplittingIt()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
     QVERIFY(action);
@@ -1798,7 +1991,7 @@ void TestMainWindow::theSelectionCountIsStateAndDoesNotExpire()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
     QVERIFY(status);
@@ -1922,13 +2115,13 @@ void TestMainWindow::anEditDuringABackgroundSyncIsNotSentYet()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY2(action, "no flag action registered");
 
     model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
-    view->selectRow(0);
+    selectThreadRow(view, 0);
 
     // A cron sync takes the lock.
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
@@ -1953,13 +2146,13 @@ void TestMainWindow::aHeldEditIsSentWhenTheBackgroundSyncEnds()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY(action);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
-    view->selectRow(0);
+    selectThreadRow(view, 0);
 
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
@@ -1988,7 +2181,7 @@ void TestMainWindow::aHeldEditCountsAsUnsynced()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY(action);
@@ -1997,7 +2190,7 @@ void TestMainWindow::aHeldEditCountsAsUnsynced()
     QVERIFY2(label->isHidden(), "the indicator starts hidden at zero");
 
     model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
-    view->selectRow(0);
+    selectThreadRow(view, 0);
 
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
@@ -2025,7 +2218,7 @@ void TestMainWindow::anUnreadableLockTableStillSendsTheEdit()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY(action);
@@ -2036,7 +2229,7 @@ void TestMainWindow::anUnreadableLockTableStillSendsTheEdit()
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
                                     SyncMonitor::State::Running));
-    view->selectRow(0);
+    selectThreadRow(view, 0);
     action->trigger();
     QVERIFY2(window.hasEditAwaitingSend(),
              "the edit was not held during a running sync, so this test is not "
@@ -2052,7 +2245,7 @@ void TestMainWindow::anUnreadableLockTableStillSendsTheEdit()
              "platform without /proc/locks");
 
     // And a NEW edit is sent rather than held.
-    view->selectRow(1);
+    selectThreadRow(view, 1);
     action->trigger();
     QVERIFY2(!window.hasEditAwaitingSend(),
              "an unreadable lock table held a new edit, so writes never resume");
@@ -2069,7 +2262,7 @@ void TestMainWindow::aRejectedWriteKeepsEarlierUndoHistory()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
     auto *flag = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY(flag);
@@ -2078,7 +2271,7 @@ void TestMainWindow::aRejectedWriteKeepsEarlierUndoHistory()
 
     model->appendBatch({ makeThread(QStringLiteral("t1"),
                                     { QStringLiteral("inbox") }) });
-    view->selectRow(0);
+    selectThreadRow(view, 0);
 
     // One edit that succeeds, so there is history worth keeping.
     archive->trigger();

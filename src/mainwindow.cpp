@@ -99,6 +99,40 @@ QString MainWindow::locksPath()
     return g_locksPath;
 }
 
+/// The thread row containing an index: the index itself when it is already a
+/// thread row, its parent when it is a message row.
+///
+/// Replaces the arithmetic on row numbers that a table permitted. In a tree a
+/// row number only identifies a row within one parent, so "current.row() + 1"
+/// means the next SIBLING, which under an expanded thread is the next reply.
+QModelIndex MainWindow::threadRowOf(const QModelIndex &index) const
+{
+    if (!index.isValid())
+        return {};
+    return index.parent().isValid() ? index.parent() : index;
+}
+
+/// Selects a whole row, the way QTableView::selectRow did.
+///
+/// QTreeView has no selectRow, and SelectRows on the selection model is not a
+/// substitute: it governs what a click extends to, not what a programmatic
+/// select() covers.
+void MainWindow::selectRowAt(const QModelIndex &index)
+{
+    if (!index.isValid())
+        return;
+
+    m_threadView->selectionModel()->select(
+        index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    m_threadView->setCurrentIndex(index);
+}
+
+/// Selects the top-level thread row at `row`.
+void MainWindow::selectThreadRow(int row)
+{
+    selectRowAt(m_model->index(row, 0, QModelIndex()));
+}
+
 void MainWindow::restoreUiState()
 {
     QSettings state(uiStatePath(), QSettings::IniFormat);
@@ -135,7 +169,7 @@ void MainWindow::restoreUiState()
     const int savedColumns =
         state.value(QStringLiteral("threadlist/columns")).toInt();
     if (!header.isEmpty() && savedColumns == ThreadListModel::ColumnCount) {
-        m_threadView->horizontalHeader()->restoreState(header);
+        m_threadView->header()->restoreState(header);
     }
 
     // The config value is the starting point for a profile that has never
@@ -154,7 +188,7 @@ void MainWindow::saveUiState() const
     state.setValue(QStringLiteral("window/state"), saveState());
     state.setValue(QStringLiteral("window/splitter"), m_splitter->saveState());
     state.setValue(QStringLiteral("threadlist/header"),
-                   m_threadView->horizontalHeader()->saveState());
+                   m_threadView->header()->saveState());
     // Guards the blob above: see restoreUiState().
     state.setValue(QStringLiteral("threadlist/columns"),
                    int(ThreadListModel::ColumnCount));
@@ -511,15 +545,23 @@ void MainWindow::buildUi()
     m_threadView->setModel(m_model);
     m_threadView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_threadView->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_threadView->verticalHeader()->hide();
-    m_threadView->horizontalHeader()->setStretchLastSection(false);
+    m_threadView->header()->setStretchLastSection(false);
     // Every column Interactive, Subject included: Stretch and ResizeToContents
     // both compute a width and discard the user's drag. Nothing absorbs spare
     // width as a result, so the columns end where they end.
     for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
-        m_threadView->horizontalHeader()->setSectionResizeMode(
+        m_threadView->header()->setSectionResizeMode(
             column, QHeaderView::Interactive);
     }
+
+    // The expander goes on the subject column, not on column 0. Column 0 is the
+    // narrow attachment marker, and an expander there has no room: it pushes the
+    // paperclip out of a 28px column entirely.
+    m_threadView->setTreePosition(ThreadListModel::SubjectColumn);
+
+    // The root thread rows are the top level, so no decoration for them beyond
+    // the expander a thread with replies gets on its own.
+    m_threadView->setRootIsDecorated(true);
 
     // Two delegates, and the split is not cosmetic. RowStyleDelegate carries
     // only the selection fix every column needs: the read/unread dimming
@@ -535,11 +577,13 @@ void MainWindow::buildUi()
     m_threadView->setItemDelegateForColumn(ThreadListModel::SubjectColumn,
                                            new SubjectDelegate(this));
 
-    // One height for every row, set here rather than left to a column's
-    // sizeHint: a QTableView takes a single height per row, so a hint from the
-    // subject column alone would only apply if the view happened to ask it.
-    m_threadView->verticalHeader()->setDefaultSectionSize(
-        SubjectDelegate::rowHeightFor(m_threadView->font()));
+    // One height for every row. A QTreeView has no vertical header to carry a
+    // default section size, so the height comes from uniformRowHeights plus the
+    // delegate's own sizeHint. uniformRowHeights is not merely an optimisation
+    // here: without it the tree measures every row separately and the tag strip,
+    // which is painted OUTSIDE any cell, is not accounted for in any of those
+    // measurements, so rows collapse to text height and the strip is clipped.
+    m_threadView->setUniformRowHeights(true);
     // Widening a column past the viewport scrolls rather than squeezing the
     // others. Per-pixel so the scroll does not jump a whole column at a time.
     // Banding, so the eye can follow a row across four columns and a pill
@@ -555,7 +599,7 @@ void MainWindow::buildUi()
     // Without this the attachment column cannot be narrow at all: the default
     // minimum section size is 58px on this platform, and setColumnWidth()
     // clamps to it silently rather than reporting the smaller value back.
-    m_threadView->horizontalHeader()->setMinimumSectionSize(24);
+    m_threadView->header()->setMinimumSectionSize(24);
     m_threadView->setColumnWidth(ThreadListModel::AttachmentColumn, 28);
     m_threadView->setColumnWidth(ThreadListModel::FlagColumn, 28);
     m_threadView->setColumnWidth(ThreadListModel::DateColumn, 130);
@@ -634,16 +678,23 @@ void MainWindow::registerActions()
     });
     addAction(QStringLiteral("next_thread"), tr("&Next thread"),
               tr("Select the next thread"), [this]() {
+        // The THREAD after this one, which is not "the next row" once replies
+        // are expanded: from a thread row the next row may be its own first
+        // reply, and from a reply row the row number counts siblings, not
+        // threads. Both are resolved by walking up to the containing thread
+        // first.
         const QModelIndex current = m_threadView->currentIndex();
-        const int row = current.isValid() ? current.row() + 1 : 0;
+        const QModelIndex thread = threadRowOf(current);
+        const int row = thread.isValid() ? thread.row() + 1 : 0;
         if (row < m_model->rowCount())
-            m_threadView->selectRow(row);
+            selectThreadRow(row);
     });
     addAction(QStringLiteral("prev_thread"), tr("&Previous thread"),
               tr("Select the previous thread"), [this]() {
         const QModelIndex current = m_threadView->currentIndex();
-        if (current.isValid() && current.row() > 0)
-            m_threadView->selectRow(current.row() - 1);
+        const QModelIndex thread = threadRowOf(current);
+        if (thread.isValid() && thread.row() > 0)
+            selectThreadRow(thread.row() - 1);
     });
     addAction(QStringLiteral("open_thread"), tr("&Open thread"),
               tr("Focus the thread list"), [this]() {
@@ -1457,8 +1508,8 @@ void MainWindow::showThreadContextMenu(const QPoint &pos)
     // collapsing to the clicked row here would silently narrow a deliberate
     // multi-row selection to one. Right-clicking outside it selects that row
     // instead, which is what every other list does.
-    if (!m_threadView->selectionModel()->isRowSelected(index.row()))
-        m_threadView->selectRow(index.row());
+    if (!m_threadView->selectionModel()->isSelected(index))
+        selectRowAt(index);
 
     m_threadContextMenu->popup(m_threadView->viewport()->mapToGlobal(pos));
 }

@@ -27,7 +27,7 @@
 
 void ThreadListView::paintEvent(QPaintEvent *event)
 {
-    QTableView::paintEvent(event);
+    QTreeView::paintEvent(event);
 
     if (!model())
         return;
@@ -43,18 +43,34 @@ void ThreadListView::paintEvent(QPaintEvent *event)
     const QFontMetrics metrics(pillFont);
     painter.setFont(pillFont);
 
-    // Only the rows actually on screen. Walking the whole model would paint
-    // thousands of strips outside the viewport on a large query.
-    const int first = rowAt(0);
-    const int last = rowAt(viewport()->height() - 1);
-    const int lastRow = last >= 0 ? last : model()->rowCount() - 1;
+    // Only the rows actually on screen, walked by INDEX rather than by row
+    // number. A tree numbers rows per parent, so row 0 exists once per expanded
+    // thread and the old flat 0..N walk would paint the first thread's strip
+    // over every one of them.
+    QModelIndex walk = indexAt(QPoint(0, 0));
 
-    for (int row = qMax(0, first); row <= lastRow; ++row) {
-        const QModelIndex index =
-            model()->index(row, ThreadListModel::SubjectColumn);
+    // Counts the rows actually painted, for the alternating colour. In a tree
+    // that has to follow VISUAL position: row 0 under three different threads
+    // is three different stripes, and using index.row() would give all three
+    // the same one.
+    int visualRow = 0;
 
-        const int rowTop = rowViewportPosition(row);
-        const int height = rowHeight(row);
+    for (; walk.isValid(); walk = indexBelow(walk), ++visualRow) {
+        const QRect rowRect = visualRect(walk);
+        if (rowRect.top() > viewport()->height())
+            break;
+
+        // No strip under a message row. The strip carries the THREAD's tags, so
+        // one under each reply would stripe the list and repeat identical tags
+        // down the whole expansion.
+        if (walk.parent().isValid())
+            continue;
+
+        const QModelIndex index = walk.siblingAtColumn(
+            ThreadListModel::SubjectColumn);
+
+        const int rowTop = rowRect.top();
+        const int height = rowRect.height();
         if (height <= 0)
             continue;
 
@@ -86,9 +102,12 @@ void ThreadListView::paintEvent(QPaintEvent *event)
 
         if (background.isValid())
             painter.fillRect(band, background.value<QBrush>());
-        else if (selectionModel() && selectionModel()->isRowSelected(row))
+        // isSelected on the index, not isRowSelected(int): a QTreeView has no
+        // such overload, and a row number alone cannot name a row in a tree
+        // anyway since it is only unique under one parent.
+        else if (selectionModel() && selectionModel()->isSelected(index))
             painter.fillRect(band, palette().brush(QPalette::Highlight));
-        else if (alternatingRowColors() && (row % 2))
+        else if (alternatingRowColors() && (visualRow % 2))
             painter.fillRect(band, palette().brush(QPalette::AlternateBase));
         else
             painter.fillRect(band, palette().brush(QPalette::Base));

@@ -29,6 +29,9 @@ class TestThreadListModel : public QObject
 private slots:
     void messageNodeHoldsDisplayFacts();
     void rootRowsSurviveTheTreeConversion();
+    void repliesBecomeChildRowsUnderTheirThread();
+    void messageRowsShowTheirOwnSenderAndSubject();
+    void reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem();
     void startsEmpty();
     void accountKeysComeFromTheAccountTags();
     void accountKeysCoverAThreadSpanningTwoAccounts();
@@ -76,6 +79,118 @@ static ThreadSummary makeThread(const QString &id, const QString &subject)
     t.matchedCount = 1;
     t.tags = QStringList{ QStringLiteral("inbox"), QStringLiteral("unread") };
     return t;
+}
+
+static MessageNode makeNode(const QString &id, int depth,
+                            const QString &from = QStringLiteral("Alice"),
+                            const QString &subject = QStringLiteral("Re: Hi"))
+{
+    MessageNode n;
+    n.messageId = id;
+    n.threadId = QStringLiteral("t1");
+    n.from = from;
+    n.subject = subject;
+    n.date = QDateTime::fromSecsSinceEpoch(1750000000);
+    n.depth = depth;
+    return n;
+}
+
+void TestThreadListModel::repliesBecomeChildRowsUnderTheirThread()
+{
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("A subject")) });
+
+    // Depth 0 is the thread's FIRST message and belongs on the root row, not in
+    // the children: the user's model is "N replies", so a thread of three shows
+    // one root and two children.
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1),
+                              makeNode(QStringLiteral("m2@example.org"), 2) });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    QCOMPARE(model.rowCount(root), 2);
+
+    const QModelIndex child =
+        model.index(0, ThreadListModel::SubjectColumn, root);
+    QVERIFY(child.isValid());
+    QCOMPARE(model.parent(child), model.index(0, 0, QModelIndex()));
+
+    QVERIFY(model.data(child, ThreadListModel::IsMessageRole).toBool());
+    QCOMPARE(model.data(child, ThreadListModel::MessageIdRole).toString(),
+             QStringLiteral("m1@example.org"));
+
+    // A message row still belongs to a thread, so a caller that only needs the
+    // containing thread does not have to walk up itself.
+    QCOMPARE(model.data(child, ThreadListModel::ThreadIdRole).toString(),
+             QStringLiteral("t1"));
+
+    // A thread root is not a message row and carries no message id.
+    QVERIFY(!model.data(root, ThreadListModel::IsMessageRole).toBool());
+    QVERIFY(model.data(root, ThreadListModel::MessageIdRole)
+                .toString().isEmpty());
+
+    QAbstractItemModelTester tester(
+        &model, QAbstractItemModelTester::FailureReportingMode::Warning);
+    Q_UNUSED(tester);
+}
+
+void TestThreadListModel::messageRowsShowTheirOwnSenderAndSubject()
+{
+    // A reply's row shows the REPLY's sender, not the thread's author summary.
+    // Reading the thread's fields for a child row is the obvious mistake and
+    // would look almost right, since the first sender is usually in both.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("A subject")) });
+    model.setThreadMessages(
+        QStringLiteral("t1"),
+        { makeNode(QStringLiteral("m0@example.org"), 0),
+          makeNode(QStringLiteral("m1@example.org"), 1,
+                   QStringLiteral("Bob <bob@example.org>"),
+                   QStringLiteral("Re: A subject")) });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    const QModelIndex authors =
+        model.index(0, ThreadListModel::AuthorsColumn, root);
+    const QModelIndex subject =
+        model.index(0, ThreadListModel::SubjectColumn, root);
+
+    QCOMPARE(model.data(authors, Qt::DisplayRole).toString(),
+             QStringLiteral("Bob <bob@example.org>"));
+    QCOMPARE(model.data(subject, Qt::DisplayRole).toString(),
+             QStringLiteral("Re: A subject"));
+
+    // No tag strip under a child row. The strip is a row-wide band carrying the
+    // THREAD's tags; one under every reply would stripe the list and repeat the
+    // same tags down the whole expansion.
+    QVERIFY(model.data(subject, ThreadListModel::PillTagsRole)
+                .toStringList().isEmpty());
+}
+
+void TestThreadListModel::reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem()
+{
+    // A thread reloaded after a sync must not end up listing its replies twice.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("A subject")) });
+
+    const QVector<MessageNode> nodes{
+        makeNode(QStringLiteral("m0@example.org"), 0),
+        makeNode(QStringLiteral("m1@example.org"), 1)
+    };
+
+    model.setThreadMessages(QStringLiteral("t1"), nodes);
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    QCOMPARE(model.rowCount(root), 1);
+
+    model.setThreadMessages(QStringLiteral("t1"), nodes);
+    QCOMPARE(model.rowCount(root), 1);
+
+    QAbstractItemModelTester tester(
+        &model, QAbstractItemModelTester::FailureReportingMode::Warning);
+    Q_UNUSED(tester);
 }
 
 void TestThreadListModel::accountKeysComeFromTheAccountTags()

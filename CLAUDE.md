@@ -42,8 +42,9 @@ UI thread                          Worker thread
 MainWindow                         NotmuchWorker
  ├ query row: QComboBox, QLineEdit,  └ owns the only notmuch_database_t*
  │   saved-query QPushButtons
- ├ ThreadListView ── ThreadListModel
- │   (RowStyleDelegate every column, SubjectDelegate on Subject)
+ ├ ThreadListView (QTreeView) ── ThreadListModel (QAbstractItemModel)
+ │   thread rows, expanding to message rows; RowStyleDelegate every
+ │   column, SubjectDelegate on Subject (chip, subject, expander)
  └ MessageView (header QLabel, QWebEngineView, attachment bar, TagStrip)
 
 Config (INI)   KeyMap   MailSync (QProcess)   MimeParser (GMime)
@@ -63,18 +64,72 @@ The tag chips under each row are one strip spanning the whole width, so they
 are drawn in the view's `paintEvent` after the cells. Consequences that are
 easy to undo by accident: `SubjectDelegate` reads `AccountLabelRole`, which
 belongs to the ROW, so installing it view-wide draws the account chip into
-every column (a `Q_ASSERT` catches this); row height must be set on the
-vertical header, since a table takes one height per row and a column's
-`sizeHint` only applies if the view happens to ask that column; and because
-alternating colours, the selection and the model's `BackgroundRole` are all
-painted per cell, the view has to fill the strip's band itself, honouring all
-three or a deleted row is cut in half and every other row shows a bare stripe.
+every column (a `Q_ASSERT` catches this); and because alternating colours, the
+selection and the model's `BackgroundRole` are all painted per cell, the view
+has to fill the strip's band itself, honouring all three or a deleted row is
+cut in half and every other row shows a bare stripe.
+
+**It is a `QTreeView` over a `QAbstractItemModel` since item 20**, because a
+thread's replies are child rows and a table can neither indent nor expand. What
+did NOT survive that port is anything keyed on a row NUMBER: a tree numbers rows
+per parent, so row 0 exists once per expanded thread and a flat `0..N` walk
+paints the first thread's strip over every one of them. The strip walk goes by
+index, alternating colour follows visual position rather than `index.row()`, and
+`QTableView::isRowSelected(int)` has no equivalent — use
+`selectionModel()->isSelected(index)`. Row height comes from
+`setUniformRowHeights` plus the delegate's `sizeHint`, since a tree has no
+vertical header to carry a default section size.
+
+**Four traps in the expander, all of which shipped a plausible-looking broken
+build before being caught.** `QTreeView::drawBranches` is the documented hook and
+does not work when the expander sits on a content column: it runs BEFORE the
+row's cells, so the delegate's background paints over it (a 60-pixel triangle
+survived as 8). `SubjectDelegate` draws it instead, from BOTH of its branches —
+calling it only from the no-chip branch leaves every real row without one, since
+every real row has an account chip. `setRootIsDecorated(false)`, needed to stop
+the style drawing its own indicator underneath, also removes the style's HIT
+AREA, so the glyph renders perfectly and is inert; `ThreadListView::mousePressEvent`
+handles the click. And `isExpanded`/`setExpanded` are keyed on **column 0**, so
+asking them about the subject-column index always answers false and every click
+expands again instead of toggling.
+
+**Visible, clickable and toggling are three separate properties.** A test for
+one passes against the other two being broken, which happened twice in one
+session: a pixel test proved the triangle was drawn while nothing could click
+it, and a click test proved it opened while it could never close.
+
+**A reply row's indent must beat the account chip's width.** A thread row draws
+a chip before its subject and a reply row does not, so a reply's text starts
+roughly a chip-width to the LEFT of its thread's before any indent applies.
+Qt's 20px default is swallowed entirely by that difference and the replies read
+as flush or outdented. `SubjectDelegate::kReplyIndent` is 72px for this reason.
+Note that `visualRect` reports the indent correctly the whole time, so a
+geometry probe endorses a layout with no visible nesting: assert on where the
+TEXT lands.
+
+**`paintEvent` runs AFTER the cells.** Anything it fills across a row covers the
+text the delegate just drew: the reply tint filled the full row height in its
+first version and erased every sender and subject, measured at zero surviving
+text pixels. The fill and the thread-line stub stay in the band below the text,
+where the tag strip lives on thread rows.
 
 **No `notmuch_*` pointer ever crosses the thread boundary.** Data crosses as the plain
-value structs in `src/types.h` (`ThreadSummary`, `MessageRef`, `TagChange`), over queued
+value structs in `src/types.h` (`ThreadSummary`, `MessageRef`, `MessageNode`,
+`ActionScope`, `TagChange`), over queued
 signals in both directions. `notmuchworker.cpp` is the only file that includes `notmuch.h`
 outside `src/nmraii.h`; C handles are owned by the `NmQuery`/`NmMessages`/`NmThread`/…
 RAII aliases there so they cannot leak.
+
+**The one exception, and it is a double-free if undone.** Messages reached
+through `notmuch_thread_get_toplevel_messages` / `notmuch_message_get_replies`
+are owned by the THREAD and freed with it (`notmuch.h:1637`), so `walkReplies`
+in `notmuchworker.cpp` holds them as raw `notmuch_message_t*`: an `NmMessage`
+wrapper would call `notmuch_message_destroy` on memory the thread frees again.
+The whole walk must finish while the `NmThread` is alive. Related: replies are
+unreachable from a query walk at all — `notmuch_message_get_replies` returns
+NULL for a message from `notmuch_query_search_messages` (`notmuch.h:1617-1628`),
+which is why `loadThreadTree` exists beside `loadThread` rather than replacing
+it.
 
 **Generation counters, not cancellation.** Each query bumps a `quint64` generation passed
 through to the worker and back on every result signal. The UI discards results whose

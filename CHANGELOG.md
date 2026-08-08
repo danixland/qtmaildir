@@ -13,6 +13,19 @@ point at which they are stable.
 
 ### Added
 
+- **Threads expand in the list to show their replies.** A thread with more than
+  one message carries an expander; opening it lists the replies as indented rows
+  beneath it, marked with a thread line, a tinted background and smaller text.
+  The replies are fetched when you expand, not with the query, so a large result
+  still paints immediately.
+- **Selecting a reply opens that message on its own**, rather than the whole
+  conversation, which is the point of having message rows at all.
+- **Actions follow what you selected, and the status bar says what they will
+  touch.** A thread row acts on the whole thread and reports "1 thread selected
+  (7 messages)" before and "(whole thread)" after; a reply row acts on that one
+  message. Both are undoable. There is no confirmation dialog, deliberately:
+  undo is this application's answer to a mistaken action, and naming the scope
+  is what makes it usable.
 - **A sync now fetches only the accounts you have edited.** Tagging mail in one
   account and syncing no longer pulls every other account as well. A sync with
   nothing outstanding is a plain fetch and still covers everything, since

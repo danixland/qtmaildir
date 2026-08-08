@@ -1,14 +1,5 @@
 # Item 20: Message Rows in the Thread List — Implementation Plan
 
-> **EXECUTED AND PARKED, 2026-08-08. Do not run this plan again.**
-> Every task here was implemented on the branch `item-20-message-rows`, which is
-> pushed to both remotes and **not merged**. master has these documents and none
-> of that code. The user's verdict on the finished result was that the table
-> layout does not fit the use, and item 53 in
-> `2026-08-03-post-0.1.0-usability.md` carries the diagnosis. This document is
-> kept for the API facts it verified and the reasoning it records, not as work
-> to pick up. Read item 53 first.
-
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the flat thread list into a tree where a thread's root row is its first message, expanding reveals the replies indented by reply depth, and selecting a reply opens that single message in the reading pane.

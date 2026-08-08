@@ -32,6 +32,7 @@ private slots:
     void repliesBecomeChildRowsUnderTheirThread();
     void messageRowsShowTheirOwnSenderAndSubject();
     void reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem();
+    void anUnexpandedMultiMessageThreadOffersAnExpander();
     void scopeFollowsTheSelectedRowKind();
     void scopeCountsEveryMessageOfAnUnexpandedThread();
     void scopeHonoursAMixedSelectionWithoutEscalating();
@@ -194,6 +195,46 @@ void TestThreadListModel::reloadingAThreadReplacesItsRepliesRatherThanRepeatingT
     QAbstractItemModelTester tester(
         &model, QAbstractItemModelTester::FailureReportingMode::Warning);
     Q_UNUSED(tester);
+}
+
+void TestThreadListModel::anUnexpandedMultiMessageThreadOffersAnExpander()
+{
+    // This is what makes lazy loading work at all. rowCount is 0 until the
+    // worker has walked the thread, so a view inferring the expander from
+    // rowCount alone draws none, the user can never expand, and the replies are
+    // never requested. hasChildren answers from the summary's count instead.
+    ThreadListModel model;
+    ThreadSummary many = makeThread(QStringLiteral("t1"),
+                                    QStringLiteral("Has replies"));
+    many.totalCount = 4;
+    ThreadSummary lone = makeThread(QStringLiteral("t2"),
+                                    QStringLiteral("Single message"));
+    lone.totalCount = 1;
+    model.appendBatch({ many, lone });
+
+    const QModelIndex withReplies = model.index(0, 0, QModelIndex());
+    const QModelIndex single = model.index(1, 0, QModelIndex());
+
+    // Guard: neither is expanded, so this really is the unloaded case.
+    QCOMPARE(model.rowCount(withReplies), 0);
+    QCOMPARE(model.rowCount(single), 0);
+
+    QVERIFY(model.hasChildren(withReplies));
+    QVERIFY(!model.hasChildren(single));
+
+    // Once loaded the children are the truth, including "there are none": a
+    // thread whose count included duplicates must stop offering an expander
+    // that opens onto nothing.
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0) });
+    QVERIFY(!model.hasChildren(withReplies));
+
+    // A message row is always a leaf.
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1) });
+    QVERIFY(model.hasChildren(withReplies));
+    QVERIFY(!model.hasChildren(model.index(0, 0, withReplies)));
 }
 
 void TestThreadListModel::scopeFollowsTheSelectedRowKind()

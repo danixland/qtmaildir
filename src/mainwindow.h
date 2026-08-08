@@ -164,6 +164,13 @@ private slots:
     /// the click lands inside.
     void showThreadContextMenu(const QPoint &pos);
     void onThreadLoaded(const QVector<MessageRef> &messages, quint64 generation);
+
+    /// Asks the worker for a thread's reply tree when its row is expanded.
+    void onThreadExpanded(const QModelIndex &index);
+
+    /// Fills in the expanded thread's message rows.
+    void onThreadTreeLoaded(const QVector<MessageNode> &nodes,
+                            quint64 generation);
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
 

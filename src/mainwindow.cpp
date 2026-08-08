@@ -606,6 +606,12 @@ void MainWindow::buildUi()
     m_threadView->setColumnWidth(ThreadListModel::AuthorsColumn, 180);
     m_threadView->setColumnWidth(ThreadListModel::SubjectColumn, 520);
 
+    // Replies are loaded when a thread is expanded, not with the query.
+    // Walking the reply tree of every thread in a 10k-thread result would cost
+    // far more than the query itself and almost none of it would be looked at.
+    connect(m_threadView, &QTreeView::expanded,
+            this, &MainWindow::onThreadExpanded);
+
     connect(m_threadView->selectionModel(),
             &QItemSelectionModel::currentRowChanged,
             this, &MainWindow::onThreadSelected);
@@ -1298,6 +1304,8 @@ void MainWindow::wireWorker()
             this, &MainWindow::onThreadsReady);
     connect(m_worker, &NotmuchWorker::queryFinished,
             this, &MainWindow::onQueryFinished);
+    connect(m_worker, &NotmuchWorker::threadTreeLoaded,
+            this, &MainWindow::onThreadTreeLoaded);
     connect(m_worker, &NotmuchWorker::threadLoaded,
             this, &MainWindow::onThreadLoaded);
     connect(m_worker, &NotmuchWorker::errorOccurred,
@@ -1665,6 +1673,38 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
                               Q_ARG(QString, m_currentThreadId),
                               Q_ARG(QString, m_lastQuery),
                               Q_ARG(quint64, m_generation));
+}
+
+void MainWindow::onThreadExpanded(const QModelIndex &index)
+{
+    if (!index.isValid() || m_model->isMessageRow(index))
+        return;
+
+    const QString threadId =
+        m_model->data(index, ThreadListModel::ThreadIdRole).toString();
+    if (threadId.isEmpty())
+        return;
+
+    QMetaObject::invokeMethod(m_worker, "loadThreadTree", Qt::QueuedConnection,
+                              Q_ARG(QString, threadId),
+                              Q_ARG(QString, m_lastQuery),
+                              Q_ARG(quint64, m_generation));
+}
+
+void MainWindow::onThreadTreeLoaded(const QVector<MessageNode> &nodes,
+                                    quint64 generation)
+{
+    // The same generation guard every other worker reply carries: an expansion
+    // whose query has since been replaced must not insert rows into the new
+    // result, where that thread may not even appear.
+    if (generation != m_generation || nodes.isEmpty())
+        return;
+
+    // Every node in one reply belongs to one thread, so the first one names it.
+    // Read from the node rather than remembered from the request: two
+    // expansions can be in flight at once, and pairing them by order would
+    // attach one thread's replies to the other.
+    m_model->setThreadMessages(nodes.first().threadId, nodes);
 }
 
 void MainWindow::onThreadLoaded(const QVector<MessageRef> &messages,

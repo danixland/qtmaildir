@@ -84,6 +84,18 @@ public:
         /// model because it owns the TagColors instance; a delegate reading
         /// config itself would be a second source of truth.
         PillColoursRole,
+
+        /// True when the row is a MESSAGE row rather than a thread root.
+        /// Drives both the action scope and whether the view paints a tag
+        /// strip under the row.
+        IsMessageRole,
+
+        /// The message id behind a message row. Empty on a thread root.
+        MessageIdRole,
+
+        /// The message's reply depth, for the view's indentation. 1 for a
+        /// direct reply, since depth 0 is the root row itself.
+        MessageDepthRole,
     };
 
     /// Row fill for a thread tagged `deleted`, and for one tagged `spam`.
@@ -130,6 +142,23 @@ public:
     void clear();
 
     ThreadSummary threadAt(int row) const;
+
+    /// Fills in a thread's message rows once the worker has walked its tree.
+    ///
+    /// The depth-0 message is dropped: it is the thread's first message and the
+    /// ROOT row already stands for it. Keeping it would show a thread of seven
+    /// as one root and seven children, contradicting the reply count the row
+    /// advertises. Calling again replaces the rows rather than appending, so a
+    /// thread reloaded after a sync does not list its replies twice.
+    void setThreadMessages(const QString &threadId,
+                           const QVector<MessageNode> &nodes);
+
+    /// True when the index is a message row rather than a thread root.
+    bool isMessageRow(const QModelIndex &index) const;
+
+    /// The message row's node, or a default-constructed one for any index that
+    /// is not a message row.
+    MessageNode messageAt(const QModelIndex &index) const;
 
     /// The account keys behind a thread's account tags, for item 49's
     /// per-account sync.

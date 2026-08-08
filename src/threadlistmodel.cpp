@@ -169,12 +169,60 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         return {};
     }
 
-    // Message rows are handled in Task 4; until then only thread rows exist and
-    // a child index cannot be produced. The bound is checked against the thread
-    // list only after establishing this IS a thread row, since a child row's
+    // A message row. Handled before the bounds check below, since a child row's
     // number indexes its siblings, not m_threads.
-    if (index.parent().isValid())
-        return {};
+    if (isMessageRow(index)) {
+        const MessageNode node = messageAt(index);
+        if (node.messageId.isEmpty())
+            return {};
+
+        switch (role) {
+        case IsMessageRole:
+            return true;
+        case MessageIdRole:
+            return node.messageId;
+        case MessageDepthRole:
+            return node.depth;
+        case ThreadIdRole:
+            // A message row still belongs to a thread, and a caller that only
+            // needs the containing thread must not have to walk up itself.
+            return node.threadId;
+        case TagsRole:
+        case PillTagsRole:
+            // No strip under a child row: the strip is a ROW-wide band carrying
+            // the thread's tags, and one under every reply would stripe the
+            // list and repeat the same tags down the whole expansion.
+            return QStringList();
+        case PillColoursRole:
+            return QVariantList();
+        case AccountLabelRole:
+            return QString();
+        case Qt::DisplayRole:
+            switch (index.column()) {
+            case AuthorsColumn:
+                // The REPLY's sender, not the thread's author summary. Reading
+                // the thread's fields here would look almost right, since the
+                // first sender usually appears in both.
+                return node.from;
+            case SubjectColumn:
+                return node.subject;
+            case DateColumn:
+                return node.date.toString(QStringLiteral("yyyy-MM-dd hh:mm"));
+            case AttachmentColumn:
+                return node.hasAttachment() ? attachmentGlyph() : QString();
+            case FlagColumn:
+                return node.isFlagged() ? flagGlyph() : QString();
+            default:
+                return {};
+            }
+        case Qt::ForegroundRole:
+            // Same rule as a thread row: read recedes, unread stays at the
+            // palette's own colour.
+            return node.isUnread() ? QVariant() : QVariant(readColour());
+        default:
+            return {};
+        }
+    }
 
     if (index.row() >= m_threads.size())
         return {};
@@ -183,6 +231,19 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
 
     if (role == ThreadIdRole)
         return thread.threadId;
+
+    // Answered rather than left to fall through as an invalid QVariant. An
+    // invalid one converts to false and an empty string anyway, so the
+    // behaviour is the same, but a role the model never mentions is a latent
+    // bug the next reader has to prove is harmless.
+    if (role == IsMessageRole)
+        return false;
+
+    if (role == MessageIdRole)
+        return QString();
+
+    if (role == MessageDepthRole)
+        return 0;
 
     if (role == TagsRole)
         return thread.tags;
@@ -374,6 +435,64 @@ void ThreadListModel::clear()
     beginResetModel();
     m_threads.clear();
     endResetModel();
+}
+
+void ThreadListModel::setThreadMessages(const QString &threadId,
+                                        const QVector<MessageNode> &nodes)
+{
+    for (int row = 0; row < m_threads.size(); ++row) {
+        if (m_threads.at(row).summary.threadId != threadId)
+            continue;
+
+        const QModelIndex parent = index(row, 0, QModelIndex());
+
+        // Replace, not append. A thread reloaded after a sync would otherwise
+        // list every reply twice.
+        if (!m_threads.at(row).children.isEmpty()) {
+            beginRemoveRows(parent, 0, m_threads.at(row).children.size() - 1);
+            m_threads[row].children.clear();
+            endRemoveRows();
+        }
+
+        QVector<MessageNode> children;
+        children.reserve(nodes.size());
+        for (const MessageNode &node : nodes) {
+            if (node.depth > 0)
+                children.append(node);
+        }
+
+        if (!children.isEmpty()) {
+            beginInsertRows(parent, 0, children.size() - 1);
+            m_threads[row].children = children;
+            endInsertRows();
+        }
+
+        // Set even when there are no replies: that is the difference between a
+        // single-message thread and one whose replies were never fetched.
+        m_threads[row].loaded = true;
+        return;
+    }
+}
+
+bool ThreadListModel::isMessageRow(const QModelIndex &index) const
+{
+    return index.isValid() && index.parent().isValid();
+}
+
+MessageNode ThreadListModel::messageAt(const QModelIndex &index) const
+{
+    if (!isMessageRow(index))
+        return {};
+
+    const int threadRow = index.parent().row();
+    if (threadRow < 0 || threadRow >= m_threads.size())
+        return {};
+
+    const QVector<MessageNode> &children = m_threads.at(threadRow).children;
+    if (index.row() < 0 || index.row() >= children.size())
+        return {};
+
+    return children.at(index.row());
 }
 
 ThreadSummary ThreadListModel::threadAt(int row) const

@@ -96,6 +96,13 @@ public:
         /// The message's reply depth, for the view's indentation. 1 for a
         /// direct reply, since depth 0 is the root row itself.
         MessageDepthRole,
+
+        /// True when the row is a thread that has replies to show.
+        ///
+        /// Read by SubjectDelegate, which draws the expander itself: the
+        /// delegate cannot call hasChildren without the model, and the same
+        /// answer has to reach the cell that reserves room for the glyph.
+        HasRepliesRole,
     };
 
     /// Row fill for a thread tagged `deleted`, and for one tagged `spam`.

@@ -559,9 +559,24 @@ void MainWindow::buildUi()
     // paperclip out of a 28px column entirely.
     m_threadView->setTreePosition(ThreadListModel::SubjectColumn);
 
-    // The root thread rows are the top level, so no decoration for them beyond
-    // the expander a thread with replies gets on its own.
-    m_threadView->setRootIsDecorated(true);
+    // No style-drawn branch decoration. SubjectDelegate draws the expander
+    // itself, because drawBranches runs BEFORE the row's cells and the
+    // delegate's own background paints straight over anything put there: a
+    // 60-pixel triangle survived as 8 pixels, indistinguishable from the
+    // near-invisible dot this replaces. Leaving both enabled would draw the
+    // theme's dot underneath the delegate's glyph.
+    m_threadView->setRootIsDecorated(false);
+
+    // Wider than Qt's default 20px, and the reason is specific rather than
+    // aesthetic. A thread row carries an account chip in front of its subject
+    // and a reply row does not, so a reply's text already starts roughly a
+    // chip's width (~60px) to the LEFT of its thread's. At the default indent
+    // the 20px shift is swallowed by that difference and the replies read as
+    // flush with the thread, or even outdented. Verified against the running
+    // app, not assumed: visualRect reported a correct 20px indent while the
+    // rendered text showed none, because the geometry is indented and the
+    // delegate then lays the text out from its own left edge.
+    m_threadView->setIndentation(SubjectDelegate::kReplyIndent);
 
     // Two delegates, and the split is not cosmetic. RowStyleDelegate carries
     // only the selection fix every column needs: the read/unread dimming

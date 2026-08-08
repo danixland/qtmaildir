@@ -92,6 +92,20 @@ public:
     /// Vertical breathing room above the subject and below the pill row.
     static constexpr int kRowPadding = 4;
 
+    /// How far a reply row is indented under its thread.
+    ///
+    /// Deliberately far wider than Qt's 20px default. A thread row carries an
+    /// account chip in front of its subject and a reply row does not, so a
+    /// reply's text starts about a chip's width to the LEFT of its thread's
+    /// before any indent is applied. 20px does not cover that, and the replies
+    /// come out looking flush or outdented; this has to beat a chip's width to
+    /// read as nesting at all.
+    static constexpr int kReplyIndent = 72;
+
+    /// Horizontal room reserved in front of a thread's subject for the
+    /// expander glyph the delegate draws.
+    static constexpr int kExpanderWidth = 18;
+
     /// The font the pill strip is drawn in: a size down from the row's own.
     ///
     /// At the same size the pills read as a second row of content competing

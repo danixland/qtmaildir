@@ -129,6 +129,19 @@ public:
     /// command was pushed, which is what "this did nothing" has to assert.
     int undoDepthForTesting() const { return m_undoStack.count(); }
 
+    /// The ids the last tag change was sent for, and whether they were thread
+    /// ids or message ids.
+    ///
+    /// Exposed because the difference is invisible from outside otherwise: a
+    /// message row routed down the thread path produces the same undo depth and
+    /// the same status text while tagging every sibling in the thread. A
+    /// mutation that made exactly that change passed the whole suite.
+    QStringList pendingThreadIdsForTesting() const { return m_pendingThreadIds; }
+    QStringList pendingMessageIdsForTesting() const
+    {
+        return m_pendingChange.messageIds;
+    }
+
     /// The generation a worker reply must carry to be accepted.
     ///
     /// A test seam: onQueryFinished() discards a reply whose generation is
@@ -351,6 +364,13 @@ private:
                              const QStringList &remove,
                              const QString &description);
 
+    /// The same for individual MESSAGES, without touching the undo stack.
+    /// Both tagSelected() and MessageTagCommand route through this.
+    void sendMessageTagChange(const QStringList &messageIds,
+                              const QStringList &add,
+                              const QStringList &remove,
+                              const QString &description);
+
     /// Undoes the optimistic model update for a write the worker rejected.
     void revertPendingTagChange();
 
@@ -384,6 +404,7 @@ private:
     QVector<HeldEdit> m_heldEdits;
 
     friend class ThreadTagCommand;
+    friend class MessageTagCommand;
 
     Config m_config;
     KeyMap m_keyMap;
@@ -610,6 +631,50 @@ public:
 private:
     MainWindow *m_window;
     QStringList m_threadIds;
+    QStringList m_add;
+    QStringList m_remove;
+    QString m_description;
+    bool m_firstRedo = true;
+};
+
+/// Undo entry for a tag change over individual MESSAGES.
+///
+/// Stores message ids, unlike ThreadTagCommand, and that difference is the
+/// point rather than an inconsistency: a message row acts on one message, so
+/// re-resolving its thread on undo would restore tags across every sibling the
+/// action never touched.
+class MessageTagCommand : public QUndoCommand
+{
+public:
+    MessageTagCommand(MainWindow *window, const QStringList &messageIds,
+                      const QStringList &add, const QStringList &remove,
+                      const QString &description)
+        : QUndoCommand(description), m_window(window),
+          m_messageIds(messageIds), m_add(add), m_remove(remove),
+          m_description(description) {}
+
+    /// The stack calls redo() when the command is pushed, by which point the
+    /// change has already been sent, so the first call is skipped.
+    void redo() override
+    {
+        if (m_firstRedo) {
+            m_firstRedo = false;
+            return;
+        }
+        m_window->sendMessageTagChange(m_messageIds, m_add, m_remove,
+                                       m_description);
+    }
+
+    void undo() override
+    {
+        m_window->sendMessageTagChange(
+            m_messageIds, m_remove, m_add,
+            QStringLiteral("Undo %1").arg(m_description));
+    }
+
+private:
+    MainWindow *m_window;
+    QStringList m_messageIds;
     QStringList m_add;
     QStringList m_remove;
     QString m_description;

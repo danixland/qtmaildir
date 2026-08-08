@@ -188,6 +188,11 @@ public:
     /// is not a message row.
     MessageNode messageAt(const QModelIndex &index) const;
 
+    /// The thread a loaded message row belongs to, or empty when no expanded
+    /// thread holds it. Only expanded threads have message rows at all, so a
+    /// message the user could select is always findable here.
+    QString threadIdForMessage(const QString &messageId) const;
+
     /// Resolves a selection into what an action should touch.
     ///
     /// Mixed selections are honoured as given: a thread root and an unrelated

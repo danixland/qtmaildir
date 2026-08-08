@@ -97,6 +97,10 @@ private slots:
     void replyRowsKeepTheirTextUnderTheThreadLine();
     void clickingTheExpanderTogglesTheThread();
     void selectingAMessageRowTargetsThatMessageNotItsThread();
+    void selectingAThreadRowNamesHowManyMessagesItStandsFor();
+    void selectingAMessageRowReportsNoBulkCount();
+    void anActionOnAThreadRowSaysItHitTheWholeThread();
+    void anActionOnAMessageRowTagsThatMessageNotTheThread();
     void markAllReadIsDisabledUntilTheQueryFinishes();
     void markAllReadActsOnEveryRowAndUndoesInOneStep();
     void markAllReadDoesNothingWhenNothingIsUnread();
@@ -662,6 +666,212 @@ void TestMainWindow::aThreadWithRepliesDrawsAVisibleExpander()
     // The control must have none, or the count above is measuring something
     // every row draws.
     QCOMPARE(control, 0);
+}
+
+void TestMainWindow::selectingAThreadRowNamesHowManyMessagesItStandsFor()
+{
+    // With two kinds of row selectable, one selected row no longer says how
+    // much an action will touch. CLAUDE.md forbids a confirmation dialog for
+    // tag mutations, so the scope is made visible instead: this is the "before"
+    // half of that, and the count has to come from the thread's own total, not
+    // from whatever happens to be expanded.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    ThreadSummary t = makeThread(QStringLiteral("t1"), {});
+    t.totalCount = 7;
+    model->appendBatch({ t });
+
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    // Guard: nothing is expanded, so a count taken from the loaded children
+    // would read 0 and this test would be measuring the wrong source.
+    QCOMPARE(model->rowCount(model->index(0, 0, QModelIndex())), 0);
+
+    selectThreadRow(view, 0);
+    QApplication::processEvents();
+
+    QVERIFY2(status->text().contains(QStringLiteral("7")),
+             qPrintable(QStringLiteral("the status bar says '%1', which does "
+                                       "not name the 7 messages the thread "
+                                       "stands for")
+                            .arg(status->text())));
+}
+
+void TestMainWindow::selectingAMessageRowReportsNoBulkCount()
+{
+    // Reading one message is not a bulk action, so it gets no count. A message
+    // row reporting "1 thread selected" would be actively wrong about what an
+    // action would touch.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    ThreadSummary t = makeThread(QStringLiteral("t1"), {});
+    t.totalCount = 3;
+    model->appendBatch({ t });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("t1");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("t1");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    const QModelIndex threadRow = model->index(0, 0, QModelIndex());
+    view->expand(threadRow);
+    QApplication::processEvents();
+
+    const QModelIndex messageRow = model->index(0, 0, threadRow);
+    QVERIFY(model->isMessageRow(messageRow));
+
+    view->selectionModel()->select(
+        messageRow,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(messageRow);
+    QApplication::processEvents();
+
+    QVERIFY2(!status->text().contains(QStringLiteral("thread")),
+             qPrintable(QStringLiteral("a single message row reports '%1', "
+                                       "which claims a thread-wide scope it "
+                                       "does not have")
+                            .arg(status->text())));
+}
+
+void TestMainWindow::anActionOnAThreadRowSaysItHitTheWholeThread()
+{
+    // The "after" half. Undo is the safety net this project chose over a
+    // confirmation dialog, and undo is only usable if the user can tell that
+    // something bigger than they intended just happened.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    ThreadSummary t = makeThread(QStringLiteral("t1"), {});
+    t.totalCount = 7;
+    model->appendBatch({ t });
+
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    selectThreadRow(view, 0);
+    QApplication::processEvents();
+
+    auto *archive = window.findChild<QAction *>(QStringLiteral("archive"));
+    QVERIFY2(archive, "no archive action to trigger");
+    archive->trigger();
+
+    // Read BEFORE processEvents, deliberately. This binary has no worker
+    // (backlog item 36), so the queued applyTagsToThreads reaches a throwaway
+    // database that has never heard of thread t1 and answers with
+    // errorOccurred, which overwrites the status bar. Draining the event loop
+    // here would assert on that error rather than on the scope message, and
+    // the test would fail against correct code.
+    const QString message = status->text();
+
+    QVERIFY2(message.contains(QStringLiteral("7")),
+             qPrintable(QStringLiteral("after archiving a 7-message thread the "
+                                       "status bar says '%1', which does not "
+                                       "say how much was touched")
+                            .arg(message)));
+
+    // And it must say the whole thread went, not merely how many messages: the
+    // count alone does not distinguish "7 messages you picked" from "7 messages
+    // because you picked their thread".
+    QVERIFY2(message.contains(QStringLiteral("whole thread")),
+             qPrintable(QStringLiteral("the status bar says '%1', which does "
+                                       "not say the action took the whole "
+                                       "thread")
+                            .arg(message)));
+}
+
+void TestMainWindow::anActionOnAMessageRowTagsThatMessageNotTheThread()
+{
+    // The routing itself, which nothing else here can see. A message row sent
+    // down the THREAD path produces the same undo depth and the same status
+    // text while tagging every sibling in the conversation: a mutation that did
+    // exactly that passed the entire suite, so this test exists because that
+    // gap was found rather than because the path looked risky.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    ThreadSummary t = makeThread(QStringLiteral("t1"), {});
+    t.totalCount = 3;
+    model->appendBatch({ t });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("t1");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("t1");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    const QModelIndex threadRow = model->index(0, 0, QModelIndex());
+    view->expand(threadRow);
+    QApplication::processEvents();
+
+    const QModelIndex messageRow = model->index(0, 0, threadRow);
+    QVERIFY(model->isMessageRow(messageRow));
+
+    view->selectionModel()->select(
+        messageRow,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(messageRow);
+    QApplication::processEvents();
+
+    auto *archive = window.findChild<QAction *>(QStringLiteral("archive"));
+    QVERIFY(archive);
+    archive->trigger();
+
+    // The change must carry the MESSAGE id and no thread id. Sent as a thread
+    // id it would archive the root and every other reply along with it.
+    QCOMPARE(window.pendingMessageIdsForTesting(),
+             QStringList{ QStringLiteral("m1@example.org") });
+    QVERIFY2(window.pendingThreadIdsForTesting().isEmpty(),
+             qPrintable(QStringLiteral("the action was sent for thread(s) %1: a "
+                                       "message row must not tag its siblings")
+                            .arg(window.pendingThreadIdsForTesting()
+                                     .join(QStringLiteral(", ")))));
+
+    // And it is undoable, on its own terms rather than the thread's.
+    QCOMPARE(window.undoDepthForTesting(), 1);
 }
 
 void TestMainWindow::selectingAMessageRowTargetsThatMessageNotItsThread()

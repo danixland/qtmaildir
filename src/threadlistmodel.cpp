@@ -151,6 +151,35 @@ int ThreadListModel::rowCount(const QModelIndex &parent) const
     return m_threads.at(parent.row()).children.size();
 }
 
+bool ThreadListModel::hasChildren(const QModelIndex &parent) const
+{
+    if (!parent.isValid())
+        return !m_threads.isEmpty();
+
+    // A message row is always a leaf. Reply depth is drawn from the node's own
+    // depth, not from further nesting, so nothing hangs under a reply.
+    if (parent.parent().isValid())
+        return false;
+
+    if (parent.column() != 0)
+        return false;
+
+    if (parent.row() < 0 || parent.row() >= m_threads.size())
+        return false;
+
+    const ThreadNode &node = m_threads.at(parent.row());
+
+    // Once loaded the children are the truth, including "there are none", which
+    // is how a thread whose totalCount counted duplicates stops offering an
+    // expander that opens onto nothing.
+    if (node.loaded)
+        return !node.children.isEmpty();
+
+    // Before loading, the summary's count is all there is. A thread of one
+    // message has no replies and must not offer an expander.
+    return node.summary.totalCount > 1;
+}
+
 int ThreadListModel::columnCount(const QModelIndex &parent) const
 {
     // Every level has the same columns. Returning 0 for a valid parent, as the

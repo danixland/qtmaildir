@@ -134,6 +134,16 @@ public:
 
     int rowCount(const QModelIndex &parent = {}) const override;
     int columnCount(const QModelIndex &parent = {}) const override;
+
+    /// Whether a thread row should offer an expander.
+    ///
+    /// Answered from totalCount rather than from the loaded children, and that
+    /// is what makes lazy loading possible at all: rowCount is 0 until the
+    /// worker has walked the thread, so a view left to infer this from rowCount
+    /// alone draws no expander, the user can never expand, and the replies are
+    /// never asked for. The count is already in the summary, so this costs
+    /// nothing.
+    bool hasChildren(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
     QVariant headerData(int section, Qt::Orientation orientation,
                         int role) const override;

@@ -99,6 +99,8 @@ private slots:
     void childRowsAreIndentedUnderTheirThread();
     void aThreadWithRepliesDrawsAVisibleExpander();
     void noTagStripIsPaintedUnderAMessageRow();
+    void replyRowsKeepTheirTextUnderTheThreadLine();
+    void clickingTheExpanderTogglesTheThread();
     void markAllReadIsDisabledUntilTheQueryFinishes();
     void markAllReadActsOnEveryRowAndUndoesInOneStep();
     void markAllReadDoesNothingWhenNothingIsUnread();
@@ -796,6 +798,127 @@ void TestMainWindow::aThreadWithRepliesDrawsAVisibleExpander()
     // The control must have none, or the count above is measuring something
     // every row draws.
     QCOMPARE(control, 0);
+}
+
+void TestMainWindow::clickingTheExpanderTogglesTheThread()
+{
+    // The glyph being VISIBLE and the glyph being CLICKABLE are separate
+    // properties, and the pixel test for the first passes happily against a
+    // triangle nothing can hit. Turning off rootIsDecorated to stop the style
+    // drawing its own dot under ours also removed the style's hit area, so the
+    // expander rendered perfectly and did nothing.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    ThreadSummary t = makeThread(
+        QStringLiteral("t1"),
+        QStringList{ TagColors::tagForAccountKey(QStringLiteral("work")) });
+    t.totalCount = 3;
+    model->appendBatch({ t });
+
+    window.resize(1400, 300);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QApplication::processEvents();
+
+    const QModelIndex root = model->index(0, 0, QModelIndex());
+    const QModelIndex subject =
+        model->index(0, ThreadListModel::SubjectColumn, QModelIndex());
+    const QRect rect = view->visualRect(subject);
+
+    // Guards: the row is drawn, it claims to have replies, and it starts
+    // collapsed. Without the last one a toggle test can pass by doing nothing.
+    QVERIFY2(rect.height() > 0, "the thread row is not on screen");
+    QVERIFY(model->data(subject, ThreadListModel::HasRepliesRole).toBool());
+    QVERIFY(!view->isExpanded(root));
+
+    // Aimed at the glyph itself: the delegate reserves kExpanderWidth at the
+    // left of the subject cell and centres the triangle in it.
+    const QPoint hit(rect.left() + SubjectDelegate::kExpanderWidth / 2,
+                     rect.top() + SubjectDelegate::kRowPadding
+                         + QFontMetrics(view->font()).height() / 2);
+
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, hit);
+    QApplication::processEvents();
+    QVERIFY2(view->isExpanded(root),
+             "clicking the expander did not open the thread");
+
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, hit);
+    QApplication::processEvents();
+    QVERIFY2(!view->isExpanded(root),
+             "clicking the expander again did not close the thread");
+}
+
+void TestMainWindow::replyRowsKeepTheirTextUnderTheThreadLine()
+{
+    // paintEvent runs AFTER the cells, so anything it fills across a reply row
+    // covers the text the delegate just drew. The tint and the thread line are
+    // both painted there, which makes this the obvious way to ship a block of
+    // blank rows.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    ThreadSummary t = makeThread(
+        QStringLiteral("t1"),
+        QStringList{ TagColors::tagForAccountKey(QStringLiteral("work")) });
+    t.totalCount = 2;
+    model->appendBatch({ t });
+
+    MessageNode first;
+    first.messageId = QStringLiteral("m0@example.org");
+    first.threadId = QStringLiteral("t1");
+    first.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("t1");
+    reply.from = QStringLiteral("A Replier <replier@example.org>");
+    reply.subject = QStringLiteral("Re: a subject");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("t1"), { first, reply });
+
+    window.resize(1400, 300);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    const QModelIndex root = model->index(0, 0, QModelIndex());
+    view->expand(root);
+    QApplication::processEvents();
+
+    const QModelIndex child =
+        model->index(0, ThreadListModel::AuthorsColumn, root);
+    const QRect rect = view->visualRect(child);
+    QVERIFY2(rect.height() > 0, "the reply row is not on screen");
+
+    QImage shot(view->viewport()->size(), QImage::Format_ARGB32);
+    shot.fill(Qt::transparent);
+    view->viewport()->render(&shot);
+
+    // Count pixels in the sender cell that differ from the row's own tint.
+    // Text is the only thing that can produce them.
+    const QRgb tint = ThreadListModel::replyBackground().rgb() | 0xff000000;
+    int textPixels = 0;
+    for (int y = rect.top(); y < qMin(rect.bottom(), shot.height()); ++y) {
+        for (int x = rect.left(); x < qMin(rect.right(), shot.width()); ++x) {
+            if ((shot.pixel(x, y) | 0xff000000) != tint)
+                ++textPixels;
+        }
+    }
+
+    QVERIFY2(textPixels > 20,
+             qPrintable(QStringLiteral("only %1 non-background pixels in the "
+                                       "reply's sender cell: the row was "
+                                       "painted over after its text was drawn")
+                            .arg(textPixels)));
 }
 
 void TestMainWindow::noTagStripIsPaintedUnderAMessageRow()

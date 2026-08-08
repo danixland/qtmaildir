@@ -57,4 +57,14 @@ public:
 protected:
     void paintEvent(QPaintEvent *event) override;
 
+    /// Toggles a thread when its expander glyph is clicked.
+    ///
+    /// The view owns this because the glyph is drawn by SubjectDelegate and a
+    /// delegate gets no click of its own without an editor. Being VISIBLE and
+    /// being CLICKABLE are separate properties: setRootIsDecorated(false),
+    /// needed to stop the style drawing its own indicator underneath ours, also
+    /// removed the style's hit area, so the expander painted correctly and did
+    /// nothing at all.
+    void mousePressEvent(QMouseEvent *event) override;
+
 };

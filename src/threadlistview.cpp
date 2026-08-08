@@ -21,9 +21,43 @@
 #include "tagchip.h"
 #include "threadlistmodel.h"
 
+#include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QScrollBar>
+
+void ThreadListView::mousePressEvent(QMouseEvent *event)
+{
+    const QModelIndex index = indexAt(event->pos());
+
+    // Only a thread row, only the subject column, only the strip the delegate
+    // reserved for the glyph. Anything wider would swallow clicks meant to
+    // select the row, which is what the rest of the subject cell is for.
+    if (event->button() == Qt::LeftButton && index.isValid()
+        && !index.parent().isValid()
+        && index.column() == ThreadListModel::SubjectColumn
+        && index.data(ThreadListModel::HasRepliesRole).toBool()) {
+
+        const QRect rect = visualRect(index);
+        if (event->pos().x() >= rect.left()
+            && event->pos().x() < rect.left() + SubjectDelegate::kExpanderWidth) {
+            // Column 0, not the clicked index. Expansion state belongs to the
+            // ROW, and QTreeView keys it on the first column: asking
+            // isExpanded() about the subject-column index always answers false,
+            // so every click expanded again instead of toggling.
+            const QModelIndex row = index.siblingAtColumn(0);
+            setExpanded(row, !isExpanded(row));
+
+            // Swallowed, so the click that opened a thread does not also load
+            // it into the message pane: expanding is a request to see the
+            // thread's shape, not to read it.
+            event->accept();
+            return;
+        }
+    }
+
+    QTreeView::mousePressEvent(event);
+}
 
 void ThreadListView::paintEvent(QPaintEvent *event)
 {
@@ -55,16 +89,74 @@ void ThreadListView::paintEvent(QPaintEvent *event)
     // the same one.
     int visualRow = 0;
 
+    // The spine's extent, collected across the reply rows and drawn once after
+    // the loop. Per-row segments leave a gap at every row boundary and read as
+    // a column of dashes rather than as one line.
+    int spineX = -1;
+    int spineTop = std::numeric_limits<int>::max();
+    int spineBottom = std::numeric_limits<int>::min();
+
     for (; walk.isValid(); walk = indexBelow(walk), ++visualRow) {
         const QRect rowRect = visualRect(walk);
         if (rowRect.top() > viewport()->height())
             break;
 
-        // No strip under a message row. The strip carries the THREAD's tags, so
-        // one under each reply would stripe the list and repeat identical tags
-        // down the whole expansion.
-        if (walk.parent().isValid())
+        // A message row: no tag strip, but it does get the band filled to its
+        // own tint and a thread line down its left.
+        //
+        // The band has to be filled here for the same reason a thread row's is.
+        // The cells paint the tint per cell, so nothing covers the width to the
+        // right of the last column or the lower band the strip normally
+        // occupies, and an untouched reply row comes out tinted across its text
+        // and bare underneath it.
+        if (walk.parent().isValid()) {
+            // Only the band BELOW the text, never the whole row. paintEvent
+            // runs after the cells, so filling the row's full height paints
+            // over the sender and subject the delegate just drew: measured at
+            // zero surviving text pixels, a block of blank tinted rows.
+            const int bandTop = rowRect.top() + SubjectDelegate::kRowPadding
+                              + rowMetrics.height();
+            const QRect band(columnViewportPosition(ThreadListModel::DateColumn),
+                             bandTop,
+                             viewport()->width()
+                                 - columnViewportPosition(
+                                     ThreadListModel::DateColumn),
+                             rowRect.bottom() - bandTop + 1);
+
+            if (selectionModel()
+                && selectionModel()->isSelected(
+                    walk.siblingAtColumn(ThreadListModel::SubjectColumn))) {
+                painter.fillRect(band, palette().brush(QPalette::Highlight));
+            } else {
+                painter.fillRect(band, ThreadListModel::replyBackground());
+            }
+
+            // The spine is NOT drawn here. Drawing it per row leaves a gap
+            // wherever consecutive rows do not abut exactly, which is every row
+            // boundary once the rows carry padding: the result reads as a
+            // column of dashes rather than as one line. It is drawn as a single
+            // continuous run after this loop, from the collected extents below.
+            const int subjectLeft =
+                columnViewportPosition(ThreadListModel::SubjectColumn);
+            const int lineX = subjectLeft + SubjectDelegate::kExpanderWidth / 2;
+
+            if (spineX < 0)
+                spineX = lineX;
+            spineTop = qMin(spineTop, rowRect.top());
+            spineBottom = qMax(spineBottom, rowRect.bottom() + 1);
+
+            // A stub out to the row, so each reply is visibly attached to the
+            // spine rather than merely beside it. Drawn in the LOWER band, not
+            // at the row's midpoint: the midpoint crosses the sender text, and
+            // this paints after the cells.
+            const int stubY = bandTop + (rowRect.bottom() - bandTop) / 2;
+            painter.setPen(QPen(ThreadListModel::threadLineColour(), 2));
+            painter.drawLine(lineX, stubY,
+                             subjectLeft + SubjectDelegate::kReplyIndent
+                                 - TagChip::kSpacing * 2,
+                             stubY);
             continue;
+        }
 
         const QModelIndex index = walk.siblingAtColumn(
             ThreadListModel::SubjectColumn);
@@ -155,5 +247,14 @@ void ThreadListView::paintEvent(QPaintEvent *event)
                            tags.at(i), colour);
             x += size.width() + TagChip::kSpacing;
         }
+    }
+
+    // One continuous spine over every visible reply row, drawn last so no
+    // cell fill can break it. Segments drawn per row left a dash at every row
+    // boundary, which read as a dotted decoration rather than as the structure
+    // holding the block together.
+    if (spineX >= 0 && spineBottom > spineTop) {
+        painter.setPen(QPen(ThreadListModel::threadLineColour(), 2));
+        painter.drawLine(spineX, spineTop, spineX, spineBottom);
     }
 }

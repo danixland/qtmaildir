@@ -124,5 +124,6 @@ struct DatabaseStats
 
 Q_DECLARE_METATYPE(ThreadSummary)
 Q_DECLARE_METATYPE(MessageRef)
+Q_DECLARE_METATYPE(MessageNode)
 Q_DECLARE_METATYPE(TagChange)
 Q_DECLARE_METATYPE(DatabaseStats)

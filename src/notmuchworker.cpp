@@ -69,6 +69,54 @@ bool collectMessageIds(notmuch_database_t *db, const QString &query,
     return true;
 }
 
+/// Walks a thread's reply structure depth-first, appending each message with
+/// its depth.
+///
+/// Takes RAW notmuch_message_t*, deliberately, against the rule that every
+/// handle in this file is RAII-owned. Messages reached through a thread belong
+/// to that thread and are freed with it (notmuch.h:1637), so wrapping one in
+/// NmMessage would call notmuch_message_destroy on memory the thread frees
+/// again. The NmThread in the caller is what keeps every pointer here alive,
+/// and this must not outlive it.
+///
+/// No match-set argument, unlike loadThread. A row is drawn for every message
+/// in the thread regardless of the query: the list is where the user goes to
+/// SEE the thread's shape, and hiding replies that did not match would make the
+/// reply count disagree with the rows beneath it.
+void walkReplies(notmuch_messages_t *messages, int depth,
+                 QVector<MessageNode> *out)
+{
+    for (; notmuch_messages_valid(messages);
+           notmuch_messages_move_to_next(messages)) {
+
+        notmuch_message_t *message = notmuch_messages_get(messages);
+        if (!message)
+            continue;
+
+        MessageNode node;
+        node.messageId =
+            QString::fromUtf8(notmuch_message_get_message_id(message));
+        node.threadId =
+            QString::fromUtf8(notmuch_message_get_thread_id(message));
+        node.filePath =
+            QString::fromUtf8(notmuch_message_get_filename(message));
+        node.from =
+            QString::fromUtf8(notmuch_message_get_header(message, "from"));
+        node.subject =
+            QString::fromUtf8(notmuch_message_get_header(message, "subject"));
+        node.date =
+            QDateTime::fromSecsSinceEpoch(notmuch_message_get_date(message));
+        node.tags = tagsOf(message);
+        node.depth = depth;
+        out->append(node);
+
+        // NULL is a legitimate "no replies" here: notmuch_messages_valid
+        // accepts it and returns FALSE (notmuch.h:1630), so a leaf needs no
+        // guard of its own.
+        walkReplies(notmuch_message_get_replies(message), depth + 1, out);
+    }
+}
+
 } // namespace
 
 NotmuchWorker::NotmuchWorker(const QString &notmuchConfigPath, QObject *parent)
@@ -240,6 +288,51 @@ void NotmuchWorker::loadThread(const QString &threadId,
     }
 
     emit threadLoaded(result, generation);
+}
+
+void NotmuchWorker::loadThreadTree(const QString &threadId,
+                                   const QString &matchQuery,
+                                   quint64 generation)
+{
+    // Accepted for signature symmetry with loadThread, and unused on purpose:
+    // see walkReplies on why every message in the thread gets a row.
+    Q_UNUSED(matchQuery);
+
+    if (!openReadOnly())
+        return;
+
+    const QString query = QStringLiteral("thread:%1").arg(threadId);
+    NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+    if (!nmQuery) {
+        emit errorOccurred(
+            QStringLiteral("Cannot load thread %1").arg(threadId));
+        return;
+    }
+
+    // search_threads, not search_messages. The messages have to come from a
+    // notmuch_thread_t or notmuch_message_get_replies returns NULL for every
+    // one of them and the walk below produces a flat list at depth 0.
+    notmuch_threads_t *rawThreads = nullptr;
+    if (notmuch_query_search_threads(nmQuery.get(), &rawThreads)
+            != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(
+            QStringLiteral("Cannot search thread %1").arg(threadId));
+        return;
+    }
+    NmThreads threads(rawThreads);
+
+    QVector<MessageNode> nodes;
+    if (notmuch_threads_valid(threads.get())) {
+        // Held for the whole walk: every message pointer inside belongs to this
+        // thread and dies with it.
+        NmThread thread(notmuch_threads_get(threads.get()));
+        if (thread) {
+            walkReplies(notmuch_thread_get_toplevel_messages(thread.get()), 0,
+                        &nodes);
+        }
+    }
+
+    emit threadTreeLoaded(nodes, generation);
 }
 
 void NotmuchWorker::applyTagsToThreads(const QStringList &threadIds,

@@ -289,8 +289,10 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     qRegisterMetaType<MessageRef>();
     qRegisterMetaType<TagChange>();
     qRegisterMetaType<DatabaseStats>();
+    qRegisterMetaType<MessageNode>();
     qRegisterMetaType<QVector<ThreadSummary>>();
     qRegisterMetaType<QVector<MessageRef>>();
+    qRegisterMetaType<QVector<MessageNode>>();
 
     m_keyMap.loadDefaults();
     {

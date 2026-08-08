@@ -94,6 +94,32 @@ struct MessageNode
     }
 };
 
+/// What an action is about to touch, resolved from the selection.
+///
+/// Exists because the thread list holds two kinds of row since item 20, so a
+/// keypress alone no longer says whether it hit one message or seven. Actions
+/// take one of these rather than a bare list of thread ids, and the status bar
+/// reports it: this project's answer to that ambiguity is to make the scope
+/// visible, not to add a confirmation dialog. See CLAUDE.md on why.
+struct ActionScope
+{
+    QStringList threadIds;   ///< Whole threads to act on.
+    QStringList messageIds;  ///< Individual messages to act on.
+
+    /// Messages the action will touch in total, for the status bar. A whole
+    /// thread contributes all of its messages, a message row contributes one.
+    int messageCount = 0;
+
+    /// True when any whole thread is in scope, which drives the
+    /// "(whole thread)" suffix in the status bar.
+    bool wholeThread = false;
+
+    bool isEmpty() const
+    {
+        return threadIds.isEmpty() && messageIds.isEmpty();
+    }
+};
+
 /// One tag mutation, kept so it can be inverted for undo.
 struct TagChange
 {

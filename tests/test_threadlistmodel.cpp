@@ -32,6 +32,9 @@ private slots:
     void repliesBecomeChildRowsUnderTheirThread();
     void messageRowsShowTheirOwnSenderAndSubject();
     void reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem();
+    void scopeFollowsTheSelectedRowKind();
+    void scopeCountsEveryMessageOfAnUnexpandedThread();
+    void scopeHonoursAMixedSelectionWithoutEscalating();
     void startsEmpty();
     void accountKeysComeFromTheAccountTags();
     void accountKeysCoverAThreadSpanningTwoAccounts();
@@ -191,6 +194,86 @@ void TestThreadListModel::reloadingAThreadReplacesItsRepliesRatherThanRepeatingT
     QAbstractItemModelTester tester(
         &model, QAbstractItemModelTester::FailureReportingMode::Warning);
     Q_UNUSED(tester);
+}
+
+void TestThreadListModel::scopeFollowsTheSelectedRowKind()
+{
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("A subject"));
+    t.totalCount = 3;
+    model.appendBatch({ t });
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1) });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    const QModelIndex child = model.index(0, 0, root);
+
+    // A thread root acts on the whole thread, and reports every message it
+    // stands for so the status bar can say so.
+    const ActionScope threadScope = model.scopeFor({ root });
+    QCOMPARE(threadScope.threadIds, QStringList{ QStringLiteral("t1") });
+    QVERIFY(threadScope.messageIds.isEmpty());
+    QCOMPARE(threadScope.messageCount, 3);
+    QVERIFY(threadScope.wholeThread);
+
+    // A message row acts on that message alone.
+    const ActionScope messageScope = model.scopeFor({ child });
+    QVERIFY(messageScope.threadIds.isEmpty());
+    QCOMPARE(messageScope.messageIds,
+             QStringList{ QStringLiteral("m1@example.org") });
+    QCOMPARE(messageScope.messageCount, 1);
+    QVERIFY(!messageScope.wholeThread);
+}
+
+void TestThreadListModel::scopeCountsEveryMessageOfAnUnexpandedThread()
+{
+    // totalCount, not the loaded children. A thread that was never expanded
+    // still has all of its messages, and counting only what happens to be on
+    // screen would understate what the action is about to do.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("A subject"));
+    t.totalCount = 7;
+    model.appendBatch({ t });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    QCOMPARE(model.rowCount(root), 0);  // guard: nothing expanded
+
+    const ActionScope scope = model.scopeFor({ root });
+    QCOMPARE(scope.messageCount, 7);
+}
+
+void TestThreadListModel::scopeHonoursAMixedSelectionWithoutEscalating()
+{
+    // Selecting a thread root and an unrelated reply acts on that whole thread
+    // AND that one message. Nothing is escalated to thread scope or narrowed to
+    // message scope silently, which is the point of the scope being visible.
+    ThreadListModel model;
+    ThreadSummary t1 = makeThread(QStringLiteral("t1"), QStringLiteral("One"));
+    t1.totalCount = 2;
+    ThreadSummary t2 = makeThread(QStringLiteral("t2"), QStringLiteral("Two"));
+    t2.totalCount = 5;
+    model.appendBatch({ t1, t2 });
+
+    MessageNode reply = makeNode(QStringLiteral("m1@example.org"), 1);
+    reply.threadId = QStringLiteral("t2");
+    model.setThreadMessages(QStringLiteral("t2"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              reply });
+
+    const QModelIndex firstRoot = model.index(0, 0, QModelIndex());
+    const QModelIndex secondRoot = model.index(1, 0, QModelIndex());
+    const QModelIndex reply1 = model.index(0, 0, secondRoot);
+
+    const ActionScope scope = model.scopeFor({ firstRoot, reply1 });
+    QCOMPARE(scope.threadIds, QStringList{ QStringLiteral("t1") });
+    QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m1@example.org") });
+
+    // 2 from the whole thread plus 1 for the lone message.
+    QCOMPARE(scope.messageCount, 3);
+    QVERIFY(scope.wholeThread);
 }
 
 void TestThreadListModel::accountKeysComeFromTheAccountTags()

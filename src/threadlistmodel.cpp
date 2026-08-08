@@ -495,6 +495,42 @@ MessageNode ThreadListModel::messageAt(const QModelIndex &index) const
     return children.at(index.row());
 }
 
+ActionScope ThreadListModel::scopeFor(const QModelIndexList &selection) const
+{
+    ActionScope scope;
+
+    for (const QModelIndex &index : selection) {
+        if (isMessageRow(index)) {
+            const MessageNode node = messageAt(index);
+            if (node.messageId.isEmpty()
+                || scope.messageIds.contains(node.messageId))
+                continue;
+            scope.messageIds.append(node.messageId);
+            scope.messageCount += 1;
+            continue;
+        }
+
+        if (index.row() < 0 || index.row() >= m_threads.size())
+            continue;
+
+        const ThreadSummary &summary = m_threads.at(index.row()).summary;
+        if (scope.threadIds.contains(summary.threadId))
+            continue;
+
+        scope.threadIds.append(summary.threadId);
+
+        // totalCount, not the loaded children: a thread that was never expanded
+        // still has all of its messages, and counting only what happens to be
+        // on screen would understate what the action does. Floored at 1, since
+        // a summary with no count still stands for at least the message that
+        // produced it.
+        scope.messageCount += qMax(1, summary.totalCount);
+        scope.wholeThread = true;
+    }
+
+    return scope;
+}
+
 ThreadSummary ThreadListModel::threadAt(int row) const
 {
     if (row < 0 || row >= m_threads.size())

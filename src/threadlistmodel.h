@@ -160,6 +160,14 @@ public:
     /// is not a message row.
     MessageNode messageAt(const QModelIndex &index) const;
 
+    /// Resolves a selection into what an action should touch.
+    ///
+    /// Mixed selections are honoured as given: a thread root and an unrelated
+    /// reply act on that whole thread and that one message. Nothing is
+    /// escalated or narrowed silently, which is the point of the scope being
+    /// visible in the first place.
+    ActionScope scopeFor(const QModelIndexList &selection) const;
+
     /// The account keys behind a thread's account tags, for item 49's
     /// per-account sync.
     ///

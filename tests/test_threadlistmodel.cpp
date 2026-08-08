@@ -28,6 +28,7 @@ class TestThreadListModel : public QObject
     Q_OBJECT
 private slots:
     void messageNodeHoldsDisplayFacts();
+    void rootRowsSurviveTheTreeConversion();
     void startsEmpty();
     void accountKeysComeFromTheAccountTags();
     void accountKeysCoverAThreadSpanningTwoAccounts();
@@ -140,6 +141,39 @@ void TestThreadListModel::messageNodeHoldsDisplayFacts()
     const MessageNode fresh;
     QCOMPARE(fresh.depth, 0);
     QVERIFY(!fresh.isUnread());
+}
+
+void TestThreadListModel::rootRowsSurviveTheTreeConversion()
+{
+    // The point of this test is NOT the tree. It is that converting the base
+    // class from QAbstractTableModel changed nothing a thread row does: a table
+    // answers index() and parent() too, just trivially, and every existing test
+    // in this file is the real regression net beside it.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("A subject")) });
+
+    // A tree model reports its roots under an INVALID parent.
+    QCOMPARE(model.rowCount(QModelIndex()), 1);
+    QCOMPARE(model.columnCount(QModelIndex()), ThreadListModel::ColumnCount);
+
+    const QModelIndex root =
+        model.index(0, ThreadListModel::SubjectColumn, QModelIndex());
+    QVERIFY(root.isValid());
+    QVERIFY(!model.parent(root).isValid());
+    QCOMPARE(model.data(root, ThreadListModel::ThreadIdRole).toString(),
+             QStringLiteral("t1"));
+
+    // No children until a thread's messages are asked for. An expander drawn
+    // over a thread whose replies were never loaded would open onto nothing.
+    QCOMPARE(model.rowCount(root), 0);
+
+    // Qt's own conformance check. It walks index/parent/rowCount for
+    // consistency and catches the classic tree-model faults, such as a parent()
+    // that does not round-trip, which a hand-written assertion misses.
+    QAbstractItemModelTester tester(
+        &model, QAbstractItemModelTester::FailureReportingMode::Warning);
+    Q_UNUSED(tester);
 }
 
 void TestThreadListModel::startsEmpty()

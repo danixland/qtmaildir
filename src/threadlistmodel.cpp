@@ -99,30 +99,87 @@ QColor ThreadListModel::readColour()
 }
 
 ThreadListModel::ThreadListModel(QObject *parent)
-    : QAbstractTableModel(parent)
+    : QAbstractItemModel(parent)
 {
+}
+
+QModelIndex ThreadListModel::index(int row, int column,
+                                   const QModelIndex &parent) const
+{
+    if (!hasIndex(row, column, parent))
+        return {};
+
+    // A root row. -1 as the internal id marks it, so parent() can tell the two
+    // kinds apart without storing a node pointer per index.
+    if (!parent.isValid())
+        return createIndex(row, column, static_cast<quintptr>(-1));
+
+    // A child row: the internal id is its parent's row, which is all parent()
+    // needs to rebuild the thread index.
+    return createIndex(row, column, static_cast<quintptr>(parent.row()));
+}
+
+QModelIndex ThreadListModel::parent(const QModelIndex &child) const
+{
+    if (!child.isValid())
+        return {};
+
+    const quintptr id = child.internalId();
+    if (id == static_cast<quintptr>(-1))
+        return {};
+
+    // Column 0, always. Qt requires a parent index in the first column, and
+    // returning the child's own column instead breaks selection and the
+    // expander, silently and only for the other columns.
+    return createIndex(static_cast<int>(id), 0, static_cast<quintptr>(-1));
 }
 
 int ThreadListModel::rowCount(const QModelIndex &parent) const
 {
-    return parent.isValid() ? 0 : m_threads.size();
+    if (!parent.isValid())
+        return m_threads.size();
+
+    // Only a thread row has children, and only in its first column. A tree
+    // takes one set of children per row; offering them under every column makes
+    // the view draw an expander in each one.
+    if (parent.parent().isValid() || parent.column() != 0)
+        return 0;
+
+    if (parent.row() < 0 || parent.row() >= m_threads.size())
+        return 0;
+
+    return m_threads.at(parent.row()).children.size();
 }
 
 int ThreadListModel::columnCount(const QModelIndex &parent) const
 {
-    return parent.isValid() ? 0 : ColumnCount;
+    // Every level has the same columns. Returning 0 for a valid parent, as the
+    // table version did, would give message rows no columns at all and render
+    // them blank.
+    Q_UNUSED(parent);
+    return ColumnCount;
 }
 
 QVariant ThreadListModel::data(const QModelIndex &index, int role) const
 {
     // A stale index from a view that has not caught up with a clear() can carry
     // any row or column, so both bounds are checked rather than trusted.
-    if (!index.isValid() || index.row() < 0 || index.row() >= m_threads.size()
+    if (!index.isValid() || index.row() < 0
         || index.column() < 0 || index.column() >= ColumnCount) {
         return {};
     }
 
-    const ThreadSummary &thread = m_threads.at(index.row());
+    // Message rows are handled in Task 4; until then only thread rows exist and
+    // a child index cannot be produced. The bound is checked against the thread
+    // list only after establishing this IS a thread row, since a child row's
+    // number indexes its siblings, not m_threads.
+    if (index.parent().isValid())
+        return {};
+
+    if (index.row() >= m_threads.size())
+        return {};
+
+    const ThreadSummary &thread = m_threads.at(index.row()).summary;
 
     if (role == ThreadIdRole)
         return thread.threadId;
@@ -310,7 +367,8 @@ void ThreadListModel::appendBatch(const QVector<ThreadSummary> &batch)
 
     const int first = m_threads.size();
     beginInsertRows({}, first, first + batch.size() - 1);
-    m_threads.append(batch);
+    for (const ThreadSummary &summary : batch)
+        m_threads.append(ThreadNode{ summary, {}, false });
     endInsertRows();
 }
 
@@ -325,13 +383,14 @@ ThreadSummary ThreadListModel::threadAt(int row) const
 {
     if (row < 0 || row >= m_threads.size())
         return {};
-    return m_threads.at(row);
+    return m_threads.at(row).summary;
 }
 
 QStringList ThreadListModel::accountKeysForThread(const QString &threadId) const
 {
     QStringList keys;
-    for (const ThreadSummary &thread : m_threads) {
+    for (const ThreadNode &node : m_threads) {
+        const ThreadSummary &thread = node.summary;
         if (thread.threadId != threadId)
             continue;
         for (const QString &tag : thread.tags) {
@@ -351,10 +410,10 @@ void ThreadListModel::applyTagChange(const QString &threadId,
                                      const QStringList &removed)
 {
     for (int row = 0; row < m_threads.size(); ++row) {
-        if (m_threads.at(row).threadId != threadId)
+        if (m_threads.at(row).summary.threadId != threadId)
             continue;
 
-        QStringList &tags = m_threads[row].tags;
+        QStringList &tags = m_threads[row].summary.tags;
         for (const QString &tag : removed)
             tags.removeAll(tag);
         for (const QString &tag : added) {

@@ -70,6 +70,13 @@ public slots:
     void loadThreadTree(const QString &threadId, const QString &matchQuery,
                         quint64 generation);
 
+    /// Loads ONE message, for a message row selected in the list.
+    ///
+    /// Emits messageLoaded with an empty vector when the id is unknown, which
+    /// is an ordinary race after a reindex rather than an error worth
+    /// reporting.
+    void loadMessage(const QString &messageId, quint64 generation);
+
     /// Applies tag changes. Opens the database read-write, applies, and closes
     /// immediately: notmuch's write lock is exclusive process-wide, so holding
     /// it would block the user's cron `notmuch new`.
@@ -117,6 +124,7 @@ signals:
     void threadLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void threadTreeLoaded(const QVector<MessageNode> &nodes,
                           quint64 generation);
+    void messageLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void tagsApplied(const TagChange &change);
     void allTagsReady(const QStringList &tags, quint64 generation);
 

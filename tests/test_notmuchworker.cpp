@@ -58,6 +58,8 @@ private slots:
     void requestAllTagsReturnsSortedTags();
     void requestAllTagsOnUnreadableConfigEmitsError();
 
+    void loadMessageReturnsOnlyThatMessage();
+    void loadMessageOnAnUnknownIdReturnsNothing();
     void loadThreadTreeReportsReplyDepth();
     void loadThreadTreeCarriesTheFactsARowNeeds();
 
@@ -159,6 +161,42 @@ QStringList TestNotmuchWorker::tagsOf(const QString &messageId)
             return m.tags;
     }
     return {};
+}
+
+void TestNotmuchWorker::loadMessageReturnsOnlyThatMessage()
+{
+    // a2 is a reply in a two-message thread. Selecting a reply row must render
+    // that message alone; loadThread would hand back the whole thread and the
+    // pane would show the conversation the user was trying to look inside.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy loaded(&worker, &NotmuchWorker::messageLoaded);
+    worker.loadMessage(QStringLiteral("a2@example.org"), 1);
+
+    QCOMPARE(loaded.count(), 1);
+    const auto messages = loaded.first().at(0).value<QVector<MessageRef>>();
+
+    QCOMPARE(messages.size(), 1);
+    QCOMPARE(messages.first().messageId, QStringLiteral("a2@example.org"));
+    QVERIFY(!messages.first().filePath.isEmpty());
+
+    // matched, so the pane renders it expanded rather than as a stub. The user
+    // asked for this message by clicking it, which is as matched as it gets.
+    QVERIFY(messages.first().matched);
+}
+
+void TestNotmuchWorker::loadMessageOnAnUnknownIdReturnsNothing()
+{
+    // Empty rather than an error: a stale row after a reindex is an ordinary
+    // race, not a failure worth a message in the status bar.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy loaded(&worker, &NotmuchWorker::messageLoaded);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.loadMessage(QStringLiteral("nonexistent@example.org"), 1);
+
+    QCOMPARE(loaded.count(), 1);
+    QVERIFY(loaded.first().at(0).value<QVector<MessageRef>>().isEmpty());
+    QCOMPARE(errors.count(), 0);
 }
 
 void TestNotmuchWorker::loadThreadTreeReportsReplyDepth()

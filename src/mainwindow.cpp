@@ -857,6 +857,7 @@ void MainWindow::registerActions()
         // thread straight back, which is the queued-reply race documented in
         // CLAUDE.md.
         m_currentThreadId.clear();
+        m_currentMessageId.clear();
         m_messageView->clear();
         showPlaceholderPane();
         m_markReadTimer->stop();
@@ -890,6 +891,7 @@ void MainWindow::registerActions()
         m_threadView->setCurrentIndex(QModelIndex());
 
         m_currentThreadId.clear();
+        m_currentMessageId.clear();
         m_messageView->clear();
         showPlaceholderPane();
         m_markReadTimer->stop();
@@ -1257,6 +1259,8 @@ void MainWindow::wireWorker()
             this, &MainWindow::onQueryFinished);
     connect(m_worker, &NotmuchWorker::threadTreeLoaded,
             this, &MainWindow::onThreadTreeLoaded);
+    connect(m_worker, &NotmuchWorker::messageLoaded,
+            this, &MainWindow::onMessageLoaded);
     connect(m_worker, &NotmuchWorker::threadLoaded,
             this, &MainWindow::onThreadLoaded);
     connect(m_worker, &NotmuchWorker::errorOccurred,
@@ -1580,6 +1584,7 @@ void MainWindow::onSelectionChanged()
     m_markReadTimer->stop();
     m_markReadThreadId.clear();
     m_currentThreadId.clear();
+    m_currentMessageId.clear();
     m_messageView->clear();
     showPlaceholderPane();
 }
@@ -1611,12 +1616,39 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
         m_markReadTimer->stop();
         m_markReadThreadId.clear();
         m_currentThreadId.clear();
+        m_currentMessageId.clear();
         m_messageView->clear();
         showPlaceholderPane();
         return;
     }
 
+    // A message row renders that message ALONE. Checked before threadAt(),
+    // which takes a top-level row number: a child's row number indexes its
+    // siblings, so passing it here would silently load whichever thread happens
+    // to sit at that position in the list.
+    if (m_model->isMessageRow(current)) {
+        const MessageNode node = m_model->messageAt(current);
+        if (node.messageId.isEmpty())
+            return;
+
+        // No mark-read timer for a message row in this pass. Marking one
+        // message of a thread read is a per-message tag write, and the
+        // pending-edit map is keyed by thread; item 28 is the record of what
+        // happens when that count goes wrong.
+        m_markReadTimer->stop();
+        m_markReadThreadId.clear();
+
+        m_currentThreadId.clear();
+        m_currentMessageId = node.messageId;
+        m_messageView->setTags(node.tags);
+        QMetaObject::invokeMethod(m_worker, "loadMessage", Qt::QueuedConnection,
+                                  Q_ARG(QString, node.messageId),
+                                  Q_ARG(quint64, m_generation));
+        return;
+    }
+
     const ThreadSummary thread = m_model->threadAt(current.row());
+    m_currentMessageId.clear();
     m_currentThreadId = thread.threadId;
     m_messageView->setTags(thread.tags);
     scheduleMarkRead(thread);
@@ -1624,6 +1656,26 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
                               Q_ARG(QString, m_currentThreadId),
                               Q_ARG(QString, m_lastQuery),
                               Q_ARG(quint64, m_generation));
+}
+
+void MainWindow::onMessageLoaded(const QVector<MessageRef> &messages,
+                                 quint64 generation)
+{
+    // The same two guards onThreadLoaded carries. A stale generation means the
+    // query moved on, and a reply landing after the selection grew past one row
+    // would paint a message back over a deliberately blanked pane.
+    if (generation != m_generation || messages.isEmpty())
+        return;
+    if (m_threadView->selectionModel()->selectedRows().size() > 1)
+        return;
+
+    // A third guard this one needs and onThreadLoaded does not: a reply that
+    // lands after the selection moved to a THREAD row would render one message
+    // where the whole conversation belongs.
+    if (m_currentMessageId.isEmpty())
+        return;
+
+    onThreadLoaded(messages, generation);
 }
 
 void MainWindow::onThreadExpanded(const QModelIndex &index)

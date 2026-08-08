@@ -96,6 +96,7 @@ private slots:
     void noTagStripIsPaintedUnderAMessageRow();
     void replyRowsKeepTheirTextUnderTheThreadLine();
     void clickingTheExpanderTogglesTheThread();
+    void selectingAMessageRowTargetsThatMessageNotItsThread();
     void markAllReadIsDisabledUntilTheQueryFinishes();
     void markAllReadActsOnEveryRowAndUndoesInOneStep();
     void markAllReadDoesNothingWhenNothingIsUnread();
@@ -661,6 +662,77 @@ void TestMainWindow::aThreadWithRepliesDrawsAVisibleExpander()
     // The control must have none, or the count above is measuring something
     // every row draws.
     QCOMPARE(control, 0);
+}
+
+void TestMainWindow::selectingAMessageRowTargetsThatMessageNotItsThread()
+{
+    // test_mainwindow has no worker (backlog item 36), so this cannot assert on
+    // what the pane renders. What it CAN assert is the decision the UI makes:
+    // a message row must stop tracking a current thread, or a reply arriving
+    // for either kind of selection cannot tell which one it belongs to.
+    //
+    // The trap this covers is specific. threadAt() takes a TOP-LEVEL row
+    // number, and a child's row number indexes its siblings, so handing a
+    // message row's number to it loads whichever thread happens to sit at that
+    // position in the list. Row 0 under a thread is a plausible-looking wrong
+    // answer, which is why the fixture puts the reply under the SECOND thread.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    ThreadSummary first = makeThread(QStringLiteral("t1"), {});
+    ThreadSummary second = makeThread(QStringLiteral("t2"), {});
+    second.totalCount = 2;
+    model->appendBatch({ first, second });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("t2");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("t2");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("t2"), { root, reply });
+
+    window.resize(1400, 300);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    // Start on a thread row, so the transition to a message row is what is
+    // being observed rather than the initial state.
+    const QModelIndex threadRow = model->index(1, 0, QModelIndex());
+    selectThreadRow(view, 1);
+    QApplication::processEvents();
+    QCOMPARE(window.currentThreadId(), QStringLiteral("t2"));
+
+    view->expand(threadRow);
+    QApplication::processEvents();
+
+    const QModelIndex messageRow = model->index(0, 0, threadRow);
+    QVERIFY(messageRow.isValid());
+    QVERIFY2(model->isMessageRow(messageRow),
+             "the fixture did not produce a message row, so this test would "
+             "assert nothing about one");
+
+    view->selectionModel()->select(
+        messageRow,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(messageRow);
+    QApplication::processEvents();
+
+    // The thread is no longer what the pane is about. Left set, a late
+    // loadThread reply would repaint the whole conversation over the single
+    // message the user asked for.
+    QVERIFY2(window.currentThreadId().isEmpty(),
+             qPrintable(QStringLiteral("selecting a reply left the current "
+                                       "thread set to '%1': the pane is still "
+                                       "tracking the conversation")
+                            .arg(window.currentThreadId())));
 }
 
 void TestMainWindow::clickingTheExpanderTogglesTheThread()

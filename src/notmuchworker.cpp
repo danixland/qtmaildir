@@ -335,6 +335,54 @@ void NotmuchWorker::loadThreadTree(const QString &threadId,
     emit threadTreeLoaded(nodes, generation);
 }
 
+void NotmuchWorker::loadMessage(const QString &messageId, quint64 generation)
+{
+    if (!openReadOnly())
+        return;
+
+    // id: is an exact-match prefix, and the id is quoted because a message id
+    // can legitimately contain characters notmuch's parser would otherwise read
+    // as query syntax.
+    const QString query = QStringLiteral("id:\"%1\"").arg(messageId);
+    NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+    if (!nmQuery) {
+        emit errorOccurred(
+            QStringLiteral("Cannot load message %1").arg(messageId));
+        return;
+    }
+
+    notmuch_messages_t *rawMessages = nullptr;
+    if (notmuch_query_search_messages(nmQuery.get(), &rawMessages)
+            != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(
+            QStringLiteral("Cannot search message %1").arg(messageId));
+        return;
+    }
+    NmMessages messages(rawMessages);
+
+    QVector<MessageRef> result;
+    if (notmuch_messages_valid(messages.get())) {
+        NmMessage message(notmuch_messages_get(messages.get()));
+        if (message) {
+            MessageRef ref;
+            ref.messageId = QString::fromUtf8(
+                notmuch_message_get_message_id(message.get()));
+            ref.filePath = QString::fromUtf8(
+                notmuch_message_get_filename(message.get()));
+            ref.tags = tagsOf(message.get());
+
+            // Always matched: the user asked for this message by clicking its
+            // row, so rendering it as a stub would answer the wrong question.
+            ref.matched = true;
+            result.append(ref);
+        }
+    }
+
+    // Emitted even when empty, so the UI's handler runs and can decide what to
+    // do rather than waiting for a reply that never comes.
+    emit messageLoaded(result, generation);
+}
+
 void NotmuchWorker::applyTagsToThreads(const QStringList &threadIds,
                                        const QStringList &add,
                                        const QStringList &remove,

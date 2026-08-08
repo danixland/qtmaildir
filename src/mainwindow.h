@@ -171,6 +171,10 @@ private slots:
     /// Fills in the expanded thread's message rows.
     void onThreadTreeLoaded(const QVector<MessageNode> &nodes,
                             quint64 generation);
+
+    /// Renders the single message a message row asked for.
+    void onMessageLoaded(const QVector<MessageRef> &messages,
+                         quint64 generation);
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
 
@@ -502,6 +506,11 @@ private:
     bool m_queryComplete = false;
     QString m_lastQuery;
     QString m_currentThreadId;
+
+    /// The message a MESSAGE row is showing, empty whenever the pane holds a
+    /// whole thread. The two are mutually exclusive and each clears the other,
+    /// so a late reply can tell which kind of selection it belongs to.
+    QString m_currentMessageId;
 
     /// The selection count last written to the status bar, so it can be taken
     /// back without clobbering a message some other action put there.

@@ -27,6 +27,7 @@ class TestThreadListModel : public QObject
 {
     Q_OBJECT
 private slots:
+    void messageNodeHoldsDisplayFacts();
     void startsEmpty();
     void accountKeysComeFromTheAccountTags();
     void accountKeysCoverAThreadSpanningTwoAccounts();
@@ -114,6 +115,31 @@ void TestThreadListModel::accountKeysAreEmptyForAnUnknownThread()
                                    QStringLiteral("Hi")) });
 
     QVERIFY(model.accountKeysForThread(QStringLiteral("nope")).isEmpty());
+}
+
+void TestThreadListModel::messageNodeHoldsDisplayFacts()
+{
+    // A message ROW has to be drawn without opening the message, so the display
+    // facts live on the node itself. MessageRef, which exists for rendering a
+    // thread into the pane, carries none of them.
+    MessageNode node;
+    node.messageId = QStringLiteral("id@example.org");
+    node.from = QStringLiteral("A Sender <sender@example.org>");
+    node.subject = QStringLiteral("Re: a subject");
+    node.date = QDateTime::fromSecsSinceEpoch(1000);
+    node.depth = 2;
+    node.tags = QStringList{ QStringLiteral("unread") };
+
+    QCOMPARE(node.depth, 2);
+    QVERIFY(node.isUnread());
+    QCOMPARE(node.from, QStringLiteral("A Sender <sender@example.org>"));
+    QCOMPARE(node.subject, QStringLiteral("Re: a subject"));
+
+    // Depth 0 is the thread's first message, which the ROOT row stands for.
+    // Defaulting to 0 rather than 1 keeps "is this the root" a plain check.
+    const MessageNode fresh;
+    QCOMPARE(fresh.depth, 0);
+    QVERIFY(!fresh.isUnread());
 }
 
 void TestThreadListModel::startsEmpty()

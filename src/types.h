@@ -63,6 +63,37 @@ struct MessageRef
     bool matched = true;
 };
 
+/// One message as a row in the thread list.
+///
+/// Separate from MessageRef, which exists for RENDERING a thread and carries
+/// only what the message pane needs. A row has to be drawn without opening the
+/// message at all, so the display facts live here.
+struct MessageNode
+{
+    QString messageId;
+    QString threadId;  ///< The thread this message belongs to.
+    QString from;
+    QString subject;
+    QDateTime date;
+    QStringList tags;
+    QString filePath;
+
+    /// Reply depth within the thread. 0 is the thread's first message, which
+    /// occupies the ROOT row rather than a child row: the user's model is
+    /// "N replies", so a thread of 7 shows 1 root and 6 descendants.
+    int depth = 0;
+
+    bool isUnread() const { return tags.contains(QStringLiteral("unread")); }
+    bool isFlagged() const { return tags.contains(QStringLiteral("flagged")); }
+
+    /// notmuch applies "attachment" while indexing, so this needs no MIME
+    /// parsing, exactly as on ThreadSummary.
+    bool hasAttachment() const
+    {
+        return tags.contains(QStringLiteral("attachment"));
+    }
+};
+
 /// One tag mutation, kept so it can be inverted for undo.
 struct TagChange
 {

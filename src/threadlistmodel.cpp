@@ -75,6 +75,46 @@ QString ThreadListModel::flagGlyph()
     return glyph;
 }
 
+QColor ThreadListModel::replyBackground()
+{
+    // Mixed from the palette rather than fixed, for the same reason as
+    // readColour: a tint that reads as "grouped" on a light theme is either
+    // invisible or muddy on a dark one.
+    //
+    // Toward Text rather than toward a hue, so it darkens on a light theme and
+    // lightens on a dark one without picking a colour that means something
+    // else. 0.07 is deliberately near the threshold of noticing: it is a
+    // grouping cue sitting beside the deleted and spam fills, which carry
+    // actual meaning and must stay the loudest thing in the list.
+    const QPalette palette = QGuiApplication::palette();
+    const QColor base = palette.color(QPalette::Base);
+    const QColor text = palette.color(QPalette::Text);
+
+    constexpr qreal kWeight = 0.07;
+    const qreal inverse = 1.0 - kWeight;
+    return QColor::fromRgbF(
+        text.redF() * kWeight + base.redF() * inverse,
+        text.greenF() * kWeight + base.greenF() * inverse,
+        text.blueF() * kWeight + base.blueF() * inverse);
+}
+
+QColor ThreadListModel::threadLineColour()
+{
+    // Stronger than the tint, weaker than the text: the line is structure, so
+    // it has to be followable down a long expansion without competing with the
+    // senders beside it.
+    const QPalette palette = QGuiApplication::palette();
+    const QColor base = palette.color(QPalette::Base);
+    const QColor text = palette.color(QPalette::Text);
+
+    constexpr qreal kWeight = 0.35;
+    const qreal inverse = 1.0 - kWeight;
+    return QColor::fromRgbF(
+        text.redF() * kWeight + base.redF() * inverse,
+        text.greenF() * kWeight + base.greenF() * inverse,
+        text.blueF() * kWeight + base.blueF() * inverse);
+}
+
 QColor ThreadListModel::readColour()
 {
     // Derived from the palette, never hardcoded: a fixed grey that reads as
@@ -248,9 +288,29 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             default:
                 return {};
             }
+        case Qt::BackgroundRole:
+            // Tinted, so an expanded thread reads as one block rather than as
+            // more table rows. Applied per cell here; ThreadListView fills the
+            // same colour across the strip's band so the row does not end up
+            // half tinted.
+            return replyBackground();
+        case Qt::FontRole: {
+            // A size down from the thread rows, so a thread reads as the
+            // heading and its replies as the contents. Never bold: an unread
+            // reply is still subordinate to the thread it belongs to, and the
+            // thread row above already carries the unread cue for the whole
+            // conversation.
+            QFont font = QGuiApplication::font();
+            if (font.pointSize() > 0)
+                font.setPointSize(qMax(6, font.pointSize() - 1));
+            else if (font.pixelSize() > 0)
+                font.setPixelSize(qMax(8, font.pixelSize() - 2));
+            return font;
+        }
         case Qt::ForegroundRole:
-            // Same rule as a thread row: read recedes, unread stays at the
-            // palette's own colour.
+            // Dimmed whether read or not, for the same reason as the font: a
+            // reply is subordinate content. An unread one is left undimmed so
+            // it can still be found.
             return node.isUnread() ? QVariant() : QVariant(readColour());
         default:
             return {};

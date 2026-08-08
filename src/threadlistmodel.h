@@ -120,6 +120,17 @@ public:
     static QColor deletedColour();
     static QColor spamColour();
 
+    /// Background for a reply row, so an expanded thread reads as one block
+    /// rather than as more table rows.
+    ///
+    /// Derived from the palette and deliberately subtle: it marks a grouping,
+    /// and a tint strong enough to notice on its own would compete with the
+    /// deleted and spam row colours, which carry real meaning.
+    static QColor replyBackground();
+
+    /// The line drawn down the left of an expanded thread's replies.
+    static QColor threadLineColour();
+
     /// The dimmed text colour a READ thread carries.
     ///
     /// Unread rows are left at the palette's own colour and read ones recede,

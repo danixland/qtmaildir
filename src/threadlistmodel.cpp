@@ -594,6 +594,17 @@ MessageNode ThreadListModel::messageAt(const QModelIndex &index) const
     return children.at(index.row());
 }
 
+QString ThreadListModel::threadIdForMessage(const QString &messageId) const
+{
+    for (const ThreadNode &node : m_threads) {
+        for (const MessageNode &child : node.children) {
+            if (child.messageId == messageId)
+                return node.summary.threadId;
+        }
+    }
+    return {};
+}
+
 ActionScope ThreadListModel::scopeFor(const QModelIndexList &selection) const
 {
     ActionScope scope;

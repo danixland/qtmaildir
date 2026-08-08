@@ -1607,33 +1607,82 @@ void MainWindow::showThreadContextMenu(const QPoint &pos)
 
 void MainWindow::onSelectionChanged()
 {
-    const int selected = m_threadView->selectionModel()->selectedRows().size();
-    if (selected <= 1) {
-        // Clearing the count here would wipe whatever the last action reported
-        // ("Archive: 3 threads"), which is the more useful message once the
-        // selection is gone. Only a count this function wrote is taken back.
+    const QModelIndexList rows = m_threadView->selectionModel()->selectedRows();
+    const int selected = rows.size();
+    if (selected == 1) {
+        // One row selected. With two kinds of row this is exactly where the
+        // scope became ambiguous: a thread root stands for every message in it,
+        // a message row for one, and the keypress looks identical. Naming it
+        // here is what this project does instead of a confirmation dialog,
+        // which CLAUDE.md rules out for tag mutations.
+        const ActionScope scope = m_model->scopeFor(rows);
+
+        if (scope.wholeThread) {
+            m_selectionMessage =
+                tr("1 thread selected (%n message(s))", "", scope.messageCount);
+            m_statusLabel->setText(m_selectionMessage);
+            m_statusTimer->stop();
+            m_transientMessage.clear();
+        } else {
+            // Reading one message is not a bulk action and gets no count.
+            if (m_statusLabel->text() == m_selectionMessage)
+                m_statusLabel->clear();
+            m_selectionMessage.clear();
+        }
+
+        // Collapsing a multi-row selection back to one row has to load that row
+        // here, and cannot be left to onThreadSelected: currentRowChanged is
+        // emitted BEFORE the selection model is updated (verified against
+        // Qt 6.11), so that handler still sees the old count and returns
+        // without loading anything.
+        //
+        // Compared per row kind. A message row's row number indexes its
+        // siblings, so threadAt() on one answers about an unrelated thread and
+        // the comparison below would be against the wrong id.
+        const QModelIndex current = m_threadView->currentIndex();
+        if (current.isValid()) {
+            const bool changed =
+                m_model->isMessageRow(current)
+                    ? m_model->messageAt(current).messageId != m_currentMessageId
+                    : m_model->threadAt(current.row()).threadId
+                          != m_currentThreadId;
+            if (changed)
+                onThreadSelected(current, QModelIndex());
+        }
+        return;
+    }
+
+    if (selected < 1) {
+        // Nothing selected. Clearing unconditionally would wipe whatever the
+        // last action reported ("Archive: 3 threads"), which is the more useful
+        // message once the selection is gone, so only a count this function
+        // wrote is taken back.
         if (m_statusLabel->text() == m_selectionMessage)
             m_statusLabel->clear();
         m_selectionMessage.clear();
-
-        // Collapsing a multi-row selection back to one row has to load that
-        // row here, and cannot be left to onThreadSelected. currentRowChanged
-        // is emitted BEFORE the selection model is updated (verified against
-        // Qt 6.11), so when a click collapses three rows to one, that handler
-        // still sees three selected, takes the multi-select branch and returns
-        // without loading anything. Only this signal sees the real count.
-        const QModelIndex current = m_threadView->currentIndex();
-        if (current.isValid()
-            && m_model->threadAt(current.row()).threadId != m_currentThreadId) {
-            onThreadSelected(current, QModelIndex());
-        }
         return;
     }
 
     // The count is the part that actually teaches multi-select: it acknowledges
     // the selection while it is being built, rather than only after an action
     // has already been applied to it.
-    m_selectionMessage = tr("%n thread(s) selected", "", selected);
+    //
+    // Reported per row kind rather than as a bare row count, so a mixed
+    // selection says what it will really touch instead of calling three replies
+    // "3 threads".
+    const ActionScope scope = m_model->scopeFor(rows);
+    if (!scope.threadIds.isEmpty() && scope.messageIds.isEmpty()) {
+        m_selectionMessage =
+            tr("%n thread(s) selected (%1 messages)", "", scope.threadIds.size())
+                .arg(scope.messageCount);
+    } else if (scope.threadIds.isEmpty()) {
+        m_selectionMessage =
+            tr("%n message(s) selected", "", scope.messageIds.size());
+    } else {
+        m_selectionMessage =
+            tr("%n thread(s) and %1 message(s) selected", "",
+               scope.threadIds.size()).arg(scope.messageIds.size());
+    }
     m_statusLabel->setText(m_selectionMessage);
 
     // State, not an event: it must persist while the selection does. Cancel any
@@ -2457,20 +2506,83 @@ void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,
     if (rows.isEmpty())
         return;
 
-    QStringList threadIds;
-    threadIds.reserve(rows.size());
-    for (const QModelIndex &index : rows)
-        threadIds.append(m_model->threadAt(index.row()).threadId);
+    // Resolved through the model rather than by mapping rows to threads here.
+    // A message row's row number indexes its siblings, so the old
+    // threadAt(index.row()) mapping silently acted on whichever thread sat at
+    // that position in the list.
+    const ActionScope scope = m_model->scopeFor(rows);
+    if (scope.isEmpty())
+        return;
 
-    sendThreadTagChange(threadIds, add, remove, description);
+    if (!scope.threadIds.isEmpty()) {
+        sendThreadTagChange(scope.threadIds, add, remove, description);
 
-    // Pushed for undo. The inverse re-resolves the same threads, so it works
-    // whether or not those rows are still selected.
-    m_undoStack.push(new ThreadTagCommand(this, threadIds, add, remove,
-                                          description));
+        // Pushed for undo. The inverse re-resolves the same threads, so it
+        // works whether or not those rows are still selected.
+        m_undoStack.push(new ThreadTagCommand(this, scope.threadIds, add,
+                                              remove, description));
+    }
 
+    if (!scope.messageIds.isEmpty()) {
+        sendMessageTagChange(scope.messageIds, add, remove, description);
+        m_undoStack.push(new MessageTagCommand(this, scope.messageIds, add,
+                                               remove, description));
+    }
+
+    // The scope named after the fact, since the selection may well be gone by
+    // the time the user reads it. This is what stands in for the confirmation
+    // dialog CLAUDE.md rules out: undo is the safety net, and undo is only
+    // usable if the user can tell that something larger than they meant has
+    // just happened.
     showTransientStatus(
-        tr("%1: %n thread(s)", "", threadIds.size()).arg(description));
+        scope.wholeThread
+            ? tr("%1: %n message(s) (whole thread)", "", scope.messageCount)
+                  .arg(description)
+            : tr("%1: %n message(s)", "", scope.messageCount).arg(description));
+}
+
+void MainWindow::sendMessageTagChange(const QStringList &messageIds,
+                                      const QStringList &add,
+                                      const QStringList &remove,
+                                      const QString &description)
+{
+    if (messageIds.isEmpty())
+        return;
+
+    // No optimistic model update. applyTagChange is keyed by THREAD and would
+    // repaint the whole row as though every message in it had changed, which
+    // for a one-message edit is a lie the user would see and then watch
+    // silently correct itself on the next query.
+
+    // The accounts this touches, resolved through the containing threads: the
+    // account is a property of the thread, and the sync needs the channel
+    // whether one message moved or seven.
+    for (const QString &messageId : messageIds) {
+        const QString threadId = m_model->threadIdForMessage(messageId);
+        if (threadId.isEmpty())
+            continue;
+        for (const QString &key : m_model->accountKeysForThread(threadId))
+            m_editedAccounts.insert(key);
+    }
+
+    // Held during a sync for exactly the reason the thread path is: the
+    // worker's read-write open BLOCKS on notmuch's exclusive lock rather than
+    // failing, so sending now would freeze the worker for the rest of the run.
+    if (aSyncHoldsTheWriteLock()) {
+        m_heldEdits.append(HeldEdit{
+            {}, TagChange{ messageIds, add, remove, description } });
+        m_statusLabel->setText(
+            tr("A sync is running; your change will be applied when it "
+               "finishes."));
+        updatePendingIndicator();
+        return;
+    }
+
+    m_pendingThreadIds.clear();
+    m_pendingChange = TagChange{ messageIds, add, remove, description };
+
+    QMetaObject::invokeMethod(m_worker, "applyTags", Qt::QueuedConnection,
+                              Q_ARG(TagChange, m_pendingChange));
 }
 
 void MainWindow::sendThreadTagChange(const QStringList &threadIds,

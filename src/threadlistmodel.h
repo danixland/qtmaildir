@@ -18,16 +18,23 @@
 
 #pragma once
 
-#include <QAbstractTableModel>
+#include <QAbstractItemModel>
 #include <QColor>
 #include <QVector>
 
 #include "tagcolors.h"
 #include "types.h"
 
-/// Table model over query results, filled in batches so a large query paints
+/// Tree model over query results, filled in batches so a large query paints
 /// its first screenful immediately.
-class ThreadListModel : public QAbstractTableModel
+///
+/// A tree rather than a table since item 20: a thread's replies are child rows
+/// under it. The tree is at most two levels deep in the MODEL (a thread, then
+/// its messages) even though the messages carry a reply depth of their own; the
+/// visual nesting beyond the first level comes from that depth, not from
+/// further parent-child structure. A deeper model would buy nothing and make
+/// every index calculation recursive.
+class ThreadListModel : public QAbstractItemModel
 {
     Q_OBJECT
 public:
@@ -109,6 +116,10 @@ public:
     /// Without one, chips fall back to a colour generated from the tag name.
     void setTagColors(const TagColors *colours) { m_tagColors = colours; }
 
+    QModelIndex index(int row, int column,
+                      const QModelIndex &parent = {}) const override;
+    QModelIndex parent(const QModelIndex &child) const override;
+
     int rowCount(const QModelIndex &parent = {}) const override;
     int columnCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
@@ -137,6 +148,24 @@ public:
                         const QStringList &removed);
 
 private:
-    QVector<ThreadSummary> m_threads;
+    /// One thread root and the message rows expanded under it.
+    ///
+    /// Children live beside the summary rather than in a separate map keyed by
+    /// thread id, so a row and its expansion are appended, cleared and
+    /// destroyed together. The model is rebuilt wholesale on every query, so
+    /// nothing here has to survive a reset.
+    struct ThreadNode
+    {
+        ThreadSummary summary;
+        QVector<MessageNode> children;  ///< Empty until the thread is expanded.
+
+        /// Distinguishes "this thread has no replies" from "its replies have
+        /// not been asked for yet". Without it an expander would be drawn over
+        /// every thread, including the ones that turn out to be single
+        /// messages.
+        bool loaded = false;
+    };
+
+    QVector<ThreadNode> m_threads;
     const TagColors *m_tagColors = nullptr;
 };

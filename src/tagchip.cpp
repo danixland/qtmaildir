@@ -156,6 +156,51 @@ void SubjectDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
 
     const QString account =
         index.data(ThreadListModel::AccountLabelRole).toString();
+
+    // The expander is drawn HERE and not in QTreeView::drawBranches, which is
+    // the obvious place and does not work. drawBranches runs before the row's
+    // cells, so with the expander column set to the subject the delegate's own
+    // background fills straight over it: measured at 8 surviving pixels of a
+    // 60-pixel triangle, which is exactly the near-invisible dot that made this
+    // override necessary in the first place. The delegate owns this cell and
+    // paints after the background, so it is the only place the glyph survives.
+    const auto drawExpander = [&](const QRect &cell) {
+        if (!index.data(ThreadListModel::HasRepliesRole).toBool())
+            return;
+
+        const int size = qMax(7, qMin(cell.height() / 3, 10));
+        const QPoint centre(cell.left() + size,
+                            cell.top() + subjectBandHeight(option) / 2
+                                + kRowPadding);
+
+        QPolygon triangle;
+        if (option.state & QStyle::State_Open) {
+            triangle << QPoint(centre.x() - size / 2, centre.y() - size / 4)
+                     << QPoint(centre.x() + size / 2, centre.y() - size / 4)
+                     << QPoint(centre.x(), centre.y() + size / 2);
+        } else {
+            triangle << QPoint(centre.x() - size / 4, centre.y() - size / 2)
+                     << QPoint(centre.x() + size / 2, centre.y())
+                     << QPoint(centre.x() - size / 4, centre.y() + size / 2);
+        }
+
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setPen(Qt::NoPen);
+        // From the palette, so it survives a theme change, and undimmed: this
+        // is the only cue that a thread can be opened at all.
+        painter->setBrush(option.palette.color(QPalette::Text));
+        painter->drawPolygon(triangle);
+        painter->restore();
+    };
+    // Room for the expander in front of whatever follows, on a thread row that
+    // has one. Reserved before either branch draws, so the chip and the bare
+    // subject are indented identically and a thread with replies does not sit
+    // a few pixels left of one without.
+    const bool hasReplies =
+        index.data(ThreadListModel::HasRepliesRole).toBool();
+    const int expanderWidth = hasReplies ? kExpanderWidth : 0;
+
     if (account.isEmpty()) {
         // No chip to draw, so the base class renders the text, confined to the
         // upper band: the lower one belongs to the row-wide pill strip that
@@ -163,8 +208,10 @@ void SubjectDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         QStyleOptionViewItem chrome = option;
         initStyleOption(&chrome, index);
         chrome.rect.setHeight(subjectBandHeight(option));
+        chrome.rect.setLeft(chrome.rect.left() + expanderWidth);
         QStyledItemDelegate::paint(painter, chrome, index);
 
+        drawExpander(option.rect);
         return;
     }
 
@@ -186,7 +233,7 @@ void SubjectDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     const int textBandHeight = subjectBandHeight(option);
     const int textTop = option.rect.top() + kRowPadding;
 
-    const QRect chipRect(option.rect.left() + TagChip::kSpacing,
+    const QRect chipRect(option.rect.left() + expanderWidth + TagChip::kSpacing,
                          textTop + (textBandHeight - chipSize.height()) / 2,
                          chipSize.width(), chipSize.height());
 
@@ -234,6 +281,13 @@ void SubjectDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
                       rowMetrics.elidedText(index.data(Qt::DisplayRole).toString(),
                                             Qt::ElideRight, textRect.width()));
     painter->restore();
+
+    // Last, so the chrome fill above cannot cover it. BOTH branches of this
+    // function have to call it: a thread row with an account chip takes this
+    // one, and that is every row in the real application, so calling it only
+    // from the no-chip branch leaves the feature invisible in practice while
+    // still passing any test built on an untagged thread.
+    drawExpander(option.rect);
 }
 
 QSize SubjectDelegate::sizeHint(const QStyleOptionViewItem &option,

@@ -92,6 +92,7 @@ private slots:
     void aSelectedReadThreadIsNotDimmedIntoTheHighlight();
     void thePillRowSpansTheWholeWidthNotOneColumn();
     void childRowsAreIndentedUnderTheirThread();
+    void aThreadWithRepliesDrawsAVisibleExpander();
     void noTagStripIsPaintedUnderAMessageRow();
     void markAllReadIsDisabledUntilTheQueryFinishes();
     void markAllReadActsOnEveryRowAndUndoesInOneStep();
@@ -490,7 +491,12 @@ void TestMainWindow::childRowsAreIndentedUnderTheirThread()
     auto *view = window.findChild<QTreeView *>();
     QVERIFY2(view, "the thread list is not a QTreeView, so it cannot indent");
 
-    model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
+    // With an account tag, so the thread row draws the chip that a reply row
+    // does not. That asymmetry is the whole reason the indent has to be wide,
+    // and a test against an untagged thread never sees it.
+    model->appendBatch({ makeThread(
+        QStringLiteral("t1"),
+        QStringList{ TagColors::tagForAccountKey(QStringLiteral("work")) }) });
 
     MessageNode first;
     first.messageId = QStringLiteral("m0@example.org");
@@ -531,6 +537,128 @@ void TestMainWindow::childRowsAreIndentedUnderTheirThread()
 
     QVERIFY2(view->visualRect(child).left() > view->visualRect(rootCell).left(),
              "the reply is not indented relative to its thread");
+
+    // The geometry being indented is NOT the same as the reply LOOKING
+    // indented, and asserting only the former shipped a build with no visible
+    // nesting at all. A thread row draws an account chip before its subject and
+    // a reply row does not, so the reply's text starts about a chip's width to
+    // the left of the thread's; at Qt's default 20px indent that difference
+    // swallows the shift entirely.
+    //
+    // So the real property: where the TEXT lands. The reply's subject must
+    // begin to the right of the thread's, which is what the eye reads as
+    // nesting.
+    const int chipWidth =
+        TagChip::sizeFor(QFontMetrics(view->font()),
+                         model->data(rootCell, ThreadListModel::AccountLabelRole)
+                             .toString()).width();
+    QVERIFY2(chipWidth > 0,
+             "the thread row has no account chip, so this test cannot measure "
+             "the offset it is meant to compensate for");
+
+    const int threadTextLeft = view->visualRect(rootCell).left() + chipWidth;
+    QVERIFY2(view->visualRect(child).left() > threadTextLeft,
+             qPrintable(QStringLiteral("the reply's text starts at x=%1, not "
+                                       "right of the thread's text at x=%2: the "
+                                       "indent does not beat the account chip "
+                                       "and the nesting is invisible")
+                            .arg(view->visualRect(child).left())
+                            .arg(threadTextLeft)));
+}
+
+void TestMainWindow::aThreadWithRepliesDrawsAVisibleExpander()
+{
+    // The expander is the ONLY thing saying a thread can be opened, and it took
+    // four wrong attempts to get on screen, each of which looked correct in
+    // code:
+    //
+    //   - QTreeView::drawBranches, the documented hook, runs BEFORE the row's
+    //     cells, so with the expander on a content column the delegate's own
+    //     background paints over it. A 60-pixel triangle survived as 8.
+    //   - Sizing it from the row rather than the branch rect put most of it
+    //     outside that rect.
+    //   - Moving it into the delegate but calling it from only one of the two
+    //     branches left every real row without one, since every real row has an
+    //     account chip and takes the other branch.
+    //
+    // None of those is visible to a test that asserts on geometry or on model
+    // roles, so this one counts painted pixels of the palette colour the glyph
+    // is drawn in.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    // Two threads: one with replies, one without. The second is the control,
+    // and without it a test that counts text pixels would pass on any row.
+    ThreadSummary withReplies = makeThread(
+        QStringLiteral("t1"),
+        QStringList{ TagColors::tagForAccountKey(QStringLiteral("work")) });
+    withReplies.totalCount = 3;
+    ThreadSummary lone = makeThread(
+        QStringLiteral("t2"),
+        QStringList{ TagColors::tagForAccountKey(QStringLiteral("work")) });
+    lone.totalCount = 1;
+    model->appendBatch({ withReplies, lone });
+
+    window.resize(1400, 300);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QApplication::processEvents();
+
+    const QModelIndex first =
+        model->index(0, ThreadListModel::SubjectColumn, QModelIndex());
+    const QModelIndex second =
+        model->index(1, ThreadListModel::SubjectColumn, QModelIndex());
+
+    // Guards: both rows on screen, and the model agreeing about which has
+    // replies. Without these a zero count could mean anything.
+    QVERIFY2(view->visualRect(first).height() > 0, "the first row is not drawn");
+    QVERIFY2(view->visualRect(second).height() > 0,
+             "the control row is not drawn");
+    QVERIFY(model->data(first, ThreadListModel::HasRepliesRole).toBool());
+    QVERIFY(!model->data(second, ThreadListModel::HasRepliesRole).toBool());
+
+    QImage shot(view->viewport()->size(), QImage::Format_ARGB32);
+    shot.fill(Qt::transparent);
+    view->viewport()->render(&shot);
+
+    // The exact colour the glyph is filled with, matched exactly rather than by
+    // a brightness threshold, which would count antialiased subject text.
+    const QRgb glyph = view->palette().color(QPalette::Text).rgb();
+
+    // Only the strip in front of the subject text, so the subject's own glyphs
+    // cannot be counted. kExpanderWidth is the room the delegate reserves.
+    const auto countGlyphPixels = [&](const QModelIndex &index) {
+        const QRect rect = view->visualRect(index);
+        int found = 0;
+        for (int y = rect.top(); y < qMin(rect.bottom(), shot.height()); ++y) {
+            for (int x = rect.left();
+                 x < qMin(rect.left() + SubjectDelegate::kExpanderWidth,
+                          shot.width());
+                 ++x) {
+                if ((shot.pixel(x, y) | 0xff000000) == (glyph | 0xff000000))
+                    ++found;
+            }
+        }
+        return found;
+    };
+
+    const int drawn = countGlyphPixels(first);
+    const int control = countGlyphPixels(second);
+
+    QVERIFY2(drawn > 12,
+             qPrintable(QStringLiteral("only %1 expander pixels: the glyph is "
+                                       "clipped or painted over, which is how "
+                                       "it shipped as an invisible dot")
+                            .arg(drawn)));
+
+    // The control must have none, or the count above is measuring something
+    // every row draws.
+    QCOMPARE(control, 0);
 }
 
 void TestMainWindow::noTagStripIsPaintedUnderAMessageRow()

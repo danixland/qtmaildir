@@ -212,6 +212,10 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             return node.messageId;
         case MessageDepthRole:
             return node.depth;
+        case HasRepliesRole:
+            // A reply never has its own expander: nesting past the first level
+            // is drawn from depth, not from further parent-child structure.
+            return false;
         case ThreadIdRole:
             // A message row still belongs to a thread, and a caller that only
             // needs the containing thread must not have to walk up itself.
@@ -273,6 +277,9 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
 
     if (role == MessageDepthRole)
         return 0;
+
+    if (role == HasRepliesRole)
+        return hasChildren(index.siblingAtColumn(0));
 
     if (role == TagsRole)
         return thread.tags;

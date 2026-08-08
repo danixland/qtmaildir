@@ -58,6 +58,9 @@ private slots:
     void requestAllTagsReturnsSortedTags();
     void requestAllTagsOnUnreadableConfigEmitsError();
 
+    void loadThreadTreeReportsReplyDepth();
+    void loadThreadTreeCarriesTheFactsARowNeeds();
+
     void requestCountsAnswersOneCountPerQuery();
     void requestCountsKeepsPositionOnAnInvalidQuery();
     void requestDatabaseStatsCountsMessagesNotThreads();
@@ -156,6 +159,55 @@ QStringList TestNotmuchWorker::tagsOf(const QString &messageId)
             return m.tags;
     }
     return {};
+}
+
+void TestNotmuchWorker::loadThreadTreeReportsReplyDepth()
+{
+    // Thread A is a root plus one reply carrying In-Reply-To, which is what
+    // notmuch threads on. Without that header the two would be separate threads
+    // and this test would assert nothing about depth.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy loaded(&worker, &NotmuchWorker::threadTreeLoaded);
+    worker.loadThreadTree(threadId, QString(), 1);
+
+    QCOMPARE(loaded.count(), 1);
+    const auto nodes = loaded.first().at(0).value<QVector<MessageNode>>();
+
+    QCOMPARE(nodes.size(), 2);
+    QCOMPARE(nodes.at(0).messageId, QStringLiteral("a1@example.org"));
+    QCOMPARE(nodes.at(0).depth, 0);
+    QCOMPARE(nodes.at(1).messageId, QStringLiteral("a2@example.org"));
+    QCOMPARE(nodes.at(1).depth, 1);
+}
+
+void TestNotmuchWorker::loadThreadTreeCarriesTheFactsARowNeeds()
+{
+    // A row is drawn without opening the message, so the walk has to read the
+    // headers. loadThread does not, which is why a separate signal exists.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy loaded(&worker, &NotmuchWorker::threadTreeLoaded);
+    worker.loadThreadTree(threadId, QString(), 1);
+
+    QCOMPARE(loaded.count(), 1);
+    const auto nodes = loaded.first().at(0).value<QVector<MessageNode>>();
+    QCOMPARE(nodes.size(), 2);
+
+    const MessageNode &reply = nodes.at(1);
+    QVERIFY(reply.from.contains(QStringLiteral("bob@example.org")));
+    QCOMPARE(reply.subject, QStringLiteral("Re: Release notes"));
+    QVERIFY(reply.date.isValid());
+    QVERIFY(!reply.filePath.isEmpty());
+
+    // Every node names its thread, so a batch does not need the caller to keep
+    // track of which thread it asked about.
+    QCOMPARE(reply.threadId, threadId);
+    QCOMPARE(nodes.at(0).threadId, threadId);
 }
 
 void TestNotmuchWorker::queryReturnsAllThreads()

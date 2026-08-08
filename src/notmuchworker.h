@@ -55,6 +55,21 @@ public slots:
     void loadThread(const QString &threadId, const QString &matchQuery,
                     quint64 generation);
 
+    /// Loads a thread as a reply TREE, for the message rows in the list.
+    ///
+    /// Separate from loadThread rather than replacing it, for a reason that is
+    /// not stylistic: loadThread walks notmuch_query_search_messages, and a
+    /// message obtained that way returns NULL from
+    /// notmuch_message_get_replies (notmuch.h:1617-1628), so that walk cannot
+    /// produce reply depth at all. The tree has to come from
+    /// notmuch_thread_get_toplevel_messages instead. The message pane still
+    /// wants the flat list; only the list wants the tree.
+    ///
+    /// matchQuery is accepted for signature symmetry with loadThread and is
+    /// deliberately unused: see the comment on the walk in the .cpp.
+    void loadThreadTree(const QString &threadId, const QString &matchQuery,
+                        quint64 generation);
+
     /// Applies tag changes. Opens the database read-write, applies, and closes
     /// immediately: notmuch's write lock is exclusive process-wide, so holding
     /// it would block the user's cron `notmuch new`.
@@ -100,6 +115,8 @@ signals:
     void threadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void queryFinished(int totalThreads, quint64 generation);
     void threadLoaded(const QVector<MessageRef> &messages, quint64 generation);
+    void threadTreeLoaded(const QVector<MessageNode> &nodes,
+                          quint64 generation);
     void tagsApplied(const TagChange &change);
     void allTagsReady(const QStringList &tags, quint64 generation);
 

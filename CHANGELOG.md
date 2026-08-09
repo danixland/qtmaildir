@@ -11,6 +11,14 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Archive and Mark all read no longer share an icon.** Both used the same one
+  in 0.12.0, which was harmless while the toolbar showed text beside every icon
+  and ambiguous once it follows a desktop set to icon-only. Archive now uses a
+  distinct icon, and a test compares every action's icon against every other so
+  the next duplicate fails the build rather than shipping.
+
 ## [0.12.0] - 2026-08-09
 
 Syncing gets narrower and more honest: a sync fetches only the accounts you

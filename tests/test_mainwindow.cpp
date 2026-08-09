@@ -121,6 +121,7 @@ private slots:
     void theImportantActionIsLabelledImportant();
     void theImportantActionStillWritesTheFlaggedTag();
     void theToolbarUsesTheConfiguredIconSize();
+    void noTwoActionsShareAnIcon();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -2540,6 +2541,58 @@ void TestMainWindow::theToolbarUsesTheConfiguredIconSize()
     // large), so the assertion cannot pass by the widget happening to agree
     // with the theme.
     QCOMPARE(toolBar->iconSize(), QSize(40, 40));
+}
+
+void TestMainWindow::noTwoActionsShareAnIcon()
+{
+    // Reported by the user against the icons shipped in 0.12.0: Archive and
+    // Mark all read both used `mail-mark-read`. With the toolbar following a
+    // desktop set to icon-only, the icon is the entire control, so two buttons
+    // with different consequences were indistinguishable.
+    //
+    // Asserted over every action rather than that one pair, because the defect
+    // is the class and not the instance: the icon table is hand-written and
+    // twenty-four entries long, so the next duplicate is a plausible typo.
+    //
+    // Compared by cacheKey() rather than by the theme NAME, which this window
+    // does not keep. Two distinct names that resolve to the same art on a given
+    // theme are just as ambiguous on screen, and that is what the user sees.
+    const Config config;
+    MainWindow window(config);
+
+    QHash<qint64, QString> owners;
+    QStringList collisions;
+    int withIcons = 0;
+
+    for (const QString &name : KeyMap::knownActions()) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
+        if (action->icon().isNull())
+            continue;
+
+        ++withIcons;
+        const qint64 key = action->icon().cacheKey();
+        const auto existing = owners.constFind(key);
+        if (existing != owners.constEnd()) {
+            collisions.append(QStringLiteral("%1 and %2")
+                                  .arg(existing.value(), name));
+        } else {
+            owners.insert(key, name);
+        }
+    }
+
+    // The guard. On a theme that resolves nothing every icon is null, the loop
+    // body never runs, and the assertion below would pass having compared
+    // nothing at all.
+    QVERIFY2(withIcons >= KeyMap::knownActions().size(),
+             qPrintable(QStringLiteral("only %1 of %2 actions had an icon to "
+                                       "compare")
+                            .arg(withIcons)
+                            .arg(KeyMap::knownActions().size())));
+
+    QVERIFY2(collisions.isEmpty(),
+             qPrintable(QStringLiteral("actions sharing one icon: %1")
+                            .arg(collisions.join(QStringLiteral("; ")))));
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

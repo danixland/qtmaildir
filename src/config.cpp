@@ -24,6 +24,16 @@
 #include <QSettings>
 #include <QStandardPaths>
 
+namespace {
+
+/// Bounds for [general] toolbar_icon_size. 16 is the smallest size the icon
+/// themes actually ship art for, and is what this desktop's style reports;
+/// above 64 the toolbar is taller than the thread rows it sits over.
+constexpr int kMinToolbarIconSize = 16;
+constexpr int kMaxToolbarIconSize = 64;
+
+} // namespace
+
 QString Account::scopedQuery(const QString &query) const
 {
     const QString prefix = QStringLiteral("path:\"%1/**\"").arg(maildir);
@@ -92,6 +102,34 @@ void Config::load(const QString &path)
     // A [general] key, so no prefix, per the note at the top of load().
     m_completionOnFocus =
         settings.value(QStringLiteral("completion_on_focus"), false).toBool();
+
+    // Clamped, unlike message_zoom above, which documents a 0.5 to 3.0 range in
+    // the README and enforces none of it. Both ends here are unrecoverable from
+    // the UI they break: too small is an invisible icon, too large is a toolbar
+    // taller than the window, and in either case the control the user would
+    // reach for to fix it is the one that just broke.
+    const QVariant iconSize = settings.value(QStringLiteral("toolbar_icon_size"));
+    if (iconSize.isValid()) {
+        bool ok = false;
+        const int value = iconSize.toString().trimmed().toInt(&ok);
+        if (!ok) {
+            addProblem(QStringLiteral("Toolbar icon size '%1' is not a number; "
+                                      "using %2.")
+                           .arg(iconSize.toString())
+                           .arg(m_toolbarIconSize));
+        } else if (value < kMinToolbarIconSize || value > kMaxToolbarIconSize) {
+            m_toolbarIconSize =
+                qBound(kMinToolbarIconSize, value, kMaxToolbarIconSize);
+            addProblem(QStringLiteral("Toolbar icon size %1 is outside %2 to "
+                                      "%3; using %4.")
+                           .arg(value)
+                           .arg(kMinToolbarIconSize)
+                           .arg(kMaxToolbarIconSize)
+                           .arg(m_toolbarIconSize));
+        } else {
+            m_toolbarIconSize = value;
+        }
+    }
 
     // Absent is silent, the default being 2000. Present but unparseable warns,
     // for the same reason message_zoom does: the user asked for something and

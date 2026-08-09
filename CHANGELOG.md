@@ -32,6 +32,10 @@ point at which they are stable.
 - **An optional `[sync] log` key**, naming the sync script's log file. It
   defaults to where `assets/mailsync.sh` writes, and only needs setting if you
   changed the script's `LOGFILE`.
+- **An optional `[general] toolbar_icon_size` key**, 16 to 64 pixels, defaulting
+  to 24. Most styles report 16, which is a small target now that the toolbar can
+  be icons only. Out-of-range values are clamped and reported rather than
+  applied.
 
 ### Changed
 

@@ -110,6 +110,11 @@ identity.
 ; Unread. Falls back to the first saved query if no query by this name
 ; exists, and warns if you named one explicitly.
 ; startup_query = Unread
+; Optional. Toolbar icon size in pixels, 16 to 64. Defaults to 24. The
+; toolbar follows your desktop's toolbar button style, so if that is set to
+; "icon only" this is the whole size of the control; 16 matches what most
+; styles report, which is small for a button with no text beside it.
+; toolbar_icon_size = 24
 ; Optional. Open the completion popup as soon as an empty query bar takes
 ; focus, without pressing the shortcut. Defaults to false.
 ; completion_on_focus = false
@@ -173,7 +178,7 @@ work = #cc4444
 [queries]
 Inbox = tag:inbox
 Unread = tag:unread
-Flagged = tag:flagged
+Important = tag:flagged
 
 [keys]
 Ctrl+E = archive
@@ -186,6 +191,10 @@ Saved-query buttons appear in alphabetical order rather than file order:
 QSettings returns keys sorted, and preserving file order would mean
 hand-rolling an INI parser. Which query opens at startup is therefore a
 separate setting, `[general] startup_query`, rather than "the first one".
+
+The button text is the key you write here, so these names are yours to
+choose. `Important = tag:flagged` and `Flagged = tag:flagged` run the same
+query and differ only in what the button says.
 
 ## The query bar
 

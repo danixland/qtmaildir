@@ -31,6 +31,10 @@ private slots:
     void missingSyncCommandIsEmpty();
     void syncLogDefaultsToTheScriptsOwnPath();
     void syncLogCanBeOverridden();
+    void toolbarIconSizeDefaultsTo24();
+    void toolbarIconSizeIsActuallyRead();
+    void toolbarIconSizeIsClampedAndReported();
+    void toolbarIconSizeRejectsGarbage();
     void accountWithoutMaildirIsRejected();
     void scopedQueryWrapsCorrectly();
     void absentSyncCommandIsNoticeNotProblem();
@@ -168,6 +172,85 @@ void TestConfig::syncLogCanBeOverridden()
     config.load(path);
 
     QCOMPARE(config.syncLog(), QStringLiteral("/var/log/mail/sync.log"));
+}
+
+void TestConfig::toolbarIconSizeDefaultsTo24()
+{
+    // The desktop's own metric is the obvious default and was rejected: this
+    // style reports PM_ToolBarIconSize as 16, which is a small click target for
+    // a toolbar that now shows icons with no text beside them. 24 is a normal
+    // toolbar size, and setting the key back to 16 restores the theme's value.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral("[general]\n"));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.toolbarIconSize(), 24);
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::toolbarIconSizeIsActuallyRead()
+{
+    // [general] keys are read WITHOUT the general/ prefix, per the note at the
+    // top of Config::load(). A key that silently matched nothing would leave
+    // the default in place and look exactly like a working default.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "toolbar_icon_size = 32\n"
+    ));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.toolbarIconSize(), 32);
+}
+
+void TestConfig::toolbarIconSizeIsClampedAndReported()
+{
+    // Out of range is clamped rather than honoured: a 4px icon is invisible and
+    // a 4000px one makes the toolbar taller than the window, and neither is
+    // recoverable from the UI the value just broke. Reported, because silently
+    // ignoring what the user asked for is how message_zoom's documented 0.5-3.0
+    // range came to be unenforced without anyone noticing.
+    QTemporaryDir dir;
+    const QString tooBig = writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "toolbar_icon_size = 4000\n"
+    ));
+
+    Config big;
+    big.load(tooBig);
+    QCOMPARE(big.toolbarIconSize(), 64);
+    QVERIFY(!big.warnings().isEmpty() || !big.problems().isEmpty());
+
+    QTemporaryDir dir2;
+    const QString tooSmall = writeIni(dir2, QStringLiteral(
+        "[general]\n"
+        "toolbar_icon_size = 2\n"
+    ));
+
+    Config small;
+    small.load(tooSmall);
+    QCOMPARE(small.toolbarIconSize(), 16);
+}
+
+void TestConfig::toolbarIconSizeRejectsGarbage()
+{
+    // Unparseable falls back to the default and says so, matching how
+    // mark_read_delay_ms treats the same mistake.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "toolbar_icon_size = enormous\n"
+    ));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.toolbarIconSize(), 24);
+    QVERIFY(!config.problems().isEmpty());
 }
 
 void TestConfig::accountWithoutMaildirIsRejected()

@@ -988,6 +988,14 @@ void MainWindow::buildMenus()
     // which would ignore the setting just as thoroughly in the other direction.
     toolBar->setToolButtonStyle(static_cast<Qt::ToolButtonStyle>(
         style()->styleHint(QStyle::SH_ToolButtonStyle, nullptr, toolBar)));
+
+    // Set explicitly rather than left to the style. With the button style above
+    // resolving to icon-only on this desktop, the icon IS the control, and this
+    // style's PM_ToolBarIconSize is 16px, which is a small target for it.
+    // Configurable because the right answer depends on the display, not on
+    // anything this code can see.
+    const int iconSize = m_config.toolbarIconSize();
+    toolBar->setIconSize(QSize(iconSize, iconSize));
     QAction *syncAction = m_actions.value(QStringLiteral("sync"));
     // Carried over from the QPushButton this replaced: with no command
     // configured the control is disabled, and the tooltip is the only thing

@@ -90,6 +90,18 @@ public:
     /// Empty when unset; the caller disables the Sync button in that case.
     QString syncCommand() const { return m_syncCommand; }
 
+    /// Toolbar icon size in pixels, 16 to 64, defaulting to 24.
+    ///
+    /// The desktop's own PM_ToolBarIconSize was the obvious default and was
+    /// rejected empirically: it reports 16 here, which is a small target now
+    /// that the toolbar follows the platform's "icon only" style and the icon
+    /// is the whole control. Setting this to 16 restores the theme's value.
+    ///
+    /// Clamped rather than trusted: a 4px icon is invisible and a 4000px one
+    /// makes the toolbar taller than the window, and neither is recoverable
+    /// from the UI the value just broke.
+    int toolbarIconSize() const { return m_toolbarIconSize; }
+
     /// The sync script's log file, read to learn the outcome of a sync this
     /// process did not start (item 54).
     ///
@@ -171,6 +183,7 @@ private:
     QList<SavedQuery> m_savedQueries;
     QString m_syncCommand;
     QString m_syncLog;
+    int m_toolbarIconSize = 24;
     QString m_notmuchConfig;
     qreal m_messageZoom = 1.0;
     bool m_completionOnFocus = false;

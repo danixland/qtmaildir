@@ -120,6 +120,7 @@ private slots:
     void theToolbarDoesNotOverrideTheDesktopButtonStyle();
     void theImportantActionIsLabelledImportant();
     void theImportantActionStillWritesTheFlaggedTag();
+    void theToolbarUsesTheConfiguredIconSize();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -2511,6 +2512,34 @@ void TestMainWindow::theImportantActionStillWritesTheFlaggedTag()
     QVERIFY2(!model->threadAt(0).tags.contains(QStringLiteral("important")),
              "the rename reached the mail store: an `important` tag was "
              "written, which no other tool reading this Maildir knows");
+}
+
+void TestMainWindow::theToolbarUsesTheConfiguredIconSize()
+{
+    // With the toolbar following the desktop's "Icon only" style, the icons are
+    // the whole control, and this style reports 16px, which is a small target.
+    // The size is configurable with a 24px default; this proves the config
+    // value actually reaches the widget rather than sitting in Config unread.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("[general]\ntoolbar_icon_size = 40\n");
+    file.close();
+
+    Config config;
+    config.load(path);
+    QCOMPARE(config.toolbarIconSize(), 40);
+
+    MainWindow window(config);
+    auto *toolBar = window.findChild<QToolBar *>(QStringLiteral("main_toolbar"));
+    QVERIFY(toolBar);
+
+    // 40 is deliberately not any of this style's own metrics (16 small, 32
+    // large), so the assertion cannot pass by the widget happening to agree
+    // with the theme.
+    QCOMPARE(toolBar->iconSize(), QSize(40, 40));
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

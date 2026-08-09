@@ -215,15 +215,87 @@ whole session was lost to probes that lied:
 - **Item 51 gets a regression test**: with cards, the view reports no horizontal
   scroll range, and clicking a card does not change `horizontalScrollBar()`'s
   value.
+- **`next_thread` gets the test that would have caught its current defect**:
+  from the LAST reply of an expanded thread it lands on the next thread, not on
+  nothing. The old `selectRow(row + 1)` fails this; a row-0-of-a-collapsed-list
+  test passes against the bug and is worthless.
+- **Alt+Up/Down skip replies**: from a thread root with its replies expanded,
+  one Alt+Down lands on the next thread root rather than on the first reply.
+- `everyActionHasAShortcut` must still pass once `setShortcut` becomes
+  `setShortcuts`, since it is the invariant that every action carries a default.
+
+Arrow-key navigation is `QTreeView`'s own and is not re-tested here, but the
+claim that it steps into replies should be confirmed by hand once before the
+spec is trusted on it. `QTest::keyClick` is weak evidence about key reachability
+per `CLAUDE.md`, and this design leans on the built-in behaviour rather than
+implementing it.
 
 Two constraints on writing these, from `CLAUDE.md`: nothing may be keyed on a
 row **number**, because a tree numbers rows per parent; and the offscreen
 platform chooses the window width itself and has been seen to choose
 differently between runs, so a test must not depend on a particular width.
 
+## Keyboard navigation
+
+Item 20 deferred "moving between messages in a thread without returning to the
+list" as an addition on top. It is folded in here instead, because the card list
+makes it a **defect repair** rather than a feature: `next_thread` and
+`prev_thread` are implemented as `selectRow(current.row() + 1)`
+(`mainwindow.cpp:644-655`), and a tree numbers rows per parent, so on the last
+reply of an expanded thread `row + 1` names a sibling that does not exist and
+the action silently does nothing. This is the same trap the branch's own commit
+message records: nothing may be keyed on a row NUMBER.
+
+**Up / Down step through everything, replies included.** This needs no code and
+no binding at all. `QTreeView`'s built-in navigation walks *visible* rows, so it
+already steps into an expanded thread's replies and past its end into the next
+thread. It is the view's own key handling rather than a shortcut, so it is
+inert whenever focus is elsewhere: arrows scroll the message pane when the web
+view has focus, move the cursor in the query bar, and move through menus, with
+nothing to configure.
+
+**Alt+Up / Alt+Down jump thread to thread**, skipping replies even when a thread
+is expanded. Bound to the existing `prev_thread` / `next_thread` actions
+alongside their current Ctrl+K / Ctrl+J, which keep working. `MainWindow`'s
+`addAction` calls `setShortcut()` singular at `mainwindow.cpp:622` and must move
+to `setShortcuts()` with a list; `zoom_reset` at `mainwindow.cpp:773` is the
+existing precedent. Alt carries no binding anywhere in the keymap today, so
+nothing is displaced.
+
+Both actions are rewritten to walk with `QTreeView::indexBelow()` and
+`indexAbove()` from the current index, skipping any index whose `IsMessageRole`
+is true, rather than arithmetic on a row number.
+
+**Shift+Up / Shift+Down are left alone.** They are `QTreeView`'s built-in
+extend-selection, which multi-row tagging and item 20's action scope both depend
+on, and which every mail client and file manager binds the same way. They were
+considered for thread-jumping and rejected on that ground.
+
+**Arrow keys must never become keymap actions.** Every action is a `QAction`
+with `Qt::WindowShortcut` (`mainwindow.cpp:626`), and a shortcut is dispatched
+BEFORE the focused widget sees the key. Qt withholds a plain LETTER shortcut
+from an editable widget, which is why the existing letter bindings are safe, but
+arrows get no such protection, exactly like Return: binding Up as a window
+shortcut would break the arrow keys in the query bar, the tag dialog and the web
+view at once. The Return case needed a per-widget `ShortcutOverride` filter to
+claw the key back (`mainwindow.cpp:261-275`), scoped to one widget and one key
+precisely because the general case is unmanageable. Alt+Up is safe only because
+the modifier makes it a chord no text field wants.
+
+## Returning to the whole thread
+
+Clicking a reply card opens that one message in the pane; clicking a thread root
+card opens the whole thread. **The way back is the root card**, which is always
+visible directly above its replies whenever they are showing.
+
+No new affordance and no key. Escape is deliberately not overloaded for this: it
+already means clear-selection, with clear-pane on Shift+Escape (item 50), and a
+third meaning stacked on the same key would be the "half an action" problem that
+item 50 exists to fix.
+
 ## Open, deliberately not decided here
 
-- **Moving between messages in a thread without returning to the list.** Named
-  by the user during item 20 and deferred there. Still deferred.
 - Whether the message pane's own presentation should change to match. Out of
-  scope: this spec is the left pane only.
+  scope: this spec is the left pane only, and the single-message rendering is
+  unchanged from the branch. The `<details>`-per-message design was offered on
+  2026-08-08 and declined; it stays declined.

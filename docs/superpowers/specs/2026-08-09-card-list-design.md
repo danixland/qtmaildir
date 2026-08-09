@@ -73,10 +73,56 @@ same places and lights up exactly where the user put a tag deliberately.
 Computed in the model from data it already holds: `MessageNode::tags` against
 the parent `ThreadSummary::tags`. **No worker change.**
 
+## The account accent
+
+**A thread card carries a vertical bar of its account's colour down its left
+edge.** A few pixels wide; the exact width is a judgement to make against real
+cards on the user's own screen and theme, not from a mockup, since five accounts
+is enough that two colours distinct as chips may read alike as thin stripes.
+
+**Reply cards carry no bar.** The account belongs to the conversation and is
+stated once at its head, and a second vertical line in a reply's gutter would
+sit a few pixels from the spine and compete with it.
+
+**Instead the spine inherits the account's colour**, so an expanded thread is
+bounded by one accent from its root to its last reply without drawing two lines
+anywhere.
+
+This **replaces the account chip** rather than joining it. The chip ate a third
+of line 2 on every card to repeat a name the user already knows, which is
+exactly the texture item 53 is about.
+
+**The colour is blended toward the background, never used raw.** An account
+colour is chosen to be a chip's fill, with text drawn on top in whatever stays
+legible against it (`TagColors::textColourOn`). The same colour as a thin line
+on the pane's own background is a different problem: it has to be followable
+down a long expansion without competing with the senders beside it, which is the
+constraint `threadLineColour()` already states and meets with a 0.35 weight
+toward the palette's text. The accent spine blends the account colour toward
+`QPalette::Base` by that same weight, so it keeps the hue that identifies the
+account and loses the saturation that would shout.
+
+**An account with no configured colour still gets one**, derived from the tag
+name by `TagColors::colourFor`, which never fails. That fallback is deliberate
+and is kept: a stable arbitrary colour is more useful than no accent, and it
+means adding an account to the config and forgetting to colour it degrades to
+something usable rather than to nothing.
+
+**The account dropdown carries the same colours.** `m_accountBox`
+(`mainwindow.cpp:399`) is filled in a plain loop over `m_config.accounts()`;
+each entry gets its account's colour as `Qt::DecorationRole`, which Qt renders
+as a swatch with no delegate. That is what makes the accent legible at all: a
+bar down a card means nothing until something says which account it is, and the
+dropdown is where the user already goes to think about accounts. Use the raw
+colour here, not the blended one: a swatch is a filled patch like a chip, not a
+thin line.
+
 ## The spine
 
 Replies are indented by depth with a **continuous vertical line per depth
-level**, drawn the full height of each reply card, in `threadLineColour()`.
+level**, drawn the full height of each reply card, in the thread's blended
+account accent (above), falling back to `threadLineColour()` when there is no
+account tag at all.
 
 No elbows, no horizontal tick into the card, and no different glyph on the last
 child. The alternatives were shown and this one chosen: elbows would require the
@@ -172,8 +218,10 @@ painting the whole card, neither is reachable.
 - Action scope by row kind, and the status-bar scope naming before and after an
   action. No confirmation dialogs, per the standing rule.
 - Undo through `TagChange::inverted()`.
-- The account chip, the `deletedColour()` / `spamColour()` row fills, and the
-  unread/read weight and colour cues.
+- The `deletedColour()` / `spamColour()` row fills, and the unread/read weight
+  and colour cues.
+- `AccountLabelRole` and `AccountColourRole`, though what they feed changes: the
+  chip becomes the left accent bar and the dropdown's swatches.
 - `setUniformRowHeights(true)`.
 
 ## New

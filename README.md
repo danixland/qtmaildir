@@ -258,7 +258,7 @@ and costs no extra query.
 
 ## Tagging
 
-Archive, delete, spam, flag and toggle-unread write fixed tags. For anything
+Archive, delete, spam, mark-important and toggle-unread write fixed tags. For anything
 else, **Ctrl+T** opens a dialog over the selected threads: type tags to add or
 remove, separated by commas, or clear a checkbox to drop a tag already present.
 
@@ -412,7 +412,7 @@ Defaults, all rebindable through `[keys]`:
 | `Ctrl+Shift+S` | `spam` | Add `spam`, remove `inbox` |
 | `Ctrl+U` | `toggle_unread` | Toggle `unread` |
 | `Ctrl+Shift+U` | `mark_all_read` | Remove `unread` from every thread in the view |
-| `Ctrl+I` | `flag` | Add `flagged` |
+| `Ctrl+I` | `flag` | Mark important (adds `flagged`) |
 | `Ctrl+L` | `focus_query` | Focus and select the query bar |
 | `Ctrl+Space` | `complete_query` | Focus the query bar and offer completions |
 | `Ctrl+H` | `toggle_html` | Switch the thread between HTML and plain text |

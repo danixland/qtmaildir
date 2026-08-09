@@ -34,7 +34,9 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 
+#include <QStyle>
 #include <QTableView>
+#include <QToolBar>
 #include <QTimer>
 
 #include "config.h"
@@ -113,6 +115,11 @@ private slots:
     void anUnknownExternalStateClearsNothing();
     void aSuccessfulCronSyncDrainsTheEditedAccounts();
     void aCronSyncDoesNotClearAnEditMadeWhileItRan();
+
+    void everyActionCarriesAnIcon();
+    void theToolbarDoesNotOverrideTheDesktopButtonStyle();
+    void theImportantActionIsLabelledImportant();
+    void theImportantActionStillWritesTheFlaggedTag();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -2376,6 +2383,134 @@ void TestMainWindow::aCronSyncDoesNotClearAnEditMadeWhileItRan()
     recordOneEdit(window, QStringLiteral("m2"), QStringLiteral("flagged"));
     QVERIFY2(!label->isHidden(),
              "an edit made after the sync ended was swallowed by it");
+}
+
+// Items 56 and 57.
+
+void TestMainWindow::everyActionCarriesAnIcon()
+{
+    // Item 56. The complaint was inconsistency, not absence: eight actions had
+    // themed icons and the other sixteen had none, so adjacent entries in one
+    // menu disagreed, and the toolbar's TextBesideIcon style laid out an empty
+    // slot for each of the sixteen.
+    //
+    // What this test can and cannot prove is worth stating, because it is
+    // weaker than it looks. QIcon::fromTheme() resolves against the icon theme
+    // of the machine running the test, so a PASS says "this desktop has art for
+    // every name assigned", not "every name is correct" and not "the icon suits
+    // the action". A machine with a sparse theme fails this through no fault of
+    // the code. It is still worth having: it catches the actual regression,
+    // which is an action registered with no name assigned at all.
+    const Config config;
+    MainWindow window(config);
+
+    // The guard. Without it a MainWindow that registered nothing would pass an
+    // empty loop, which is the classic way a "for each" assertion goes vacuous.
+    const QList<QAction *> actions =
+        window.findChildren<QAction *>(QString(), Qt::FindDirectChildrenOnly);
+    QVERIFY2(actions.size() >= KeyMap::knownActions().size(),
+             qPrintable(QStringLiteral("expected at least %1 actions, found %2")
+                            .arg(KeyMap::knownActions().size())
+                            .arg(actions.size())));
+
+    QStringList missing;
+    for (const QString &name : KeyMap::knownActions()) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
+        if (action->icon().isNull())
+            missing.append(name);
+    }
+
+    QVERIFY2(missing.isEmpty(),
+             qPrintable(QStringLiteral("%1 action(s) have no icon: %2")
+                            .arg(missing.size())
+                            .arg(missing.join(QStringLiteral(", ")))));
+}
+
+void TestMainWindow::theToolbarDoesNotOverrideTheDesktopButtonStyle()
+{
+    // The second half of the user's note: "Buttons should honor the 'Icon only'
+    // option". They cannot while the toolbar asserts its own style. Qt takes
+    // the desktop's preference from the platform theme and exposes it as
+    // SH_ToolButtonStyle; a hardcoded setToolButtonStyle() overrides it, so the
+    // user's setting has no effect whatever it is set to.
+    const Config config;
+    MainWindow window(config);
+
+    auto *toolBar = window.findChild<QToolBar *>(QStringLiteral("main_toolbar"));
+    QVERIFY(toolBar);
+
+    const auto expected = static_cast<Qt::ToolButtonStyle>(
+        window.style()->styleHint(QStyle::SH_ToolButtonStyle, nullptr, toolBar));
+
+    QCOMPARE(toolBar->toolButtonStyle(), expected);
+}
+
+void TestMainWindow::theImportantActionIsLabelledImportant()
+{
+    // Item 57. The user picked "Important" over "Starred": the Message menu
+    // already has `Mark &spam`, so "Starred" would have had to take an
+    // accelerator from inside the word, while "Important" takes a free &I.
+    const Config config;
+    MainWindow window(config);
+
+    // The action NAME is unchanged on purpose. It is the key a user writes in
+    // the config's [keys] section, so renaming it would silently break every
+    // existing binding for a change that is only about wording.
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(action);
+
+    QVERIFY2(action->text().contains(QStringLiteral("Important")),
+             qPrintable(QStringLiteral("the action still reads '%1'")
+                            .arg(action->text())));
+    QVERIFY2(!action->text().contains(QStringLiteral("Flag")),
+             qPrintable(QStringLiteral("the action still reads '%1'")
+                            .arg(action->text())));
+
+    // The accelerator the item chose, and the reason "Starred" was rejected.
+    QCOMPARE(action->text(), QStringLiteral("&Important"));
+}
+
+void TestMainWindow::theImportantActionStillWritesTheFlaggedTag()
+{
+    // The rename is a LABEL change and must not reach the mail store. `flagged`
+    // is a notmuch tag: neomutt reads it, the user's saved queries match on it,
+    // ThreadSummary::isFlagged() tests for it and TagColors colours it. A
+    // rename that followed the label through to the tag would rewrite the store
+    // and desynchronise every other tool that reads the same Maildir.
+    //
+    // Asserted on the ids and tags actually sent to the worker, which is the
+    // only place the distinction is observable.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTableView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("inbox") }) });
+
+    // The guard: the thread must NOT already carry the tag, or the assertion
+    // below would pass against an action that did nothing at all.
+    QVERIFY(!model->threadAt(0).isFlagged());
+
+    view->selectRow(0);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(action);
+    action->trigger();
+
+    // sendThreadTagChange() applies the change to the model optimistically, so
+    // the tag the action really wrote is observable here without a worker.
+    QVERIFY2(model->threadAt(0).isFlagged(),
+             "the renamed action no longer writes the `flagged` tag");
+    QVERIFY2(model->threadAt(0).tags.contains(QStringLiteral("flagged")),
+             "the tag written was not `flagged`");
+    QVERIFY2(!model->threadAt(0).tags.contains(QStringLiteral("important")),
+             "the rename reached the mail store: an `important` tag was "
+             "written, which no other tool reading this Maildir knows");
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

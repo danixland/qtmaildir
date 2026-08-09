@@ -189,8 +189,11 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     if (role == Qt::ToolTipRole && index.column() == AttachmentColumn)
         return thread.hasAttachment() ? tr("Has an attachment") : QVariant();
 
+    // "Important", matching the action's own wording (item 57). The underlying
+    // tag is still `flagged` and isFlagged() still tests for it; only what the
+    // user reads changed.
     if (role == Qt::ToolTipRole && index.column() == FlagColumn)
-        return thread.isFlagged() ? tr("Flagged") : QVariant();
+        return thread.isFlagged() ? tr("Important") : QVariant();
 
     // Both marker columns: a glyph reads as a marker only when it sits in the
     // middle of its column rather than against the text beside it.

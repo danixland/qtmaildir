@@ -26,6 +26,32 @@ point at which they are stable.
 - **`assets/mailsync.sh` takes channel names as arguments**, syncing all
   channels when given none. A replacement sync script that ignores its arguments
   still works, it just always syncs everything.
+- **Every action now carries an icon**, where before only eight of twenty-four
+  did and adjacent menu entries disagreed with each other. Icons come from the
+  desktop's icon theme; one the theme does not provide falls back to text alone.
+- **An optional `[sync] log` key**, naming the sync script's log file. It
+  defaults to where `assets/mailsync.sh` writes, and only needs setting if you
+  changed the script's `LOGFILE`.
+
+### Changed
+
+- **"Flag" is now "Important"**, on the menu entry, the undo history and the
+  star column's tooltip. `Ctrl+I` is unchanged, and so is the `flagged` tag
+  itself: neomutt, your saved queries and anything else reading the same Maildir
+  keep working. The `flag` action name in `[keys]` is also unchanged, so
+  existing bindings are untouched.
+- **The toolbar follows your desktop's toolbar button setting** instead of
+  always showing text beside icons. If your desktop is set to "Icon only", the
+  toolbar is now icons only; it previously ignored that.
+
+### Fixed
+
+- **A sync run from cron now clears the unsynced-changes indicator.** Edits made
+  in the application reach the mail store through any sync, but only a sync
+  started from the window cleared the count, so the indicator kept reporting
+  work that had already gone out and the quit prompt offered to sync for it.
+  A failed sync, or one whose outcome cannot be read, still leaves the count
+  standing.
 
 ## [0.11.0] - 2026-08-07
 

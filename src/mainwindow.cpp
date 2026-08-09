@@ -681,9 +681,17 @@ void MainWindow::registerActions()
         tagSelected({ QStringLiteral("spam") }, { QStringLiteral("inbox") },
                     tr("Mark spam"));
     });
-    addAction(QStringLiteral("flag"), tr("&Flag"),
-              tr("Add the flagged tag"), [this]() {
-        tagSelected({ QStringLiteral("flagged") }, {}, tr("Flag"));
+    // Item 57. The LABEL is "Important"; the action name and the tag are both
+    // still `flag`/`flagged`, deliberately. The name is what a user writes in
+    // the config's [keys] section, and `flagged` is a notmuch tag that neomutt,
+    // the user's saved queries and ThreadSummary::isFlagged() all read. Only
+    // the wording the user sees changes.
+    //
+    // &I rather than &S: the Message menu already has "Mark &spam", so
+    // "Starred" would have needed an accelerator from inside the word.
+    addAction(QStringLiteral("flag"), tr("&Important"),
+              tr("Mark the selected threads as important"), [this]() {
+        tagSelected({ QStringLiteral("flagged") }, {}, tr("Mark important"));
     });
     addAction(QStringLiteral("toggle_unread"), tr("Toggle &unread"),
               tr("Toggle the unread tag"), [this]() {
@@ -899,6 +907,14 @@ void MainWindow::buildMenus()
     // Standard names from the icon theme, so the buttons match the rest of the
     // desktop rather than shipping bespoke art. A theme that lacks one leaves
     // that action with text alone, which still works.
+    // Item 56: every registered action, not a subset. Eight of these carried an
+    // icon and sixteen did not, which reads worse than none having one: two
+    // adjacent entries in the same menu disagreed, and the toolbar's
+    // TextBesideIcon style laid out an empty slot for each of the sixteen.
+    //
+    // Names are freedesktop ones, and were probed against a real icon theme
+    // rather than taken from the spec on faith. A name the running theme lacks
+    // still degrades to text through the null check below.
     const QHash<QString, QString> themeIcons = {
         { QStringLiteral("sync"),    QStringLiteral("mail-receive") },
         { QStringLiteral("archive"), QStringLiteral("mail-mark-read") },
@@ -908,6 +924,23 @@ void MainWindow::buildMenus()
         { QStringLiteral("flag"),    QStringLiteral("mail-mark-important") },
         { QStringLiteral("quit"),    QStringLiteral("application-exit") },
         { QStringLiteral("focus_query"), QStringLiteral("edit-find") },
+
+        { QStringLiteral("next_thread"),     QStringLiteral("go-down") },
+        { QStringLiteral("prev_thread"),     QStringLiteral("go-up") },
+        { QStringLiteral("open_thread"),     QStringLiteral("document-open") },
+        { QStringLiteral("toggle_unread"),   QStringLiteral("mail-mark-unread") },
+        { QStringLiteral("mark_all_read"),   QStringLiteral("mail-mark-read") },
+        { QStringLiteral("edit_tags"),       QStringLiteral("tag") },
+        { QStringLiteral("complete_query"),  QStringLiteral("edit-find-replace") },
+        { QStringLiteral("select_all"),      QStringLiteral("edit-select-all") },
+        { QStringLiteral("clear_pane"),      QStringLiteral("edit-clear") },
+        { QStringLiteral("clear_selection"), QStringLiteral("edit-clear-all") },
+        { QStringLiteral("toggle_html"),     QStringLiteral("text-html") },
+        { QStringLiteral("load_remote"),     QStringLiteral("image-loading") },
+        { QStringLiteral("message_details"), QStringLiteral("dialog-information") },
+        { QStringLiteral("zoom_in"),         QStringLiteral("zoom-in") },
+        { QStringLiteral("zoom_out"),        QStringLiteral("zoom-out") },
+        { QStringLiteral("zoom_reset"),      QStringLiteral("zoom-original") },
     };
     for (auto it = themeIcons.cbegin(); it != themeIcons.cend(); ++it) {
         QAction *action = m_actions.value(it.key());
@@ -945,7 +978,16 @@ void MainWindow::buildMenus()
     // unreadable as no toolbar.
     auto *toolBar = addToolBar(tr("Main"));
     toolBar->setObjectName(QStringLiteral("main_toolbar"));
-    toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    // Item 56, second half: the user asked that buttons honour the desktop's
+    // "Icon only" setting. They cannot while this asserts a style of its own.
+    // Qt exposes the desktop's preference as SH_ToolButtonStyle, and a
+    // hardcoded setToolButtonStyle() overrides it whatever the user chose.
+    //
+    // Read rather than dropped entirely: with no call at all a QToolBar
+    // defaults to Qt::ToolButtonIconOnly rather than to the platform's hint,
+    // which would ignore the setting just as thoroughly in the other direction.
+    toolBar->setToolButtonStyle(static_cast<Qt::ToolButtonStyle>(
+        style()->styleHint(QStyle::SH_ToolButtonStyle, nullptr, toolBar)));
     QAction *syncAction = m_actions.value(QStringLiteral("sync"));
     // Carried over from the QPushButton this replaced: with no command
     // configured the control is disabled, and the tooltip is the only thing

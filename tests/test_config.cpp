@@ -46,6 +46,7 @@ private slots:
     void unknownStartupQueryFallsBackAndReports();
     void generalSectionKeysAreActuallyRead();
     void messageZoomDefaultsAndValidates();
+    void messageZoomOutOfRangeIsReported();
     void completionOnFocusDefaultsToFalse();
     void completionOnFocusIsActuallyRead();
     void markReadDelayDefaultsToTwoSeconds();
@@ -476,6 +477,34 @@ void TestConfig::messageZoomDefaultsAndValidates()
         QCOMPARE(config.messageZoom(), 1.0);
         QCOMPARE(config.problems().size(), 1);
     }
+}
+
+void TestConfig::messageZoomOutOfRangeIsReported()
+{
+    // MessageView::clampZoom() already stops an out-of-range value from
+    // reaching the web view, so this is not about the render. It is about the
+    // silence: the key parses, so nothing ever told the user that the 500 they
+    // wrote is not what they are looking at. Not clamped here, because
+    // clampZoom() owns the bounds and two copies would drift.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "message_zoom=500\n")));
+    QCOMPARE(config.problems().size(), 1);
+    QVERIFY(config.problems().first().contains(QStringLiteral("500")));
+
+    QTemporaryDir dir2;
+    Config small;
+    small.load(writeIni(dir2, QStringLiteral("[general]\n"
+                                             "message_zoom=0.1\n")));
+    QCOMPARE(small.problems().size(), 1);
+
+    // In range stays silent.
+    QTemporaryDir dir3;
+    Config ok;
+    ok.load(writeIni(dir3, QStringLiteral("[general]\n"
+                                          "message_zoom=3.0\n")));
+    QVERIFY(ok.problems().isEmpty());
 }
 
 void TestConfig::completionOnFocusDefaultsToFalse()

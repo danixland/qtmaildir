@@ -19,6 +19,9 @@
 #include "config.h"
 
 #include "mailsync.h"
+// For kMinZoom/kMaxZoom. The bounds live with the widget that enforces them,
+// so this reports the same numbers rather than keeping a second copy.
+#include "messageview.h"
 
 #include <QFileInfo>
 #include <QSettings>
@@ -76,8 +79,8 @@ void Config::load(const QString &path)
 
     // Absent is fine and silent: the default is 1.0. Present but unparseable
     // is a problem, since the user asked for something and is not getting it.
-    // The range check lives in MessageView::clampZoom(), the one place that
-    // knows what the web view can render.
+    // The range is enforced by MessageView::clampZoom(), the one place that
+    // knows what the web view can render; out of range is reported below.
     // Empty is treated as unset rather than as "a query named nothing".
     const QString startup =
         settings.value(QStringLiteral("startup_query")).toString().trimmed();
@@ -92,6 +95,18 @@ void Config::load(const QString &path)
         const double value = zoom.toString().toDouble(&ok);
         if (ok) {
             m_messageZoom = value;
+            // Reported, not clamped: MessageView::clampZoom() owns the bounds
+            // and already stops this reaching the web view, so clamping here
+            // too would be a second copy of the range, free to drift from the
+            // first. What was missing is the report. The value parses, so
+            // nothing ever said the 500 in the file is not what is on screen.
+            if (value < MessageView::kMinZoom || value > MessageView::kMaxZoom) {
+                addProblem(QStringLiteral("Message zoom %1 is outside %2 to %3; "
+                                          "using the nearest allowed value.")
+                               .arg(value)
+                               .arg(MessageView::kMinZoom)
+                               .arg(MessageView::kMaxZoom));
+            }
         } else {
             addProblem(QStringLiteral("Message zoom '%1' is not a number; "
                                       "using the default.")

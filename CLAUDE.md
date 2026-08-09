@@ -302,3 +302,41 @@ Work goes directly on `master`, no PR flow. Commits must be GPG-signed (`git com
 `HANDOFF.md` is local-only and gitignored; never stage or commit it.
 
 v1 is read-and-organize only. Compose and send are v2.
+
+## Cutting a release
+
+Five steps, and **the GitHub Release is part of cutting a release, not a
+follow-up.** The repo had fourteen tags and zero releases until 2026-08-09,
+because the first four steps were treated as the whole job.
+
+1. Move the `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD`
+   heading, leaving `[Unreleased]` in place and empty above it. Add a one or
+   two sentence summary under the heading, and an `### Upgrading` section when
+   a user's own config or habits need to change.
+2. Bump `project(qtmaildir VERSION ...)` in `CMakeLists.txt`, the only place
+   the version lives. Reconfigure, build, and check `./build/src/qtmaildir
+   --version`.
+3. Commit as `release: X.Y.Z`, then `git tag -s vX.Y.Z -m "qtmaildir X.Y.Z"`.
+   Tags are annotated and GPG-signed, matching every existing one.
+4. `git push && git push --tags`. `origin` carries two push URLs, the personal
+   server and GitHub, so one push reaches both.
+5. Create the GitHub Release from the tag, with the body taken from that
+   version's changelog section rather than written fresh:
+
+   ```bash
+   gh release create vX.Y.Z --repo danixland/qtmaildir \
+     --title "qtmaildir X.Y.Z" --notes-file <section>.md --verify-tag
+   ```
+
+   Normal release, never `--prerelease`: GitHub's "latest" badge ignores
+   prereleases, and every 0.x here is a real release the user runs daily. The
+   pre-1.0 stability caveat is already stated at the top of the changelog.
+
+**Version choice is semver on the user-visible surface**, pre-1.0 included. A
+changed label, a changed default, or anything in an `### Upgrading` section is a
+minor bump, not a patch: 0.12.0 renamed an action and changed the toolbar's
+button style, and both are things a user notices without reading the changelog.
+
+`assets/slackbuild/` carries its own version in three files and is **not** part
+of this procedure. It has been stale since 0.7.0 and the user is considering
+removing it; do not bump it as a side effect of a release.

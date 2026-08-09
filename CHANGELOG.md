@@ -11,6 +11,10 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-08-09
+
+A single fix for a defect 0.12.0 introduced.
+
 ### Fixed
 
 - **Archive and Mark all read no longer share an icon.** Both used the same one

@@ -11,6 +11,27 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-09
+
+Syncing gets narrower and more honest: a sync fetches only the accounts you
+have actually edited, and one run from cron now clears the unsynced-changes
+indicator instead of leaving it claiming work that had already gone out.
+The toolbar gains icons throughout and defers to your desktop's own style.
+
+### Upgrading
+
+Two things you may want to change in your own config, neither of which breaks
+if you leave it alone:
+
+- **Saved-query button labels are your own key names.** If you have
+  `Flagged = tag:flagged` under `[queries]`, that button still reads "Flagged"
+  after the action was renamed to "Important". Rename the key to
+  `Important = tag:flagged` if you want the two to agree; the query is
+  unchanged either way.
+- **The toolbar now honours your desktop's toolbar button style.** If that is
+  set to "icon only" the toolbar loses its text labels, which it previously
+  ignored. Icons are 24px by default; `[general] toolbar_icon_size` changes it.
+
 ### Added
 
 - **A sync now fetches only the accounts you have edited.** Tagging mail in one

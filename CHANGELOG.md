@@ -11,6 +11,22 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The message pane no longer comes back as a sliver.** A splitter position is
+  saved in pixels, so one saved in a wide window did not fit a narrower one: the
+  thread list kept its full saved width and the message pane got whatever was
+  left, in one real case 29px. The pane now has a minimum width and cannot be
+  collapsed, which covers the restore and the equivalent drag.
+
+### Changed
+
+- **An out-of-range `message_zoom` now says so.** The documented 0.5 to 3.0
+  range was already enforced on the way to the web view, so a `message_zoom` of
+  500 rendered at 3.0 rather than unusably, but nothing reported that the value
+  in the file was not the value on screen. It is now listed with the other
+  configuration problems at startup.
+
 ## [0.12.1] - 2026-08-09
 
 A single fix for a defect 0.12.0 introduced.

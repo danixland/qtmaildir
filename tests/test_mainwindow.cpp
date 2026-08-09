@@ -35,6 +35,7 @@
 #include <QTemporaryDir>
 
 #include <QStyle>
+#include <QSplitter>
 #include <QTableView>
 #include <QToolBar>
 #include <QTimer>
@@ -64,6 +65,8 @@ private slots:
     void uiStateIsNotWrittenIntoTheUserConfig();
     void uiStateSurvivesARestart();
     void missingUiStateLeavesTheDefaults();
+    void splitterStateFromAWiderWindowKeepsTheMessagePane();
+    void usableSplitterStateIsRestoredUntouched();
     void headerStateFromADifferentColumnLayoutIsDiscarded();
     void returnInTheQueryBarRunsTheQueryNotOpenThread();
     void markReadTimerRestartsRatherThanStacking();
@@ -298,6 +301,124 @@ void TestMainWindow::missingUiStateLeavesTheDefaults()
     MainWindow window(config);
     QCOMPARE(window.size(), QSize(1200, 800));
 
+    QStandardPaths::setTestModeEnabled(false);
+}
+
+void TestMainWindow::splitterStateFromAWiderWindowKeepsTheMessagePane()
+{
+    // The reported symptom, from a real state file: a splitter position saved
+    // at 1285/1252 and restored into a 1136px window. QSplitter honours the
+    // first size and gives the second what is left, so the message pane came
+    // back roughly 30px wide, a sliver of rendered mail against a full-width
+    // thread list. It is not a first-run problem, which is why widening the
+    // default window would not have helped: the wider the window ever was, the
+    // worse the next narrower session is.
+    QStandardPaths::setTestModeEnabled(true);
+    QFile::remove(MainWindow::uiStatePath());
+
+    {
+        const Config config;
+        MainWindow window(config);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+        auto *splitter = window.findChild<QSplitter *>();
+        QVERIFY(splitter);
+        // Guard: the forged sizes have to be genuinely wider than the window
+        // this reopens into, or the test proves nothing.
+        QVERIFY(splitter->width() > 0);
+        // Times four, not times two: the offscreen platform chooses the window
+        // width itself and has been seen to choose differently between runs of
+        // this binary, so a margin that only just exceeds THIS window's width
+        // can fail to exceed the reopened one's and quietly stop reproducing
+        // the bug.
+        const int overwide = splitter->width() * 4;
+        splitter->setSizes({ overwide, overwide });
+        window.close();
+    }
+
+    const Config config;
+    MainWindow reopened(config);
+    reopened.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&reopened));
+
+    auto *splitter = reopened.findChild<QSplitter *>();
+    QVERIFY(splitter);
+    const QList<int> sizes = splitter->sizes();
+    QCOMPARE(sizes.size(), 2);
+
+    // Asserted against the pane's OWN minimum rather than a number repeated
+    // here: the floor is private to MainWindow, and a literal copy would keep
+    // passing if the shipped one were lowered back to a width mail cannot be
+    // read at. The guard below is what stops that from being vacuous.
+    auto *pane = reopened.findChild<MessageView *>();
+    QVERIFY(pane);
+    QVERIFY2(pane->minimumWidth() >= 300,
+             qPrintable(QStringLiteral("message pane floor is %1px")
+                            .arg(pane->minimumWidth())));
+    QVERIFY2(sizes.at(1) >= pane->minimumWidth(),
+             qPrintable(QStringLiteral("message pane restored %1px wide in a "
+                                       "%2px splitter")
+                            .arg(sizes.at(1))
+                            .arg(splitter->width())));
+
+    reopened.close();
+    QFile::remove(MainWindow::uiStatePath());
+    QStandardPaths::setTestModeEnabled(false);
+}
+
+void TestMainWindow::usableSplitterStateIsRestoredUntouched()
+{
+    // The rescue must not fire on a position that fits. This is item 1's whole
+    // point: a splitter the user dragged comes back where they left it.
+    QStandardPaths::setTestModeEnabled(true);
+    QFile::remove(MainWindow::uiStatePath());
+
+    QList<int> saved;
+    {
+        const Config config;
+        MainWindow window(config);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+        auto *splitter = window.findChild<QSplitter *>();
+        QVERIFY(splitter);
+        // Lopsided but both panes usable, so nothing should touch it. Sized as
+        // a fraction rather than "width minus 250": this window's width is the
+        // platform's to choose and has been seen to differ between two runs of
+        // the same binary, so an absolute split saved here can arrive too wide
+        // for the reopened window and trip the rescue the test is asserting
+        // does NOT fire.
+        const int total = splitter->width();
+        QVERIFY(total > 500);
+        splitter->setSizes({ total / 4, total - total / 4 });
+        saved = splitter->sizes();
+        QVERIFY(saved.at(0) < saved.at(1));
+        window.close();
+    }
+
+    const Config config;
+    MainWindow reopened(config);
+    reopened.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&reopened));
+
+    auto *splitter = reopened.findChild<QSplitter *>();
+    QVERIFY(splitter);
+    // The saved ratio, not the saved pixels: QSplitter redistributes to the
+    // current width, and only a rescue would flip which pane is the larger.
+    // The FIRST pane's saved pixel width is what must survive: QSplitter
+    // restores it verbatim and gives the second whatever the current window
+    // leaves, so this is the value a rescue would overwrite and the only one
+    // that does not move with the window width. Which matters here, because
+    // the offscreen platform picks that width itself and has been seen to
+    // pick differently between two runs of this same binary (1181 and 779),
+    // so any assertion on a ratio or on pane 1 is checking the platform's
+    // mood rather than this code.
+    const QList<int> sizes = splitter->sizes();
+    QCOMPARE(sizes.at(0), saved.at(0));
+
+    reopened.close();
+    QFile::remove(MainWindow::uiStatePath());
     QStandardPaths::setTestModeEnabled(false);
 }
 

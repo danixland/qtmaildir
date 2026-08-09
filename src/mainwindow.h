@@ -211,6 +211,7 @@ private:
     /// Restores window geometry, splitter and thread-list header widths.
     /// A missing or rejected blob leaves the buildUi() defaults in place.
     void restoreUiState();
+
     void saveUiState() const;
 
     void registerActions();
@@ -415,6 +416,13 @@ private:
     /// menu bar does.
     QMenu *m_threadContextMenu = nullptr;
     QSplitter *m_splitter = nullptr;
+
+    /// Below this the message pane shows a sliver of a rendered mail and is
+    /// not worth the space it occupies. This is a floor, reached only when a
+    /// restored position does not fit, so it is set at the width mail is
+    /// readable at rather than the width it is merely visible at: at 200 the
+    /// placeholder's own text wraps every couple of words.
+    static constexpr int kMinMessagePaneWidth = 300;
     QComboBox *m_accountBox = nullptr;
     QLabel *m_statusLabel = nullptr;
 

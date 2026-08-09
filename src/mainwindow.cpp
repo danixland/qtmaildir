@@ -585,6 +585,17 @@ void MainWindow::buildUi()
     m_splitter->addWidget(m_threadView);
     m_splitter->addWidget(m_messageView);
     m_splitter->setStretchFactor(1, 2);
+    // A splitter position is saved in PIXELS, so one saved in a wide window
+    // does not fit a narrower one: QSplitter restores the first pane's size
+    // verbatim and gives the second whatever is left. A real 1285/1252 split
+    // restored into a 1136px window left the message pane 29px wide, a sliver
+    // of rendered mail beside a full-width thread list. A floor on the pane
+    // covers that and the equivalent drag, and needs no restore-time repair.
+    // Only the message pane: a minimum on the thread view as well would leave
+    // a narrow window unable to satisfy either, the same fault from the other
+    // side.
+    m_splitter->setCollapsible(1, false);
+    m_messageView->setMinimumWidth(kMinMessagePaneWidth);
     layout->addWidget(m_splitter, 1);
 
     layout->addWidget(m_syncLogPane);

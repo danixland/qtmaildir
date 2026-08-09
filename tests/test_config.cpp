@@ -20,6 +20,7 @@
 #include <QTemporaryDir>
 #include <QSettings>
 #include "config.h"
+#include "mailsync.h"
 
 class TestConfig : public QObject
 {
@@ -28,6 +29,8 @@ private slots:
     void parsesAccounts();
     void parsesSavedQueries();
     void missingSyncCommandIsEmpty();
+    void syncLogDefaultsToTheScriptsOwnPath();
+    void syncLogCanBeOverridden();
     void accountWithoutMaildirIsRejected();
     void scopedQueryWrapsCorrectly();
     void absentSyncCommandIsNoticeNotProblem();
@@ -132,6 +135,39 @@ void TestConfig::missingSyncCommandIsEmpty()
     QVERIFY(config.syncCommand().isEmpty());
     // The UI uses this to disable the Sync button with a tooltip.
     QVERIFY(!config.warnings().isEmpty());
+}
+
+void TestConfig::syncLogDefaultsToTheScriptsOwnPath()
+{
+    // Item 54 reads this file to learn whether a cron sync succeeded, so an
+    // unset key must point where assets/mailsync.sh actually writes, not be
+    // empty. Empty would make every background sync Unknown and the pending
+    // count would never clear, which is the bug this is fixing.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral("[general]\n"));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.syncLog(), MailSync::defaultLogPath());
+    QVERIFY(config.syncLog().endsWith(QStringLiteral("/.local/state/mailsync.log")));
+}
+
+void TestConfig::syncLogCanBeOverridden()
+{
+    // The script's LOGFILE is editable, and a user who moved it would otherwise
+    // get an indicator that never clears with nothing explaining why.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[sync]\n"
+        "command=/bin/true\n"
+        "log=/var/log/mail/sync.log\n"
+    ));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.syncLog(), QStringLiteral("/var/log/mail/sync.log"));
 }
 
 void TestConfig::accountWithoutMaildirIsRejected()

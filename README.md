@@ -140,6 +140,12 @@ identity.
 ; assets/mailsync.sh is the reference implementation; see "The sync command".
 ; command = /home/you/bin/mailsync.sh
 
+; Optional. The sync script's log file, read to tell whether a sync started
+; outside the application (a cron run, say) succeeded, so the unsynced-edits
+; indicator can clear itself for one. Defaults to the path assets/mailsync.sh
+; writes; set it only if you changed the script's LOGFILE.
+; log = /home/you/.local/state/mailsync.log
+
 ; Section names use a dot, not a slash: QSettings treats "/" as its own
 ; group separator, so [account/work] would be parsed as a nested group.
 [account.work]

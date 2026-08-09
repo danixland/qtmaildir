@@ -325,7 +325,11 @@ private:
 
     /// Sends a tag change for a set of threads without touching the undo stack.
     /// Both tagSelected() and ThreadTagCommand route through this.
-    void sendThreadTagChange(const QStringList &threadIds,
+    ///
+    /// Invokable so a test can record an edit against a known account without a
+    /// worker: this is where m_editedAccounts is populated, and item 54's
+    /// draining of it cannot be observed otherwise.
+    Q_INVOKABLE void sendThreadTagChange(const QStringList &threadIds,
                              const QStringList &add,
                              const QStringList &remove,
                              const QString &description);
@@ -543,7 +547,10 @@ private:
     /// The channel names for m_editedAccounts, resolved through the config.
     /// Empty means sync everything, which is what a fetch with nothing pending
     /// has to do.
-    QStringList pendingSyncChannels() const;
+    /// Invokable for the same reason as sendThreadTagChange(): it is the only
+    /// view onto m_editedAccounts, and a count that reaches zero while the set
+    /// stays full looks correct and still syncs the wrong channels.
+    Q_INVOKABLE QStringList pendingSyncChannels() const;
 };
 
 /// Undo entry for a tag change over a set of threads.

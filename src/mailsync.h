@@ -65,6 +65,17 @@ private:
     QString m_status;
 };
 
+/// The outcome of a sync run this process did not start.
+///
+/// Unknown is not a failure, it is the absence of evidence: no log, no marker,
+/// an unreadable file. Callers must treat it as "nothing observed" and change
+/// no state on it, exactly as SyncMonitor::State::Unknown is treated.
+enum class SyncOutcome {
+    Unknown,
+    Ok,
+    Failed,
+};
+
 /// Runs the configured external sync command.
 ///
 /// qtmaildir deliberately does not implement sync itself. The existing script
@@ -96,6 +107,23 @@ public:
     bool start(const QStringList &channels = {});
 
     QString log() const { return m_log; }
+
+    /// Where assets/mailsync.sh writes its log, unless the config overrides it.
+    static QString defaultLogPath();
+
+    /// Reads the outcome of the last COMPLETED run from \p logPath.
+    ///
+    /// This is how a sync fired by the user's cron is judged: the process that
+    /// ran it is gone and its exit status died with it, but the script writes
+    /// a "RUN END ... status=OK" line before exiting, and that line survives.
+    /// Deriving the outcome from mbsync's own chatter was rejected for the
+    /// reason given on SyncPhaseTracker: a second opinion built from loose text
+    /// matching eventually disagrees with the authoritative one.
+    ///
+    /// Reads a bounded tail, not the file: this runs on the UI thread every
+    /// time a background sync ends, against a file logrotate lets grow all day.
+    /// Anything unreadable, absent or unmarked is Unknown.
+    static SyncOutcome lastRunOutcome(const QString &logPath);
 
 signals:
     void started();

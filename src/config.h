@@ -90,6 +90,15 @@ public:
     /// Empty when unset; the caller disables the Sync button in that case.
     QString syncCommand() const { return m_syncCommand; }
 
+    /// The sync script's log file, read to learn the outcome of a sync this
+    /// process did not start (item 54).
+    ///
+    /// Never empty: an unset key falls back to where assets/mailsync.sh writes
+    /// by default. An empty value would make every background sync report
+    /// SyncOutcome::Unknown, and the pending-edit indicator would then never
+    /// clear on a cron sync, which is exactly the defect this exists to fix.
+    QString syncLog() const { return m_syncLog; }
+
     /// Optional alternate notmuch config file. Empty means "let notmuch decide".
     QString notmuchConfig() const { return m_notmuchConfig; }
 
@@ -161,6 +170,7 @@ private:
     QList<Account> m_accounts;
     QList<SavedQuery> m_savedQueries;
     QString m_syncCommand;
+    QString m_syncLog;
     QString m_notmuchConfig;
     qreal m_messageZoom = 1.0;
     bool m_completionOnFocus = false;

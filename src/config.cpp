@@ -18,6 +18,8 @@
 
 #include "config.h"
 
+#include "mailsync.h"
+
 #include <QFileInfo>
 #include <QSettings>
 #include <QStandardPaths>
@@ -170,6 +172,14 @@ void Config::load(const QString &path)
                 .arg(m_syncCommand));
         m_syncCommand.clear();
     }
+
+    // Not validated for existence, unlike the command above. The log is written
+    // by the script when it runs, so a fresh install has no file yet, and a
+    // startup problem reported for that would be noise. A missing file simply
+    // reads as SyncOutcome::Unknown when the time comes.
+    m_syncLog = settings.value(QStringLiteral("sync/log")).toString().trimmed();
+    if (m_syncLog.isEmpty())
+        m_syncLog = MailSync::defaultLogPath();
 
     // Account groups are written as [account.work], [account.personal], etc.
     // A dot, not a slash, separates the "account" namespace from the key:

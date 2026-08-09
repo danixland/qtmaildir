@@ -106,6 +106,13 @@ private slots:
     void aHeldEditCountsAsUnsynced();
     void anUnreadableLockTableStillSendsTheEdit();
     void aRejectedWriteKeepsEarlierUndoHistory();
+
+    void aSuccessfulCronSyncClearsThePendingCount();
+    void aFailedCronSyncLeavesThePendingCount();
+    void anUnreadableSyncLogLeavesThePendingCount();
+    void anUnknownExternalStateClearsNothing();
+    void aSuccessfulCronSyncDrainsTheEditedAccounts();
+    void aCronSyncDoesNotClearAnEditMadeWhileItRan();
 };
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -2098,6 +2105,277 @@ void TestMainWindow::aRejectedWriteKeepsEarlierUndoHistory()
     QVERIFY2(window.canUndo(),
              "a rejected write cleared the undo history of edits that had "
              "already succeeded");
+}
+
+// Item 54. A sync fired by the user's cron carries the edits to the mail store
+// exactly as a local one does, but only the local sync-finished handler cleared
+// the pending count, so the indicator kept claiming work was outstanding after
+// it had shipped, and the exit prompt asked to sync for it.
+//
+// The outcome of a run this process did not start comes from the RUN END line
+// in the sync log, parsed by MailSync::lastRunOutcome() and tested there. These
+// tests are about what MainWindow does with each answer.
+
+namespace {
+
+/// Writes a config naming \p logPath as the sync log, and loads it.
+///
+/// The log path has to come from config rather than the real
+/// ~/.local/state/mailsync.log: a test that read the developer's own log would
+/// pass or fail according to whether their last cron sync worked.
+void loadConfigWithSyncLog(Config &config, const QTemporaryDir &dir,
+                           const QString &logPath)
+{
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write(QStringLiteral("[sync]\nlog=%1\n").arg(logPath).toUtf8());
+    file.close();
+
+    config.load(path);
+    QCOMPARE(config.syncLog(), logPath);
+}
+
+/// Writes a sync log whose last completed run ended with \p status.
+void writeSyncLog(const QString &path, const QString &status)
+{
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write(QStringLiteral("===== RUN END: 2026-08-09T10:20:03+02:00  status=%1 "
+                              "=====\n").arg(status).toUtf8());
+    file.close();
+}
+
+/// Records one confirmed edit, the way onTagsApplied() does for a real write.
+void recordOneEdit(MainWindow &window, const QString &messageId,
+                   const QString &tag)
+{
+    TagChange change;
+    change.messageIds = { messageId };
+    change.added = { tag };
+    change.description = QStringLiteral("Flag");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+}
+
+/// Drives a complete external sync: the lock appears, then it is released.
+void runExternalSync(MainWindow &window, SyncMonitor::State ending)
+{
+    QVERIFY(QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                                      Q_ARG(SyncMonitor::State,
+                                            SyncMonitor::State::Running)));
+    QVERIFY(QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                                      Q_ARG(SyncMonitor::State, ending)));
+}
+
+} // namespace
+
+void TestMainWindow::aSuccessfulCronSyncClearsThePendingCount()
+{
+    // The reported defect: edits applied, cron syncs, indicator still says N.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("mailsync.log"));
+    writeSyncLog(logPath, QStringLiteral("OK"));
+
+    Config config;
+    loadConfigWithSyncLog(config, dir, logPath);
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    recordOneEdit(window, QStringLiteral("m1"), QStringLiteral("flagged"));
+    QVERIFY2(!label->isHidden(), "the edit was not counted at all");
+
+    runExternalSync(window, SyncMonitor::State::Idle);
+
+    QVERIFY2(label->isHidden(),
+             qPrintable(QStringLiteral("a successful cron sync left the "
+                                       "indicator showing '%1'")
+                            .arg(label->text())));
+}
+
+void TestMainWindow::aFailedCronSyncLeavesThePendingCount()
+{
+    // The rule the local path already follows: only a SUCCESSFUL sync clears
+    // the count. Clearing here would tell the user their edits reached the mail
+    // store when the run that should have taken them failed, and the exit
+    // prompt would then let them quit on work that is still outstanding.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("mailsync.log"));
+    writeSyncLog(logPath, QStringLiteral("FAILED  mbsync=1 notmuch=0"));
+
+    Config config;
+    loadConfigWithSyncLog(config, dir, logPath);
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    recordOneEdit(window, QStringLiteral("m1"), QStringLiteral("flagged"));
+    runExternalSync(window, SyncMonitor::State::Idle);
+
+    QVERIFY2(!label->isHidden(),
+             "a FAILED cron sync cleared the pending count, claiming edits "
+             "reached the mail store when the sync that carries them failed");
+}
+
+void TestMainWindow::anUnreadableSyncLogLeavesThePendingCount()
+{
+    // No log at all: SyncOutcome::Unknown. Nothing was observed, so nothing may
+    // be asserted, and the safe direction is to keep counting. Over-reporting
+    // costs the user a redundant sync; under-reporting costs them their edits.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("absent.log"));
+    QVERIFY(!QFileInfo::exists(logPath));
+
+    Config config;
+    loadConfigWithSyncLog(config, dir, logPath);
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    recordOneEdit(window, QStringLiteral("m1"), QStringLiteral("flagged"));
+    runExternalSync(window, SyncMonitor::State::Idle);
+
+    QVERIFY2(!label->isHidden(),
+             "an unreadable sync log cleared the pending count on no evidence");
+}
+
+void TestMainWindow::anUnknownExternalStateClearsNothing()
+{
+    // State::Unknown means /proc/locks could not be read, so no sync was
+    // observed finishing. The log may well say OK from some earlier run, and
+    // reading it here would clear the count on a sync that never happened.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("mailsync.log"));
+    writeSyncLog(logPath, QStringLiteral("OK"));
+
+    Config config;
+    loadConfigWithSyncLog(config, dir, logPath);
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    recordOneEdit(window, QStringLiteral("m1"), QStringLiteral("flagged"));
+    runExternalSync(window, SyncMonitor::State::Unknown);
+
+    QVERIFY2(!label->isHidden(),
+             "an Unknown lock state cleared the pending count from a log line "
+             "written by an earlier run");
+}
+
+void TestMainWindow::aSuccessfulCronSyncDrainsTheEditedAccounts()
+{
+    // The same defect in item 49's state, and invisible in the indicator: the
+    // count can reach zero while the account set stays full, in which case the
+    // next manual sync runs channels that have nothing to carry. Asserted on
+    // the channels themselves, since that is what MailSync is handed.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("mailsync.log"));
+    writeSyncLog(logPath, QStringLiteral("OK"));
+
+    const QString confPath = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile conf(confPath);
+    QVERIFY(conf.open(QIODevice::WriteOnly | QIODevice::Text));
+    conf.write(QStringLiteral("[sync]\nlog=%1\n\n"
+                              "[account.work]\n"
+                              "maildir=work-mail\n"
+                              "channel=work-channel\n")
+                   .arg(logPath).toUtf8());
+    conf.close();
+
+    Config config;
+    config.load(confPath);
+    QCOMPARE(config.accounts().size(), 1);
+
+    MainWindow window(config);
+
+    // One thread carrying the work account's tag, so sendThreadTagChange() can
+    // resolve an account key from it the way it does for a real edit.
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    ThreadSummary thread;
+    thread.threadId = QStringLiteral("t1");
+    thread.subject = QStringLiteral("Subject");
+    thread.tags = { QStringLiteral("account-work"), QStringLiteral("inbox") };
+    model->appendBatch({ thread });
+    QCOMPARE(model->accountKeysForThread(QStringLiteral("t1")),
+             QStringList{ QStringLiteral("work") });
+
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "sendThreadTagChange",
+        Q_ARG(QStringList, QStringList{ QStringLiteral("t1") }),
+        Q_ARG(QStringList, QStringList{ QStringLiteral("flagged") }),
+        Q_ARG(QStringList, QStringList{}),
+        Q_ARG(QString, QStringLiteral("Flag"))));
+
+    // The guard: the account really is recorded, so the assertion below is
+    // about draining it rather than about it never having been there.
+    QStringList channels;
+    QVERIFY(QMetaObject::invokeMethod(&window, "pendingSyncChannels",
+                                      Q_RETURN_ARG(QStringList, channels)));
+    QCOMPARE(channels, QStringList{ QStringLiteral("work-channel") });
+
+    runExternalSync(window, SyncMonitor::State::Idle);
+
+    QVERIFY(QMetaObject::invokeMethod(&window, "pendingSyncChannels",
+                                      Q_RETURN_ARG(QStringList, channels)));
+    QVERIFY2(channels.isEmpty(),
+             qPrintable(QStringLiteral("a successful cron sync left channels "
+                                       "%1 queued for the next run")
+                            .arg(channels.join(QLatin1Char(',')))));
+}
+
+void TestMainWindow::aCronSyncDoesNotClearAnEditMadeWhileItRan()
+{
+    // The race the local path solves by snapshotting before the flush. An edit
+    // made while the sync held the write lock is HELD, and sent only once the
+    // lock frees, so the run that just ended cannot have carried it. Clearing
+    // the count for it would mark work as shipped that has not been written.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("mailsync.log"));
+    writeSyncLog(logPath, QStringLiteral("OK"));
+
+    Config config;
+    loadConfigWithSyncLog(config, dir, logPath);
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    // The sync starts, then the user edits while it is running.
+    QVERIFY(QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                                      Q_ARG(SyncMonitor::State,
+                                            SyncMonitor::State::Running)));
+    recordOneEdit(window, QStringLiteral("m1"), QStringLiteral("flagged"));
+    QVERIFY2(!label->isHidden(), "the edit was not counted at all");
+
+    QVERIFY(QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                                      Q_ARG(SyncMonitor::State,
+                                            SyncMonitor::State::Idle)));
+
+    // onTagsApplied() ran while the lock was held, so this edit reached the
+    // INDEX during the sync. Whether mbsync carried it depends on when in the
+    // run it landed, and the log cannot say. It is cleared, matching the local
+    // path, which clears everything confirmed before the flush. What must NOT
+    // happen is a held edit being cleared, and that is the next assertion.
+    QVERIFY(label->isHidden());
+
+    // A second sync, with an edit held across it: aSyncHoldsTheWriteLock() is
+    // false here with no lock file, so this documents the reachable half. The
+    // held-edit path has its own coverage in aHeldEditCountsAsUnsynced().
+    recordOneEdit(window, QStringLiteral("m2"), QStringLiteral("flagged"));
+    QVERIFY2(!label->isHidden(),
+             "an edit made after the sync ended was swallowed by it");
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

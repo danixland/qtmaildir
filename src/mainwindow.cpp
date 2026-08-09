@@ -1902,6 +1902,33 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
         showTransientStatus(
             tr("Background sync completed. Press Enter in the query bar to "
                "refresh."));
+
+        // Item 54. A cron sync carries the edits to the mail store exactly as a
+        // local one does, so the count it cleared has to be cleared here too.
+        // Without this the indicator kept reporting work that had already
+        // shipped, and the exit prompt asked to sync for it.
+        //
+        // The outcome comes from the RUN END line the script writes, because
+        // the process that ran this sync is gone and its exit status with it.
+        // Anything other than a definite OK changes nothing: the local path's
+        // rule is that only a SUCCESSFUL sync may clear the count, and Unknown
+        // is the absence of evidence rather than evidence of success.
+        if (MailSync::lastRunOutcome(m_config.syncLog()) == SyncOutcome::Ok) {
+            m_pendingTagEdits.clear();
+            m_unnettablePendingEdits = 0;
+
+            // Cleared HERE, before flushHeldEdits() below, and the ordering is
+            // load-bearing for the reason spelled out on the local path at
+            // onSyncFinished(): the flush calls sendThreadTagChange(), which
+            // writes m_editedAccounts SYNCHRONOUSLY. Clearing after the flush
+            // would discard accounts whose edits this run did not carry, and
+            // those edits would then sync only when some later edit happened to
+            // name the same account. Running first, everything in the set at
+            // this moment is exactly what the finished sync carried, so the
+            // local path's snapshot-and-subtract collapses to a clear.
+            m_editedAccounts.clear();
+            updatePendingIndicator();
+        }
     }
 
     // OUTSIDE the Idle branch, deliberately. Unknown clears the busy flag above,

@@ -16,8 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include <QElapsedTimer>
 #include <QFile>
+#include <QProcess>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -55,6 +55,15 @@ private slots:
     void runMarkersAreNotAPhase();
     void theChannelNameIsShown();
     void aChannelNameIsNotLetInVerbatim();
+
+    void lastRunOutcomeReadsAnOkRun();
+    void lastRunOutcomeReadsAFailedRun();
+    void lastRunOutcomeTakesTheLastMarkerNotTheFirst();
+    void lastRunOutcomeOnAMissingLogIsUnknown();
+    void lastRunOutcomeOnALogWithNoMarkerIsUnknown();
+    void lastRunOutcomeIgnoresATrailingPartialRun();
+    void lastRunOutcomeReadsATailOfAHugeLog();
+    void lastRunOutcomeReadsABannerTheScriptActuallyWrote();
 
 private:
     /// Writes an executable shell script into the temp dir, returns its path.
@@ -450,6 +459,172 @@ void TestMailSync::aChannelNameIsNotLetInVerbatim()
     const QString text = tracker.statusText();
     QVERIFY2(text.size() <= 120, qPrintable(QString::number(text.size())));
     QVERIFY(!text.contains(QLatin1Char('\n')));
+}
+
+// Item 54. A cron sync clears the pending-edit count only if it succeeded, and
+// the only evidence of that available to this process is the RUN END line the
+// script writes into its log. These tests pin the parser against the exact
+// shape assets/mailsync.sh emits.
+
+void TestMailSync::lastRunOutcomeReadsAnOkRun()
+{
+    const QString path = m_dir.filePath(QStringLiteral("ok.log"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("===== RUN START: 2026-08-09T10:20:00+02:00 =====\n"
+               "10:20:01 Channel one\n"
+               "===== RUN END: 2026-08-09T10:20:03+02:00  status=OK =====\n");
+    file.close();
+
+    QCOMPARE(MailSync::lastRunOutcome(path), SyncOutcome::Ok);
+}
+
+void TestMailSync::lastRunOutcomeReadsAFailedRun()
+{
+    // The failure line carries extra fields after status=, so a parser keyed on
+    // the whole line rather than the token would miss it.
+    const QString path = m_dir.filePath(QStringLiteral("failed.log"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("===== RUN END: 2026-08-09T10:30:07+02:00  status=FAILED  "
+               "mbsync=1 notmuch=0 =====\n");
+    file.close();
+
+    QCOMPARE(MailSync::lastRunOutcome(path), SyncOutcome::Failed);
+}
+
+void TestMailSync::lastRunOutcomeTakesTheLastMarkerNotTheFirst()
+{
+    // The log accumulates runs and is rotated by logrotate, not by the script,
+    // so it normally holds many. Reading the first marker would report an
+    // outcome from hours ago, and in the direction that matters: an old OK
+    // would clear the count for a run that has just failed.
+    const QString path = m_dir.filePath(QStringLiteral("many.log"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("===== RUN END: 2026-08-09T10:00:03+02:00  status=OK =====\n"
+               "===== RUN END: 2026-08-09T10:10:03+02:00  status=OK =====\n"
+               "===== RUN END: 2026-08-09T10:20:07+02:00  status=FAILED  "
+               "mbsync=1 notmuch=0 =====\n");
+    file.close();
+
+    QCOMPARE(MailSync::lastRunOutcome(path), SyncOutcome::Failed);
+}
+
+void TestMailSync::lastRunOutcomeOnAMissingLogIsUnknown()
+{
+    // Unknown, never Ok. The caller clears the user's pending count on Ok, so
+    // an absent log must not be able to assert that edits reached the store.
+    QCOMPARE(MailSync::lastRunOutcome(m_dir.filePath(QStringLiteral("nope.log"))),
+             SyncOutcome::Unknown);
+    QCOMPARE(MailSync::lastRunOutcome(QString()), SyncOutcome::Unknown);
+}
+
+void TestMailSync::lastRunOutcomeOnALogWithNoMarkerIsUnknown()
+{
+    const QString path = m_dir.filePath(QStringLiteral("nomarker.log"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("10:20:01 Channel one\n10:20:02 Channel two\n");
+    file.close();
+
+    QCOMPARE(MailSync::lastRunOutcome(path), SyncOutcome::Unknown);
+}
+
+void TestMailSync::lastRunOutcomeIgnoresATrailingPartialRun()
+{
+    // The lock is released when the script exits, but the window polls
+    // /proc/locks, so it can read the log while a LATER run has already started
+    // and written its RUN START. Only END lines carry an outcome.
+    const QString path = m_dir.filePath(QStringLiteral("partial.log"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("===== RUN END: 2026-08-09T10:20:03+02:00  status=OK =====\n"
+               "===== RUN START: 2026-08-09T10:30:00+02:00 =====\n"
+               "10:30:01 Channel one\n");
+    file.close();
+
+    QCOMPARE(MailSync::lastRunOutcome(path), SyncOutcome::Ok);
+}
+
+void TestMailSync::lastRunOutcomeReadsATailOfAHugeLog()
+{
+    // This runs on the UI thread every time a background sync ends, up to six
+    // times an hour, against a file logrotate lets grow all day, so it reads a
+    // bounded tail rather than the whole file.
+    //
+    // Asserted by CONTENT, not by timing. A first version of this test timed
+    // the call and required it under 100 ms; it passed with the seek deleted,
+    // because reading 10 MB is quick enough either way. The probe measured
+    // nothing. A marker reachable only from the head of the file cannot be
+    // found by a tail read and cannot be missed by a whole-file read, so the
+    // two implementations give different answers here.
+    const QString path = m_dir.filePath(QStringLiteral("huge.log"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("===== RUN END: 2026-08-09T09:00:03+02:00  status=OK =====\n");
+    const QByteArray filler(200, 'x');
+    for (int i = 0; i < 50000; ++i) {
+        file.write(filler);
+        file.write("\n");
+    }
+    file.close();
+    QVERIFY2(QFileInfo(path).size() > 4L * 1024 * 1024,
+             "the fixture must be big enough to matter");
+
+    // Unknown, because the only marker is megabytes above the tail. Reading the
+    // whole file would return Ok and fail this.
+    QCOMPARE(MailSync::lastRunOutcome(path), SyncOutcome::Unknown);
+
+    // The guard the paragraph above demands: prove the tail read finds a marker
+    // that IS within reach, so the Unknown above is bounded reading rather than
+    // a parser that never matches anything in a large file.
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text));
+    file.write("===== RUN END: 2026-08-09T10:20:03+02:00  status=FAILED  "
+               "mbsync=1 notmuch=0 =====\n");
+    file.close();
+
+    QCOMPARE(MailSync::lastRunOutcome(path), SyncOutcome::Failed);
+}
+
+void TestMailSync::lastRunOutcomeReadsABannerTheScriptActuallyWrote()
+{
+    // Every other fixture here is a string this test file made up, and the
+    // first batch of them was WRONG: they used "2026-08-09 10:20:03" where the
+    // script writes `date -Iseconds`, so "2026-08-09T10:20:03+02:00". The
+    // parser happened to survive it, because it keys on the "===== RUN END:"
+    // prefix and the status= token rather than on the timestamp, but nothing
+    // here proved the two formats agreed. A fixture invented to match the code
+    // tests the code against itself.
+    //
+    // So build the banner the way assets/mailsync.sh builds it, with the same
+    // command, and parse that. If the script's format changes, or the parser
+    // starts depending on the timestamp shape, this fails.
+    QProcess date;
+    date.start(QStringLiteral("date"), { QStringLiteral("-Iseconds") });
+    QVERIFY(date.waitForFinished(5000));
+    QCOMPARE(date.exitCode(), 0);
+    const QString stamp =
+        QString::fromUtf8(date.readAllStandardOutput()).trimmed();
+    QVERIFY(!stamp.isEmpty());
+
+    const QString path = m_dir.filePath(QStringLiteral("real.log"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write(QStringLiteral("===== RUN END: %1  status=OK =====\n")
+                   .arg(stamp).toUtf8());
+    file.close();
+
+    QCOMPARE(MailSync::lastRunOutcome(path), SyncOutcome::Ok);
+
+    // And the failure banner, whose trailing fields are the part a whole-line
+    // match would miss.
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text));
+    file.write(QStringLiteral("===== RUN END: %1  status=FAILED  mbsync=1 "
+                              "notmuch=0 =====\n").arg(stamp).toUtf8());
+    file.close();
+
+    QCOMPARE(MailSync::lastRunOutcome(path), SyncOutcome::Failed);
 }
 
 QTEST_MAIN(TestMailSync)

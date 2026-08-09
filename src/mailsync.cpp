@@ -19,6 +19,8 @@
 #include "mailsync.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QRegularExpression>
 
 namespace {
@@ -239,4 +241,57 @@ void MailSync::handleError(QProcess::ProcessError error)
     m_log += message;
     emit outputReceived(message);
     emit finished(false, -1);
+}
+
+QString MailSync::defaultLogPath()
+{
+    // Hardcoded to match assets/mailsync.sh, which builds it the same way from
+    // $HOME. Deriving it from QStandardPaths::GenericStateLocation would append
+    // the application name and point at a file the script never writes.
+    return QDir::homePath() + QStringLiteral("/.local/state/mailsync.log");
+}
+
+SyncOutcome MailSync::lastRunOutcome(const QString &logPath)
+{
+    if (logPath.isEmpty())
+        return SyncOutcome::Unknown;
+
+    QFile file(logPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return SyncOutcome::Unknown;
+
+    // A run's banner is one short line, so a tail this size holds many of them
+    // even when a verbose mbsync run sits between two. Reading the whole file
+    // would be a multi-megabyte read on the UI thread every ten minutes.
+    constexpr qint64 kTailBytes = 64 * 1024;
+    const qint64 size = file.size();
+    if (size > kTailBytes && !file.seek(size - kTailBytes))
+        return SyncOutcome::Unknown;
+
+    const QByteArray tail = file.readAll();
+
+    // Last marker wins: the log accumulates runs, and an older OK must never
+    // speak for a newer failure. RUN START lines are skipped rather than
+    // stopping the scan, since the poll that observes a lock release can land
+    // after the next run has already announced itself.
+    const QList<QByteArray> lines = tail.split('\n');
+    for (auto it = lines.crbegin(); it != lines.crend(); ++it) {
+        const QByteArray line = it->trimmed();
+        if (!line.startsWith("===== RUN END:"))
+            continue;
+
+        // Matched as a token, not as a whole line: the failure banner carries
+        // mbsync= and notmuch= fields after the status.
+        if (line.contains("status=OK"))
+            return SyncOutcome::Ok;
+        if (line.contains("status=FAILED"))
+            return SyncOutcome::Failed;
+
+        // A marker whose status this does not recognise. The script changed, or
+        // the line was truncated by the tail boundary; either way nothing was
+        // observed.
+        return SyncOutcome::Unknown;
+    }
+
+    return SyncOutcome::Unknown;
 }

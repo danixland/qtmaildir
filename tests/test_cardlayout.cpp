@@ -35,6 +35,7 @@ private slots:
     void dateIsFlushRight();
     void threadCardCarriesAnAccentBar();
     void replyCardCarriesNoAccentBar();
+    void theDateFitsWhenTheCardIsBold();
 };
 
 namespace {
@@ -229,6 +230,42 @@ void TestCardLayout::replyCardCarriesNoAccentBar()
     // carries the accent instead, so the gutter never holds two lines.
     QVERIFY(reply.accentRect.isEmpty());
     QCOMPARE(reply.spines.size(), 1);
+}
+
+void TestCardLayout::theDateFitsWhenTheCardIsBold()
+{
+    // An UNREAD card draws BOLD, and bold is wider. The layout is computed from
+    // option.font, which is the view's regular font, while the text is painted
+    // with the font initStyleOption resolved from the model's Qt::FontRole. So
+    // a date measured regular and drawn bold overflows its rect: measured at
+    // 154px reserved against 170px needed, which clipped the leading digit of
+    // the year off every unread card.
+    //
+    // The fix is in the layout rather than in the delegate: it reserves the
+    // BOLD width whatever font it is handed, so the two can never disagree.
+    QFont regular;
+    regular.setBold(false);
+    QFont bold = regular;
+    bold.setBold(true);
+
+    const QString sample = QStringLiteral("2025-08-10 06:26");
+    const int boldWidth = QFontMetrics(bold).horizontalAdvance(sample);
+
+    // Guard: bold must actually be wider here, or this asserts nothing.
+    QVERIFY2(boldWidth > QFontMetrics(regular).horizontalAdvance(sample),
+             "bold is not wider than regular in this environment, so this test "
+             "cannot detect the overflow it exists for");
+
+    const int h = CardLayout::heightFor(regular);
+    const CardLayout card =
+        CardLayout::compute(threadInput(), QRect(0, 0, 400, h), regular);
+
+    QVERIFY2(card.dateRect.width() >= boldWidth,
+             qPrintable(QStringLiteral("a layout computed from the REGULAR "
+                                       "font reserves %1px, and the date needs "
+                                       "%2px when the card draws bold")
+                            .arg(card.dateRect.width())
+                            .arg(boldWidth)));
 }
 
 QTEST_MAIN(TestCardLayout)

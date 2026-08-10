@@ -87,7 +87,16 @@ CardLayout CardLayout::compute(const Input &input, const QRect &rect,
 
     // The date is measured first and the sender gets what is left, so a long
     // sender is elided rather than painting over the date.
-    const int dateWidth = metrics.horizontalAdvance(
+    //
+    // Measured BOLD whatever font this is handed. An unread card draws bold and
+    // the delegate computes its layout from the view's regular font, so a rect
+    // sized regular clips a bold date: 154px reserved against 170px needed, one
+    // digit of the year gone from every unread card. Reserving the wider of the
+    // two costs a few pixels on a read card and cannot disagree with what is
+    // painted.
+    QFont dateFont = font;
+    dateFont.setBold(true);
+    const int dateWidth = QFontMetrics(dateFont).horizontalAdvance(
         QStringLiteral("8888-88-88 88:88"));
     out.dateRect = QRect(right - dateWidth, lineOneTop, dateWidth,
                          metrics.height());

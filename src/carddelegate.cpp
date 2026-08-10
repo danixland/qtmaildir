@@ -53,15 +53,21 @@ QColor CardDelegate::accentLineColour(const QColor &accountColour)
     if (!accountColour.isValid())
         return ThreadListModel::threadLineColour();
 
-    // The same 0.35 weight threadLineColour() uses, toward Base rather than
-    // toward Text, so the two kinds of line sit at the same visual strength.
-    const QColor base = QGuiApplication::palette().color(QPalette::Base);
-    constexpr qreal kWeight = 0.35;
-    const qreal inverse = 1.0 - kWeight;
-    return QColor::fromRgbF(
-        accountColour.redF() * kWeight + base.redF() * inverse,
-        accountColour.greenF() * kWeight + base.greenF() * inverse,
-        accountColour.blueF() * kWeight + base.blueF() * inverse);
+    // 0.35 toward Base was the first attempt and produced an INVISIBLE bar on
+    // a dark theme: rendered against a Base of (0.169, 0.169, 0.169) it landed
+    // at (0.18, 0.22, 0.26), which is the background. The weight is a fraction
+    // OF THE ACCOUNT COLOUR, so a low one keeps the background, not the hue.
+    //
+    // The bar is the account's colour, undiluted. Blending it toward Base at
+    // all was the mistake: a chip's colour is chosen to carry text on top and
+    // is therefore already muted, and three pixels of a muted colour on a dark
+    // background is nothing at all. There is no text on this bar, so nothing
+    // needs the contrast a chip's fill was picked for.
+    //
+    // What DOES step back is the spine, below: a line running the height of a
+    // whole expansion has to be followable without competing with the senders
+    // beside it, which is a different problem from a 3px edge marker.
+    return accountColour;
 }
 
 QSize CardDelegate::sizeHint(const QStyleOptionViewItem &option,
@@ -110,10 +116,22 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     if (!card.accentRect.isEmpty())
         painter->fillRect(card.accentRect, lineColour);
 
-    // Spines, under everything else, in the same accent so an expanded thread
-    // is bounded by one colour from its root to its last reply.
-    for (const QRect &spine : card.spines)
-        painter->fillRect(spine, lineColour);
+    // Spines, under everything else, in the account's hue so an expanded thread
+    // is bounded by one colour from its root to its last reply. Muted against
+    // the pane's own background, unlike the accent bar: this line runs the full
+    // height of every reply and at full strength it shouts.
+    if (!card.spines.isEmpty()) {
+        const QColor base =
+            QGuiApplication::palette().color(QPalette::Base);
+        constexpr qreal kSpineWeight = 0.55;
+        const qreal inverse = 1.0 - kSpineWeight;
+        const QColor spineColour = QColor::fromRgbF(
+            lineColour.redF() * kSpineWeight + base.redF() * inverse,
+            lineColour.greenF() * kSpineWeight + base.greenF() * inverse,
+            lineColour.blueF() * kSpineWeight + base.blueF() * inverse);
+        for (const QRect &spine : card.spines)
+            painter->fillRect(spine, spineColour);
+    }
 
     // Selection outranks the model's foreground, and the order matters: a read
     // card carries a dimmed colour blended against the UNSELECTED background,

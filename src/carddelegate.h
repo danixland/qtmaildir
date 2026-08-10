@@ -52,17 +52,21 @@ public:
     static QRect expanderRectFor(const QStyleOptionViewItem &option,
                                  const QModelIndex &index);
 
-    /// An account's colour as a thin LINE rather than as a chip's fill.
+    /// The colour the accent bar is painted in: the account's own, undiluted.
     ///
-    /// Never use the raw account colour for the accent bar or the spine. That
-    /// colour is chosen to be a background with legible text drawn on top
-    /// (TagColors::textColourOn picks black or white against it). The same
-    /// colour as a few pixels of line on the pane's own background is a
-    /// different problem: it has to be followable down a long expansion
-    /// WITHOUT competing with the senders beside it, which is the constraint
-    /// threadLineColour() states and meets by blending 0.35 toward the
-    /// palette's text. This blends the account colour toward the palette's
-    /// Base by the same weight, keeping the hue that identifies the account
-    /// and dropping the saturation that would shout.
+    /// Blending it toward the palette's Base was tried first, at the 0.35
+    /// weight threadLineColour() uses, and produced an INVISIBLE bar on a dark
+    /// theme: against a Base of (0.169, 0.169, 0.169) it landed at (0.18, 0.22,
+    /// 0.26), which is the background. The weight is a fraction OF THE ACCOUNT
+    /// COLOUR, so a low one keeps the background rather than the hue.
+    ///
+    /// An account colour is already chosen to be a chip's fill with legible
+    /// text on top, so it is muted to begin with; three pixels of a muted
+    /// colour is nothing. Nothing is drawn on this bar, so it needs none of the
+    /// contrast that choice was made for. The SPINE is where the muting belongs
+    /// and is blended in paint(): it runs the full height of every reply in an
+    /// expansion and has to be followable without competing with the senders.
+    ///
+    /// Falls back to threadLineColour() for a thread with no account tag.
     static QColor accentLineColour(const QColor &accountColour);
 };

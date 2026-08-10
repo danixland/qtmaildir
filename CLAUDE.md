@@ -43,10 +43,10 @@ MainWindow                         NotmuchWorker
  ├ query row: QComboBox, QLineEdit,  └ owns the only notmuch_database_t*
  │   saved-query QPushButtons
  ├ ThreadListView (QTreeView) ── ThreadListModel (QAbstractItemModel)
- │   thread rows, expanding to message rows; RowStyleDelegate every
- │   column, SubjectDelegate on Subject (chip, subject, expander)
+ │   ONE column of cards; CardDelegate paints each whole, from CardLayout
  └ MessageView (header QLabel, QWebEngineView, attachment bar, TagStrip)
 
+CardLayout (pure geometry, no painting)
 Config (INI)   KeyMap   MailSync (QProcess)   MimeParser (GMime)
 SyncMonitor (/proc/locks)   TagColors   QueryCompleter   ThreadCidMap
 ```
@@ -56,62 +56,92 @@ The query row and the message-pane header are **built inline in `MainWindow` and
 listed `QueryBar`, `SavedQueryBar`, `HeaderWidget` and `AttachmentBar`; none of
 those types have ever existed, and looking for them wastes a search. The widget
 classes that do exist are `MessageView`, `ThreadListView`, `TagStrip`,
-`TagDialog`, `RowStyleDelegate` and `SubjectDelegate`; `TagChip` is a namespace
-of painting helpers, not a widget, and `ThreadCidMap` is a struct.
+`TagDialog`, `RowStyleDelegate` and `CardDelegate`; `TagChip` is a namespace of
+painting helpers, not a widget, and `ThreadCidMap` and `CardLayout` are structs.
+`SubjectDelegate` existed until item 53 and is gone.
 
-**`ThreadListView` exists because a delegate cannot paint outside its column.**
-The tag chips under each row are one strip spanning the whole width, so they
-are drawn in the view's `paintEvent` after the cells. Consequences that are
-easy to undo by accident: `SubjectDelegate` reads `AccountLabelRole`, which
-belongs to the ROW, so installing it view-wide draws the account chip into
-every column (a `Q_ASSERT` catches this); and because alternating colours, the
-selection and the model's `BackgroundRole` are all painted per cell, the view
-has to fill the strip's band itself, honouring all three or a deleted row is
-cut in half and every other row shows a bare stripe.
+**`ThreadListView` survives only for the expander hit-test.** `CardDelegate`
+draws the reply count, and a delegate gets no click of its own without an
+editor, so the view owns the click and asks the delegate for the rect rather
+than recomputing it.
+
+Until item 53 it also painted a row-wide strip of tag chips after the cells,
+because a delegate cannot paint outside its column and the strip spanned all
+five. That is why the class exists at all, and the history is worth keeping:
+the arithmetic it needed produced a deleted row cut in half and every other row
+showing a bare stripe, both because the view had to re-honour alternating
+colours, the selection and `BackgroundRole` across cells it did not own. With
+one column there is nothing to span, so the `paintEvent` and its band
+arithmetic are deleted and none of that applies any more.
+
+**A card layout must be testable without a painter.** `CardLayout` computes
+every rect on a card and touches no `QPainter` and no widget, so the geometry
+has tests that a blank render cannot defeat. When changing what a card shows,
+change `CardLayout` and assert there; a test that renders the delegate and
+counts pixels proves nothing, for the reasons under "Rendering probes lie".
+Two traps it already handles: `QRect::right()` is inclusive, so the right edge
+is carried as an exclusive one, and `QFont::pointSizeF()` returns -1 for a font
+set in pixels, which qt6ct does.
+
+**`QTreeView`'s Up/Down already walk into an expanded thread's replies**, and
+that is where message-to-message navigation comes from. Do not bind arrow keys
+as `QAction` shortcuts to get it: a shortcut is dispatched before the focused
+widget sees the key and Qt withholds only plain LETTERS from editable widgets,
+so a bare `Up` would break the query bar, the tag dialog and the web view at
+once. `Alt+Up`/`Alt+Down` are chords and therefore safe; `Shift+Up`/`Down` is
+the built-in extend-selection and must be left alone. Binding two sequences to
+one action needs `setShortcuts`, not `setShortcut`, which keeps only the last.
+
+**`Q_ENUM` is not enough to send an enum across a queued connection.** It gives
+the type a meta-object entry, not a metatype registered under the name
+`invokeMethod` resolves, so a `Q_ARG` carrying it is dropped at runtime with a
+warning and the slot runs with a default. `NotmuchWorker::SortOrder` is
+registered beside the type for this reason, not in `MainWindow`, so a caller
+that never constructs one still gets it.
 
 **It is a `QTreeView` over a `QAbstractItemModel` since item 20**, because a
 thread's replies are child rows and a table can neither indent nor expand. What
 did NOT survive that port is anything keyed on a row NUMBER: a tree numbers rows
-per parent, so row 0 exists once per expanded thread and a flat `0..N` walk
-paints the first thread's strip over every one of them. The strip walk goes by
-index, alternating colour follows visual position rather than `index.row()`, and
-`QTableView::isRowSelected(int)` has no equivalent — use
-`selectionModel()->isSelected(index)`. Row height comes from
-`setUniformRowHeights` plus the delegate's `sizeHint`, since a tree has no
-vertical header to carry a default section size.
+per parent, so `row 0` exists once per expanded thread and `current.row() + 1`
+names a sibling rather than the next thread. Navigation walks with
+`indexBelow`/`indexAbove`; `QTableView::isRowSelected(int)` has no equivalent —
+use `selectionModel()->isSelected(index)`. Row height comes from
+`setUniformRowHeights` plus `CardDelegate::sizeHint`, since a tree has no
+vertical header to carry a default section size. Indentation is
+`setIndentation(0)`: `CardLayout` draws the indent inside the card's own rect,
+so `visualRect` reports the SAME left edge for a thread and its reply and a
+geometry probe sees no nesting in a correctly nested list.
 
-**Four traps in the expander, all of which shipped a plausible-looking broken
+**Three traps in the expander, all of which shipped a plausible-looking broken
 build before being caught.** `QTreeView::drawBranches` is the documented hook and
 does not work when the expander sits on a content column: it runs BEFORE the
 row's cells, so the delegate's background paints over it (a 60-pixel triangle
-survived as 8). `SubjectDelegate` draws it instead, from BOTH of its branches —
-calling it only from the no-chip branch leaves every real row without one, since
-every real row has an account chip. `setRootIsDecorated(false)`, needed to stop
-the style drawing its own indicator underneath, also removes the style's HIT
-AREA, so the glyph renders perfectly and is inert; `ThreadListView::mousePressEvent`
-handles the click. And `isExpanded`/`setExpanded` are keyed on **column 0**, so
-asking them about the subject-column index always answers false and every click
-expands again instead of toggling.
+survived as 8). `CardDelegate` draws it instead, as the reply count on the
+card's second line. `setRootIsDecorated(false)`, needed to stop the style
+drawing its own indicator underneath, also removes the style's HIT AREA, so the
+glyph renders perfectly and is inert; `ThreadListView::mousePressEvent` handles
+the click, asking `CardDelegate::expanderRectFor` for the target so the drawn
+and clickable rects cannot drift. A fourth trap died with the grid: `isExpanded`
+is keyed on column 0, which used to disagree with the subject-column index.
 
 **Visible, clickable and toggling are three separate properties.** A test for
 one passes against the other two being broken, which happened twice in one
 session: a pixel test proved the triangle was drawn while nothing could click
 it, and a click test proved it opened while it could never close.
 
-**A reply row's indent must beat the account chip's width.** A thread row draws
-a chip before its subject and a reply row does not, so a reply's text starts
-roughly a chip-width to the LEFT of its thread's before any indent applies.
-Qt's 20px default is swallowed entirely by that difference and the replies read
-as flush or outdented. `SubjectDelegate::kReplyIndent` is 72px for this reason.
-Note that `visualRect` reports the indent correctly the whole time, so a
-geometry probe endorses a layout with no visible nesting: assert on where the
-TEXT lands.
+**Assert a reply's indent on where the TEXT lands, never on `visualRect`.** The
+reason has inverted twice and the rule has not. Under item 20 the geometry was
+indented while the text was not, because the delegate laid text out from its own
+left edge; now `setIndentation(0)` means `visualRect` reports no indent at all
+while the text is indented, because `CardLayout` draws it inside the card's rect.
+A probe on `visualRect` therefore endorsed a broken layout then and would fail a
+correct one now. Assert on `CardLayout::contentLeft`.
 
-**`paintEvent` runs AFTER the cells.** Anything it fills across a row covers the
-text the delegate just drew: the reply tint filled the full row height in its
-first version and erased every sender and subject, measured at zero surviving
-text pixels. The fill and the thread-line stub stay in the band below the text,
-where the tag strip lives on thread rows.
+**`paintEvent` ran AFTER the cells**, which is why anything the view filled
+across a row covered the text the delegate had just drawn: the reply tint filled
+the full row height in one version and erased every sender and subject, measured
+at zero surviving text pixels. Recorded because it is the class of bug a view
+that paints invites. `ThreadListView` no longer paints at all.
 
 **No `notmuch_*` pointer ever crosses the thread boundary.** Data crosses as the plain
 value structs in `src/types.h` (`ThreadSummary`, `MessageRef`, `MessageNode`,

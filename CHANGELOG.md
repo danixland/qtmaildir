@@ -11,6 +11,29 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Changed
+
+- **The thread list is now a list of cards rather than a table of columns.**
+  Each thread shows its sender and date, its subject with the flag, attachment
+  and reply-count marks, and its tags, on three lines at one uniform height.
+  Expanding a thread shows its replies indented under a continuous spine,
+  carrying only the tags the thread itself does not have, and without the `Re:`
+  prefix every reply used to repeat.
+- **Threads can be listed newest or oldest first**, from a new control beside
+  the query bar. The choice is remembered between sessions.
+- **An account's colour now runs down the left edge of its threads**, and down
+  the spine of their replies, replacing the account chip that used to sit in
+  front of every subject. The account dropdown shows the same colours, so which
+  colour means which account is readable in one place.
+- **Alt+Up and Alt+Down step between threads**, alongside the existing Ctrl+J
+  and Ctrl+K. Plain Up and Down now step message by message through an expanded
+  thread, which is the view's own behaviour rather than a binding.
+- **An out-of-range `message_zoom` now says so.** The documented 0.5 to 3.0
+  range was already enforced on the way to the web view, so a `message_zoom` of
+  500 rendered at 3.0 rather than unusably, but nothing reported that the value
+  in the file was not the value on screen. It is now listed with the other
+  configuration problems at startup.
+
 ### Fixed
 
 - **The message pane no longer comes back as a sliver.** A splitter position is
@@ -19,13 +42,18 @@ point at which they are stable.
   left, in one real case 29px. The pane now has a minimum width and cannot be
   collapsed, which covers the restore and the equivalent drag.
 
-### Changed
+- **Clicking a thread no longer scrolls the list sideways.** A card is exactly
+  the width of the pane, so there is nowhere to scroll to.
+- **Next and previous thread no longer step onto a reply** when a thread is
+  expanded. They skip message rows, so they keep meaning thread-to-thread.
 
-- **An out-of-range `message_zoom` now says so.** The documented 0.5 to 3.0
-  range was already enforced on the way to the web view, so a `message_zoom` of
-  500 rendered at 3.0 rather than unusably, but nothing reported that the value
-  in the file was not the value on screen. It is now listed with the other
-  configuration problems at startup.
+### Upgrading
+
+- **Saved thread-list column widths are ignored.** There is one column now, so
+  the `threadlist/header` and `threadlist/columns` entries in
+  `~/.local/state/qtmaildir/uistate.conf` no longer do anything. Nothing needs
+  to be done: they are read past and can be left in place or deleted. Window
+  geometry, the splitter position and the message zoom are unaffected.
 
 ## [0.12.1] - 2026-08-09
 

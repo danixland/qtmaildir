@@ -468,6 +468,7 @@ private:
     /// placeholder's own text wraps every couple of words.
     static constexpr int kMinMessagePaneWidth = 300;
     QComboBox *m_accountBox = nullptr;
+    QComboBox *m_sortOrder = nullptr;
     QLabel *m_statusLabel = nullptr;
 
     /// Expires a transient status message. See showTransientStatus().

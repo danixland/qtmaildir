@@ -119,9 +119,25 @@ void walkReplies(notmuch_messages_t *messages, int depth,
 
 } // namespace
 
+/// Registers SortOrder for queued calls, once, before main() runs.
+///
+/// Q_ENUM alone is NOT enough for a queued Q_ARG: it gives the enum a
+/// meta-object entry, not a metatype registered under the name invokeMethod
+/// resolves, so MainWindow's queued runQuery would drop its sort argument at
+/// runtime with a warning and every query would silently run newest-first.
+///
+/// Here rather than in MainWindow's constructor, because the registration
+/// belongs to the type rather than to one consumer: a caller that never
+/// constructs a MainWindow (a test, or a future headless mode) needs it too,
+/// and that is exactly how the first attempt at this passed by accident and
+/// failed under test.
+static const int kSortOrderMetaType =
+    qRegisterMetaType<NotmuchWorker::SortOrder>("NotmuchWorker::SortOrder");
+
 NotmuchWorker::NotmuchWorker(const QString &notmuchConfigPath, QObject *parent)
     : QObject(parent), m_configPath(notmuchConfigPath)
 {
+    Q_UNUSED(kSortOrderMetaType);
 }
 
 NotmuchWorker::~NotmuchWorker()

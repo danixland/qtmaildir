@@ -163,6 +163,12 @@ void MainWindow::restoreUiState()
     // by CardDelegate, so there are no widths to restore; a blob saved by an
     // older version is simply ignored (item 53's Upgrading note).
 
+    // Range-guarded on read: a stale or hand-edited file can hold anything,
+    // and setCurrentIndex() on a value with no row silently selects nothing.
+    const int sort =
+        state.value(QStringLiteral("threadlist/sortOrder"), 0).toInt();
+    m_sortOrder->setCurrentIndex(sort == 1 ? 1 : 0);
+
     // The config value is the starting point for a profile that has never
     // zoomed; once the user does, the state file is what they last had.
     // clampZoom() rejects the garbage a hand-edited file can hold.
@@ -178,6 +184,8 @@ void MainWindow::saveUiState() const
     state.setValue(QStringLiteral("window/geometry"), saveGeometry());
     state.setValue(QStringLiteral("window/state"), saveState());
     state.setValue(QStringLiteral("window/splitter"), m_splitter->saveState());
+    state.setValue(QStringLiteral("threadlist/sortOrder"),
+                   m_sortOrder->currentIndex());
     state.setValue(QStringLiteral("message/zoom"), m_messageView->zoomFactor());
 }
 
@@ -419,9 +427,34 @@ void MainWindow::buildUi()
     // Query row.
     auto *queryRow = new QHBoxLayout;
     m_accountBox = new QComboBox(central);
+    m_accountBox->setObjectName(QStringLiteral("accountBox"));
     m_accountBox->addItem(tr("All accounts"), QString());
-    for (const Account &account : m_config.accounts())
+    for (const Account &account : m_config.accounts()) {
         m_accountBox->addItem(account.key, account.key);
+        // The RAW account colour here, not CardDelegate's blended line colour:
+        // a swatch is a filled patch like a chip, not a thin line, so it wants
+        // the colour the account was actually given. Qt renders a
+        // DecorationRole colour as a swatch itself, with no delegate.
+        //
+        // This is what makes the accent bar on a card mean anything: a colour
+        // down a card's edge says nothing until something maps it to a name.
+        m_accountBox->setItemData(
+            m_accountBox->count() - 1,
+            m_tagColors.colourFor(TagColors::tagForAccountKey(account.key)),
+            Qt::DecorationRole);
+    }
+
+    // Sort order. Two entries, straight to notmuch: this ADDS a feature rather
+    // than replacing one, since the old column header was decorative and
+    // nothing implemented click-to-sort.
+    m_sortOrder = new QComboBox(central);
+    m_sortOrder->setObjectName(QStringLiteral("sortOrder"));
+    // Order matters: the index is what uistate.conf stores.
+    m_sortOrder->addItem(tr("Newest first"));
+    m_sortOrder->addItem(tr("Oldest first"));
+    m_sortOrder->setToolTip(tr("The order threads are listed in"));
+    connect(m_sortOrder, &QComboBox::currentIndexChanged,
+            this, &MainWindow::runCurrentQuery);
 
     m_queryEdit = new QLineEdit(central);
     m_queryEdit->setPlaceholderText(tr("notmuch query, e.g. tag:inbox"));
@@ -510,6 +543,7 @@ void MainWindow::buildUi()
     // would squeeze the field, but three is the real-world case today. Item 23
     // already specifies buttons-plus-menu and is where that belongs.
     queryRow->addWidget(m_accountBox);
+    queryRow->addWidget(m_sortOrder);
     queryRow->addWidget(m_queryEdit, 1);
     for (const SavedQuery &saved : m_config.savedQueries()) {
         auto *button = new QPushButton(saved.name, central);
@@ -1465,9 +1499,13 @@ void MainWindow::runCurrentQuery()
     m_queryComplete = false;
     updateViewWideActions();
 
+    const auto sort = m_sortOrder->currentIndex() == 1
+                          ? NotmuchWorker::OldestFirst
+                          : NotmuchWorker::NewestFirst;
     QMetaObject::invokeMethod(m_worker, "runQuery", Qt::QueuedConnection,
                               Q_ARG(QString, query),
-                              Q_ARG(quint64, m_generation));
+                              Q_ARG(quint64, m_generation),
+                              Q_ARG(NotmuchWorker::SortOrder, sort));
 }
 
 void MainWindow::onThreadsReady(const QVector<ThreadSummary> &threads,

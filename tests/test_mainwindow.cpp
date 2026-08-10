@@ -51,6 +51,7 @@
 
 #include <QImage>
 #include <QPainter>
+#include <QComboBox>
 #include <QScrollBar>
 #include "tagchip.h"
 #include "threadlistmodel.h"
@@ -107,6 +108,8 @@ private slots:
     void nextThreadLeavesTheLastReply();
     void altDownSkipsReplies();
     void bothThreadStepBindingsReachTheAction();
+    void sortChoiceSurvivesRestart();
+    void accountEntriesCarryTheirColour();
     void replyRowsKeepTheirTextUnderTheThreadLine();
     void clickingTheExpanderTogglesTheThread();
     void selectingAMessageRowTargetsThatMessageNotItsThread();
@@ -771,6 +774,93 @@ void TestMainWindow::bothThreadStepBindingsReachTheAction()
                      QKeySequence(QString::fromLatin1(pair.second))),
                  pair.second);
     }
+}
+
+void TestMainWindow::sortChoiceSurvivesRestart()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    QFile::remove(MainWindow::uiStatePath());
+
+    {
+        const Config config;
+        MainWindow window(config);
+        auto *sort = window.findChild<QComboBox *>(QStringLiteral("sortOrder"));
+        QVERIFY(sort);
+        QCOMPARE(sort->count(), 2);
+        QCOMPARE(sort->currentIndex(), 0);  // Newest first by default.
+        sort->setCurrentIndex(1);
+        window.close();
+    }
+
+    const Config config;
+    MainWindow second(config);
+    auto *sort = second.findChild<QComboBox *>(QStringLiteral("sortOrder"));
+    QVERIFY(sort);
+    QCOMPARE(sort->currentIndex(), 1);
+
+    // A stale or hand-edited file can hold anything, which is the lesson item
+    // 58 recorded: an out-of-range value must fall back rather than select a
+    // row that does not exist.
+    {
+        QSettings state(MainWindow::uiStatePath(), QSettings::IniFormat);
+        state.setValue(QStringLiteral("threadlist/sortOrder"), 47);
+    }
+    MainWindow third(config);
+    auto *thirdSort = third.findChild<QComboBox *>(QStringLiteral("sortOrder"));
+    QCOMPARE(thirdSort->currentIndex(), 0);
+
+    QFile::remove(MainWindow::uiStatePath());
+    QStandardPaths::setTestModeEnabled(false);
+}
+
+void TestMainWindow::accountEntriesCarryTheirColour()
+{
+    // Its own config, not the environment's. Reading the real one made this
+    // SKIP wherever no accounts are configured, which is a test that asserts
+    // nothing while reporting success.
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QSettings s(path, QSettings::IniFormat);
+        s.beginGroup(QStringLiteral("account.work"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("work"));
+        s.setValue(QStringLiteral("color"), QStringLiteral("#3d7fd1"));
+        s.endGroup();
+        s.beginGroup(QStringLiteral("account.personal"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("personal"));
+        s.endGroup();
+    }
+
+    Config config;
+    config.load(path);
+    QCOMPARE(config.accounts().size(), 2);
+
+    MainWindow window(config);
+    auto *box = window.findChild<QComboBox *>(QStringLiteral("accountBox"));
+    QVERIFY(box);
+    QCOMPARE(box->count(), 3);
+
+    // "All accounts" is not an account and carries no swatch.
+    QVERIFY(!box->itemData(0, Qt::DecorationRole).isValid());
+
+    // Every real account does, including the one with no color= key:
+    // colourFor() never fails, deriving a stable colour from the tag name, so
+    // adding an account and forgetting to colour it degrades to something
+    // usable rather than to nothing.
+    QSet<QRgb> seen;
+    for (int i = 1; i < box->count(); ++i) {
+        const QVariant swatch = box->itemData(i, Qt::DecorationRole);
+        QVERIFY2(swatch.isValid(),
+                 qPrintable(QStringLiteral("account %1 carries no swatch")
+                                .arg(box->itemText(i))));
+        const QColor colour = swatch.value<QColor>();
+        QVERIFY(colour.isValid());
+        seen.insert(colour.rgb());
+    }
+
+    // Guard: two accounts sharing one colour would make the swatches useless
+    // as a key to the accent bars, and would let a broken lookup pass.
+    QCOMPARE(seen.size(), 2);
 }
 
 void TestMainWindow::cardsNeverScrollSideways()

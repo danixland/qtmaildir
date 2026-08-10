@@ -40,6 +40,7 @@ private slots:
     void unreadableConfigEmitsError();
     void queryPassesGenerationThrough();
     void oldestFirstReversesTheOrder();
+    void theSortOrderCrossesAQueuedCall();
 
     void loadThreadReturnsMessagesOldestFirst();
     void loadThreadMarksMatchedMessages();
@@ -344,6 +345,27 @@ void TestNotmuchWorker::oldestFirstReversesTheOrder()
 
     QCOMPARE(oldest.first().threadId, newest.last().threadId);
     QCOMPARE(oldest.last().threadId, newest.first().threadId);
+}
+
+void TestNotmuchWorker::theSortOrderCrossesAQueuedCall()
+{
+    // MainWindow reaches the worker with invokeMethod(..., QueuedConnection)
+    // across a thread boundary, and a Q_ARG whose type the meta-object system
+    // does not know FAILS AT RUNTIME with a warning, not at compile time. So
+    // the enum's registration is asserted here rather than assumed from Q_ENUM.
+    QVERIFY2(QMetaType::fromName("NotmuchWorker::SortOrder").isValid(),
+             "SortOrder is not a registered metatype, so the queued runQuery "
+             "call will drop its sort argument at runtime");
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy ready(&worker, &NotmuchWorker::threadsReady);
+
+    // The real call shape, invoked by NAME exactly as MainWindow does.
+    QVERIFY(QMetaObject::invokeMethod(
+        &worker, "runQuery", Qt::DirectConnection,
+        Q_ARG(QString, QStringLiteral("*")), Q_ARG(quint64, 1),
+        Q_ARG(NotmuchWorker::SortOrder, NotmuchWorker::OldestFirst)));
+    QCOMPARE(ready.size(), 1);
 }
 
 void TestNotmuchWorker::loadThreadReturnsMessagesOldestFirst()

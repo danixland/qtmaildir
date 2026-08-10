@@ -3335,7 +3335,7 @@ void TestMainWindow::theImportantActionStillWritesTheFlaggedTag()
 
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *view = window.findChild<QTableView *>();
+    auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"),
@@ -3345,7 +3345,7 @@ void TestMainWindow::theImportantActionStillWritesTheFlaggedTag()
     // below would pass against an action that did nothing at all.
     QVERIFY(!model->threadAt(0).isFlagged());
 
-    view->selectRow(0);
+    selectThreadRow(view, 0);
 
     auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY(action);

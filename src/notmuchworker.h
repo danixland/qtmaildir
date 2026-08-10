@@ -44,10 +44,24 @@ public:
     /// Threads emitted per threadsReady() signal.
     static constexpr int kBatchSize = 200;
 
+    /// The sort orders offered to the user.
+    ///
+    /// Two, not four. notmuch also has NOTMUCH_SORT_MESSAGE_ID and
+    /// NOTMUCH_SORT_UNSORTED, and neither is an order a human wants. Sorting
+    /// by sender or subject is deliberately absent: notmuch cannot do it, so
+    /// the model would have to sort after results arrive, which fights the
+    /// batching that makes a 10k-thread query paint immediately.
+    enum SortOrder {
+        NewestFirst,
+        OldestFirst,
+    };
+    Q_ENUM(SortOrder)
+
 public slots:
     /// Runs a query. generation lets the UI discard results from a superseded
     /// query without the worker needing to know about cancellation.
-    void runQuery(const QString &query, quint64 generation);
+    void runQuery(const QString &query, quint64 generation,
+                  SortOrder sort = NewestFirst);
 
     /// Loads the messages of one thread, oldest first. matchQuery is the
     /// user's current query; messages matching it render expanded, the rest

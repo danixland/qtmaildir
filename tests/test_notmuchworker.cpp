@@ -39,6 +39,7 @@ private slots:
     void malformedQueryYieldsNoThreads();
     void unreadableConfigEmitsError();
     void queryPassesGenerationThrough();
+    void oldestFirstReversesTheOrder();
 
     void loadThreadReturnsMessagesOldestFirst();
     void loadThreadMarksMatchedMessages();
@@ -73,7 +74,9 @@ private:
     QStringList tagsOf(const QString &messageId);
     QVector<MessageRef> messagesOfThread(const QString &threadId,
                                          const QString &matchQuery = QString());
-    QVector<ThreadSummary> runQuery(const QString &query);
+    QVector<ThreadSummary> runQuery(
+        const QString &query,
+        NotmuchWorker::SortOrder sort = NotmuchWorker::NewestFirst);
     QString threadIdOf(const QString &subject);
 
     NotmuchFixture m_fixture;
@@ -113,13 +116,14 @@ void TestNotmuchWorker::initTestCase()
     QVERIFY2(m_fixture.index(), qPrintable(m_fixture.error()));
 }
 
-QVector<ThreadSummary> TestNotmuchWorker::runQuery(const QString &query)
+QVector<ThreadSummary> TestNotmuchWorker::runQuery(
+    const QString &query, NotmuchWorker::SortOrder sort)
 {
     NotmuchWorker worker(m_fixture.configPath());
     QSignalSpy ready(&worker, &NotmuchWorker::threadsReady);
     QSignalSpy finished(&worker, &NotmuchWorker::queryFinished);
 
-    worker.runQuery(query, 1);
+    worker.runQuery(query, 1, sort);
 
     QVector<ThreadSummary> all;
     for (const QList<QVariant> &args : ready)
@@ -322,6 +326,24 @@ void TestNotmuchWorker::queryPassesGenerationThrough()
     QCOMPARE(finished.size(), 1);
     QCOMPARE(finished.first().at(0).toInt(), 3);
     QCOMPARE(finished.first().at(1).value<quint64>(), quint64(42));
+}
+
+void TestNotmuchWorker::oldestFirstReversesTheOrder()
+{
+    const QVector<ThreadSummary> newest = runQuery(QStringLiteral("*"));
+    const QVector<ThreadSummary> oldest =
+        runQuery(QStringLiteral("*"), NotmuchWorker::OldestFirst);
+
+    QCOMPARE(oldest.size(), newest.size());
+
+    // The guard: with fewer than two threads, or with every thread carrying
+    // the same date, a reversal is indistinguishable from no sorting at all
+    // and every assertion below would pass against a hardcoded order.
+    QVERIFY(newest.size() >= 2);
+    QVERIFY(newest.first().date != newest.last().date);
+
+    QCOMPARE(oldest.first().threadId, newest.last().threadId);
+    QCOMPARE(oldest.last().threadId, newest.first().threadId);
 }
 
 void TestNotmuchWorker::loadThreadReturnsMessagesOldestFirst()

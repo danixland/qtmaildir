@@ -170,7 +170,8 @@ void NotmuchWorker::close()
     }
 }
 
-void NotmuchWorker::runQuery(const QString &query, quint64 generation)
+void NotmuchWorker::runQuery(const QString &query, quint64 generation,
+                             SortOrder sort)
 {
     if (!openReadOnly())
         return;
@@ -180,7 +181,9 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation)
         emit errorOccurred(QStringLiteral("Invalid query: %1").arg(query));
         return;
     }
-    notmuch_query_set_sort(nmQuery.get(), NOTMUCH_SORT_NEWEST_FIRST);
+    notmuch_query_set_sort(nmQuery.get(),
+                           sort == OldestFirst ? NOTMUCH_SORT_OLDEST_FIRST
+                                               : NOTMUCH_SORT_NEWEST_FIRST);
 
     notmuch_threads_t *rawThreads = nullptr;
     const notmuch_status_t status =

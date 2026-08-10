@@ -11,6 +11,19 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-10
+
+The thread list stops being a table. Each thread is a card of three lines,
+carrying its sender and date, its subject with the marks that apply to it, and
+its tags; expanding one shows its replies indented beneath it rather than as
+more rows of the same grid. The account colour moves from a chip in front of
+every subject to a bar down the card's edge, and threads can now be sorted
+oldest first.
+
+This replaces the presentation built for 0.12, which was finished and working
+and read as a table of records rather than as a list of conversations. The
+model, the reply walk and the keyboard navigation underneath it are unchanged.
+
 ### Changed
 
 - **The thread list is now a list of cards rather than a table of columns.**
@@ -28,6 +41,17 @@ point at which they are stable.
 - **Alt+Up and Alt+Down step between threads**, alongside the existing Ctrl+J
   and Ctrl+K. Plain Up and Down now step message by message through an expanded
   thread, which is the view's own behaviour rather than a binding.
+- **Selecting a thread now shows its first message**, not the whole
+  conversation. The card at the head of a thread is that message, and the
+  replies under it are the rest; a thread's opening message was previously
+  unreachable, since the pane rendered every message at once and no row in the
+  list offered it on its own.
+- **Dates follow the desktop's locale.** They were written in a fixed
+  `yyyy-MM-dd hh:mm` regardless of locale, which is not the format most desktops
+  use.
+- **The reply count reads as a control.** It is drawn as a rounded chip saying
+  "3 replies", rather than as a bare number beside the subject that gave no hint
+  it could be clicked.
 - **An out-of-range `message_zoom` now says so.** The documented 0.5 to 3.0
   range was already enforced on the way to the web view, so a `message_zoom` of
   500 rendered at 3.0 rather than unusably, but nothing reported that the value
@@ -46,6 +70,17 @@ point at which they are stable.
   the width of the pane, so there is nowhere to scroll to.
 - **Next and previous thread no longer step onto a reply** when a thread is
   expanded. They skip message rows, so they keep meaning thread-to-thread.
+- **Threads without reply structure now expand.** A thread whose messages carry
+  no usable `In-Reply-To` header, which notmuch reports as a flat list rather
+  than a tree, advertised a reply count that opened onto nothing. Its replies
+  now appear, indented under the same spine as any other thread's.
+- **The date is no longer clipped on unread threads.** Unread rows draw in bold,
+  which is wider than the font the layout measured, so the leading digit of the
+  year was cut off.
+- **The account colour down a card's edge is now visible.** It was drawn in a
+  colour blended so far toward the pane's background that it matched it exactly
+  on a dark theme, and account colours, which are chosen to be readable behind
+  chip text, are muted enough that a few pixels of one barely registers.
 
 ### Upgrading
 

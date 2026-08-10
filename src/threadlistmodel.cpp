@@ -268,6 +268,37 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             return QStringList();
         case PillColoursRole:
             return QVariantList();
+        case MessageOwnTagsRole: {
+            // Set difference against the parent THREAD, not against a global
+            // list: "own" means "not already said by the card above this one".
+            // The parent row indexes m_threads directly, which is the same
+            // mapping messageAt() uses to reach this node.
+            const int threadRow = index.parent().row();
+            const QStringList threadTags =
+                (threadRow >= 0 && threadRow < m_threads.size())
+                    ? m_threads.at(threadRow).summary.tags
+                    : QStringList();
+            QStringList own;
+            for (const QString &tag : node.tags) {
+                if (!threadTags.contains(tag))
+                    own.append(tag);
+            }
+            // Sorted, so a reply does not reshuffle its own chips between
+            // repaints, matching what PillTagsRole already guarantees.
+            own.sort();
+            return own;
+        }
+        case MessageOwnColoursRole: {
+            const QStringList own =
+                data(index, MessageOwnTagsRole).toStringList();
+            QVariantList colours;
+            colours.reserve(own.size());
+            for (const QString &tag : own) {
+                colours.append(m_tagColors ? m_tagColors->colourFor(tag)
+                                           : TagColors().colourFor(tag));
+            }
+            return colours;
+        }
         case AccountLabelRole:
             return QString();
         case Qt::DisplayRole:
@@ -343,6 +374,12 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
 
     if (role == TagsRole)
         return thread.tags;
+
+    if (role == MessageOwnTagsRole)
+        return QStringList();
+
+    if (role == MessageOwnColoursRole)
+        return QVariantList();
 
     if (role == PillTagsRole || role == PillColoursRole) {
         // Everything the row already says another way is dropped: the account

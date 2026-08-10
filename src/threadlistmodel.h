@@ -103,6 +103,26 @@ public:
         /// delegate cannot call hasChildren without the model, and the same
         /// answer has to reach the cell that reserves room for the glyph.
         HasRepliesRole,
+
+        /// The tags this MESSAGE carries that its thread does not.
+        ///
+        /// A reply card shows these and nothing else. Showing a reply's full
+        /// tag set instead was measured against the user's own database and
+        /// rejected: of 48691 messages, 7 carry `unread` and 75 carry
+        /// `flagged`, and both are already drawn another way (the sender's
+        /// weight, and the mark on line 2). Every other tag is applied to a
+        /// whole thread and is identical on all its messages, so full sets
+        /// would repeat the thread's own chips down the entire expansion,
+        /// which is the striping the old row-wide strip existed to avoid.
+        ///
+        /// Empty on a thread row, which has no thread to differ from.
+        MessageOwnTagsRole,
+
+        /// The colours for MessageOwnTagsRole, in the same order. Supplied by
+        /// the model for the same reason as PillColoursRole: it owns the
+        /// TagColors instance, and a delegate reading config itself would be a
+        /// second source of truth.
+        MessageOwnColoursRole,
     };
 
     /// Row fill for a thread tagged `deleted`, and for one tagged `spam`.

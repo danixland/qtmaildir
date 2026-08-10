@@ -31,6 +31,8 @@ private slots:
     void rootRowsSurviveTheTreeConversion();
     void repliesBecomeChildRowsUnderTheirThread();
     void messageRowsShowTheirOwnSenderAndSubject();
+    void replyShowsOnlyItsOwnTags();
+    void replySharingEveryThreadTagShowsNone();
     void reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem();
     void anUnexpandedMultiMessageThreadOffersAnExpander();
     void scopeFollowsTheSelectedRowKind();
@@ -1042,6 +1044,73 @@ void TestThreadListModel::attachmentColumnIsFirstAndMarksOnlyTaggedThreads()
     // than the icon and defeat the narrow column.
     QVERIFY(model.headerData(ThreadListModel::AttachmentColumn, Qt::Horizontal,
                              Qt::DisplayRole).toString().isEmpty());
+}
+
+void TestThreadListModel::replyShowsOnlyItsOwnTags()
+{
+    ThreadListModel model;
+    ThreadSummary thread;
+    thread.threadId = QStringLiteral("T1");
+    thread.subject = QStringLiteral("Build fails");
+    thread.totalCount = 2;
+    thread.tags = { QStringLiteral("inbox"), QStringLiteral("work") };
+    model.appendBatch({ thread });
+
+    MessageNode reply;
+    reply.messageId = QStringLiteral("M2");
+    reply.threadId = QStringLiteral("T1");
+    reply.from = QStringLiteral("bob@example.org");
+    reply.depth = 1;
+    // Two the thread already has, one it does not.
+    reply.tags = { QStringLiteral("inbox"), QStringLiteral("work"),
+                   QStringLiteral("todo") };
+    model.setThreadMessages(QStringLiteral("T1"), { reply });
+
+    const QModelIndex threadIndex = model.index(0, 0);
+    QVERIFY(model.hasChildren(threadIndex));
+    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+    QVERIFY(replyIndex.isValid());
+
+    const QStringList own =
+        replyIndex.data(ThreadListModel::MessageOwnTagsRole).toStringList();
+    QCOMPARE(own, QStringList{ QStringLiteral("todo") });
+
+    // The colours must line up with the names one for one, or the delegate
+    // walks the two lists together and paints a chip in another tag's colour.
+    const QVariantList colours =
+        replyIndex.data(ThreadListModel::MessageOwnColoursRole).toList();
+    QCOMPARE(colours.size(), own.size());
+    QVERIFY(colours.first().value<QColor>().isValid());
+}
+
+void TestThreadListModel::replySharingEveryThreadTagShowsNone()
+{
+    ThreadListModel model;
+    ThreadSummary thread;
+    thread.threadId = QStringLiteral("T1");
+    thread.totalCount = 2;
+    thread.tags = { QStringLiteral("inbox"), QStringLiteral("work") };
+    model.appendBatch({ thread });
+
+    MessageNode reply;
+    reply.messageId = QStringLiteral("M2");
+    reply.threadId = QStringLiteral("T1");
+    reply.depth = 1;
+    reply.tags = { QStringLiteral("inbox"), QStringLiteral("work") };
+    model.setThreadMessages(QStringLiteral("T1"), { reply });
+
+    const QModelIndex replyIndex = model.index(0, 0, model.index(0, 0));
+    QVERIFY(replyIndex.isValid());
+    QVERIFY(replyIndex.data(ThreadListModel::MessageOwnTagsRole)
+                .toStringList()
+                .isEmpty());
+
+    // A thread row has no thread to differ from, so it never answers these:
+    // its own chips come from PillTagsRole.
+    QVERIFY(model.index(0, 0)
+                .data(ThreadListModel::MessageOwnTagsRole)
+                .toStringList()
+                .isEmpty());
 }
 
 QTEST_MAIN(TestThreadListModel)

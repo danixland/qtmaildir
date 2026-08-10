@@ -55,6 +55,15 @@ public:
     /// text, so the menu shows a stable choice rather than a hash-order one.
     QKeySequence sequenceFor(const QString &action) const;
 
+    /// EVERY sequence bound to an action, with sequenceFor()'s choice first.
+    ///
+    /// An action can have more than one binding, and setShortcut() keeps only
+    /// the last: next_thread ships with both Ctrl+J and Alt+Down, and with the
+    /// singular setter whichever arrived second was silently unreachable.
+    /// Ordered rather than hash-ordered, so the menu still advertises the same
+    /// binding sequenceFor() chose.
+    QList<QKeySequence> sequencesFor(const QString &action) const;
+
     /// The built-in sequence for an action, ignoring any user override.
     static QKeySequence defaultSequenceFor(const QString &action);
 

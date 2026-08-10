@@ -104,6 +104,9 @@ private slots:
     void childRowsAreIndentedUnderTheirThread();
     void aThreadWithRepliesDrawsAVisibleExpander();
     void cardsNeverScrollSideways();
+    void nextThreadLeavesTheLastReply();
+    void altDownSkipsReplies();
+    void bothThreadStepBindingsReachTheAction();
     void replyRowsKeepTheirTextUnderTheThreadLine();
     void clickingTheExpanderTogglesTheThread();
     void selectingAMessageRowTargetsThatMessageNotItsThread();
@@ -641,6 +644,133 @@ void TestMainWindow::childRowsAreIndentedUnderTheirThread()
     // And the spine that makes the nesting read as one block rather than as an
     // arbitrary offset.
     QCOMPARE(replyCard.spines.size(), replyIn.depth);
+}
+
+namespace {
+
+/// Two threads, the first with one reply, expanded. The shared fixture for the
+/// two navigation tests below.
+struct NavFixture
+{
+    QTreeView *view = nullptr;
+    ThreadListModel *model = nullptr;
+    QModelIndex root;
+    QModelIndex reply;
+};
+
+NavFixture buildNavFixture(MainWindow &window)
+{
+    NavFixture f;
+    f.view = window.findChild<QTreeView *>();
+    f.model = window.findChild<ThreadListModel *>();
+
+    ThreadSummary first = makeThread(QStringLiteral("T1"),
+                                     QStringList{ QStringLiteral("inbox") });
+    first.totalCount = 2;
+    ThreadSummary second = makeThread(QStringLiteral("T2"),
+                                      QStringList{ QStringLiteral("inbox") });
+    second.totalCount = 1;
+    f.model->appendBatch({ first, second });
+
+    MessageNode rootNode;
+    rootNode.messageId = QStringLiteral("M1");
+    rootNode.threadId = QStringLiteral("T1");
+    rootNode.depth = 0;
+    MessageNode replyNode;
+    replyNode.messageId = QStringLiteral("M2");
+    replyNode.threadId = QStringLiteral("T1");
+    replyNode.depth = 1;
+    f.model->setThreadMessages(QStringLiteral("T1"), { rootNode, replyNode });
+
+    f.root = f.model->index(0, 0);
+    f.view->expand(f.root);
+    f.reply = f.model->index(0, 0, f.root);
+    return f;
+}
+
+}  // namespace
+
+void TestMainWindow::nextThreadLeavesTheLastReply()
+{
+    const Config config;
+    MainWindow window(config);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    const NavFixture f = buildNavFixture(window);
+    QVERIFY(f.reply.isValid());
+    QVERIFY2(f.view->isExpanded(f.root),
+             "the thread is collapsed, so this test would arrow down a flat "
+             "list and pass against the bug it exists to catch");
+
+    f.view->setCurrentIndex(f.reply);
+
+    // The defect (item 60): selectRow(current.row() + 1) asked for row 1 UNDER
+    // T1, which does not exist, so the action did nothing at all.
+    window.findChild<QAction *>(QStringLiteral("next_thread"))->trigger();
+
+    QCOMPARE(f.view->currentIndex().data(ThreadListModel::ThreadIdRole)
+                 .toString(),
+             QStringLiteral("T2"));
+}
+
+void TestMainWindow::altDownSkipsReplies()
+{
+    const Config config;
+    MainWindow window(config);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    const NavFixture f = buildNavFixture(window);
+    QVERIFY(f.view->isExpanded(f.root));
+
+    // From the thread ROOT with its replies showing: one step must land on the
+    // next THREAD, not on the first reply. That is what makes the action mean
+    // thread-to-thread while plain Up/Down still steps message-to-message.
+    f.view->setCurrentIndex(f.root);
+    window.findChild<QAction *>(QStringLiteral("next_thread"))->trigger();
+
+    QCOMPARE(f.view->currentIndex().data(ThreadListModel::ThreadIdRole)
+                 .toString(),
+             QStringLiteral("T2"));
+    QVERIFY(!f.view->currentIndex().data(ThreadListModel::IsMessageRole)
+                 .toBool());
+
+    // And back, which is the mirror case the old arithmetic also failed.
+    window.findChild<QAction *>(QStringLiteral("prev_thread"))->trigger();
+    QCOMPARE(f.view->currentIndex().data(ThreadListModel::ThreadIdRole)
+                 .toString(),
+             QStringLiteral("T1"));
+    QVERIFY(!f.view->currentIndex().data(ThreadListModel::IsMessageRole)
+                 .toBool());
+}
+
+void TestMainWindow::bothThreadStepBindingsReachTheAction()
+{
+    const Config config;
+    MainWindow window(config);
+
+    // Two bindings per action, which needs setShortcuts rather than
+    // setShortcut: Ctrl+J/K for a neomutt hand, Alt+Up/Down for a mouse one.
+    // Alt because Shift+arrows is QTreeView's built-in extend-selection that
+    // multi-row tagging depends on, and a bare arrow cannot be a window
+    // shortcut without breaking every text field in the window.
+    for (const auto &pair : { std::pair<const char *, const char *>{
+                                  "next_thread", "Alt+Down" },
+                              { "prev_thread", "Alt+Up" } }) {
+        auto *action =
+            window.findChild<QAction *>(QString::fromLatin1(pair.first));
+        QVERIFY2(action, pair.first);
+        const QList<QKeySequence> shortcuts = action->shortcuts();
+        QVERIFY2(shortcuts.size() >= 2,
+                 qPrintable(QStringLiteral("%1 carries %2 shortcut(s), so the "
+                                           "second binding is unreachable")
+                                .arg(QString::fromLatin1(pair.first))
+                                .arg(shortcuts.size())));
+        QVERIFY2(shortcuts.contains(
+                     QKeySequence(QString::fromLatin1(pair.second))),
+                 pair.second);
+    }
 }
 
 void TestMainWindow::cardsNeverScrollSideways()

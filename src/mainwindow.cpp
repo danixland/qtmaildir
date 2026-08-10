@@ -629,9 +629,11 @@ QAction *MainWindow::addAction(const QString &name, const QString &text,
 
     // The binding comes from KeyMap, so a [keys] override reaches the menus
     // and the shortcut reference as well as the keyboard.
-    const QKeySequence sequence = m_keyMap.sequenceFor(name);
-    if (!sequence.isEmpty())
-        action->setShortcut(sequence);
+    // Plural: an action can carry more than one binding, and setShortcut()
+    // keeps only the last one given. next_thread has both Ctrl+J and Alt+Down.
+    const QList<QKeySequence> sequences = m_keyMap.sequencesFor(name);
+    if (!sequences.isEmpty())
+        action->setShortcuts(sequences);
 
     // Shortcuts must work while focus is in the thread list or the message
     // view, not only on the window itself.
@@ -655,23 +657,32 @@ void MainWindow::registerActions()
     });
     addAction(QStringLiteral("next_thread"), tr("&Next thread"),
               tr("Select the next thread"), [this]() {
-        // The THREAD after this one, which is not "the next row" once replies
-        // are expanded: from a thread row the next row may be its own first
-        // reply, and from a reply row the row number counts siblings, not
-        // threads. Both are resolved by walking up to the containing thread
-        // first.
-        const QModelIndex current = m_threadView->currentIndex();
-        const QModelIndex thread = threadRowOf(current);
-        const int row = thread.isValid() ? thread.row() + 1 : 0;
-        if (row < m_model->rowCount())
-            selectThreadRow(row);
+        // Walked by INDEX, never by row number. A tree numbers rows per
+        // parent, so current.row() + 1 names a SIBLING: from the last reply of
+        // an expanded thread it asks for a row that does not exist, and from a
+        // thread row it counts top-level threads only by accident (item 60).
+        //
+        // The skip loop is what keeps this meaning thread-to-thread while the
+        // view's own Up/Down still steps message-to-message.
+        QModelIndex index = m_threadView->indexBelow(
+            m_threadView->currentIndex());
+        while (index.isValid()
+               && index.data(ThreadListModel::IsMessageRole).toBool()) {
+            index = m_threadView->indexBelow(index);
+        }
+        if (index.isValid())
+            selectRowAt(index);
     });
     addAction(QStringLiteral("prev_thread"), tr("&Previous thread"),
               tr("Select the previous thread"), [this]() {
-        const QModelIndex current = m_threadView->currentIndex();
-        const QModelIndex thread = threadRowOf(current);
-        if (thread.isValid() && thread.row() > 0)
-            selectThreadRow(thread.row() - 1);
+        QModelIndex index = m_threadView->indexAbove(
+            m_threadView->currentIndex());
+        while (index.isValid()
+               && index.data(ThreadListModel::IsMessageRole).toBool()) {
+            index = m_threadView->indexAbove(index);
+        }
+        if (index.isValid())
+            selectRowAt(index);
     });
     addAction(QStringLiteral("open_thread"), tr("&Open thread"),
               tr("Focus the thread list"), [this]() {

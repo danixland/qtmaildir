@@ -18,6 +18,8 @@
 
 #include "keymap.h"
 
+#include <algorithm>
+
 #include <QSettings>
 
 QStringList KeyMap::knownActions()
@@ -64,6 +66,18 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
     return {
         { QStringLiteral("Ctrl+J"),       QStringLiteral("next_thread") },
         { QStringLiteral("Ctrl+K"),       QStringLiteral("prev_thread") },
+        // Alt, because Shift+Up/Down is QTreeView's built-in extend-selection,
+        // which multi-row tagging depends on, and plain Up/Down is the view's
+        // own navigation, which already steps INTO an expanded thread's
+        // replies and is what gives message-to-message movement for free.
+        //
+        // These must stay chords. Every action is a QAction with
+        // WindowShortcut, dispatched before the focused widget sees the key,
+        // and Qt withholds only plain LETTERS from editable widgets: a bare
+        // Up bound here would break the arrow keys in the query bar, the tag
+        // dialog and the web view at once, exactly as Return did.
+        { QStringLiteral("Alt+Down"),      QStringLiteral("next_thread") },
+        { QStringLiteral("Alt+Up"),        QStringLiteral("prev_thread") },
         { QStringLiteral("Return"),       QStringLiteral("open_thread") },
         { QStringLiteral("Ctrl+E"),       QStringLiteral("archive") },
         { QStringLiteral("Ctrl+D"),       QStringLiteral("delete") },
@@ -151,6 +165,28 @@ void KeyMap::loadDefaults()
 {
     for (const auto &binding : defaultBindings())
         m_bindings.insert(normalizeSequence(binding.first), binding.second);
+}
+
+QList<QKeySequence> KeyMap::sequencesFor(const QString &action) const
+{
+    const QKeySequence primary = sequenceFor(action);
+    if (primary.isEmpty())
+        return {};
+
+    QList<QKeySequence> all{ primary };
+    QList<QKeySequence> rest;
+    for (auto it = m_bindings.cbegin(); it != m_bindings.cend(); ++it) {
+        if (it.value() == action && it.key() != primary)
+            rest.append(it.key());
+    }
+    // QHash iteration order is unspecified, so the tail is sorted rather than
+    // left to chance: an action's shortcut list must not reorder between runs.
+    std::sort(rest.begin(), rest.end(),
+              [](const QKeySequence &a, const QKeySequence &b) {
+                  return a.toString() < b.toString();
+              });
+    all += rest;
+    return all;
 }
 
 QKeySequence KeyMap::sequenceFor(const QString &action) const

@@ -240,6 +240,15 @@ private:
         ThreadSummary summary;
         QVector<MessageNode> children;  ///< Empty until the thread is expanded.
 
+        /// The thread's FIRST message, which the root card itself draws.
+        ///
+        /// Kept because the root card is that message: selecting it must
+        /// render one message rather than the whole conversation, and without
+        /// this the first message of every thread is unreachable, since the
+        /// only rows offering a message are the replies and it is not one of
+        /// them. Empty until the replies are loaded.
+        MessageNode first;
+
         /// Distinguishes "this thread has no replies" from "its replies have
         /// not been asked for yet". Without it an expander would be drawn over
         /// every thread, including the ones that turn out to be single

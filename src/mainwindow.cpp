@@ -1755,10 +1755,31 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     }
 
     const ThreadSummary thread = m_model->threadAt(current.row());
-    m_currentMessageId.clear();
     m_currentThreadId = thread.threadId;
     m_messageView->setTags(thread.tags);
     scheduleMarkRead(thread);
+
+    // The root card IS the thread's first message, so selecting it renders
+    // that message rather than the whole conversation. Loading the thread here
+    // made the first message unreachable: the pane showed every message with
+    // only the last expanded, and no row in the list offered the first one,
+    // since the reply rows are messages two onward.
+    //
+    // Known only once the replies have been loaded, which happens when the
+    // thread is expanded. Until then the thread is the honest answer: it
+    // contains the first message, where a guess might not.
+    const QString firstId =
+        m_model->data(current, ThreadListModel::MessageIdRole).toString();
+    if (!firstId.isEmpty()) {
+        m_currentMessageId = firstId;
+        QMetaObject::invokeMethod(m_worker, "loadMessage",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(QString, firstId),
+                                  Q_ARG(quint64, m_generation));
+        return;
+    }
+
+    m_currentMessageId.clear();
     QMetaObject::invokeMethod(m_worker, "loadThread", Qt::QueuedConnection,
                               Q_ARG(QString, m_currentThreadId),
                               Q_ARG(QString, m_lastQuery),

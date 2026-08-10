@@ -105,6 +105,7 @@ private slots:
     void childRowsAreIndentedUnderTheirThread();
     void aThreadWithRepliesDrawsAVisibleExpander();
     void cardsNeverScrollSideways();
+    void selectingARootCardKeepsItsThreadForMarkRead();
     void nextThreadLeavesTheLastReply();
     void altDownSkipsReplies();
     void bothThreadStepBindingsReachTheAction();
@@ -667,8 +668,12 @@ NavFixture buildNavFixture(MainWindow &window)
     f.view = window.findChild<QTreeView *>();
     f.model = window.findChild<ThreadListModel *>();
 
+    // unread, so a selection arms the mark-read timer: scheduleMarkRead()
+    // returns early for a thread that is already read, and a fixture without
+    // it would make a mark-read assertion pass for the wrong reason.
     ThreadSummary first = makeThread(QStringLiteral("T1"),
-                                     QStringList{ QStringLiteral("inbox") });
+                                     QStringList{ QStringLiteral("inbox"),
+                                                  QStringLiteral("unread") });
     first.totalCount = 2;
     ThreadSummary second = makeThread(QStringLiteral("T2"),
                                       QStringList{ QStringLiteral("inbox") });
@@ -692,6 +697,38 @@ NavFixture buildNavFixture(MainWindow &window)
 }
 
 }  // namespace
+
+void TestMainWindow::selectingARootCardKeepsItsThreadForMarkRead()
+{
+    // A root card is BOTH a message and a thread: it renders the thread's
+    // first message, and it is still the thread that gets marked read and
+    // repainted on a tag change. The message-row path deliberately clears the
+    // current thread id; doing that here too would silently disable mark-read
+    // and the tag-change repaint for every thread root in the list.
+    const Config config;
+    MainWindow window(config);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    const NavFixture f = buildNavFixture(window);
+    f.view->setCurrentIndex(f.root);
+    QApplication::processEvents();
+
+    // Guard: the fixture loads replies, so the root knows its own message and
+    // the branch under test is the one that runs.
+    QVERIFY2(!f.model->data(f.root, ThreadListModel::MessageIdRole)
+                  .toString().isEmpty(),
+             "the root card does not know its first message, so this exercises "
+             "the fallback rather than the path it is written for");
+
+    // A mark-read timer armed for the thread is what proves the thread id
+    // survived: scheduleMarkRead() is only reached on the thread-row path.
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+    QVERIFY2(timer->isActive(),
+             "no mark-read timer for a selected root card: its thread id was "
+             "cleared along with the switch to rendering one message");
+}
 
 void TestMainWindow::nextThreadLeavesTheLastReply()
 {

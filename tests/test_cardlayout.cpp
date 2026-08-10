@@ -19,6 +19,7 @@
 #include "cardlayout.h"
 
 #include <QFont>
+#include <QLocale>
 #include <QTest>
 
 class TestCardLayout : public QObject
@@ -32,10 +33,12 @@ private slots:
     void indentStopsAtTheCap();
     void expanderSitsOnTheSecondLine();
     void expanderIsEmptyWithoutReplies();
+    void theExpanderReadsAsAPillWithAWord();
     void dateIsFlushRight();
     void threadCardCarriesAnAccentBar();
     void replyCardCarriesNoAccentBar();
     void theDateFitsWhenTheCardIsBold();
+    void theDateFollowsTheSystemLocale();
 };
 
 namespace {
@@ -183,6 +186,42 @@ void TestCardLayout::expanderIsEmptyWithoutReplies()
     QVERIFY(card.expanderRect.isEmpty());
 }
 
+void TestCardLayout::theExpanderReadsAsAPillWithAWord()
+{
+    // A bare "3" beside the subject reads as an unexplained number and gives
+    // no hint that it can be clicked. The label carries the word, and the rect
+    // carries padding for the pill drawn behind it.
+    QCOMPARE(CardLayout::expanderLabel(3, false),
+             QStringLiteral("\u25b8 3 replies"));
+    QCOMPARE(CardLayout::expanderLabel(3, true),
+             QStringLiteral("\u25be 3 replies"));
+
+    // Singular, because "1 replies" is the kind of detail that makes an
+    // interface look unfinished.
+    QCOMPARE(CardLayout::expanderLabel(1, false),
+             QStringLiteral("\u25b8 1 reply"));
+
+    const QFont font;
+    const int h = CardLayout::heightFor(font);
+    const CardLayout card =
+        CardLayout::compute(threadInput(), QRect(0, 0, 400, h), font);
+    const QFontMetrics small(CardLayout::smallFont(font));
+
+    // The rect must hold the label AND its padding, or the pill's background
+    // is narrower than the text sitting on it.
+    QVERIFY2(card.expanderRect.width()
+                 >= small.horizontalAdvance(CardLayout::expanderLabel(3, false))
+                        + CardLayout::kPillPaddingX * 2,
+             "the expander rect is too narrow for its own label and padding");
+
+    // And it must NOT change width when the card opens: a pill that resized on
+    // click would shift the subject's elision under the pointer.
+    CardLayout::Input open = threadInput();
+    const CardLayout expanded =
+        CardLayout::compute(open, QRect(0, 0, 400, h), font);
+    QCOMPARE(expanded.expanderRect.width(), card.expanderRect.width());
+}
+
 void TestCardLayout::dateIsFlushRight()
 {
     const QFont font;
@@ -230,6 +269,42 @@ void TestCardLayout::replyCardCarriesNoAccentBar()
     // carries the accent instead, so the gutter never holds two lines.
     QVERIFY(reply.accentRect.isEmpty());
     QCOMPARE(reply.spines.size(), 1);
+}
+
+void TestCardLayout::theDateFollowsTheSystemLocale()
+{
+    const QDateTime when(QDate(2025, 8, 10), QTime(6, 26));
+
+    // The system locale's own rendering, whatever it is. Asserting a specific
+    // string would only restate the hardcoded pattern this replaced, and would
+    // fail on any machine but the one that wrote it.
+    QCOMPARE(CardLayout::formatDate(when),
+             QLocale::system().toString(when, QLocale::ShortFormat));
+
+    // The specific fault: an ISO-looking pattern on a desktop that does not
+    // use one. Guarded so this test says nothing on a locale that genuinely
+    // formats that way.
+    if (QLocale::system().toString(when, QLocale::ShortFormat)
+            != QStringLiteral("2025-08-10 06:26")) {
+        QVERIFY2(CardLayout::formatDate(when)
+                     != QStringLiteral("2025-08-10 06:26"),
+                 "the date is hardcoded to yyyy-MM-dd hh:mm rather than "
+                 "following the desktop's locale");
+    }
+
+    // And the reserved width has to follow the same formatter, or a locale
+    // whose dates are longer clips them exactly as the bold font did.
+    QFont font;
+    const int h = CardLayout::heightFor(font);
+    const CardLayout card =
+        CardLayout::compute(threadInput(), QRect(0, 0, 400, h), font);
+    QFont bold = font;
+    bold.setBold(true);
+    QVERIFY2(card.dateRect.width()
+                 >= QFontMetrics(bold).horizontalAdvance(
+                        CardLayout::formatDate(when)),
+             "the reserved date width is narrower than this locale's own "
+             "formatting of a date");
 }
 
 void TestCardLayout::theDateFitsWhenTheCardIsBold()

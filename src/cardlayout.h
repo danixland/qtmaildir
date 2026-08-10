@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QDateTime>
 #include <QFont>
 #include <QRect>
 #include <QVector>
@@ -116,4 +117,34 @@ struct CardLayout
 
     static CardLayout compute(const Input &input, const QRect &rect,
                               const QFont &font);
+
+    /// How a card writes a date, in the user's own locale.
+    ///
+    /// Never a hardcoded pattern. "yyyy-MM-dd hh:mm" is a US-looking format
+    /// that an Italian desktop does not use, and the whole point of asking the
+    /// system locale is that the user reads dates the way their desktop writes
+    /// them everywhere else.
+    ///
+    /// Shared with the layout so the width reserved for the date and the text
+    /// drawn into it come from one place: a locale whose short format is
+    /// longer than the reserved rect would clip, which is exactly the fault
+    /// bold text produced.
+    static QString formatDate(const QDateTime &date);
+
+    /// The widest string formatDate() can return, for reserving space.
+    static QString widestDateSample();
+
+    /// The expander's label: the reply count with its glyph, as drawn.
+    ///
+    /// Shared with the layout for the same reason as formatDate: the rect
+    /// reserved for the pill and the text put inside it must come from one
+    /// place, or a count wider than the sample the layout guessed at spills
+    /// out of its own background.
+    ///
+    /// `expanded` chooses which way the triangle points.
+    static QString expanderLabel(int replyCount, bool expanded);
+
+    /// Padding inside the expander pill, matching a tag chip's, so the two read
+    /// as the same kind of object on the card.
+    static constexpr int kPillPaddingX = 8;
 };

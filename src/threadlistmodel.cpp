@@ -365,8 +365,13 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     if (role == IsMessageRole)
         return false;
 
-    if (role == MessageIdRole)
-        return QString();
+    if (role == MessageIdRole) {
+        // The thread's FIRST message, once known, because the root card is
+        // that message: selecting it renders one message rather than the whole
+        // conversation. Empty before the replies are loaded, which is the
+        // caller's signal to load the thread instead of guessing at a message.
+        return m_threads.at(index.row()).first.messageId;
+    }
 
     if (role == MessageDepthRole)
         return 0;
@@ -542,7 +547,7 @@ void ThreadListModel::appendBatch(const QVector<ThreadSummary> &batch)
     const int first = m_threads.size();
     beginInsertRows({}, first, first + batch.size() - 1);
     for (const ThreadSummary &summary : batch)
-        m_threads.append(ThreadNode{ summary, {}, false });
+        m_threads.append(ThreadNode{ summary, {}, {}, false });
     endInsertRows();
 }
 
@@ -570,12 +575,26 @@ void ThreadListModel::setThreadMessages(const QString &threadId,
             endRemoveRows();
         }
 
-        QVector<MessageNode> children;
-        children.reserve(nodes.size());
-        for (const MessageNode &node : nodes) {
-            if (node.depth > 0)
-                children.append(node);
-        }
+        // Every message EXCEPT the first, which is the root card itself.
+        //
+        // Selecting on depth > 0 instead was wrong, and wrong in a way that
+        // only showed on real mail: notmuch_thread_get_toplevel_messages
+        // returns every message at depth 0 when a thread carries no usable
+        // In-Reply-To, so a flat thread contributed no children at all. The
+        // card advertised "3 replies" and expanded onto nothing. Measured in
+        // the user's database: of 396 inbox threads, three are flat, one of
+        // them nine messages long, and every two-message thread of this kind
+        // was affected, which is why the fault looked like "the expander only
+        // works with more than one reply".
+        //
+        // Position also happens to be the right rule rather than a workaround.
+        // The root card IS the thread's first message, so the row under it is
+        // the second message whatever depth notmuch assigns it.
+        QVector<MessageNode> children = nodes.mid(1);
+
+        // Kept so the root card can render its own message. It is the card the
+        // user clicks to read the thread's opening message.
+        m_threads[row].first = nodes.isEmpty() ? MessageNode() : nodes.first();
 
         if (!children.isEmpty()) {
             beginInsertRows(parent, 0, children.size() - 1);

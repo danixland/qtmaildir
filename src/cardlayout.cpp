@@ -19,6 +19,44 @@
 #include "cardlayout.h"
 
 #include <QFontMetrics>
+#include <QLocale>
+
+QString CardLayout::formatDate(const QDateTime &date)
+{
+    // The system locale's own short format, not a hardcoded pattern: an
+    // Italian desktop writes 10/08/2025, not 2025-08-10, and a mail client
+    // that disagrees with every other application on screen is simply wrong.
+    return QLocale::system().toString(date, QLocale::ShortFormat);
+}
+
+QString CardLayout::expanderLabel(int replyCount, bool expanded)
+{
+    // "3 replies", not a bare "3". The count alone reads as an unexplained
+    // number beside the subject, and the word is what says the card opens.
+    //
+    // Not translated through tr() here because CardLayout is a plain struct
+    // rather than a QObject; the delegate is where a translated build would
+    // wrap this, and the string is deliberately kept in one place so there is
+    // exactly one thing to change.
+    const QString glyph = expanded ? QStringLiteral("\u25be")
+                                   : QStringLiteral("\u25b8");
+    const QString word = replyCount == 1 ? QStringLiteral("reply")
+                                         : QStringLiteral("replies");
+    return QStringLiteral("%1 %2 %3").arg(glyph).arg(replyCount).arg(word);
+}
+
+QString CardLayout::widestDateSample()
+{
+    // A real date run through the same formatter, with the wide digits and a
+    // two-digit day and month, so the reserved width matches what is drawn
+    // whatever the locale's pattern turns out to be. Guessing a pattern here
+    // would reintroduce the clipping this exists to prevent.
+    static const QString sample = [] {
+        const QDateTime wide(QDate(2028, 12, 28), QTime(22, 58));
+        return formatDate(wide);
+    }();
+    return sample;
+}
 
 QFont CardLayout::smallFont(const QFont &cardFont)
 {
@@ -96,8 +134,8 @@ CardLayout CardLayout::compute(const Input &input, const QRect &rect,
     // painted.
     QFont dateFont = font;
     dateFont.setBold(true);
-    const int dateWidth = QFontMetrics(dateFont).horizontalAdvance(
-        QStringLiteral("8888-88-88 88:88"));
+    const int dateWidth =
+        QFontMetrics(dateFont).horizontalAdvance(widestDateSample());
     out.dateRect = QRect(right - dateWidth, lineOneTop, dateWidth,
                          metrics.height());
     out.senderRect = QRect(out.contentLeft, lineOneTop,
@@ -105,10 +143,20 @@ CardLayout CardLayout::compute(const Input &input, const QRect &rect,
                                        - kPaddingX),
                            metrics.height());
 
-    // The expander is the reply count, on line two and on the right.
+    // The expander is the reply count as a PILL, on line two and on the right.
+    //
+    // Sized from the label actually drawn rather than from a fixed sample, so
+    // the background and the text inside it cannot disagree. Both states of the
+    // glyph are measured because the rect must not change width when the card
+    // is expanded: a pill that resized on click would shift the subject's
+    // elision under the pointer.
     if (input.replyCount > 0) {
-        const int countWidth = smallMetrics.horizontalAdvance(
-            QStringLiteral("▾ 8888 replies"));
+        const int collapsed = smallMetrics.horizontalAdvance(
+            expanderLabel(input.replyCount, false));
+        const int expanded = smallMetrics.horizontalAdvance(
+            expanderLabel(input.replyCount, true));
+        const int countWidth =
+            qMax(collapsed, expanded) + kPillPaddingX * 2;
         out.expanderRect = QRect(right - countWidth, lineTwoTop, countWidth,
                                  metrics.height());
     }

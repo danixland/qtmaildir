@@ -157,7 +157,7 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const QDateTime date =
         index.data(ThreadListModel::DateRole).toDateTime();
     painter->drawText(card.dateRect, Qt::AlignVCenter | Qt::AlignRight,
-                      date.toString(QStringLiteral("yyyy-MM-dd hh:mm")));
+                      CardLayout::formatDate(date));
 
     // Line 2: the flag mark, the subject, the attachment mark.
     QString subject = index.data(ThreadListModel::SubjectRole).toString();
@@ -178,16 +178,51 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                       metrics.elidedText(line2, Qt::ElideRight,
                                          card.subjectRect.width()));
 
-    // The reply count, which is also the expander.
+    // The reply count, which is also the expander, drawn as a PILL.
+    //
+    // A bare "3" on the card's own background read as an unexplained number
+    // beside the subject and gave no hint that it could be clicked. The chip
+    // shape says "this is a control", matching the tag chips on line 3, and the
+    // word says what the number counts.
     if (!card.expanderRect.isEmpty()) {
-        painter->setFont(CardLayout::smallFont(chrome.font));
         const int count = index.data(ThreadListModel::ReplyCountRole).toInt();
-        const QString glyph = (option.state & QStyle::State_Open)
-                                  ? QStringLiteral("▾")
-                                  : QStringLiteral("▸");
-        painter->drawText(card.expanderRect, Qt::AlignVCenter | Qt::AlignRight,
-                          QStringLiteral("%1 %2").arg(glyph).arg(count));
-        painter->setFont(chrome.font);
+        const QString label = CardLayout::expanderLabel(
+            count, option.state & QStyle::State_Open);
+
+        painter->save();
+        painter->setFont(CardLayout::smallFont(chrome.font));
+
+        // Blended from Text toward Base rather than taken from a palette ROLE.
+        // QPalette::Button is the role this obviously wants and it is
+        // #2b2b2b against a Base of #2b2b2b on the user's theme: byte
+        // identical, so the pill was invisible. A theme is free to make any two
+        // roles equal, and several do; a blend cannot collide with the surface
+        // it sits on because it is defined relative to it.
+        //
+        // Toward Text, so it darkens on a light theme and lightens on a dark
+        // one, the same trick replyBackground() and threadLineColour() use.
+        const QColor base = option.palette.color(QPalette::Base);
+        const QColor text = option.palette.color(QPalette::Text);
+        constexpr qreal kFillWeight = 0.18;
+        const QColor fill = QColor::fromRgbF(
+            text.redF() * kFillWeight + base.redF() * (1.0 - kFillWeight),
+            text.greenF() * kFillWeight + base.greenF() * (1.0 - kFillWeight),
+            text.blueF() * kFillWeight + base.blueF() * (1.0 - kFillWeight));
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(fill);
+        // Fully rounded ends, the same shape TagChip paints: the radius is half
+        // the height, so the pill cannot look like a rectangle with soft corners.
+        const qreal radius = card.expanderRect.height() / 2.0;
+        painter->drawRoundedRect(card.expanderRect, radius, radius);
+
+        // The pen is restored from the card's own text colour rather than
+        // ButtonText, which belongs to the role that just proved unreliable.
+        painter->setPen(option.state & QStyle::State_Selected
+                            ? option.palette.highlightedText().color()
+                            : text);
+        painter->drawText(card.expanderRect, Qt::AlignCenter, label);
+        painter->restore();
     }
 
     painter->restore();

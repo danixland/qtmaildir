@@ -32,6 +32,8 @@ private slots:
     void repliesBecomeChildRowsUnderTheirThread();
     void messageRowsShowTheirOwnSenderAndSubject();
     void modelHasOneColumn();
+    void aFlatThreadStillListsItsReplies();
+    void theRootCardKnowsItsOwnMessage();
     void replyShowsOnlyItsOwnTags();
     void replySharingEveryThreadTagShowsNone();
     void reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem();
@@ -131,10 +133,13 @@ void TestThreadListModel::repliesBecomeChildRowsUnderTheirThread()
     QCOMPARE(model.data(child, ThreadListModel::ThreadIdRole).toString(),
              QStringLiteral("t1"));
 
-    // A thread root is not a message row and carries no message id.
+    // A thread root is not a message ROW, but it does carry a message id: the
+    // root card is the thread's first message, and selecting it renders that
+    // message alone. It used to answer nothing here, which is what made the
+    // first message of every thread unreachable.
     QVERIFY(!model.data(root, ThreadListModel::IsMessageRole).toBool());
-    QVERIFY(model.data(root, ThreadListModel::MessageIdRole)
-                .toString().isEmpty());
+    QCOMPARE(model.data(root, ThreadListModel::MessageIdRole).toString(),
+             QStringLiteral("m0@example.org"));
 
     QAbstractItemModelTester tester(
         &model, QAbstractItemModelTester::FailureReportingMode::Warning);
@@ -1022,6 +1027,72 @@ void TestThreadListModel::modelHasOneColumn()
     QCOMPARE(index.data(ThreadListModel::ReplyCountRole).toInt(), 0);
 }
 
+void TestThreadListModel::aFlatThreadStillListsItsReplies()
+{
+    // A thread whose messages carry no reply structure: notmuch returns them
+    // all from get_toplevel_messages at depth 0, which is what happens when the
+    // mail has no usable In-Reply-To. Measured in the user's own database:
+    // of 396 inbox threads, three are like this, one of them nine messages
+    // deep, and every one of them showed a reply count that expanded to
+    // nothing because the model kept only nodes with depth > 0.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"),
+                                      QStringLiteral("flat thread"));
+    thread.totalCount = 3;
+    model.appendBatch({ thread });
+
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 0),
+                              makeNode(QStringLiteral("m2@example.org"), 0) });
+
+    const QModelIndex root = model.index(0, 0);
+
+    // Two children, not zero: the FIRST message is the root card itself, and
+    // the rest are its replies however flat the thread is.
+    QCOMPARE(model.rowCount(root), 2);
+    QCOMPARE(model.index(0, 0, root).data(ThreadListModel::MessageIdRole)
+                 .toString(),
+             QStringLiteral("m1@example.org"));
+
+    // And the count the card advertises must agree with the rows beneath it,
+    // or the expander opens onto nothing.
+    QCOMPARE(root.data(ThreadListModel::ReplyCountRole).toInt(),
+             model.rowCount(root));
+}
+
+void TestThreadListModel::theRootCardKnowsItsOwnMessage()
+{
+    // The root card IS the thread's first message, so it has to be able to say
+    // which message that is. Without this the pane renders the whole thread
+    // when the root is selected, and the first message is unreachable: the
+    // only rows offering it are the replies, and it is not one of them.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"),
+                                      QStringLiteral("a subject"));
+    thread.totalCount = 2;
+    model.appendBatch({ thread });
+
+    const QModelIndex root = model.index(0, 0);
+
+    // Before the replies are loaded there is nothing to report, and the caller
+    // must fall back to loading the whole thread rather than a wrong message.
+    QVERIFY(root.data(ThreadListModel::MessageIdRole).toString().isEmpty());
+
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1) });
+
+    QCOMPARE(root.data(ThreadListModel::MessageIdRole).toString(),
+             QStringLiteral("m0@example.org"));
+
+    // And it is the FIRST message, not just any of them: the reply must still
+    // report its own.
+    QCOMPARE(model.index(0, 0, root).data(ThreadListModel::MessageIdRole)
+                 .toString(),
+             QStringLiteral("m1@example.org"));
+}
+
 void TestThreadListModel::replyShowsOnlyItsOwnTags()
 {
     ThreadListModel model;
@@ -1040,7 +1111,14 @@ void TestThreadListModel::replyShowsOnlyItsOwnTags()
     // Two the thread already has, one it does not.
     reply.tags = { QStringLiteral("inbox"), QStringLiteral("work"),
                    QStringLiteral("todo") };
-    model.setThreadMessages(QStringLiteral("T1"), { reply });
+
+    // Led by the thread's FIRST message, which is what the worker sends and
+    // what the root card draws. setThreadMessages drops it by position.
+    MessageNode root;
+    root.messageId = QStringLiteral("M1");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    model.setThreadMessages(QStringLiteral("T1"), { root, reply });
 
     const QModelIndex threadIndex = model.index(0, 0);
     QVERIFY(model.hasChildren(threadIndex));
@@ -1073,7 +1151,12 @@ void TestThreadListModel::replySharingEveryThreadTagShowsNone()
     reply.threadId = QStringLiteral("T1");
     reply.depth = 1;
     reply.tags = { QStringLiteral("inbox"), QStringLiteral("work") };
-    model.setThreadMessages(QStringLiteral("T1"), { reply });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("M1");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    model.setThreadMessages(QStringLiteral("T1"), { root, reply });
 
     const QModelIndex replyIndex = model.index(0, 0, model.index(0, 0));
     QVERIFY(replyIndex.isValid());

@@ -31,6 +31,7 @@ private slots:
     void rootRowsSurviveTheTreeConversion();
     void repliesBecomeChildRowsUnderTheirThread();
     void messageRowsShowTheirOwnSenderAndSubject();
+    void modelHasOneColumn();
     void replyShowsOnlyItsOwnTags();
     void replySharingEveryThreadTagShowsNone();
     void reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem();
@@ -1044,6 +1045,33 @@ void TestThreadListModel::attachmentColumnIsFirstAndMarksOnlyTaggedThreads()
     // than the icon and defeat the narrow column.
     QVERIFY(model.headerData(ThreadListModel::AttachmentColumn, Qt::Horizontal,
                              Qt::DisplayRole).toString().isEmpty());
+}
+
+void TestThreadListModel::modelHasOneColumn()
+{
+    ThreadListModel model;
+    ThreadSummary thread;
+    thread.threadId = QStringLiteral("T1");
+    thread.subject = QStringLiteral("Build fails");
+    thread.authors = QStringLiteral("alice@example.org");
+    thread.date = QDateTime::currentDateTime();
+    thread.totalCount = 1;
+    model.appendBatch({ thread });
+
+    QCOMPARE(model.columnCount(), 1);
+
+    // Every field the five columns used to answer is still reachable, by role
+    // rather than by column, because the card draws them all.
+    const QModelIndex index = model.index(0, 0);
+    QCOMPARE(index.data(ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("Build fails"));
+    QCOMPARE(index.data(ThreadListModel::SendersRole).toString(),
+             QStringLiteral("alice@example.org"));
+    QVERIFY(index.data(ThreadListModel::DateRole).toDateTime().isValid());
+
+    // A single-message thread offers no expander: totalCount includes the root
+    // message, which is the card itself.
+    QCOMPARE(index.data(ThreadListModel::ReplyCountRole).toInt(), 0);
 }
 
 void TestThreadListModel::replyShowsOnlyItsOwnTags()

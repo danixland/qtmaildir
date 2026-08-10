@@ -38,26 +38,6 @@ class ThreadListModel : public QAbstractItemModel
 {
     Q_OBJECT
 public:
-    /// No tags column: spelling out a dozen tags per row cost most of the
-    /// list's width and was unreadable. Functional tags moved to a chip strip
-    /// under the message pane, and the account tag renders as a chip in front
-    /// of the subject.
-    enum Column {
-        /// A paperclip when the thread has an attachment, so it is visible
-        /// without opening the thread. Icon only and deliberately narrow;
-        /// it carries no text.
-        AttachmentColumn = 0,
-
-        /// A star when the thread carries the flagged tag. Beside the
-        /// paperclip and the same shape: icon only, narrow, no text.
-        FlagColumn,
-
-        DateColumn,
-        AuthorsColumn,
-        SubjectColumn,
-        ColumnCount,
-    };
-
     enum Role {
         /// The thread id behind a row. Views hand out QModelIndexes, but the
         /// worker speaks thread ids, so the mapping belongs on the model
@@ -123,20 +103,33 @@ public:
         /// TagColors instance, and a delegate reading config itself would be a
         /// second source of truth.
         MessageOwnColoursRole,
+
+        /// The card's own fields, by role rather than by column.
+        ///
+        /// Five columns used to answer these through Qt::DisplayRole. One
+        /// column cannot, and a card needs all five values at once, so each
+        /// gets a role and Qt::DisplayRole answers the subject alone (which is
+        /// what keyboard search and accessibility read).
+        SubjectRole,
+        SendersRole,
+        DateRole,          ///< A QDateTime. The delegate formats it.
+        HasAttachmentRole, ///< bool
+        IsFlaggedRole,     ///< bool
+        ReplyCountRole,    ///< int; 0 when a thread has no replies.
     };
+
+    /// The mark drawn on a card's second line when the message has an
+    /// attachment. A paperclip when the system font can draw it, "*" otherwise.
+    static QString attachmentGlyph();
+
+    /// The mark drawn on a card's second line when the message is flagged.
+    /// A star when the system font can draw it, "*" otherwise.
+    static QString flagGlyph();
 
     /// Row fill for a thread tagged `deleted`, and for one tagged `spam`.
     /// Muted rather than saturated: a bulk delete paints every selected row,
     /// and a wall of pure red is harder to read than the list it replaces.
     /// Exposed so a test names the same colour the model uses.
-    /// The character shown in AttachmentColumn for a thread that has one.
-    /// A paperclip when the system font can draw it, "*" otherwise.
-    static QString attachmentGlyph();
-
-    /// The character shown in FlagColumn for a flagged thread.
-    /// A star when the system font can draw it, "*" otherwise.
-    static QString flagGlyph();
-
     static QColor deletedColour();
     static QColor spamColour();
 
@@ -183,8 +176,6 @@ public:
     /// nothing.
     bool hasChildren(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
-    QVariant headerData(int section, Qt::Orientation orientation,
-                        int role) const override;
 
     void appendBatch(const QVector<ThreadSummary> &batch);
     void clear();

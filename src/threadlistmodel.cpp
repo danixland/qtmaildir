@@ -64,7 +64,7 @@ QString ThreadListModel::flagGlyph()
     // U+2605 BLACK STAR, with the same fallback reasoning as the paperclip: an
     // unrenderable codepoint shows as tofu, which reads as breakage rather
     // than as "flagged". The solid star, not the outlined U+2606, since it has
-    // to register at column width beside a paperclip.
+    // to register at small size beside a paperclip.
     static const QString glyph = [] {
         const char32_t star = 0x2605;
         const QString preferred = QString::fromUcs4(&star, 1);
@@ -222,11 +222,13 @@ bool ThreadListModel::hasChildren(const QModelIndex &parent) const
 
 int ThreadListModel::columnCount(const QModelIndex &parent) const
 {
-    // Every level has the same columns. Returning 0 for a valid parent, as the
-    // table version did, would give message rows no columns at all and render
-    // them blank.
+    // One column: the card is drawn whole by CardDelegate. The five-column
+    // grid is what item 53 removed.
+    //
+    // Answered for a valid parent too. Returning 0 there, as the table version
+    // did, would give message rows no columns at all and render them blank.
     Q_UNUSED(parent);
-    return ColumnCount;
+    return 1;
 }
 
 QVariant ThreadListModel::data(const QModelIndex &index, int role) const
@@ -234,7 +236,7 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     // A stale index from a view that has not caught up with a clear() can carry
     // any row or column, so both bounds are checked rather than trusted.
     if (!index.isValid() || index.row() < 0
-        || index.column() < 0 || index.column() >= ColumnCount) {
+        || index.column() != 0) {
         return {};
     }
 
@@ -302,23 +304,23 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         case AccountLabelRole:
             return QString();
         case Qt::DisplayRole:
-            switch (index.column()) {
-            case AuthorsColumn:
-                // The REPLY's sender, not the thread's author summary. Reading
-                // the thread's fields here would look almost right, since the
-                // first sender usually appears in both.
-                return node.from;
-            case SubjectColumn:
-                return node.subject;
-            case DateColumn:
-                return node.date.toString(QStringLiteral("yyyy-MM-dd hh:mm"));
-            case AttachmentColumn:
-                return node.hasAttachment() ? attachmentGlyph() : QString();
-            case FlagColumn:
-                return node.isFlagged() ? flagGlyph() : QString();
-            default:
-                return {};
-            }
+        case SubjectRole:
+            return node.subject;
+        case SendersRole:
+            // The REPLY's sender, not the thread's author summary. Reading the
+            // thread's fields here would look almost right, since the first
+            // sender usually appears in both.
+            return node.from;
+        case DateRole:
+            return node.date;
+        case HasAttachmentRole:
+            return node.hasAttachment();
+        case IsFlaggedRole:
+            return node.isFlagged();
+        case ReplyCountRole:
+            // A reply never offers an expander: nesting past the first level is
+            // drawn from depth, not from further parent-child structure.
+            return 0;
         case Qt::BackgroundRole:
             // Tinted, so an expanded thread reads as one block rather than as
             // more table rows. Applied per cell here; ThreadListView fills the
@@ -437,46 +439,42 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         return {};
     }
 
-    if (role == Qt::ToolTipRole && index.column() == AttachmentColumn)
-        return thread.hasAttachment() ? tr("Has an attachment") : QVariant();
-
-    // "Important", matching the action's own wording (item 57). The underlying
-    // tag is still `flagged` and isFlagged() still tests for it; only what the
-    // user reads changed.
-    if (role == Qt::ToolTipRole && index.column() == FlagColumn)
-        return thread.isFlagged() ? tr("Important") : QVariant();
-
-    // Both marker columns: a glyph reads as a marker only when it sits in the
-    // middle of its column rather than against the text beside it.
-    if (role == Qt::TextAlignmentRole
-        && (index.column() == AttachmentColumn || index.column() == FlagColumn)) {
-        return QVariant::fromValue(Qt::AlignCenter);
+    if (role == Qt::ToolTipRole) {
+        // One tooltip for the whole card, since the marks no longer have
+        // columns of their own to be hovered separately. "Important" matches
+        // the action's own wording (item 57); the underlying tag is still
+        // `flagged` and isFlagged() still tests for it.
+        QStringList marks;
+        if (thread.isFlagged())
+            marks.append(tr("Important"));
+        if (thread.hasAttachment())
+            marks.append(tr("Has an attachment"));
+        return marks.isEmpty() ? QVariant() : marks.join(QStringLiteral(", "));
     }
 
-    if (role == Qt::DisplayRole) {
-        switch (index.column()) {
-        case AttachmentColumn:
-            // A glyph rather than an icon resource: no new asset to ship, and
-            // it inherits the row's font, so it strikes through with a doomed
-            // thread like every other cell.
-            return thread.hasAttachment() ? attachmentGlyph() : QString();
-        case FlagColumn:
-            // A glyph rather than an icon, for the same reasons as the
-            // paperclip: no asset to ship, and it inherits the row's font so
-            // it strikes through with a doomed thread.
-            return thread.isFlagged() ? flagGlyph() : QString();
-        case DateColumn:
-            return thread.date.toString(QStringLiteral("yyyy-MM-dd hh:mm"));
-        case AuthorsColumn:
-            return thread.authors;
-        case SubjectColumn:
-            return thread.totalCount > 1
-                ? QStringLiteral("%1 (%2)").arg(thread.subject)
-                      .arg(thread.totalCount)
-                : thread.subject;
-        default:
-            return {};
-        }
+    switch (role) {
+    case Qt::DisplayRole:
+    case SubjectRole:
+        // Bare, with no "(3)" message-count suffix. The count is drawn on the
+        // card's second line as the expander, so a suffix here would state it
+        // twice on the same card.
+        return thread.subject;
+    case SendersRole:
+        return thread.authors;
+    case DateRole:
+        // The QDateTime itself. Formatting belongs to the delegate now: the
+        // card decides how much of a date it has room for, and a pre-formatted
+        // string takes that decision away from it.
+        return thread.date;
+    case HasAttachmentRole:
+        return thread.hasAttachment();
+    case IsFlaggedRole:
+        return thread.isFlagged();
+    case ReplyCountRole:
+        // totalCount includes the root message, which is the card itself.
+        return qMax(0, thread.totalCount - 1);
+    default:
+        break;
     }
 
     // A thread tagged deleted or spam is on its way out, and the user needs to
@@ -532,24 +530,6 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     }
 
     return {};
-}
-
-QVariant ThreadListModel::headerData(int section, Qt::Orientation orientation,
-                                     int role) const
-{
-    if (orientation != Qt::Horizontal || role != Qt::DisplayRole)
-        return {};
-
-    switch (section) {
-    // No label: any text would set a minimum width far wider than the icon,
-    // which defeats the point of a narrow column.
-    case AttachmentColumn: return QString();
-    case FlagColumn:       return QString();
-    case DateColumn:    return tr("Date");
-    case AuthorsColumn: return tr("From");
-    case SubjectColumn: return tr("Subject");
-    default:            return {};
-    }
 }
 
 void ThreadListModel::appendBatch(const QVector<ThreadSummary> &batch)
@@ -720,9 +700,9 @@ void ThreadListModel::applyTagChange(const QString &threadId,
                 tags.append(tag);
         }
 
-        // The whole row repaints: unread state drives the font of every column,
-        // not just the tags one.
-        emit dataChanged(index(row, 0), index(row, ColumnCount - 1));
+        // The whole card repaints: unread state drives its font, and the tags
+        // it draws on line 3 have just changed.
+        emit dataChanged(index(row, 0), index(row, 0));
         return;
     }
 }

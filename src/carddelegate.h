@@ -52,20 +52,27 @@ public:
     static QRect expanderRectFor(const QStyleOptionViewItem &option,
                                  const QModelIndex &index);
 
-    /// The colour the accent bar is painted in: the account's own, undiluted.
+    /// The colour the accent bar is painted in: the account's hue, lifted to a
+    /// floor of saturation and lightness.
     ///
-    /// Blending it toward the palette's Base was tried first, at the 0.35
-    /// weight threadLineColour() uses, and produced an INVISIBLE bar on a dark
-    /// theme: against a Base of (0.169, 0.169, 0.169) it landed at (0.18, 0.22,
-    /// 0.26), which is the background. The weight is a fraction OF THE ACCOUNT
-    /// COLOUR, so a low one keeps the background rather than the hue.
+    /// Two earlier versions were wrong in opposite directions. Blending toward
+    /// the palette's Base at threadLineColour()'s 0.35 weight produced an
+    /// INVISIBLE bar on a dark theme, landing at (0.18, 0.22, 0.26) against a
+    /// Base of (0.169, 0.169, 0.169): the weight is a fraction OF THE ACCOUNT
+    /// COLOUR, so a low one keeps the background rather than the hue. Passing
+    /// the raw colour through fixed that and was still too quiet, because an
+    /// account colour is chosen as a CHIP's fill with legible text on top and
+    /// is therefore mid-tone by construction.
     ///
-    /// An account colour is already chosen to be a chip's fill with legible
-    /// text on top, so it is muted to begin with; three pixels of a muted
-    /// colour is nothing. Nothing is drawn on this bar, so it needs none of the
-    /// contrast that choice was made for. The SPINE is where the muting belongs
-    /// and is blended in paint(): it runs the full height of every reply in an
-    /// expansion and has to be followable without competing with the senders.
+    /// A floor, not a repaint: a colour already past it is returned untouched,
+    /// so a deliberately vivid choice is preserved. Hue is never altered, since
+    /// hue is the whole information the bar carries and a shifted one would
+    /// stop matching the account's chip and its swatch in the dropdown.
+    ///
+    /// The SPINE takes its colour from this and mutes it again in paint(): it
+    /// runs the full height of every reply in an expansion and has to be
+    /// followable without competing with the senders, which is a different
+    /// problem from a 3px edge marker.
     ///
     /// Falls back to threadLineColour() for a thread with no account tag.
     static QColor accentLineColour(const QColor &accountColour);

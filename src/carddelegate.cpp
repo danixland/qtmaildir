@@ -58,16 +58,32 @@ QColor CardDelegate::accentLineColour(const QColor &accountColour)
     // at (0.18, 0.22, 0.26), which is the background. The weight is a fraction
     // OF THE ACCOUNT COLOUR, so a low one keeps the background, not the hue.
     //
-    // The bar is the account's colour, undiluted. Blending it toward Base at
-    // all was the mistake: a chip's colour is chosen to carry text on top and
-    // is therefore already muted, and three pixels of a muted colour on a dark
-    // background is nothing at all. There is no text on this bar, so nothing
-    // needs the contrast a chip's fill was picked for.
+    // The account's own hue, lifted to a floor of saturation and lightness.
     //
-    // What DOES step back is the spine, below: a line running the height of a
-    // whole expansion has to be followable without competing with the senders
-    // beside it, which is a different problem from a 3px edge marker.
-    return accountColour;
+    // Blending toward Base was the first mistake and is long gone: a chip's
+    // colour is already muted, since it is chosen to carry legible text on top,
+    // and three pixels of a muted colour is nothing. Handing the raw colour
+    // through was the second: it is better, but the five real accounts are all
+    // mid-tone by construction and still read as faint stripes on a dark theme.
+    //
+    // A FLOOR rather than a repaint. A colour already past it is returned
+    // untouched, so a user who deliberately picked something vivid keeps
+    // exactly what they picked, and only the muted ones move. Hue is never
+    // touched at all, because hue is the entire information the bar carries:
+    // shifting it would make a bar stop matching its account's chip and its
+    // swatch in the dropdown.
+    //
+    // The numbers were chosen by rendering all five accounts as 3px bars on
+    // both a dark and a light card background and looking. Higher pushed the
+    // green toward a neon that no longer matched its own chip; lower left it
+    // where it started.
+    constexpr float kMinSaturation = 0.65f;
+    constexpr float kMinLightness = 0.50f;
+
+    float h = 0, s = 0, l = 0, a = 0;
+    accountColour.getHslF(&h, &s, &l, &a);
+    return QColor::fromHslF(h, qMax(s, kMinSaturation),
+                            qMax(l, kMinLightness), a);
 }
 
 QSize CardDelegate::sizeHint(const QStyleOptionViewItem &option,

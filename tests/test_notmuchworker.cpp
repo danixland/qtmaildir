@@ -39,6 +39,8 @@ private slots:
     void malformedQueryYieldsNoThreads();
     void unreadableConfigEmitsError();
     void queryPassesGenerationThrough();
+    void oldestFirstReversesTheOrder();
+    void theSortOrderCrossesAQueuedCall();
 
     void loadThreadReturnsMessagesOldestFirst();
     void loadThreadMarksMatchedMessages();
@@ -58,6 +60,11 @@ private slots:
     void requestAllTagsReturnsSortedTags();
     void requestAllTagsOnUnreadableConfigEmitsError();
 
+    void loadMessageReturnsOnlyThatMessage();
+    void loadMessageOnAnUnknownIdReturnsNothing();
+    void loadThreadTreeReportsReplyDepth();
+    void loadThreadTreeCarriesTheFactsARowNeeds();
+
     void requestCountsAnswersOneCountPerQuery();
     void requestCountsKeepsPositionOnAnInvalidQuery();
     void requestDatabaseStatsCountsMessagesNotThreads();
@@ -68,7 +75,9 @@ private:
     QStringList tagsOf(const QString &messageId);
     QVector<MessageRef> messagesOfThread(const QString &threadId,
                                          const QString &matchQuery = QString());
-    QVector<ThreadSummary> runQuery(const QString &query);
+    QVector<ThreadSummary> runQuery(
+        const QString &query,
+        NotmuchWorker::SortOrder sort = NotmuchWorker::NewestFirst);
     QString threadIdOf(const QString &subject);
 
     NotmuchFixture m_fixture;
@@ -108,13 +117,14 @@ void TestNotmuchWorker::initTestCase()
     QVERIFY2(m_fixture.index(), qPrintable(m_fixture.error()));
 }
 
-QVector<ThreadSummary> TestNotmuchWorker::runQuery(const QString &query)
+QVector<ThreadSummary> TestNotmuchWorker::runQuery(
+    const QString &query, NotmuchWorker::SortOrder sort)
 {
     NotmuchWorker worker(m_fixture.configPath());
     QSignalSpy ready(&worker, &NotmuchWorker::threadsReady);
     QSignalSpy finished(&worker, &NotmuchWorker::queryFinished);
 
-    worker.runQuery(query, 1);
+    worker.runQuery(query, 1, sort);
 
     QVector<ThreadSummary> all;
     for (const QList<QVariant> &args : ready)
@@ -156,6 +166,91 @@ QStringList TestNotmuchWorker::tagsOf(const QString &messageId)
             return m.tags;
     }
     return {};
+}
+
+void TestNotmuchWorker::loadMessageReturnsOnlyThatMessage()
+{
+    // a2 is a reply in a two-message thread. Selecting a reply row must render
+    // that message alone; loadThread would hand back the whole thread and the
+    // pane would show the conversation the user was trying to look inside.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy loaded(&worker, &NotmuchWorker::messageLoaded);
+    worker.loadMessage(QStringLiteral("a2@example.org"), 1);
+
+    QCOMPARE(loaded.count(), 1);
+    const auto messages = loaded.first().at(0).value<QVector<MessageRef>>();
+
+    QCOMPARE(messages.size(), 1);
+    QCOMPARE(messages.first().messageId, QStringLiteral("a2@example.org"));
+    QVERIFY(!messages.first().filePath.isEmpty());
+
+    // matched, so the pane renders it expanded rather than as a stub. The user
+    // asked for this message by clicking it, which is as matched as it gets.
+    QVERIFY(messages.first().matched);
+}
+
+void TestNotmuchWorker::loadMessageOnAnUnknownIdReturnsNothing()
+{
+    // Empty rather than an error: a stale row after a reindex is an ordinary
+    // race, not a failure worth a message in the status bar.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy loaded(&worker, &NotmuchWorker::messageLoaded);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.loadMessage(QStringLiteral("nonexistent@example.org"), 1);
+
+    QCOMPARE(loaded.count(), 1);
+    QVERIFY(loaded.first().at(0).value<QVector<MessageRef>>().isEmpty());
+    QCOMPARE(errors.count(), 0);
+}
+
+void TestNotmuchWorker::loadThreadTreeReportsReplyDepth()
+{
+    // Thread A is a root plus one reply carrying In-Reply-To, which is what
+    // notmuch threads on. Without that header the two would be separate threads
+    // and this test would assert nothing about depth.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy loaded(&worker, &NotmuchWorker::threadTreeLoaded);
+    worker.loadThreadTree(threadId, QString(), 1);
+
+    QCOMPARE(loaded.count(), 1);
+    const auto nodes = loaded.first().at(0).value<QVector<MessageNode>>();
+
+    QCOMPARE(nodes.size(), 2);
+    QCOMPARE(nodes.at(0).messageId, QStringLiteral("a1@example.org"));
+    QCOMPARE(nodes.at(0).depth, 0);
+    QCOMPARE(nodes.at(1).messageId, QStringLiteral("a2@example.org"));
+    QCOMPARE(nodes.at(1).depth, 1);
+}
+
+void TestNotmuchWorker::loadThreadTreeCarriesTheFactsARowNeeds()
+{
+    // A row is drawn without opening the message, so the walk has to read the
+    // headers. loadThread does not, which is why a separate signal exists.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy loaded(&worker, &NotmuchWorker::threadTreeLoaded);
+    worker.loadThreadTree(threadId, QString(), 1);
+
+    QCOMPARE(loaded.count(), 1);
+    const auto nodes = loaded.first().at(0).value<QVector<MessageNode>>();
+    QCOMPARE(nodes.size(), 2);
+
+    const MessageNode &reply = nodes.at(1);
+    QVERIFY(reply.from.contains(QStringLiteral("bob@example.org")));
+    QCOMPARE(reply.subject, QStringLiteral("Re: Release notes"));
+    QVERIFY(reply.date.isValid());
+    QVERIFY(!reply.filePath.isEmpty());
+
+    // Every node names its thread, so a batch does not need the caller to keep
+    // track of which thread it asked about.
+    QCOMPARE(reply.threadId, threadId);
+    QCOMPARE(nodes.at(0).threadId, threadId);
 }
 
 void TestNotmuchWorker::queryReturnsAllThreads()
@@ -232,6 +327,45 @@ void TestNotmuchWorker::queryPassesGenerationThrough()
     QCOMPARE(finished.size(), 1);
     QCOMPARE(finished.first().at(0).toInt(), 3);
     QCOMPARE(finished.first().at(1).value<quint64>(), quint64(42));
+}
+
+void TestNotmuchWorker::oldestFirstReversesTheOrder()
+{
+    const QVector<ThreadSummary> newest = runQuery(QStringLiteral("*"));
+    const QVector<ThreadSummary> oldest =
+        runQuery(QStringLiteral("*"), NotmuchWorker::OldestFirst);
+
+    QCOMPARE(oldest.size(), newest.size());
+
+    // The guard: with fewer than two threads, or with every thread carrying
+    // the same date, a reversal is indistinguishable from no sorting at all
+    // and every assertion below would pass against a hardcoded order.
+    QVERIFY(newest.size() >= 2);
+    QVERIFY(newest.first().date != newest.last().date);
+
+    QCOMPARE(oldest.first().threadId, newest.last().threadId);
+    QCOMPARE(oldest.last().threadId, newest.first().threadId);
+}
+
+void TestNotmuchWorker::theSortOrderCrossesAQueuedCall()
+{
+    // MainWindow reaches the worker with invokeMethod(..., QueuedConnection)
+    // across a thread boundary, and a Q_ARG whose type the meta-object system
+    // does not know FAILS AT RUNTIME with a warning, not at compile time. So
+    // the enum's registration is asserted here rather than assumed from Q_ENUM.
+    QVERIFY2(QMetaType::fromName("NotmuchWorker::SortOrder").isValid(),
+             "SortOrder is not a registered metatype, so the queued runQuery "
+             "call will drop its sort argument at runtime");
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy ready(&worker, &NotmuchWorker::threadsReady);
+
+    // The real call shape, invoked by NAME exactly as MainWindow does.
+    QVERIFY(QMetaObject::invokeMethod(
+        &worker, "runQuery", Qt::DirectConnection,
+        Q_ARG(QString, QStringLiteral("*")), Q_ARG(quint64, 1),
+        Q_ARG(NotmuchWorker::SortOrder, NotmuchWorker::OldestFirst)));
+    QCOMPARE(ready.size(), 1);
 }
 
 void TestNotmuchWorker::loadThreadReturnsMessagesOldestFirst()

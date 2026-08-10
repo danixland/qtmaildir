@@ -59,8 +59,8 @@ void paint(QPainter *painter, const QRect &rect, const QString &text,
 /// the selection highlight it lands as grey on the highlight colour, close to
 /// unreadable.
 ///
-/// Applied to the columns that have no delegate of their own; SubjectDelegate
-/// inherits it for the subject column.
+/// Inherited by CardDelegate, which is the only delegate the thread list
+/// installs.
 class RowStyleDelegate : public QStyledItemDelegate
 {
     Q_OBJECT
@@ -72,41 +72,3 @@ protected:
                          const QModelIndex &index) const override;
 };
 
-/// Item delegate for the subject column: draws the account chip in front of
-/// the subject text, so which mailbox a thread came from reads at a glance
-/// without a tags column spelling it out.
-/// **Install on the subject column only.** It reads AccountLabelRole, which is
-/// a property of the row rather than of a cell, so as a view-wide delegate it
-/// draws the account chip into every column.
-class SubjectDelegate : public RowStyleDelegate
-{
-    Q_OBJECT
-public:
-    using RowStyleDelegate::RowStyleDelegate;
-
-    void paint(QPainter *painter, const QStyleOptionViewItem &option,
-               const QModelIndex &index) const override;
-    QSize sizeHint(const QStyleOptionViewItem &option,
-                   const QModelIndex &index) const override;
-
-    /// Vertical breathing room above the subject and below the pill row.
-    static constexpr int kRowPadding = 4;
-
-    /// The font the pill strip is drawn in: a size down from the row's own.
-    ///
-    /// At the same size the pills read as a second row of content competing
-    /// with the subject, rather than as annotation beneath it. Derived from
-    /// the row font rather than fixed, so it follows the desktop's font size.
-    static QFont pillFont(const QFont &rowFont);
-
-    /// The height every row gets, tall enough for the subject and a pill strip
-    /// beneath it. The view applies this itself: a QTableView takes one height
-    /// for the whole row, so leaving it to a single column's sizeHint would
-    /// let whichever column the view happens to ask decide.
-    static int rowHeightFor(const QFont &rowFont);
-
-protected:
-    /// The height of the band the subject text occupies. Everything below it
-    /// belongs to ThreadListView's row-wide pill strip.
-    static int subjectBandHeight(const QStyleOptionViewItem &option);
-};

@@ -69,11 +69,75 @@ bool collectMessageIds(notmuch_database_t *db, const QString &query,
     return true;
 }
 
+/// Walks a thread's reply structure depth-first, appending each message with
+/// its depth.
+///
+/// Takes RAW notmuch_message_t*, deliberately, against the rule that every
+/// handle in this file is RAII-owned. Messages reached through a thread belong
+/// to that thread and are freed with it (notmuch.h:1637), so wrapping one in
+/// NmMessage would call notmuch_message_destroy on memory the thread frees
+/// again. The NmThread in the caller is what keeps every pointer here alive,
+/// and this must not outlive it.
+///
+/// No match-set argument, unlike loadThread. A row is drawn for every message
+/// in the thread regardless of the query: the list is where the user goes to
+/// SEE the thread's shape, and hiding replies that did not match would make the
+/// reply count disagree with the rows beneath it.
+void walkReplies(notmuch_messages_t *messages, int depth,
+                 QVector<MessageNode> *out)
+{
+    for (; notmuch_messages_valid(messages);
+           notmuch_messages_move_to_next(messages)) {
+
+        notmuch_message_t *message = notmuch_messages_get(messages);
+        if (!message)
+            continue;
+
+        MessageNode node;
+        node.messageId =
+            QString::fromUtf8(notmuch_message_get_message_id(message));
+        node.threadId =
+            QString::fromUtf8(notmuch_message_get_thread_id(message));
+        node.filePath =
+            QString::fromUtf8(notmuch_message_get_filename(message));
+        node.from =
+            QString::fromUtf8(notmuch_message_get_header(message, "from"));
+        node.subject =
+            QString::fromUtf8(notmuch_message_get_header(message, "subject"));
+        node.date =
+            QDateTime::fromSecsSinceEpoch(notmuch_message_get_date(message));
+        node.tags = tagsOf(message);
+        node.depth = depth;
+        out->append(node);
+
+        // NULL is a legitimate "no replies" here: notmuch_messages_valid
+        // accepts it and returns FALSE (notmuch.h:1630), so a leaf needs no
+        // guard of its own.
+        walkReplies(notmuch_message_get_replies(message), depth + 1, out);
+    }
+}
+
 } // namespace
+
+/// Registers SortOrder for queued calls, once, before main() runs.
+///
+/// Q_ENUM alone is NOT enough for a queued Q_ARG: it gives the enum a
+/// meta-object entry, not a metatype registered under the name invokeMethod
+/// resolves, so MainWindow's queued runQuery would drop its sort argument at
+/// runtime with a warning and every query would silently run newest-first.
+///
+/// Here rather than in MainWindow's constructor, because the registration
+/// belongs to the type rather than to one consumer: a caller that never
+/// constructs a MainWindow (a test, or a future headless mode) needs it too,
+/// and that is exactly how the first attempt at this passed by accident and
+/// failed under test.
+static const int kSortOrderMetaType =
+    qRegisterMetaType<NotmuchWorker::SortOrder>("NotmuchWorker::SortOrder");
 
 NotmuchWorker::NotmuchWorker(const QString &notmuchConfigPath, QObject *parent)
     : QObject(parent), m_configPath(notmuchConfigPath)
 {
+    Q_UNUSED(kSortOrderMetaType);
 }
 
 NotmuchWorker::~NotmuchWorker()
@@ -122,7 +186,8 @@ void NotmuchWorker::close()
     }
 }
 
-void NotmuchWorker::runQuery(const QString &query, quint64 generation)
+void NotmuchWorker::runQuery(const QString &query, quint64 generation,
+                             SortOrder sort)
 {
     if (!openReadOnly())
         return;
@@ -132,7 +197,9 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation)
         emit errorOccurred(QStringLiteral("Invalid query: %1").arg(query));
         return;
     }
-    notmuch_query_set_sort(nmQuery.get(), NOTMUCH_SORT_NEWEST_FIRST);
+    notmuch_query_set_sort(nmQuery.get(),
+                           sort == OldestFirst ? NOTMUCH_SORT_OLDEST_FIRST
+                                               : NOTMUCH_SORT_NEWEST_FIRST);
 
     notmuch_threads_t *rawThreads = nullptr;
     const notmuch_status_t status =
@@ -240,6 +307,99 @@ void NotmuchWorker::loadThread(const QString &threadId,
     }
 
     emit threadLoaded(result, generation);
+}
+
+void NotmuchWorker::loadThreadTree(const QString &threadId,
+                                   const QString &matchQuery,
+                                   quint64 generation)
+{
+    // Accepted for signature symmetry with loadThread, and unused on purpose:
+    // see walkReplies on why every message in the thread gets a row.
+    Q_UNUSED(matchQuery);
+
+    if (!openReadOnly())
+        return;
+
+    const QString query = QStringLiteral("thread:%1").arg(threadId);
+    NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+    if (!nmQuery) {
+        emit errorOccurred(
+            QStringLiteral("Cannot load thread %1").arg(threadId));
+        return;
+    }
+
+    // search_threads, not search_messages. The messages have to come from a
+    // notmuch_thread_t or notmuch_message_get_replies returns NULL for every
+    // one of them and the walk below produces a flat list at depth 0.
+    notmuch_threads_t *rawThreads = nullptr;
+    if (notmuch_query_search_threads(nmQuery.get(), &rawThreads)
+            != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(
+            QStringLiteral("Cannot search thread %1").arg(threadId));
+        return;
+    }
+    NmThreads threads(rawThreads);
+
+    QVector<MessageNode> nodes;
+    if (notmuch_threads_valid(threads.get())) {
+        // Held for the whole walk: every message pointer inside belongs to this
+        // thread and dies with it.
+        NmThread thread(notmuch_threads_get(threads.get()));
+        if (thread) {
+            walkReplies(notmuch_thread_get_toplevel_messages(thread.get()), 0,
+                        &nodes);
+        }
+    }
+
+    emit threadTreeLoaded(nodes, generation);
+}
+
+void NotmuchWorker::loadMessage(const QString &messageId, quint64 generation)
+{
+    if (!openReadOnly())
+        return;
+
+    // id: is an exact-match prefix, and the id is quoted because a message id
+    // can legitimately contain characters notmuch's parser would otherwise read
+    // as query syntax.
+    const QString query = QStringLiteral("id:\"%1\"").arg(messageId);
+    NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+    if (!nmQuery) {
+        emit errorOccurred(
+            QStringLiteral("Cannot load message %1").arg(messageId));
+        return;
+    }
+
+    notmuch_messages_t *rawMessages = nullptr;
+    if (notmuch_query_search_messages(nmQuery.get(), &rawMessages)
+            != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(
+            QStringLiteral("Cannot search message %1").arg(messageId));
+        return;
+    }
+    NmMessages messages(rawMessages);
+
+    QVector<MessageRef> result;
+    if (notmuch_messages_valid(messages.get())) {
+        NmMessage message(notmuch_messages_get(messages.get()));
+        if (message) {
+            MessageRef ref;
+            ref.messageId = QString::fromUtf8(
+                notmuch_message_get_message_id(message.get()));
+            ref.filePath = QString::fromUtf8(
+                notmuch_message_get_filename(message.get()));
+            ref.tags = tagsOf(message.get());
+
+            // Always matched: the user asked for this message by clicking its
+            // row, so rendering it as a stub would answer the wrong question.
+            ref.matched = true;
+            result.append(ref);
+        }
+    }
+
+    // Emitted even when empty, so the UI's handler runs and can decide what to
+    // do rather than waiting for a reply that never comes.
+    emit messageLoaded(result, generation);
 }
 
 void NotmuchWorker::applyTagsToThreads(const QStringList &threadIds,

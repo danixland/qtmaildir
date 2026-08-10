@@ -41,7 +41,7 @@
 class QAction;
 class QLineEdit;
 class QMenu;
-class QTableView;
+class ThreadListView;
 class QLabel;
 class QPushButton;
 class QComboBox;
@@ -129,6 +129,19 @@ public:
     /// command was pushed, which is what "this did nothing" has to assert.
     int undoDepthForTesting() const { return m_undoStack.count(); }
 
+    /// The ids the last tag change was sent for, and whether they were thread
+    /// ids or message ids.
+    ///
+    /// Exposed because the difference is invisible from outside otherwise: a
+    /// message row routed down the thread path produces the same undo depth and
+    /// the same status text while tagging every sibling in the thread. A
+    /// mutation that made exactly that change passed the whole suite.
+    QStringList pendingThreadIdsForTesting() const { return m_pendingThreadIds; }
+    QStringList pendingMessageIdsForTesting() const
+    {
+        return m_pendingChange.messageIds;
+    }
+
     /// The generation a worker reply must carry to be accepted.
     ///
     /// A test seam: onQueryFinished() discards a reply whose generation is
@@ -164,6 +177,17 @@ private slots:
     /// the click lands inside.
     void showThreadContextMenu(const QPoint &pos);
     void onThreadLoaded(const QVector<MessageRef> &messages, quint64 generation);
+
+    /// Asks the worker for a thread's reply tree when its row is expanded.
+    void onThreadExpanded(const QModelIndex &index);
+
+    /// Fills in the expanded thread's message rows.
+    void onThreadTreeLoaded(const QVector<MessageNode> &nodes,
+                            quint64 generation);
+
+    /// Renders the single message a message row asked for.
+    void onMessageLoaded(const QVector<MessageRef> &messages,
+                         quint64 generation);
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
 
@@ -212,6 +236,15 @@ private:
     /// A missing or rejected blob leaves the buildUi() defaults in place.
     void restoreUiState();
 
+    /// The thread row containing an index: itself for a thread row, its parent
+    /// for a message row.
+    QModelIndex threadRowOf(const QModelIndex &index) const;
+
+    /// Selects a whole row. QTreeView has no selectRow of its own.
+    void selectRowAt(const QModelIndex &index);
+
+    /// Selects the top-level thread row at `row`.
+    void selectThreadRow(int row);
     void saveUiState() const;
 
     void registerActions();
@@ -335,6 +368,13 @@ private:
                              const QStringList &remove,
                              const QString &description);
 
+    /// The same for individual MESSAGES, without touching the undo stack.
+    /// Both tagSelected() and MessageTagCommand route through this.
+    void sendMessageTagChange(const QStringList &messageIds,
+                              const QStringList &add,
+                              const QStringList &remove,
+                              const QString &description);
+
     /// Undoes the optimistic model update for a write the worker rejected.
     void revertPendingTagChange();
 
@@ -368,6 +408,7 @@ private:
     QVector<HeldEdit> m_heldEdits;
 
     friend class ThreadTagCommand;
+    friend class MessageTagCommand;
 
     Config m_config;
     KeyMap m_keyMap;
@@ -410,7 +451,10 @@ private:
 
     QLineEdit *m_queryEdit = nullptr;
     QueryCompleter *m_queryCompleter = nullptr;
-    QTableView *m_threadView = nullptr;
+    /// Its own type, not the QTreeView base. The strip painting and the
+    /// expander column are ThreadListView's, and holding the base here only
+    /// hid that from every reader.
+    ThreadListView *m_threadView = nullptr;
 
     /// Right-click menu for the thread list, holding the same QActions the
     /// menu bar does.
@@ -424,6 +468,7 @@ private:
     /// placeholder's own text wraps every couple of words.
     static constexpr int kMinMessagePaneWidth = 300;
     QComboBox *m_accountBox = nullptr;
+    QComboBox *m_sortOrder = nullptr;
     QLabel *m_statusLabel = nullptr;
 
     /// Expires a transient status message. See showTransientStatus().
@@ -494,6 +539,11 @@ private:
     bool m_queryComplete = false;
     QString m_lastQuery;
     QString m_currentThreadId;
+
+    /// The message a MESSAGE row is showing, empty whenever the pane holds a
+    /// whole thread. The two are mutually exclusive and each clears the other,
+    /// so a late reply can tell which kind of selection it belongs to.
+    QString m_currentMessageId;
 
     /// The selection count last written to the status bar, so it can be taken
     /// back without clobbering a message some other action put there.
@@ -596,6 +646,50 @@ public:
 private:
     MainWindow *m_window;
     QStringList m_threadIds;
+    QStringList m_add;
+    QStringList m_remove;
+    QString m_description;
+    bool m_firstRedo = true;
+};
+
+/// Undo entry for a tag change over individual MESSAGES.
+///
+/// Stores message ids, unlike ThreadTagCommand, and that difference is the
+/// point rather than an inconsistency: a message row acts on one message, so
+/// re-resolving its thread on undo would restore tags across every sibling the
+/// action never touched.
+class MessageTagCommand : public QUndoCommand
+{
+public:
+    MessageTagCommand(MainWindow *window, const QStringList &messageIds,
+                      const QStringList &add, const QStringList &remove,
+                      const QString &description)
+        : QUndoCommand(description), m_window(window),
+          m_messageIds(messageIds), m_add(add), m_remove(remove),
+          m_description(description) {}
+
+    /// The stack calls redo() when the command is pushed, by which point the
+    /// change has already been sent, so the first call is skipped.
+    void redo() override
+    {
+        if (m_firstRedo) {
+            m_firstRedo = false;
+            return;
+        }
+        m_window->sendMessageTagChange(m_messageIds, m_add, m_remove,
+                                       m_description);
+    }
+
+    void undo() override
+    {
+        m_window->sendMessageTagChange(
+            m_messageIds, m_remove, m_add,
+            QStringLiteral("Undo %1").arg(m_description));
+    }
+
+private:
+    MainWindow *m_window;
+    QStringList m_messageIds;
     QStringList m_add;
     QStringList m_remove;
     QString m_description;

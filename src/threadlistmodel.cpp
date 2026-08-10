@@ -64,7 +64,7 @@ QString ThreadListModel::flagGlyph()
     // U+2605 BLACK STAR, with the same fallback reasoning as the paperclip: an
     // unrenderable codepoint shows as tofu, which reads as breakage rather
     // than as "flagged". The solid star, not the outlined U+2606, since it has
-    // to register at column width beside a paperclip.
+    // to register at small size beside a paperclip.
     static const QString glyph = [] {
         const char32_t star = 0x2605;
         const QString preferred = QString::fromUcs4(&star, 1);
@@ -73,6 +73,46 @@ QString ThreadListModel::flagGlyph()
         return metrics.inFontUcs4(star) ? preferred : QStringLiteral("*");
     }();
     return glyph;
+}
+
+QColor ThreadListModel::replyBackground()
+{
+    // Mixed from the palette rather than fixed, for the same reason as
+    // readColour: a tint that reads as "grouped" on a light theme is either
+    // invisible or muddy on a dark one.
+    //
+    // Toward Text rather than toward a hue, so it darkens on a light theme and
+    // lightens on a dark one without picking a colour that means something
+    // else. 0.07 is deliberately near the threshold of noticing: it is a
+    // grouping cue sitting beside the deleted and spam fills, which carry
+    // actual meaning and must stay the loudest thing in the list.
+    const QPalette palette = QGuiApplication::palette();
+    const QColor base = palette.color(QPalette::Base);
+    const QColor text = palette.color(QPalette::Text);
+
+    constexpr qreal kWeight = 0.07;
+    const qreal inverse = 1.0 - kWeight;
+    return QColor::fromRgbF(
+        text.redF() * kWeight + base.redF() * inverse,
+        text.greenF() * kWeight + base.greenF() * inverse,
+        text.blueF() * kWeight + base.blueF() * inverse);
+}
+
+QColor ThreadListModel::threadLineColour()
+{
+    // Stronger than the tint, weaker than the text: the line is structure, so
+    // it has to be followable down a long expansion without competing with the
+    // senders beside it.
+    const QPalette palette = QGuiApplication::palette();
+    const QColor base = palette.color(QPalette::Base);
+    const QColor text = palette.color(QPalette::Text);
+
+    constexpr qreal kWeight = 0.35;
+    const qreal inverse = 1.0 - kWeight;
+    return QColor::fromRgbF(
+        text.redF() * kWeight + base.redF() * inverse,
+        text.greenF() * kWeight + base.greenF() * inverse,
+        text.blueF() * kWeight + base.blueF() * inverse);
 }
 
 QColor ThreadListModel::readColour()
@@ -99,36 +139,254 @@ QColor ThreadListModel::readColour()
 }
 
 ThreadListModel::ThreadListModel(QObject *parent)
-    : QAbstractTableModel(parent)
+    : QAbstractItemModel(parent)
 {
+}
+
+QModelIndex ThreadListModel::index(int row, int column,
+                                   const QModelIndex &parent) const
+{
+    if (!hasIndex(row, column, parent))
+        return {};
+
+    // A root row. -1 as the internal id marks it, so parent() can tell the two
+    // kinds apart without storing a node pointer per index.
+    if (!parent.isValid())
+        return createIndex(row, column, static_cast<quintptr>(-1));
+
+    // A child row: the internal id is its parent's row, which is all parent()
+    // needs to rebuild the thread index.
+    return createIndex(row, column, static_cast<quintptr>(parent.row()));
+}
+
+QModelIndex ThreadListModel::parent(const QModelIndex &child) const
+{
+    if (!child.isValid())
+        return {};
+
+    const quintptr id = child.internalId();
+    if (id == static_cast<quintptr>(-1))
+        return {};
+
+    // Column 0, always. Qt requires a parent index in the first column, and
+    // returning the child's own column instead breaks selection and the
+    // expander, silently and only for the other columns.
+    return createIndex(static_cast<int>(id), 0, static_cast<quintptr>(-1));
 }
 
 int ThreadListModel::rowCount(const QModelIndex &parent) const
 {
-    return parent.isValid() ? 0 : m_threads.size();
+    if (!parent.isValid())
+        return m_threads.size();
+
+    // Only a thread row has children, and only in its first column. A tree
+    // takes one set of children per row; offering them under every column makes
+    // the view draw an expander in each one.
+    if (parent.parent().isValid() || parent.column() != 0)
+        return 0;
+
+    if (parent.row() < 0 || parent.row() >= m_threads.size())
+        return 0;
+
+    return m_threads.at(parent.row()).children.size();
+}
+
+bool ThreadListModel::hasChildren(const QModelIndex &parent) const
+{
+    if (!parent.isValid())
+        return !m_threads.isEmpty();
+
+    // A message row is always a leaf. Reply depth is drawn from the node's own
+    // depth, not from further nesting, so nothing hangs under a reply.
+    if (parent.parent().isValid())
+        return false;
+
+    if (parent.column() != 0)
+        return false;
+
+    if (parent.row() < 0 || parent.row() >= m_threads.size())
+        return false;
+
+    const ThreadNode &node = m_threads.at(parent.row());
+
+    // Once loaded the children are the truth, including "there are none", which
+    // is how a thread whose totalCount counted duplicates stops offering an
+    // expander that opens onto nothing.
+    if (node.loaded)
+        return !node.children.isEmpty();
+
+    // Before loading, the summary's count is all there is. A thread of one
+    // message has no replies and must not offer an expander.
+    return node.summary.totalCount > 1;
 }
 
 int ThreadListModel::columnCount(const QModelIndex &parent) const
 {
-    return parent.isValid() ? 0 : ColumnCount;
+    // One column: the card is drawn whole by CardDelegate. The five-column
+    // grid is what item 53 removed.
+    //
+    // Answered for a valid parent too. Returning 0 there, as the table version
+    // did, would give message rows no columns at all and render them blank.
+    Q_UNUSED(parent);
+    return 1;
 }
 
 QVariant ThreadListModel::data(const QModelIndex &index, int role) const
 {
     // A stale index from a view that has not caught up with a clear() can carry
     // any row or column, so both bounds are checked rather than trusted.
-    if (!index.isValid() || index.row() < 0 || index.row() >= m_threads.size()
-        || index.column() < 0 || index.column() >= ColumnCount) {
+    if (!index.isValid() || index.row() < 0
+        || index.column() != 0) {
         return {};
     }
 
-    const ThreadSummary &thread = m_threads.at(index.row());
+    // A message row. Handled before the bounds check below, since a child row's
+    // number indexes its siblings, not m_threads.
+    if (isMessageRow(index)) {
+        const MessageNode node = messageAt(index);
+        if (node.messageId.isEmpty())
+            return {};
+
+        switch (role) {
+        case IsMessageRole:
+            return true;
+        case MessageIdRole:
+            return node.messageId;
+        case MessageDepthRole:
+            return node.depth;
+        case HasRepliesRole:
+            // A reply never has its own expander: nesting past the first level
+            // is drawn from depth, not from further parent-child structure.
+            return false;
+        case ThreadIdRole:
+            // A message row still belongs to a thread, and a caller that only
+            // needs the containing thread must not have to walk up itself.
+            return node.threadId;
+        case TagsRole:
+        case PillTagsRole:
+            // No strip under a child row: the strip is a ROW-wide band carrying
+            // the thread's tags, and one under every reply would stripe the
+            // list and repeat the same tags down the whole expansion.
+            return QStringList();
+        case PillColoursRole:
+            return QVariantList();
+        case MessageOwnTagsRole: {
+            // Set difference against the parent THREAD, not against a global
+            // list: "own" means "not already said by the card above this one".
+            // The parent row indexes m_threads directly, which is the same
+            // mapping messageAt() uses to reach this node.
+            const int threadRow = index.parent().row();
+            const QStringList threadTags =
+                (threadRow >= 0 && threadRow < m_threads.size())
+                    ? m_threads.at(threadRow).summary.tags
+                    : QStringList();
+            QStringList own;
+            for (const QString &tag : node.tags) {
+                if (!threadTags.contains(tag))
+                    own.append(tag);
+            }
+            // Sorted, so a reply does not reshuffle its own chips between
+            // repaints, matching what PillTagsRole already guarantees.
+            own.sort();
+            return own;
+        }
+        case MessageOwnColoursRole: {
+            const QStringList own =
+                data(index, MessageOwnTagsRole).toStringList();
+            QVariantList colours;
+            colours.reserve(own.size());
+            for (const QString &tag : own) {
+                colours.append(m_tagColors ? m_tagColors->colourFor(tag)
+                                           : TagColors().colourFor(tag));
+            }
+            return colours;
+        }
+        case AccountLabelRole:
+            return QString();
+        case Qt::DisplayRole:
+        case SubjectRole:
+            return node.subject;
+        case SendersRole:
+            // The REPLY's sender, not the thread's author summary. Reading the
+            // thread's fields here would look almost right, since the first
+            // sender usually appears in both.
+            return node.from;
+        case DateRole:
+            return node.date;
+        case HasAttachmentRole:
+            return node.hasAttachment();
+        case IsFlaggedRole:
+            return node.isFlagged();
+        case ReplyCountRole:
+            // A reply never offers an expander: nesting past the first level is
+            // drawn from depth, not from further parent-child structure.
+            return 0;
+        case Qt::BackgroundRole:
+            // Tinted, so an expanded thread reads as one block rather than as
+            // more table rows. Applied per cell here; ThreadListView fills the
+            // same colour across the strip's band so the row does not end up
+            // half tinted.
+            return replyBackground();
+        case Qt::FontRole: {
+            // A size down from the thread rows, so a thread reads as the
+            // heading and its replies as the contents. Never bold: an unread
+            // reply is still subordinate to the thread it belongs to, and the
+            // thread row above already carries the unread cue for the whole
+            // conversation.
+            QFont font = QGuiApplication::font();
+            if (font.pointSize() > 0)
+                font.setPointSize(qMax(6, font.pointSize() - 1));
+            else if (font.pixelSize() > 0)
+                font.setPixelSize(qMax(8, font.pixelSize() - 2));
+            return font;
+        }
+        case Qt::ForegroundRole:
+            // Dimmed whether read or not, for the same reason as the font: a
+            // reply is subordinate content. An unread one is left undimmed so
+            // it can still be found.
+            return node.isUnread() ? QVariant() : QVariant(readColour());
+        default:
+            return {};
+        }
+    }
+
+    if (index.row() >= m_threads.size())
+        return {};
+
+    const ThreadSummary &thread = m_threads.at(index.row()).summary;
 
     if (role == ThreadIdRole)
         return thread.threadId;
 
+    // Answered rather than left to fall through as an invalid QVariant. An
+    // invalid one converts to false and an empty string anyway, so the
+    // behaviour is the same, but a role the model never mentions is a latent
+    // bug the next reader has to prove is harmless.
+    if (role == IsMessageRole)
+        return false;
+
+    if (role == MessageIdRole) {
+        // The thread's FIRST message, once known, because the root card is
+        // that message: selecting it renders one message rather than the whole
+        // conversation. Empty before the replies are loaded, which is the
+        // caller's signal to load the thread instead of guessing at a message.
+        return m_threads.at(index.row()).first.messageId;
+    }
+
+    if (role == MessageDepthRole)
+        return 0;
+
+    if (role == HasRepliesRole)
+        return hasChildren(index.siblingAtColumn(0));
+
     if (role == TagsRole)
         return thread.tags;
+
+    if (role == MessageOwnTagsRole)
+        return QStringList();
+
+    if (role == MessageOwnColoursRole)
+        return QVariantList();
 
     if (role == PillTagsRole || role == PillColoursRole) {
         // Everything the row already says another way is dropped: the account
@@ -186,46 +444,42 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         return {};
     }
 
-    if (role == Qt::ToolTipRole && index.column() == AttachmentColumn)
-        return thread.hasAttachment() ? tr("Has an attachment") : QVariant();
-
-    // "Important", matching the action's own wording (item 57). The underlying
-    // tag is still `flagged` and isFlagged() still tests for it; only what the
-    // user reads changed.
-    if (role == Qt::ToolTipRole && index.column() == FlagColumn)
-        return thread.isFlagged() ? tr("Important") : QVariant();
-
-    // Both marker columns: a glyph reads as a marker only when it sits in the
-    // middle of its column rather than against the text beside it.
-    if (role == Qt::TextAlignmentRole
-        && (index.column() == AttachmentColumn || index.column() == FlagColumn)) {
-        return QVariant::fromValue(Qt::AlignCenter);
+    if (role == Qt::ToolTipRole) {
+        // One tooltip for the whole card, since the marks no longer have
+        // columns of their own to be hovered separately. "Important" matches
+        // the action's own wording (item 57); the underlying tag is still
+        // `flagged` and isFlagged() still tests for it.
+        QStringList marks;
+        if (thread.isFlagged())
+            marks.append(tr("Important"));
+        if (thread.hasAttachment())
+            marks.append(tr("Has an attachment"));
+        return marks.isEmpty() ? QVariant() : marks.join(QStringLiteral(", "));
     }
 
-    if (role == Qt::DisplayRole) {
-        switch (index.column()) {
-        case AttachmentColumn:
-            // A glyph rather than an icon resource: no new asset to ship, and
-            // it inherits the row's font, so it strikes through with a doomed
-            // thread like every other cell.
-            return thread.hasAttachment() ? attachmentGlyph() : QString();
-        case FlagColumn:
-            // A glyph rather than an icon, for the same reasons as the
-            // paperclip: no asset to ship, and it inherits the row's font so
-            // it strikes through with a doomed thread.
-            return thread.isFlagged() ? flagGlyph() : QString();
-        case DateColumn:
-            return thread.date.toString(QStringLiteral("yyyy-MM-dd hh:mm"));
-        case AuthorsColumn:
-            return thread.authors;
-        case SubjectColumn:
-            return thread.totalCount > 1
-                ? QStringLiteral("%1 (%2)").arg(thread.subject)
-                      .arg(thread.totalCount)
-                : thread.subject;
-        default:
-            return {};
-        }
+    switch (role) {
+    case Qt::DisplayRole:
+    case SubjectRole:
+        // Bare, with no "(3)" message-count suffix. The count is drawn on the
+        // card's second line as the expander, so a suffix here would state it
+        // twice on the same card.
+        return thread.subject;
+    case SendersRole:
+        return thread.authors;
+    case DateRole:
+        // The QDateTime itself. Formatting belongs to the delegate now: the
+        // card decides how much of a date it has room for, and a pre-formatted
+        // string takes that decision away from it.
+        return thread.date;
+    case HasAttachmentRole:
+        return thread.hasAttachment();
+    case IsFlaggedRole:
+        return thread.isFlagged();
+    case ReplyCountRole:
+        // totalCount includes the root message, which is the card itself.
+        return qMax(0, thread.totalCount - 1);
+    default:
+        break;
     }
 
     // A thread tagged deleted or spam is on its way out, and the user needs to
@@ -283,24 +537,6 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     return {};
 }
 
-QVariant ThreadListModel::headerData(int section, Qt::Orientation orientation,
-                                     int role) const
-{
-    if (orientation != Qt::Horizontal || role != Qt::DisplayRole)
-        return {};
-
-    switch (section) {
-    // No label: any text would set a minimum width far wider than the icon,
-    // which defeats the point of a narrow column.
-    case AttachmentColumn: return QString();
-    case FlagColumn:       return QString();
-    case DateColumn:    return tr("Date");
-    case AuthorsColumn: return tr("From");
-    case SubjectColumn: return tr("Subject");
-    default:            return {};
-    }
-}
-
 void ThreadListModel::appendBatch(const QVector<ThreadSummary> &batch)
 {
     // beginInsertRows with an empty range violates Qt's contract, so the guard
@@ -310,7 +546,8 @@ void ThreadListModel::appendBatch(const QVector<ThreadSummary> &batch)
 
     const int first = m_threads.size();
     beginInsertRows({}, first, first + batch.size() - 1);
-    m_threads.append(batch);
+    for (const ThreadSummary &summary : batch)
+        m_threads.append(ThreadNode{ summary, {}, {}, false });
     endInsertRows();
 }
 
@@ -321,17 +558,137 @@ void ThreadListModel::clear()
     endResetModel();
 }
 
+void ThreadListModel::setThreadMessages(const QString &threadId,
+                                        const QVector<MessageNode> &nodes)
+{
+    for (int row = 0; row < m_threads.size(); ++row) {
+        if (m_threads.at(row).summary.threadId != threadId)
+            continue;
+
+        const QModelIndex parent = index(row, 0, QModelIndex());
+
+        // Replace, not append. A thread reloaded after a sync would otherwise
+        // list every reply twice.
+        if (!m_threads.at(row).children.isEmpty()) {
+            beginRemoveRows(parent, 0, m_threads.at(row).children.size() - 1);
+            m_threads[row].children.clear();
+            endRemoveRows();
+        }
+
+        // Every message EXCEPT the first, which is the root card itself.
+        //
+        // Selecting on depth > 0 instead was wrong, and wrong in a way that
+        // only showed on real mail: notmuch_thread_get_toplevel_messages
+        // returns every message at depth 0 when a thread carries no usable
+        // In-Reply-To, so a flat thread contributed no children at all. The
+        // card advertised "3 replies" and expanded onto nothing. Measured in
+        // the user's database: of 396 inbox threads, three are flat, one of
+        // them nine messages long, and every two-message thread of this kind
+        // was affected, which is why the fault looked like "the expander only
+        // works with more than one reply".
+        //
+        // Position also happens to be the right rule rather than a workaround.
+        // The root card IS the thread's first message, so the row under it is
+        // the second message whatever depth notmuch assigns it.
+        QVector<MessageNode> children = nodes.mid(1);
+
+        // Kept so the root card can render its own message. It is the card the
+        // user clicks to read the thread's opening message.
+        m_threads[row].first = nodes.isEmpty() ? MessageNode() : nodes.first();
+
+        if (!children.isEmpty()) {
+            beginInsertRows(parent, 0, children.size() - 1);
+            m_threads[row].children = children;
+            endInsertRows();
+        }
+
+        // Set even when there are no replies: that is the difference between a
+        // single-message thread and one whose replies were never fetched.
+        m_threads[row].loaded = true;
+        return;
+    }
+}
+
+bool ThreadListModel::isMessageRow(const QModelIndex &index) const
+{
+    return index.isValid() && index.parent().isValid();
+}
+
+MessageNode ThreadListModel::messageAt(const QModelIndex &index) const
+{
+    if (!isMessageRow(index))
+        return {};
+
+    const int threadRow = index.parent().row();
+    if (threadRow < 0 || threadRow >= m_threads.size())
+        return {};
+
+    const QVector<MessageNode> &children = m_threads.at(threadRow).children;
+    if (index.row() < 0 || index.row() >= children.size())
+        return {};
+
+    return children.at(index.row());
+}
+
+QString ThreadListModel::threadIdForMessage(const QString &messageId) const
+{
+    for (const ThreadNode &node : m_threads) {
+        for (const MessageNode &child : node.children) {
+            if (child.messageId == messageId)
+                return node.summary.threadId;
+        }
+    }
+    return {};
+}
+
+ActionScope ThreadListModel::scopeFor(const QModelIndexList &selection) const
+{
+    ActionScope scope;
+
+    for (const QModelIndex &index : selection) {
+        if (isMessageRow(index)) {
+            const MessageNode node = messageAt(index);
+            if (node.messageId.isEmpty()
+                || scope.messageIds.contains(node.messageId))
+                continue;
+            scope.messageIds.append(node.messageId);
+            scope.messageCount += 1;
+            continue;
+        }
+
+        if (index.row() < 0 || index.row() >= m_threads.size())
+            continue;
+
+        const ThreadSummary &summary = m_threads.at(index.row()).summary;
+        if (scope.threadIds.contains(summary.threadId))
+            continue;
+
+        scope.threadIds.append(summary.threadId);
+
+        // totalCount, not the loaded children: a thread that was never expanded
+        // still has all of its messages, and counting only what happens to be
+        // on screen would understate what the action does. Floored at 1, since
+        // a summary with no count still stands for at least the message that
+        // produced it.
+        scope.messageCount += qMax(1, summary.totalCount);
+        scope.wholeThread = true;
+    }
+
+    return scope;
+}
+
 ThreadSummary ThreadListModel::threadAt(int row) const
 {
     if (row < 0 || row >= m_threads.size())
         return {};
-    return m_threads.at(row);
+    return m_threads.at(row).summary;
 }
 
 QStringList ThreadListModel::accountKeysForThread(const QString &threadId) const
 {
     QStringList keys;
-    for (const ThreadSummary &thread : m_threads) {
+    for (const ThreadNode &node : m_threads) {
+        const ThreadSummary &thread = node.summary;
         if (thread.threadId != threadId)
             continue;
         for (const QString &tag : thread.tags) {
@@ -351,10 +708,10 @@ void ThreadListModel::applyTagChange(const QString &threadId,
                                      const QStringList &removed)
 {
     for (int row = 0; row < m_threads.size(); ++row) {
-        if (m_threads.at(row).threadId != threadId)
+        if (m_threads.at(row).summary.threadId != threadId)
             continue;
 
-        QStringList &tags = m_threads[row].tags;
+        QStringList &tags = m_threads[row].summary.tags;
         for (const QString &tag : removed)
             tags.removeAll(tag);
         for (const QString &tag : added) {
@@ -362,9 +719,9 @@ void ThreadListModel::applyTagChange(const QString &threadId,
                 tags.append(tag);
         }
 
-        // The whole row repaints: unread state drives the font of every column,
-        // not just the tags one.
-        emit dataChanged(index(row, 0), index(row, ColumnCount - 1));
+        // The whole card repaints: unread state drives its font, and the tags
+        // it draws on line 3 have just changed.
+        emit dataChanged(index(row, 0), index(row, 0));
         return;
     }
 }

@@ -63,6 +63,63 @@ struct MessageRef
     bool matched = true;
 };
 
+/// One message as a row in the thread list.
+///
+/// Separate from MessageRef, which exists for RENDERING a thread and carries
+/// only what the message pane needs. A row has to be drawn without opening the
+/// message at all, so the display facts live here.
+struct MessageNode
+{
+    QString messageId;
+    QString threadId;  ///< The thread this message belongs to.
+    QString from;
+    QString subject;
+    QDateTime date;
+    QStringList tags;
+    QString filePath;
+
+    /// Reply depth within the thread. 0 is the thread's first message, which
+    /// occupies the ROOT row rather than a child row: the user's model is
+    /// "N replies", so a thread of 7 shows 1 root and 6 descendants.
+    int depth = 0;
+
+    bool isUnread() const { return tags.contains(QStringLiteral("unread")); }
+    bool isFlagged() const { return tags.contains(QStringLiteral("flagged")); }
+
+    /// notmuch applies "attachment" while indexing, so this needs no MIME
+    /// parsing, exactly as on ThreadSummary.
+    bool hasAttachment() const
+    {
+        return tags.contains(QStringLiteral("attachment"));
+    }
+};
+
+/// What an action is about to touch, resolved from the selection.
+///
+/// Exists because the thread list holds two kinds of row since item 20, so a
+/// keypress alone no longer says whether it hit one message or seven. Actions
+/// take one of these rather than a bare list of thread ids, and the status bar
+/// reports it: this project's answer to that ambiguity is to make the scope
+/// visible, not to add a confirmation dialog. See CLAUDE.md on why.
+struct ActionScope
+{
+    QStringList threadIds;   ///< Whole threads to act on.
+    QStringList messageIds;  ///< Individual messages to act on.
+
+    /// Messages the action will touch in total, for the status bar. A whole
+    /// thread contributes all of its messages, a message row contributes one.
+    int messageCount = 0;
+
+    /// True when any whole thread is in scope, which drives the
+    /// "(whole thread)" suffix in the status bar.
+    bool wholeThread = false;
+
+    bool isEmpty() const
+    {
+        return threadIds.isEmpty() && messageIds.isEmpty();
+    }
+};
+
 /// One tag mutation, kept so it can be inverted for undo.
 struct TagChange
 {
@@ -93,5 +150,6 @@ struct DatabaseStats
 
 Q_DECLARE_METATYPE(ThreadSummary)
 Q_DECLARE_METATYPE(MessageRef)
+Q_DECLARE_METATYPE(MessageNode)
 Q_DECLARE_METATYPE(TagChange)
 Q_DECLARE_METATYPE(DatabaseStats)

@@ -18,123 +18,38 @@
 
 #include "threadlistview.h"
 
-#include "tagchip.h"
+#include "carddelegate.h"
 #include "threadlistmodel.h"
 
-#include <QPaintEvent>
-#include <QPainter>
-#include <QScrollBar>
+#include <QMouseEvent>
 
-void ThreadListView::paintEvent(QPaintEvent *event)
+void ThreadListView::mousePressEvent(QMouseEvent *event)
 {
-    QTableView::paintEvent(event);
+    const QModelIndex index = indexAt(event->pos());
 
-    if (!model())
-        return;
+    // The reply count IS the expander. Anything outside its rect selects the
+    // card and opens it, which is what the rest of the card is for.
+    if (event->button() == Qt::LeftButton && index.isValid()
+        && index.data(ThreadListModel::ReplyCountRole).toInt() > 0) {
 
-    QPainter painter(viewport());
+        QStyleOptionViewItem option;
+        initViewItemOption(&option);
+        option.rect = visualRect(index);
+        // State_Open decides which way the glyph points, and the rect is the
+        // same either way, but pass it so the layout sees the true state.
+        if (isExpanded(index))
+            option.state |= QStyle::State_Open;
 
-    // Two fonts, deliberately. The row's own font fixes where the text band
-    // ends, and the pills are drawn a size smaller: at the same size they read
-    // as a second row of content competing with the subject, rather than as
-    // annotation beneath it.
-    const QFontMetrics rowMetrics(font());
-    const QFont pillFont = SubjectDelegate::pillFont(font());
-    const QFontMetrics metrics(pillFont);
-    painter.setFont(pillFont);
-
-    // Only the rows actually on screen. Walking the whole model would paint
-    // thousands of strips outside the viewport on a large query.
-    const int first = rowAt(0);
-    const int last = rowAt(viewport()->height() - 1);
-    const int lastRow = last >= 0 ? last : model()->rowCount() - 1;
-
-    for (int row = qMax(0, first); row <= lastRow; ++row) {
-        const QModelIndex index =
-            model()->index(row, ThreadListModel::SubjectColumn);
-
-        const int rowTop = rowViewportPosition(row);
-        const int height = rowHeight(row);
-        if (height <= 0)
-            continue;
-
-        // The strip's band, filled to match the row before anything is drawn
-        // on it.
-        //
-        // A QTableView paints alternating colours and the selection PER CELL,
-        // so nothing paints the width to the right of the last column, and
-        // nothing paints the band at all where a column does not reach. Left
-        // unfilled, an alternate-coloured or selected row shows the viewport
-        // background in a strip across its lower half. Filled for every
-        // visible row, not only tagged ones, since an untagged row has the
-        // same band to account for.
-        // Starting at the date column, NOT at the viewport edge. The two
-        // leading columns hold the attachment and flag glyphs, centred in the
-        // full row height, so a band drawn over them cuts those glyphs in half.
-        const int bandLeft =
-            columnViewportPosition(ThreadListModel::DateColumn);
-        const QRect band(bandLeft, rowTop + SubjectDelegate::kRowPadding
-                                       + rowMetrics.height(),
-                         viewport()->width() - bandLeft,
-                         height - SubjectDelegate::kRowPadding
-                                - rowMetrics.height());
-
-        // The model's own row colour wins where it has one: a deleted or spam
-        // thread fills its cells with crimson or orange, and painting the base
-        // colour across the band beneath them would cut the row in half.
-        const QVariant background = index.data(Qt::BackgroundRole);
-
-        if (background.isValid())
-            painter.fillRect(band, background.value<QBrush>());
-        else if (selectionModel() && selectionModel()->isRowSelected(row))
-            painter.fillRect(band, palette().brush(QPalette::Highlight));
-        else if (alternatingRowColors() && (row % 2))
-            painter.fillRect(band, palette().brush(QPalette::AlternateBase));
-        else
-            painter.fillRect(band, palette().brush(QPalette::Base));
-
-        const QStringList tags =
-            index.data(ThreadListModel::PillTagsRole).toStringList();
-        if (tags.isEmpty())
-            continue;
-
-        const QVariantList colours =
-            index.data(ThreadListModel::PillColoursRole).toList();
-
-        // The band the cells leave free, below the text they draw in the
-        // upper one. Measured from SubjectDelegate by both sides, so neither
-        // can drift into the other's half. The row's own font metrics set the
-        // text band; the strip's smaller font must not be used for it, or the
-        // pills ride up over the date and sender.
-        const int top = rowTop + SubjectDelegate::kRowPadding
-                      + rowMetrics.height() + TagChip::kSpacing;
-
-        // Aligned with the first text column rather than the viewport edge:
-        // the two leading columns are narrow markers for the attachment and
-        // flag glyphs, and a strip starting at x=0 paints straight over them.
-        // Indented past the date column's own left edge rather than flush with
-        // it: a chip starting exactly where the column does reads as part of
-        // the column rather than as a strip laid under the row.
-        int x = columnViewportPosition(ThreadListModel::DateColumn)
-              + TagChip::kSpacing * 2;
-        const int available = viewport()->width() - TagChip::kSpacing;
-
-        for (int i = 0; i < tags.size(); ++i) {
-            const QSize size = TagChip::sizeFor(metrics, tags.at(i));
-
-            // Stop rather than wrap or elide. A row that grew to fit its tags
-            // would break the uniform height the list depends on, and half a
-            // chip reads as a rendering fault.
-            if (x + size.width() > available)
-                break;
-
-            const QColor colour = i < colours.size()
-                ? colours.at(i).value<QColor>()
-                : QColor(0x55, 0x55, 0x5f);
-
-            TagChip::paint(&painter, QRect(x, top, size.width(), size.height()),
-                           tags.at(i), colour);
-            x += size.width() + TagChip::kSpacing;
+        if (CardDelegate::expanderRectFor(option, index)
+                .contains(event->pos())) {
+            setExpanded(index, !isExpanded(index));
+            // Swallowed, so expanding does not also load the thread into the
+            // message pane: it is a request to see the thread's shape, not to
+            // read it.
+            event->accept();
+            return;
         }
     }
+
+    QTreeView::mousePressEvent(event);
 }

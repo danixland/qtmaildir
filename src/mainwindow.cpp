@@ -42,7 +42,7 @@
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStatusBar>
-#include <QTableView>
+#include <QScrollBar>
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -52,6 +52,8 @@
 #include "mimeparser.h"
 #include "notmuchworker.h"
 #include "querycompleter.h"
+#include "carddelegate.h"
+#include "cardlayout.h"
 #include "tagchip.h"
 #include "tagdialog.h"
 #include "threadlistmodel.h"
@@ -99,6 +101,40 @@ QString MainWindow::locksPath()
     return g_locksPath;
 }
 
+/// The thread row containing an index: the index itself when it is already a
+/// thread row, its parent when it is a message row.
+///
+/// Replaces the arithmetic on row numbers that a table permitted. In a tree a
+/// row number only identifies a row within one parent, so "current.row() + 1"
+/// means the next SIBLING, which under an expanded thread is the next reply.
+QModelIndex MainWindow::threadRowOf(const QModelIndex &index) const
+{
+    if (!index.isValid())
+        return {};
+    return index.parent().isValid() ? index.parent() : index;
+}
+
+/// Selects a whole row, the way QTableView::selectRow did.
+///
+/// QTreeView has no selectRow, and SelectRows on the selection model is not a
+/// substitute: it governs what a click extends to, not what a programmatic
+/// select() covers.
+void MainWindow::selectRowAt(const QModelIndex &index)
+{
+    if (!index.isValid())
+        return;
+
+    m_threadView->selectionModel()->select(
+        index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    m_threadView->setCurrentIndex(index);
+}
+
+/// Selects the top-level thread row at `row`.
+void MainWindow::selectThreadRow(int row)
+{
+    selectRowAt(m_model->index(row, 0, QModelIndex()));
+}
+
 void MainWindow::restoreUiState()
 {
     QSettings state(uiStatePath(), QSettings::IniFormat);
@@ -123,20 +159,15 @@ void MainWindow::restoreUiState()
         m_splitter->restoreState(splitter);
     }
 
-    // A header blob saved against a different set of columns must be
-    // discarded, not restored. QHeaderView::restoreState() returns TRUE for a
-    // blob with fewer sections than the model and applies the old widths to
-    // the wrong columns: adding the attachment column in front shifted every
-    // saved width one place right, silently mangling the layout with no error
-    // to detect it by (verified on Qt 6.11). The column count is stored
-    // alongside and the blob is only used when it still matches.
-    const QByteArray header = state.value(QStringLiteral("threadlist/header"))
-                                  .toByteArray();
-    const int savedColumns =
-        state.value(QStringLiteral("threadlist/columns")).toInt();
-    if (!header.isEmpty() && savedColumns == ThreadListModel::ColumnCount) {
-        m_threadView->horizontalHeader()->restoreState(header);
-    }
+    // No thread-list header state is read. The pane is one column drawn whole
+    // by CardDelegate, so there are no widths to restore; a blob saved by an
+    // older version is simply ignored (item 53's Upgrading note).
+
+    // Range-guarded on read: a stale or hand-edited file can hold anything,
+    // and setCurrentIndex() on a value with no row silently selects nothing.
+    const int sort =
+        state.value(QStringLiteral("threadlist/sortOrder"), 0).toInt();
+    m_sortOrder->setCurrentIndex(sort == 1 ? 1 : 0);
 
     // The config value is the starting point for a profile that has never
     // zoomed; once the user does, the state file is what they last had.
@@ -153,11 +184,8 @@ void MainWindow::saveUiState() const
     state.setValue(QStringLiteral("window/geometry"), saveGeometry());
     state.setValue(QStringLiteral("window/state"), saveState());
     state.setValue(QStringLiteral("window/splitter"), m_splitter->saveState());
-    state.setValue(QStringLiteral("threadlist/header"),
-                   m_threadView->horizontalHeader()->saveState());
-    // Guards the blob above: see restoreUiState().
-    state.setValue(QStringLiteral("threadlist/columns"),
-                   int(ThreadListModel::ColumnCount));
+    state.setValue(QStringLiteral("threadlist/sortOrder"),
+                   m_sortOrder->currentIndex());
     state.setValue(QStringLiteral("message/zoom"), m_messageView->zoomFactor());
 }
 
@@ -289,8 +317,10 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     qRegisterMetaType<MessageRef>();
     qRegisterMetaType<TagChange>();
     qRegisterMetaType<DatabaseStats>();
+    qRegisterMetaType<MessageNode>();
     qRegisterMetaType<QVector<ThreadSummary>>();
     qRegisterMetaType<QVector<MessageRef>>();
+    qRegisterMetaType<QVector<MessageNode>>();
 
     m_keyMap.loadDefaults();
     {
@@ -397,9 +427,34 @@ void MainWindow::buildUi()
     // Query row.
     auto *queryRow = new QHBoxLayout;
     m_accountBox = new QComboBox(central);
+    m_accountBox->setObjectName(QStringLiteral("accountBox"));
     m_accountBox->addItem(tr("All accounts"), QString());
-    for (const Account &account : m_config.accounts())
+    for (const Account &account : m_config.accounts()) {
         m_accountBox->addItem(account.key, account.key);
+        // The RAW account colour here, not CardDelegate's blended line colour:
+        // a swatch is a filled patch like a chip, not a thin line, so it wants
+        // the colour the account was actually given. Qt renders a
+        // DecorationRole colour as a swatch itself, with no delegate.
+        //
+        // This is what makes the accent bar on a card mean anything: a colour
+        // down a card's edge says nothing until something maps it to a name.
+        m_accountBox->setItemData(
+            m_accountBox->count() - 1,
+            m_tagColors.colourFor(TagColors::tagForAccountKey(account.key)),
+            Qt::DecorationRole);
+    }
+
+    // Sort order. Two entries, straight to notmuch: this ADDS a feature rather
+    // than replacing one, since the old column header was decorative and
+    // nothing implemented click-to-sort.
+    m_sortOrder = new QComboBox(central);
+    m_sortOrder->setObjectName(QStringLiteral("sortOrder"));
+    // Order matters: the index is what uistate.conf stores.
+    m_sortOrder->addItem(tr("Newest first"));
+    m_sortOrder->addItem(tr("Oldest first"));
+    m_sortOrder->setToolTip(tr("The order threads are listed in"));
+    connect(m_sortOrder, &QComboBox::currentIndexChanged,
+            this, &MainWindow::runCurrentQuery);
 
     m_queryEdit = new QLineEdit(central);
     m_queryEdit->setPlaceholderText(tr("notmuch query, e.g. tag:inbox"));
@@ -488,6 +543,7 @@ void MainWindow::buildUi()
     // would squeeze the field, but three is the real-world case today. Item 23
     // already specifies buttons-plus-menu and is where that belongs.
     queryRow->addWidget(m_accountBox);
+    queryRow->addWidget(m_sortOrder);
     queryRow->addWidget(m_queryEdit, 1);
     for (const SavedQuery &saved : m_config.savedQueries()) {
         auto *button = new QPushButton(saved.name, central);
@@ -507,58 +563,48 @@ void MainWindow::buildUi()
     // delegate is confined to one column's rectangle.
     m_threadView = new ThreadListView(central);
     m_threadView->setModel(m_model);
+    m_threadView->setItemDelegate(new CardDelegate(this));
+    m_threadView->setHeaderHidden(true);
     m_threadView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_threadView->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_threadView->verticalHeader()->hide();
-    m_threadView->horizontalHeader()->setStretchLastSection(false);
-    // Every column Interactive, Subject included: Stretch and ResizeToContents
-    // both compute a width and discard the user's drag. Nothing absorbs spare
-    // width as a result, so the columns end where they end.
-    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
-        m_threadView->horizontalHeader()->setSectionResizeMode(
-            column, QHeaderView::Interactive);
-    }
 
-    // Two delegates, and the split is not cosmetic. RowStyleDelegate carries
-    // only the selection fix every column needs: the read/unread dimming
-    // arrives as a Qt::ForegroundRole, which Qt's painting prefers over the
-    // highlight, leaving a selected read row grey on the selection colour.
-    //
-    // SubjectDelegate adds the account chip and the tag pills, and must go on
-    // the subject column ALONE. It reads AccountLabelRole, a property of the
-    // row rather than of a cell, so installed view-wide it draws the chip into
-    // every column: tried once, and the list came out with a chip repeated
-    // four times per row.
-    m_threadView->setItemDelegate(new RowStyleDelegate(this));
-    m_threadView->setItemDelegateForColumn(ThreadListModel::SubjectColumn,
-                                           new SubjectDelegate(this));
+    // No style-drawn branch decoration. CardDelegate draws the expander itself,
+    // because drawBranches runs BEFORE the row's cells and the delegate's own
+    // background paints straight over anything put there: a 60-pixel triangle
+    // once survived as 8. Leaving both enabled would draw the theme's dot
+    // underneath the delegate's glyph.
+    m_threadView->setRootIsDecorated(false);
 
-    // One height for every row, set here rather than left to a column's
-    // sizeHint: a QTableView takes a single height per row, so a hint from the
-    // subject column alone would only apply if the view happened to ask it.
-    m_threadView->verticalHeader()->setDefaultSectionSize(
-        SubjectDelegate::rowHeightFor(m_threadView->font()));
-    // Widening a column past the viewport scrolls rather than squeezing the
-    // others. Per-pixel so the scroll does not jump a whole column at a time.
-    // Banding, so the eye can follow a row across four columns and a pill
-    // strip without losing it. The colour comes from the palette's
-    // AlternateBase, so it follows the desktop theme.
+    // Zero, because CardLayout draws the indent itself. Qt's own indentation
+    // would shift the card's rect, and every rect on the card is measured from
+    // that rect's left edge, so the two would compound.
+    m_threadView->setIndentation(0);
+
+    // One height for every row. A QTreeView has no vertical header to carry a
+    // default section size, so the height comes from uniformRowHeights plus
+    // CardDelegate::sizeHint.
+    m_threadView->setUniformRowHeights(true);
+
+    // Banding, so the eye can follow a card across the pane. The colour comes
+    // from the palette's AlternateBase, so it follows the desktop theme.
     m_threadView->setAlternatingRowColors(true);
 
-    m_threadView->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_threadView->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    // A card is exactly viewport width, so there is nothing to scroll to
+    // sideways. Turning the bar off is what closes item 51: a click used to
+    // scroll the list horizontally, because the subject column was wider than
+    // the viewport and auto-scroll brought the clicked index fully into view.
+    m_threadView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    // Starting widths only; a drag overrides them, and they are what the
-    // saved-widths item will persist.
-    // Without this the attachment column cannot be narrow at all: the default
-    // minimum section size is 58px on this platform, and setColumnWidth()
-    // clamps to it silently rather than reporting the smaller value back.
-    m_threadView->horizontalHeader()->setMinimumSectionSize(24);
-    m_threadView->setColumnWidth(ThreadListModel::AttachmentColumn, 28);
-    m_threadView->setColumnWidth(ThreadListModel::FlagColumn, 28);
-    m_threadView->setColumnWidth(ThreadListModel::DateColumn, 130);
-    m_threadView->setColumnWidth(ThreadListModel::AuthorsColumn, 180);
-    m_threadView->setColumnWidth(ThreadListModel::SubjectColumn, 520);
+    // Scrolling a whole card at a time rather than a fraction of one, so a
+    // card is never left half above the top edge.
+    m_threadView->verticalScrollBar()->setSingleStep(
+        CardLayout::heightFor(m_threadView->font()));
+
+    // Replies are loaded when a thread is expanded, not with the query.
+    // Walking the reply tree of every thread in a 10k-thread result would cost
+    // far more than the query itself and almost none of it would be looked at.
+    connect(m_threadView, &QTreeView::expanded,
+            this, &MainWindow::onThreadExpanded);
 
     connect(m_threadView->selectionModel(),
             &QItemSelectionModel::currentRowChanged,
@@ -617,9 +663,11 @@ QAction *MainWindow::addAction(const QString &name, const QString &text,
 
     // The binding comes from KeyMap, so a [keys] override reaches the menus
     // and the shortcut reference as well as the keyboard.
-    const QKeySequence sequence = m_keyMap.sequenceFor(name);
-    if (!sequence.isEmpty())
-        action->setShortcut(sequence);
+    // Plural: an action can carry more than one binding, and setShortcut()
+    // keeps only the last one given. next_thread has both Ctrl+J and Alt+Down.
+    const QList<QKeySequence> sequences = m_keyMap.sequencesFor(name);
+    if (!sequences.isEmpty())
+        action->setShortcuts(sequences);
 
     // Shortcuts must work while focus is in the thread list or the message
     // view, not only on the window itself.
@@ -643,16 +691,32 @@ void MainWindow::registerActions()
     });
     addAction(QStringLiteral("next_thread"), tr("&Next thread"),
               tr("Select the next thread"), [this]() {
-        const QModelIndex current = m_threadView->currentIndex();
-        const int row = current.isValid() ? current.row() + 1 : 0;
-        if (row < m_model->rowCount())
-            m_threadView->selectRow(row);
+        // Walked by INDEX, never by row number. A tree numbers rows per
+        // parent, so current.row() + 1 names a SIBLING: from the last reply of
+        // an expanded thread it asks for a row that does not exist, and from a
+        // thread row it counts top-level threads only by accident (item 60).
+        //
+        // The skip loop is what keeps this meaning thread-to-thread while the
+        // view's own Up/Down still steps message-to-message.
+        QModelIndex index = m_threadView->indexBelow(
+            m_threadView->currentIndex());
+        while (index.isValid()
+               && index.data(ThreadListModel::IsMessageRole).toBool()) {
+            index = m_threadView->indexBelow(index);
+        }
+        if (index.isValid())
+            selectRowAt(index);
     });
     addAction(QStringLiteral("prev_thread"), tr("&Previous thread"),
               tr("Select the previous thread"), [this]() {
-        const QModelIndex current = m_threadView->currentIndex();
-        if (current.isValid() && current.row() > 0)
-            m_threadView->selectRow(current.row() - 1);
+        QModelIndex index = m_threadView->indexAbove(
+            m_threadView->currentIndex());
+        while (index.isValid()
+               && index.data(ThreadListModel::IsMessageRole).toBool()) {
+            index = m_threadView->indexAbove(index);
+        }
+        if (index.isValid())
+            selectRowAt(index);
     });
     addAction(QStringLiteral("open_thread"), tr("&Open thread"),
               tr("Focus the thread list"), [this]() {
@@ -802,6 +866,7 @@ void MainWindow::registerActions()
         // thread straight back, which is the queued-reply race documented in
         // CLAUDE.md.
         m_currentThreadId.clear();
+        m_currentMessageId.clear();
         m_messageView->clear();
         showPlaceholderPane();
         m_markReadTimer->stop();
@@ -835,6 +900,7 @@ void MainWindow::registerActions()
         m_threadView->setCurrentIndex(QModelIndex());
 
         m_currentThreadId.clear();
+        m_currentMessageId.clear();
         m_messageView->clear();
         showPlaceholderPane();
         m_markReadTimer->stop();
@@ -985,7 +1051,7 @@ void MainWindow::buildMenus()
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("select_all")));
 
     m_threadView->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_threadView, &QTableView::customContextMenuRequested,
+    connect(m_threadView, &QWidget::customContextMenuRequested,
             this, &MainWindow::showThreadContextMenu);
 
     // The frequent subset only. A toolbar holding every action is as
@@ -1245,6 +1311,10 @@ void MainWindow::wireWorker()
             this, &MainWindow::onThreadsReady);
     connect(m_worker, &NotmuchWorker::queryFinished,
             this, &MainWindow::onQueryFinished);
+    connect(m_worker, &NotmuchWorker::threadTreeLoaded,
+            this, &MainWindow::onThreadTreeLoaded);
+    connect(m_worker, &NotmuchWorker::messageLoaded,
+            this, &MainWindow::onMessageLoaded);
     connect(m_worker, &NotmuchWorker::threadLoaded,
             this, &MainWindow::onThreadLoaded);
     connect(m_worker, &NotmuchWorker::errorOccurred,
@@ -1429,9 +1499,13 @@ void MainWindow::runCurrentQuery()
     m_queryComplete = false;
     updateViewWideActions();
 
+    const auto sort = m_sortOrder->currentIndex() == 1
+                          ? NotmuchWorker::OldestFirst
+                          : NotmuchWorker::NewestFirst;
     QMetaObject::invokeMethod(m_worker, "runQuery", Qt::QueuedConnection,
                               Q_ARG(QString, query),
-                              Q_ARG(quint64, m_generation));
+                              Q_ARG(quint64, m_generation),
+                              Q_ARG(NotmuchWorker::SortOrder, sort));
 }
 
 void MainWindow::onThreadsReady(const QVector<ThreadSummary> &threads,
@@ -1519,41 +1593,90 @@ void MainWindow::showThreadContextMenu(const QPoint &pos)
     // collapsing to the clicked row here would silently narrow a deliberate
     // multi-row selection to one. Right-clicking outside it selects that row
     // instead, which is what every other list does.
-    if (!m_threadView->selectionModel()->isRowSelected(index.row()))
-        m_threadView->selectRow(index.row());
+    if (!m_threadView->selectionModel()->isSelected(index))
+        selectRowAt(index);
 
     m_threadContextMenu->popup(m_threadView->viewport()->mapToGlobal(pos));
 }
 
 void MainWindow::onSelectionChanged()
 {
-    const int selected = m_threadView->selectionModel()->selectedRows().size();
-    if (selected <= 1) {
-        // Clearing the count here would wipe whatever the last action reported
-        // ("Archive: 3 threads"), which is the more useful message once the
-        // selection is gone. Only a count this function wrote is taken back.
+    const QModelIndexList rows = m_threadView->selectionModel()->selectedRows();
+    const int selected = rows.size();
+    if (selected == 1) {
+        // One row selected. With two kinds of row this is exactly where the
+        // scope became ambiguous: a thread root stands for every message in it,
+        // a message row for one, and the keypress looks identical. Naming it
+        // here is what this project does instead of a confirmation dialog,
+        // which CLAUDE.md rules out for tag mutations.
+        const ActionScope scope = m_model->scopeFor(rows);
+
+        if (scope.wholeThread) {
+            m_selectionMessage =
+                tr("1 thread selected (%n message(s))", "", scope.messageCount);
+            m_statusLabel->setText(m_selectionMessage);
+            m_statusTimer->stop();
+            m_transientMessage.clear();
+        } else {
+            // Reading one message is not a bulk action and gets no count.
+            if (m_statusLabel->text() == m_selectionMessage)
+                m_statusLabel->clear();
+            m_selectionMessage.clear();
+        }
+
+        // Collapsing a multi-row selection back to one row has to load that row
+        // here, and cannot be left to onThreadSelected: currentRowChanged is
+        // emitted BEFORE the selection model is updated (verified against
+        // Qt 6.11), so that handler still sees the old count and returns
+        // without loading anything.
+        //
+        // Compared per row kind. A message row's row number indexes its
+        // siblings, so threadAt() on one answers about an unrelated thread and
+        // the comparison below would be against the wrong id.
+        const QModelIndex current = m_threadView->currentIndex();
+        if (current.isValid()) {
+            const bool changed =
+                m_model->isMessageRow(current)
+                    ? m_model->messageAt(current).messageId != m_currentMessageId
+                    : m_model->threadAt(current.row()).threadId
+                          != m_currentThreadId;
+            if (changed)
+                onThreadSelected(current, QModelIndex());
+        }
+        return;
+    }
+
+    if (selected < 1) {
+        // Nothing selected. Clearing unconditionally would wipe whatever the
+        // last action reported ("Archive: 3 threads"), which is the more useful
+        // message once the selection is gone, so only a count this function
+        // wrote is taken back.
         if (m_statusLabel->text() == m_selectionMessage)
             m_statusLabel->clear();
         m_selectionMessage.clear();
-
-        // Collapsing a multi-row selection back to one row has to load that
-        // row here, and cannot be left to onThreadSelected. currentRowChanged
-        // is emitted BEFORE the selection model is updated (verified against
-        // Qt 6.11), so when a click collapses three rows to one, that handler
-        // still sees three selected, takes the multi-select branch and returns
-        // without loading anything. Only this signal sees the real count.
-        const QModelIndex current = m_threadView->currentIndex();
-        if (current.isValid()
-            && m_model->threadAt(current.row()).threadId != m_currentThreadId) {
-            onThreadSelected(current, QModelIndex());
-        }
         return;
     }
 
     // The count is the part that actually teaches multi-select: it acknowledges
     // the selection while it is being built, rather than only after an action
     // has already been applied to it.
-    m_selectionMessage = tr("%n thread(s) selected", "", selected);
+    //
+    // Reported per row kind rather than as a bare row count, so a mixed
+    // selection says what it will really touch instead of calling three replies
+    // "3 threads".
+    const ActionScope scope = m_model->scopeFor(rows);
+    if (!scope.threadIds.isEmpty() && scope.messageIds.isEmpty()) {
+        m_selectionMessage =
+            tr("%n thread(s) selected (%1 messages)", "", scope.threadIds.size())
+                .arg(scope.messageCount);
+    } else if (scope.threadIds.isEmpty()) {
+        m_selectionMessage =
+            tr("%n message(s) selected", "", scope.messageIds.size());
+    } else {
+        m_selectionMessage =
+            tr("%n thread(s) and %1 message(s) selected", "",
+               scope.threadIds.size()).arg(scope.messageIds.size());
+    }
     m_statusLabel->setText(m_selectionMessage);
 
     // State, not an event: it must persist while the selection does. Cancel any
@@ -1568,6 +1691,7 @@ void MainWindow::onSelectionChanged()
     m_markReadTimer->stop();
     m_markReadThreadId.clear();
     m_currentThreadId.clear();
+    m_currentMessageId.clear();
     m_messageView->clear();
     showPlaceholderPane();
 }
@@ -1599,8 +1723,34 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
         m_markReadTimer->stop();
         m_markReadThreadId.clear();
         m_currentThreadId.clear();
+        m_currentMessageId.clear();
         m_messageView->clear();
         showPlaceholderPane();
+        return;
+    }
+
+    // A message row renders that message ALONE. Checked before threadAt(),
+    // which takes a top-level row number: a child's row number indexes its
+    // siblings, so passing it here would silently load whichever thread happens
+    // to sit at that position in the list.
+    if (m_model->isMessageRow(current)) {
+        const MessageNode node = m_model->messageAt(current);
+        if (node.messageId.isEmpty())
+            return;
+
+        // No mark-read timer for a message row in this pass. Marking one
+        // message of a thread read is a per-message tag write, and the
+        // pending-edit map is keyed by thread; item 28 is the record of what
+        // happens when that count goes wrong.
+        m_markReadTimer->stop();
+        m_markReadThreadId.clear();
+
+        m_currentThreadId.clear();
+        m_currentMessageId = node.messageId;
+        m_messageView->setTags(node.tags);
+        QMetaObject::invokeMethod(m_worker, "loadMessage", Qt::QueuedConnection,
+                                  Q_ARG(QString, node.messageId),
+                                  Q_ARG(quint64, m_generation));
         return;
     }
 
@@ -1608,10 +1758,84 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     m_currentThreadId = thread.threadId;
     m_messageView->setTags(thread.tags);
     scheduleMarkRead(thread);
+
+    // The root card IS the thread's first message, so selecting it renders
+    // that message rather than the whole conversation. Loading the thread here
+    // made the first message unreachable: the pane showed every message with
+    // only the last expanded, and no row in the list offered the first one,
+    // since the reply rows are messages two onward.
+    //
+    // Known only once the replies have been loaded, which happens when the
+    // thread is expanded. Until then the thread is the honest answer: it
+    // contains the first message, where a guess might not.
+    const QString firstId =
+        m_model->data(current, ThreadListModel::MessageIdRole).toString();
+    if (!firstId.isEmpty()) {
+        m_currentMessageId = firstId;
+        QMetaObject::invokeMethod(m_worker, "loadMessage",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(QString, firstId),
+                                  Q_ARG(quint64, m_generation));
+        return;
+    }
+
+    m_currentMessageId.clear();
     QMetaObject::invokeMethod(m_worker, "loadThread", Qt::QueuedConnection,
                               Q_ARG(QString, m_currentThreadId),
                               Q_ARG(QString, m_lastQuery),
                               Q_ARG(quint64, m_generation));
+}
+
+void MainWindow::onMessageLoaded(const QVector<MessageRef> &messages,
+                                 quint64 generation)
+{
+    // The same two guards onThreadLoaded carries. A stale generation means the
+    // query moved on, and a reply landing after the selection grew past one row
+    // would paint a message back over a deliberately blanked pane.
+    if (generation != m_generation || messages.isEmpty())
+        return;
+    if (m_threadView->selectionModel()->selectedRows().size() > 1)
+        return;
+
+    // A third guard this one needs and onThreadLoaded does not: a reply that
+    // lands after the selection moved to a THREAD row would render one message
+    // where the whole conversation belongs.
+    if (m_currentMessageId.isEmpty())
+        return;
+
+    onThreadLoaded(messages, generation);
+}
+
+void MainWindow::onThreadExpanded(const QModelIndex &index)
+{
+    if (!index.isValid() || m_model->isMessageRow(index))
+        return;
+
+    const QString threadId =
+        m_model->data(index, ThreadListModel::ThreadIdRole).toString();
+    if (threadId.isEmpty())
+        return;
+
+    QMetaObject::invokeMethod(m_worker, "loadThreadTree", Qt::QueuedConnection,
+                              Q_ARG(QString, threadId),
+                              Q_ARG(QString, m_lastQuery),
+                              Q_ARG(quint64, m_generation));
+}
+
+void MainWindow::onThreadTreeLoaded(const QVector<MessageNode> &nodes,
+                                    quint64 generation)
+{
+    // The same generation guard every other worker reply carries: an expansion
+    // whose query has since been replaced must not insert rows into the new
+    // result, where that thread may not even appear.
+    if (generation != m_generation || nodes.isEmpty())
+        return;
+
+    // Every node in one reply belongs to one thread, so the first one names it.
+    // Read from the node rather than remembered from the request: two
+    // expansions can be in flight at once, and pairing them by order would
+    // attach one thread's replies to the other.
+    m_model->setThreadMessages(nodes.first().threadId, nodes);
 }
 
 void MainWindow::onThreadLoaded(const QVector<MessageRef> &messages,
@@ -2297,20 +2521,83 @@ void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,
     if (rows.isEmpty())
         return;
 
-    QStringList threadIds;
-    threadIds.reserve(rows.size());
-    for (const QModelIndex &index : rows)
-        threadIds.append(m_model->threadAt(index.row()).threadId);
+    // Resolved through the model rather than by mapping rows to threads here.
+    // A message row's row number indexes its siblings, so the old
+    // threadAt(index.row()) mapping silently acted on whichever thread sat at
+    // that position in the list.
+    const ActionScope scope = m_model->scopeFor(rows);
+    if (scope.isEmpty())
+        return;
 
-    sendThreadTagChange(threadIds, add, remove, description);
+    if (!scope.threadIds.isEmpty()) {
+        sendThreadTagChange(scope.threadIds, add, remove, description);
 
-    // Pushed for undo. The inverse re-resolves the same threads, so it works
-    // whether or not those rows are still selected.
-    m_undoStack.push(new ThreadTagCommand(this, threadIds, add, remove,
-                                          description));
+        // Pushed for undo. The inverse re-resolves the same threads, so it
+        // works whether or not those rows are still selected.
+        m_undoStack.push(new ThreadTagCommand(this, scope.threadIds, add,
+                                              remove, description));
+    }
 
+    if (!scope.messageIds.isEmpty()) {
+        sendMessageTagChange(scope.messageIds, add, remove, description);
+        m_undoStack.push(new MessageTagCommand(this, scope.messageIds, add,
+                                               remove, description));
+    }
+
+    // The scope named after the fact, since the selection may well be gone by
+    // the time the user reads it. This is what stands in for the confirmation
+    // dialog CLAUDE.md rules out: undo is the safety net, and undo is only
+    // usable if the user can tell that something larger than they meant has
+    // just happened.
     showTransientStatus(
-        tr("%1: %n thread(s)", "", threadIds.size()).arg(description));
+        scope.wholeThread
+            ? tr("%1: %n message(s) (whole thread)", "", scope.messageCount)
+                  .arg(description)
+            : tr("%1: %n message(s)", "", scope.messageCount).arg(description));
+}
+
+void MainWindow::sendMessageTagChange(const QStringList &messageIds,
+                                      const QStringList &add,
+                                      const QStringList &remove,
+                                      const QString &description)
+{
+    if (messageIds.isEmpty())
+        return;
+
+    // No optimistic model update. applyTagChange is keyed by THREAD and would
+    // repaint the whole row as though every message in it had changed, which
+    // for a one-message edit is a lie the user would see and then watch
+    // silently correct itself on the next query.
+
+    // The accounts this touches, resolved through the containing threads: the
+    // account is a property of the thread, and the sync needs the channel
+    // whether one message moved or seven.
+    for (const QString &messageId : messageIds) {
+        const QString threadId = m_model->threadIdForMessage(messageId);
+        if (threadId.isEmpty())
+            continue;
+        for (const QString &key : m_model->accountKeysForThread(threadId))
+            m_editedAccounts.insert(key);
+    }
+
+    // Held during a sync for exactly the reason the thread path is: the
+    // worker's read-write open BLOCKS on notmuch's exclusive lock rather than
+    // failing, so sending now would freeze the worker for the rest of the run.
+    if (aSyncHoldsTheWriteLock()) {
+        m_heldEdits.append(HeldEdit{
+            {}, TagChange{ messageIds, add, remove, description } });
+        m_statusLabel->setText(
+            tr("A sync is running; your change will be applied when it "
+               "finishes."));
+        updatePendingIndicator();
+        return;
+    }
+
+    m_pendingThreadIds.clear();
+    m_pendingChange = TagChange{ messageIds, add, remove, description };
+
+    QMetaObject::invokeMethod(m_worker, "applyTags", Qt::QueuedConnection,
+                              Q_ARG(TagChange, m_pendingChange));
 }
 
 void MainWindow::sendThreadTagChange(const QStringList &threadIds,

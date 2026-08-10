@@ -18,30 +18,33 @@
 
 #pragma once
 
-#include <QTableView>
+#include <QTreeView>
 
-/// The thread list, with a row-wide strip of tag chips under each row's cells.
+/// The thread list.
 ///
-/// The strip is painted by the VIEW rather than by a delegate, and that is the
-/// whole reason this class exists. A delegate is handed one cell's rectangle
-/// and cannot paint outside its column, so pills drawn from the subject
-/// column's delegate stop at that column's edge, losing the last tags of a
-/// well-tagged thread, and start at that column's left edge, which puts them
-/// under the subject instead of under the row. Painting after the cells lets
-/// the strip run the full width, which is what the layout asks for:
+/// It exists for ONE reason now: the expander is drawn by CardDelegate, and a
+/// delegate gets no click of its own without an editor, so the view has to own
+/// the hit-test. Everything else it used to do is gone.
 ///
-///     [ date ][ from ][ subject ...................... ]
-///       [ pill ][ pill ][ pill ]
-///
-/// The cells confine themselves to the upper band so the lower one is free;
-/// SubjectDelegate::kRowPadding and rowHeightFor() are the shared measurements
-/// that keep the two halves agreeing.
-class ThreadListView : public QTableView
+/// Until item 53 this class also painted a row-wide strip of tag chips after
+/// the cells, because a delegate cannot paint outside its column and the strip
+/// spanned all five. With one column and one delegate painting the whole card,
+/// that reason is gone and so is the paintEvent, along with the two faults it
+/// kept producing: a deleted row cut in half, and every other row showing a
+/// bare stripe, both from the view having to re-honour alternating colours,
+/// the selection and BackgroundRole across cells it did not own.
+class ThreadListView : public QTreeView
 {
     Q_OBJECT
 public:
-    using QTableView::QTableView;
+    using QTreeView::QTreeView;
 
 protected:
-    void paintEvent(QPaintEvent *event) override;
+    /// Toggles a thread when its reply count is clicked.
+    ///
+    /// Being VISIBLE and being CLICKABLE are separate properties:
+    /// setRootIsDecorated(false), needed to stop the style drawing its own
+    /// indicator underneath, also removed the style's hit area, so an expander
+    /// once painted correctly and did nothing at all.
+    void mousePressEvent(QMouseEvent *event) override;
 };

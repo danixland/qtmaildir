@@ -27,6 +27,20 @@ class TestThreadListModel : public QObject
 {
     Q_OBJECT
 private slots:
+    void messageNodeHoldsDisplayFacts();
+    void rootRowsSurviveTheTreeConversion();
+    void repliesBecomeChildRowsUnderTheirThread();
+    void messageRowsShowTheirOwnSenderAndSubject();
+    void modelHasOneColumn();
+    void aFlatThreadStillListsItsReplies();
+    void theRootCardKnowsItsOwnMessage();
+    void replyShowsOnlyItsOwnTags();
+    void replySharingEveryThreadTagShowsNone();
+    void reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem();
+    void anUnexpandedMultiMessageThreadOffersAnExpander();
+    void scopeFollowsTheSelectedRowKind();
+    void scopeCountsEveryMessageOfAnUnexpandedThread();
+    void scopeHonoursAMixedSelectionWithoutEscalating();
     void startsEmpty();
     void accountKeysComeFromTheAccountTags();
     void accountKeysCoverAThreadSpanningTwoAccounts();
@@ -35,22 +49,20 @@ private slots:
     void appendingEmptyBatchIsNoOp();
     void clearResetsModel();
     void reportsSubjectAndAuthors();
-    void subjectShowsMessageCountOnlyForRealThreads();
+    void theReplyCountExcludesTheRootMessage();
     void unreadThreadsRenderBold();
     void readThreadsAreDimmedAndUnreadAreNot();
     void flaggedThreadsShowAStar();
     void pillTagsExcludeWhatTheRowAlreadyShows();
-    void theStarColumnIsNarrowAndCarriesNoText();
     void theUnreadCueDoesNotDependOnFontWeight();
     void aDoomedThreadKeepsItsContrastEvenWhenRead();
-    void tagsAreTheFirstColumnAndSubjectTheLast();
     void accountTagBecomesAChipLabel();
     void unreadStylingSurvivesAnAccountChip();
     void accountChipUsesTheConfiguredColour();
     void deletedThreadsAreRedAndStruckThrough();
-    void attachmentColumnIsFirstAndMarksOnlyTaggedThreads();
+    void attachmentIsMarkedOnlyOnTaggedThreads();
     void spamThreadsAreOrangeAndStruckThrough();
-    void doomedStylingCoversEveryColumn();
+    void doomedStylingCoversTheWholeCard();
     void ordinaryThreadsCarryNoRowColour();
     void threadIdIsReachableFromAnIndex();
     void invalidIndexesReturnNothing();
@@ -74,6 +86,238 @@ static ThreadSummary makeThread(const QString &id, const QString &subject)
     t.matchedCount = 1;
     t.tags = QStringList{ QStringLiteral("inbox"), QStringLiteral("unread") };
     return t;
+}
+
+static MessageNode makeNode(const QString &id, int depth,
+                            const QString &from = QStringLiteral("Alice"),
+                            const QString &subject = QStringLiteral("Re: Hi"))
+{
+    MessageNode n;
+    n.messageId = id;
+    n.threadId = QStringLiteral("t1");
+    n.from = from;
+    n.subject = subject;
+    n.date = QDateTime::fromSecsSinceEpoch(1750000000);
+    n.depth = depth;
+    return n;
+}
+
+void TestThreadListModel::repliesBecomeChildRowsUnderTheirThread()
+{
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("A subject")) });
+
+    // Depth 0 is the thread's FIRST message and belongs on the root row, not in
+    // the children: the user's model is "N replies", so a thread of three shows
+    // one root and two children.
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1),
+                              makeNode(QStringLiteral("m2@example.org"), 2) });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    QCOMPARE(model.rowCount(root), 2);
+
+    const QModelIndex child =
+        model.index(0, 0, root);
+    QVERIFY(child.isValid());
+    QCOMPARE(model.parent(child), model.index(0, 0, QModelIndex()));
+
+    QVERIFY(model.data(child, ThreadListModel::IsMessageRole).toBool());
+    QCOMPARE(model.data(child, ThreadListModel::MessageIdRole).toString(),
+             QStringLiteral("m1@example.org"));
+
+    // A message row still belongs to a thread, so a caller that only needs the
+    // containing thread does not have to walk up itself.
+    QCOMPARE(model.data(child, ThreadListModel::ThreadIdRole).toString(),
+             QStringLiteral("t1"));
+
+    // A thread root is not a message ROW, but it does carry a message id: the
+    // root card is the thread's first message, and selecting it renders that
+    // message alone. It used to answer nothing here, which is what made the
+    // first message of every thread unreachable.
+    QVERIFY(!model.data(root, ThreadListModel::IsMessageRole).toBool());
+    QCOMPARE(model.data(root, ThreadListModel::MessageIdRole).toString(),
+             QStringLiteral("m0@example.org"));
+
+    QAbstractItemModelTester tester(
+        &model, QAbstractItemModelTester::FailureReportingMode::Warning);
+    Q_UNUSED(tester);
+}
+
+void TestThreadListModel::messageRowsShowTheirOwnSenderAndSubject()
+{
+    // A reply's row shows the REPLY's sender, not the thread's author summary.
+    // Reading the thread's fields for a child row is the obvious mistake and
+    // would look almost right, since the first sender is usually in both.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("A subject")) });
+    model.setThreadMessages(
+        QStringLiteral("t1"),
+        { makeNode(QStringLiteral("m0@example.org"), 0),
+          makeNode(QStringLiteral("m1@example.org"), 1,
+                   QStringLiteral("Bob <bob@example.org>"),
+                   QStringLiteral("Re: A subject")) });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    const QModelIndex reply = model.index(0, 0, root);
+
+    QCOMPARE(model.data(reply, ThreadListModel::SendersRole).toString(),
+             QStringLiteral("Bob <bob@example.org>"));
+    QCOMPARE(model.data(reply, ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("Re: A subject"));
+
+    // No tag strip under a child row. The strip is a row-wide band carrying the
+    // THREAD's tags; one under every reply would stripe the list and repeat the
+    // same tags down the whole expansion.
+    QVERIFY(model.data(reply, ThreadListModel::PillTagsRole)
+                .toStringList().isEmpty());
+}
+
+void TestThreadListModel::reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem()
+{
+    // A thread reloaded after a sync must not end up listing its replies twice.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("A subject")) });
+
+    const QVector<MessageNode> nodes{
+        makeNode(QStringLiteral("m0@example.org"), 0),
+        makeNode(QStringLiteral("m1@example.org"), 1)
+    };
+
+    model.setThreadMessages(QStringLiteral("t1"), nodes);
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    QCOMPARE(model.rowCount(root), 1);
+
+    model.setThreadMessages(QStringLiteral("t1"), nodes);
+    QCOMPARE(model.rowCount(root), 1);
+
+    QAbstractItemModelTester tester(
+        &model, QAbstractItemModelTester::FailureReportingMode::Warning);
+    Q_UNUSED(tester);
+}
+
+void TestThreadListModel::anUnexpandedMultiMessageThreadOffersAnExpander()
+{
+    // This is what makes lazy loading work at all. rowCount is 0 until the
+    // worker has walked the thread, so a view inferring the expander from
+    // rowCount alone draws none, the user can never expand, and the replies are
+    // never requested. hasChildren answers from the summary's count instead.
+    ThreadListModel model;
+    ThreadSummary many = makeThread(QStringLiteral("t1"),
+                                    QStringLiteral("Has replies"));
+    many.totalCount = 4;
+    ThreadSummary lone = makeThread(QStringLiteral("t2"),
+                                    QStringLiteral("Single message"));
+    lone.totalCount = 1;
+    model.appendBatch({ many, lone });
+
+    const QModelIndex withReplies = model.index(0, 0, QModelIndex());
+    const QModelIndex single = model.index(1, 0, QModelIndex());
+
+    // Guard: neither is expanded, so this really is the unloaded case.
+    QCOMPARE(model.rowCount(withReplies), 0);
+    QCOMPARE(model.rowCount(single), 0);
+
+    QVERIFY(model.hasChildren(withReplies));
+    QVERIFY(!model.hasChildren(single));
+
+    // Once loaded the children are the truth, including "there are none": a
+    // thread whose count included duplicates must stop offering an expander
+    // that opens onto nothing.
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0) });
+    QVERIFY(!model.hasChildren(withReplies));
+
+    // A message row is always a leaf.
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1) });
+    QVERIFY(model.hasChildren(withReplies));
+    QVERIFY(!model.hasChildren(model.index(0, 0, withReplies)));
+}
+
+void TestThreadListModel::scopeFollowsTheSelectedRowKind()
+{
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("A subject"));
+    t.totalCount = 3;
+    model.appendBatch({ t });
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1) });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    const QModelIndex child = model.index(0, 0, root);
+
+    // A thread root acts on the whole thread, and reports every message it
+    // stands for so the status bar can say so.
+    const ActionScope threadScope = model.scopeFor({ root });
+    QCOMPARE(threadScope.threadIds, QStringList{ QStringLiteral("t1") });
+    QVERIFY(threadScope.messageIds.isEmpty());
+    QCOMPARE(threadScope.messageCount, 3);
+    QVERIFY(threadScope.wholeThread);
+
+    // A message row acts on that message alone.
+    const ActionScope messageScope = model.scopeFor({ child });
+    QVERIFY(messageScope.threadIds.isEmpty());
+    QCOMPARE(messageScope.messageIds,
+             QStringList{ QStringLiteral("m1@example.org") });
+    QCOMPARE(messageScope.messageCount, 1);
+    QVERIFY(!messageScope.wholeThread);
+}
+
+void TestThreadListModel::scopeCountsEveryMessageOfAnUnexpandedThread()
+{
+    // totalCount, not the loaded children. A thread that was never expanded
+    // still has all of its messages, and counting only what happens to be on
+    // screen would understate what the action is about to do.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("A subject"));
+    t.totalCount = 7;
+    model.appendBatch({ t });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    QCOMPARE(model.rowCount(root), 0);  // guard: nothing expanded
+
+    const ActionScope scope = model.scopeFor({ root });
+    QCOMPARE(scope.messageCount, 7);
+}
+
+void TestThreadListModel::scopeHonoursAMixedSelectionWithoutEscalating()
+{
+    // Selecting a thread root and an unrelated reply acts on that whole thread
+    // AND that one message. Nothing is escalated to thread scope or narrowed to
+    // message scope silently, which is the point of the scope being visible.
+    ThreadListModel model;
+    ThreadSummary t1 = makeThread(QStringLiteral("t1"), QStringLiteral("One"));
+    t1.totalCount = 2;
+    ThreadSummary t2 = makeThread(QStringLiteral("t2"), QStringLiteral("Two"));
+    t2.totalCount = 5;
+    model.appendBatch({ t1, t2 });
+
+    MessageNode reply = makeNode(QStringLiteral("m1@example.org"), 1);
+    reply.threadId = QStringLiteral("t2");
+    model.setThreadMessages(QStringLiteral("t2"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              reply });
+
+    const QModelIndex firstRoot = model.index(0, 0, QModelIndex());
+    const QModelIndex secondRoot = model.index(1, 0, QModelIndex());
+    const QModelIndex reply1 = model.index(0, 0, secondRoot);
+
+    const ActionScope scope = model.scopeFor({ firstRoot, reply1 });
+    QCOMPARE(scope.threadIds, QStringList{ QStringLiteral("t1") });
+    QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m1@example.org") });
+
+    // 2 from the whole thread plus 1 for the lone message.
+    QCOMPARE(scope.messageCount, 3);
+    QVERIFY(scope.wholeThread);
 }
 
 void TestThreadListModel::accountKeysComeFromTheAccountTags()
@@ -116,11 +360,69 @@ void TestThreadListModel::accountKeysAreEmptyForAnUnknownThread()
     QVERIFY(model.accountKeysForThread(QStringLiteral("nope")).isEmpty());
 }
 
+void TestThreadListModel::messageNodeHoldsDisplayFacts()
+{
+    // A message ROW has to be drawn without opening the message, so the display
+    // facts live on the node itself. MessageRef, which exists for rendering a
+    // thread into the pane, carries none of them.
+    MessageNode node;
+    node.messageId = QStringLiteral("id@example.org");
+    node.from = QStringLiteral("A Sender <sender@example.org>");
+    node.subject = QStringLiteral("Re: a subject");
+    node.date = QDateTime::fromSecsSinceEpoch(1000);
+    node.depth = 2;
+    node.tags = QStringList{ QStringLiteral("unread") };
+
+    QCOMPARE(node.depth, 2);
+    QVERIFY(node.isUnread());
+    QCOMPARE(node.from, QStringLiteral("A Sender <sender@example.org>"));
+    QCOMPARE(node.subject, QStringLiteral("Re: a subject"));
+
+    // Depth 0 is the thread's first message, which the ROOT row stands for.
+    // Defaulting to 0 rather than 1 keeps "is this the root" a plain check.
+    const MessageNode fresh;
+    QCOMPARE(fresh.depth, 0);
+    QVERIFY(!fresh.isUnread());
+}
+
+void TestThreadListModel::rootRowsSurviveTheTreeConversion()
+{
+    // The point of this test is NOT the tree. It is that converting the base
+    // class from QAbstractTableModel changed nothing a thread row does: a table
+    // answers index() and parent() too, just trivially, and every existing test
+    // in this file is the real regression net beside it.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("A subject")) });
+
+    // A tree model reports its roots under an INVALID parent.
+    QCOMPARE(model.rowCount(QModelIndex()), 1);
+    QCOMPARE(model.columnCount(QModelIndex()), 1);
+
+    const QModelIndex root =
+        model.index(0, 0, QModelIndex());
+    QVERIFY(root.isValid());
+    QVERIFY(!model.parent(root).isValid());
+    QCOMPARE(model.data(root, ThreadListModel::ThreadIdRole).toString(),
+             QStringLiteral("t1"));
+
+    // No children until a thread's messages are asked for. An expander drawn
+    // over a thread whose replies were never loaded would open onto nothing.
+    QCOMPARE(model.rowCount(root), 0);
+
+    // Qt's own conformance check. It walks index/parent/rowCount for
+    // consistency and catches the classic tree-model faults, such as a parent()
+    // that does not round-trip, which a hand-written assertion misses.
+    QAbstractItemModelTester tester(
+        &model, QAbstractItemModelTester::FailureReportingMode::Warning);
+    Q_UNUSED(tester);
+}
+
 void TestThreadListModel::startsEmpty()
 {
     ThreadListModel model;
     QCOMPARE(model.rowCount(), 0);
-    QCOMPARE(model.columnCount(), ThreadListModel::ColumnCount);
+    QCOMPARE(model.columnCount(), 1);
 }
 
 void TestThreadListModel::appendsBatches()
@@ -165,21 +467,21 @@ void TestThreadListModel::reportsSubjectAndAuthors()
     ThreadListModel model;
     model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("hello")) });
 
-    const QModelIndex authors = model.index(0, ThreadListModel::AuthorsColumn);
-    QCOMPARE(model.data(authors, Qt::DisplayRole).toString(),
+    // One index, every field, by role. The card draws them all at once, so
+    // reading them through Qt::DisplayRole as five columns did is no longer
+    // possible: DisplayRole answers the subject alone.
+    const QModelIndex card = model.index(0, 0);
+    QCOMPARE(model.data(card, ThreadListModel::SendersRole).toString(),
              QStringLiteral("Alice"));
+    QVERIFY(model.data(card, ThreadListModel::DateRole).toDateTime().isValid());
+    QCOMPARE(model.data(card, ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("hello"));
 
-    const QModelIndex date = model.index(0, ThreadListModel::DateColumn);
-    QVERIFY(!model.data(date, Qt::DisplayRole).toString().isEmpty());
-
-    // Tags are no longer a column; they reach the strip under the message
-    // pane through a role instead.
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
-    QCOMPARE(model.data(subject, ThreadListModel::TagsRole).toStringList(),
+    QCOMPARE(model.data(card, ThreadListModel::TagsRole).toStringList(),
              QStringList({ QStringLiteral("inbox"), QStringLiteral("unread") }));
 }
 
-void TestThreadListModel::subjectShowsMessageCountOnlyForRealThreads()
+void TestThreadListModel::theReplyCountExcludesTheRootMessage()
 {
     ThreadListModel model;
 
@@ -189,12 +491,18 @@ void TestThreadListModel::subjectShowsMessageCountOnlyForRealThreads()
     multi.totalCount = 4;
     model.appendBatch({ single, multi });
 
-    QCOMPARE(model.data(model.index(0, ThreadListModel::SubjectColumn),
-                        Qt::DisplayRole).toString(),
-             QStringLiteral("alone"));
-    QCOMPARE(model.data(model.index(1, ThreadListModel::SubjectColumn),
-                        Qt::DisplayRole).toString(),
-             QStringLiteral("group (4)"));
+    // The count used to be a "(4)" suffix on the subject. It is the expander
+    // on the card's second line now, and it counts REPLIES: totalCount
+    // includes the root message, which is the card itself.
+    QCOMPARE(model.data(model.index(0, 0),
+                        ThreadListModel::ReplyCountRole).toInt(), 0);
+    QCOMPARE(model.data(model.index(1, 0),
+                        ThreadListModel::ReplyCountRole).toInt(), 3);
+
+    // And the subject is bare, with no count spliced into it.
+    QCOMPARE(model.data(model.index(1, 0),
+                        ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("group"));
 }
 
 void TestThreadListModel::unreadThreadsRenderBold()
@@ -205,11 +513,11 @@ void TestThreadListModel::unreadThreadsRenderBold()
     model.appendBatch({ read, makeThread(QStringLiteral("t2"), QStringLiteral("unread")) });
 
     const QVariant readFont =
-        model.data(model.index(0, ThreadListModel::SubjectColumn), Qt::FontRole);
+        model.data(model.index(0, 0), Qt::FontRole);
     QVERIFY(!readFont.isValid());
 
     const QVariant unreadFont =
-        model.data(model.index(1, ThreadListModel::SubjectColumn), Qt::FontRole);
+        model.data(model.index(1, 0), Qt::FontRole);
     QVERIFY(unreadFont.isValid());
     QVERIFY(unreadFont.value<QFont>().bold());
 }
@@ -232,10 +540,10 @@ void TestThreadListModel::readThreadsAreDimmedAndUnreadAreNot()
         { read, makeThread(QStringLiteral("t2"), QStringLiteral("unread")) });
 
     const QVariant readFg =
-        model.data(model.index(0, ThreadListModel::SubjectColumn),
+        model.data(model.index(0, 0),
                    Qt::ForegroundRole);
     const QVariant unreadFg =
-        model.data(model.index(1, ThreadListModel::SubjectColumn),
+        model.data(model.index(1, 0),
                    Qt::ForegroundRole);
 
     QVERIFY2(readFg.isValid(), "a read thread carries no dimming");
@@ -257,16 +565,17 @@ void TestThreadListModel::flaggedThreadsShowAStar()
                                 QStringLiteral("flagged") };
     model.appendBatch({ plain, starred });
 
-    const QString none =
-        model.data(model.index(0, ThreadListModel::FlagColumn),
-                   Qt::DisplayRole).toString();
-    const QString star =
-        model.data(model.index(1, ThreadListModel::FlagColumn),
-                   Qt::DisplayRole).toString();
+    QVERIFY2(!model.data(model.index(0, 0),
+                         ThreadListModel::IsFlaggedRole).toBool(),
+             "an unflagged thread reports itself flagged");
+    QVERIFY2(model.data(model.index(1, 0),
+                        ThreadListModel::IsFlaggedRole).toBool(),
+             "a flagged thread does not report itself flagged");
 
-    QVERIFY2(none.isEmpty(), "an unflagged thread shows something in the column");
-    QVERIFY2(!star.isEmpty(), "a flagged thread shows nothing");
-    QCOMPARE(star, ThreadListModel::flagGlyph());
+    // The glyph the delegate draws from that flag must be something a font can
+    // render: an unrenderable codepoint shows as tofu, which reads as
+    // breakage rather than as a mark.
+    QVERIFY(!ThreadListModel::flagGlyph().isEmpty());
 }
 
 void TestThreadListModel::pillTagsExcludeWhatTheRowAlreadyShows()
@@ -290,7 +599,7 @@ void TestThreadListModel::pillTagsExcludeWhatTheRowAlreadyShows()
     model.appendBatch({ thread });
 
     const QStringList pills =
-        model.data(model.index(0, ThreadListModel::SubjectColumn),
+        model.data(model.index(0, 0),
                    ThreadListModel::PillTagsRole).toStringList();
 
     QVERIFY2(pills.contains(QStringLiteral("SBo")), qPrintable(pills.join(',')));
@@ -320,29 +629,6 @@ void TestThreadListModel::pillTagsExcludeWhatTheRowAlreadyShows()
     QCOMPARE(pills, sorted);
 }
 
-void TestThreadListModel::theStarColumnIsNarrowAndCarriesNoText()
-{
-    // A marker column, like the paperclip beside it: centred, and never
-    // carrying the subject or anything else that would want width.
-    ThreadListModel model;
-    ThreadSummary starred = makeThread(QStringLiteral("t1"),
-                                       QStringLiteral("starred"));
-    starred.tags = QStringList{ QStringLiteral("flagged") };
-    model.appendBatch({ starred });
-
-    const QModelIndex index = model.index(0, ThreadListModel::FlagColumn);
-    QCOMPARE(model.data(index, Qt::TextAlignmentRole).toInt(),
-             int(Qt::AlignCenter));
-
-    // The glyph is one character, whether it is the star or its fallback: a
-    // column sized for a marker cannot hold a word.
-    QCOMPARE(ThreadListModel::flagGlyph().size(), 1);
-
-    // And it says what it means, for anyone who cannot tell the glyph apart
-    // from the paperclip beside it.
-    QVERIFY(!model.data(index, Qt::ToolTipRole).toString().isEmpty());
-}
-
 void TestThreadListModel::theUnreadCueDoesNotDependOnFontWeight()
 {
     // The property that matters, stated directly: strip every font from the
@@ -355,17 +641,14 @@ void TestThreadListModel::theUnreadCueDoesNotDependOnFontWeight()
     model.appendBatch(
         { read, makeThread(QStringLiteral("t2"), QStringLiteral("unread")) });
 
-    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
-        const QVariant readFg =
-            model.data(model.index(0, column), Qt::ForegroundRole);
-        const QVariant unreadFg =
-            model.data(model.index(1, column), Qt::ForegroundRole);
+    const QVariant readFg =
+        model.data(model.index(0, 0), Qt::ForegroundRole);
+    const QVariant unreadFg =
+        model.data(model.index(1, 0), Qt::ForegroundRole);
 
-        QVERIFY2(readFg != unreadFg,
-                 qPrintable(QStringLiteral("column %1 renders read and unread "
-                                           "identically once the font is "
-                                           "ignored").arg(column)));
-    }
+    QVERIFY2(readFg != unreadFg,
+             "read and unread cards render identically once the font is "
+             "ignored");
 }
 
 void TestThreadListModel::aDoomedThreadKeepsItsContrastEvenWhenRead()
@@ -382,30 +665,9 @@ void TestThreadListModel::aDoomedThreadKeepsItsContrastEvenWhenRead()
 
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QCOMPARE(model.data(subject, Qt::ForegroundRole).value<QBrush>().color(),
              QColor(Qt::white));
-}
-
-void TestThreadListModel::tagsAreTheFirstColumnAndSubjectTheLast()
-{
-    // Subject stretches to fill the view, so whatever sits after it is pushed
-    // off-screen. Tags used to be there, which is why acting on a thread
-    // looked like it did nothing: the only column that changed was invisible.
-    QCOMPARE(ThreadListModel::SubjectColumn, ThreadListModel::ColumnCount - 1);
-
-    ThreadListModel model;
-    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("hello")) });
-    QCOMPARE(model.headerData(ThreadListModel::SubjectColumn, Qt::Horizontal,
-                              Qt::DisplayRole).toString(),
-             QStringLiteral("Subject"));
-
-    // No tags column at all: spelling out a dozen tags per row consumed most
-    // of the list's width and was unreadable.
-    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
-        QVERIFY(model.headerData(column, Qt::Horizontal, Qt::DisplayRole)
-                    .toString() != QStringLiteral("Tags"));
-    }
 }
 
 void TestThreadListModel::accountTagBecomesAChipLabel()
@@ -419,7 +681,7 @@ void TestThreadListModel::accountTagBecomesAChipLabel()
                                QStringLiteral("account-webmail-personal") };
     model.appendBatch({ thread });
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QCOMPARE(model.data(subject, ThreadListModel::AccountLabelRole).toString(),
              QStringLiteral("webmail-personal"));
     QVERIFY(model.data(subject, ThreadListModel::AccountColourRole)
@@ -430,7 +692,7 @@ void TestThreadListModel::accountTagBecomesAChipLabel()
     ThreadSummary untagged = makeThread(QStringLiteral("t2"), QStringLiteral("hi"));
     untagged.tags = QStringList{ QStringLiteral("inbox") };
     plain.appendBatch({ untagged });
-    QVERIFY(plain.data(plain.index(0, ThreadListModel::SubjectColumn),
+    QVERIFY(plain.data(plain.index(0, 0),
                        ThreadListModel::AccountLabelRole).toString().isEmpty());
 }
 
@@ -446,7 +708,7 @@ void TestThreadListModel::unreadStylingSurvivesAnAccountChip()
                                QStringLiteral("account-webmail-personal") };
     model.appendBatch({ thread });
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QVERIFY(!model.data(subject, ThreadListModel::AccountLabelRole)
                  .toString().isEmpty());
 
@@ -469,7 +731,7 @@ void TestThreadListModel::accountChipUsesTheConfiguredColour()
     thread.tags = QStringList{ QStringLiteral("account-webmail-personal") };
     model.appendBatch({ thread });
 
-    QCOMPARE(model.data(model.index(0, ThreadListModel::SubjectColumn),
+    QCOMPARE(model.data(model.index(0, 0),
                         ThreadListModel::AccountColourRole).value<QColor>(),
              QColor(QStringLiteral("#cc0000")));
 }
@@ -481,7 +743,7 @@ void TestThreadListModel::deletedThreadsAreRedAndStruckThrough()
     thread.tags = QStringList{ QStringLiteral("inbox") };
     model.appendBatch({ thread });
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QVERIFY(!model.data(subject, Qt::BackgroundRole).isValid());
 
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
@@ -506,7 +768,7 @@ void TestThreadListModel::spamThreadsAreOrangeAndStruckThrough()
 
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("spam") }, {});
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QCOMPARE(model.data(subject, Qt::BackgroundRole).value<QBrush>().color(),
              ThreadListModel::spamColour());
     QVERIFY(model.data(subject, Qt::FontRole).value<QFont>().strikeOut());
@@ -515,10 +777,12 @@ void TestThreadListModel::spamThreadsAreOrangeAndStruckThrough()
     QVERIFY(ThreadListModel::spamColour() != ThreadListModel::deletedColour());
 }
 
-void TestThreadListModel::doomedStylingCoversEveryColumn()
+void TestThreadListModel::doomedStylingCoversTheWholeCard()
 {
-    // A cue on one column would vanish the moment that column scrolled out of
-    // view, which is the bug this whole change exists to fix.
+    // The cue is on the card itself. It used to be asserted per column,
+    // because a cue on one column vanished the moment that column scrolled out
+    // of view; one column cannot scroll away, but the roles still have to be
+    // answered or a deleted card looks untouched.
     ThreadListModel model;
     ThreadSummary thread = makeThread(QStringLiteral("t1"), QStringLiteral("doomed"));
     thread.tags = QStringList{ QStringLiteral("inbox") };
@@ -526,13 +790,11 @@ void TestThreadListModel::doomedStylingCoversEveryColumn()
 
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
 
-    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
-        const QModelIndex index = model.index(0, column);
-        QVERIFY2(model.data(index, Qt::BackgroundRole).isValid(),
-                 qPrintable(QStringLiteral("column %1 has no background").arg(column)));
-        QVERIFY2(model.data(index, Qt::FontRole).value<QFont>().strikeOut(),
-                 qPrintable(QStringLiteral("column %1 is not struck through").arg(column)));
-    }
+    const QModelIndex index = model.index(0, 0);
+    QVERIFY2(model.data(index, Qt::BackgroundRole).isValid(),
+             "a deleted card has no background");
+    QVERIFY2(model.data(index, Qt::FontRole).value<QFont>().strikeOut(),
+             "a deleted card is not struck through");
 }
 
 void TestThreadListModel::ordinaryThreadsCarryNoRowColour()
@@ -546,7 +808,7 @@ void TestThreadListModel::ordinaryThreadsCarryNoRowColour()
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
     model.applyTagChange(QStringLiteral("t1"), {}, { QStringLiteral("deleted") });
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QVERIFY(!model.data(subject, Qt::BackgroundRole).isValid());
     const QVariant font = model.data(subject, Qt::FontRole);
     QVERIFY(!font.isValid() || !font.value<QFont>().strikeOut());
@@ -569,7 +831,7 @@ void TestThreadListModel::threadIdIsReachableFromAnIndex()
     model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")),
                         makeThread(QStringLiteral("t2"), QStringLiteral("two")) });
 
-    const QModelIndex index = model.index(1, ThreadListModel::SubjectColumn);
+    const QModelIndex index = model.index(1, 0);
     QCOMPARE(model.data(index, ThreadListModel::ThreadIdRole).toString(),
              QStringLiteral("t2"));
 }
@@ -587,7 +849,7 @@ void TestThreadListModel::invalidIndexesReturnNothing()
     // the reset in clear() before data() ever sees it. data() still checks its
     // own bounds, but that guard is unreachable defence, not something these
     // assertions can falsify.
-    QVERIFY(!model.index(0, ThreadListModel::ColumnCount).isValid());
+    QVERIFY(!model.index(0, 1).isValid());
     QVERIFY(!model.index(5, 0).isValid());
     QVERIFY(!model.index(-1, 0).isValid());
 
@@ -651,9 +913,9 @@ void TestThreadListModel::tagChangeSignalsExactlyTheChangedRow()
     const QModelIndex bottomRight = changed.first().at(1).value<QModelIndex>();
     QCOMPARE(topLeft.row(), 1);
     QCOMPARE(bottomRight.row(), 1);
+    // One column, so the range is a single index: the card repaints whole.
     QCOMPARE(topLeft.column(), 0);
-    // The whole row repaints: unread state changes the font of every column.
-    QCOMPARE(bottomRight.column(), ThreadListModel::ColumnCount - 1);
+    QCOMPARE(bottomRight.column(), 0);
 }
 
 void TestThreadListModel::tagChangeForUnknownThreadIsIgnored()
@@ -704,12 +966,11 @@ void TestThreadListModel::modelPassesQtTester()
     model.clear();
 }
 
-void TestThreadListModel::attachmentColumnIsFirstAndMarksOnlyTaggedThreads()
+void TestThreadListModel::attachmentIsMarkedOnlyOnTaggedThreads()
 {
-    // Leftmost, and narrow: the point is to see an attachment without opening
-    // the thread, which only works if the column is never scrolled away.
-    QCOMPARE(ThreadListModel::AttachmentColumn, 0);
-
+    // The mark is drawn on the card's second line by CardDelegate. What the
+    // model owes it is the flag and the glyph, which is what this asserts:
+    // the column that used to carry it is gone.
     ThreadSummary plain = makeThread(QStringLiteral("t1"),
                                      QStringLiteral("no attachment"));
     ThreadSummary withFile = makeThread(QStringLiteral("t2"),
@@ -722,13 +983,12 @@ void TestThreadListModel::attachmentColumnIsFirstAndMarksOnlyTaggedThreads()
     model.appendBatch({ plain, withFile });
 
     const QModelIndex plainCell =
-        model.index(0, ThreadListModel::AttachmentColumn);
+        model.index(0, 0);
     const QModelIndex fileCell =
-        model.index(1, ThreadListModel::AttachmentColumn);
+        model.index(1, 0);
 
-    QVERIFY(model.data(plainCell, Qt::DisplayRole).toString().isEmpty());
-    QCOMPARE(model.data(fileCell, Qt::DisplayRole).toString(),
-             ThreadListModel::attachmentGlyph());
+    QVERIFY(!model.data(plainCell, ThreadListModel::HasAttachmentRole).toBool());
+    QVERIFY(model.data(fileCell, ThreadListModel::HasAttachmentRole).toBool());
 
     // The glyph must be something a font can draw. An unrenderable codepoint
     // shows as a tofu box, which reads as breakage rather than as a marker.
@@ -738,11 +998,178 @@ void TestThreadListModel::attachmentColumnIsFirstAndMarksOnlyTaggedThreads()
     // have an attachment on hover.
     QVERIFY(model.data(plainCell, Qt::ToolTipRole).toString().isEmpty());
     QVERIFY(!model.data(fileCell, Qt::ToolTipRole).toString().isEmpty());
+}
 
-    // The header carries no text: a label would set a minimum width far wider
-    // than the icon and defeat the narrow column.
-    QVERIFY(model.headerData(ThreadListModel::AttachmentColumn, Qt::Horizontal,
-                             Qt::DisplayRole).toString().isEmpty());
+void TestThreadListModel::modelHasOneColumn()
+{
+    ThreadListModel model;
+    ThreadSummary thread;
+    thread.threadId = QStringLiteral("T1");
+    thread.subject = QStringLiteral("Build fails");
+    thread.authors = QStringLiteral("alice@example.org");
+    thread.date = QDateTime::currentDateTime();
+    thread.totalCount = 1;
+    model.appendBatch({ thread });
+
+    QCOMPARE(model.columnCount(), 1);
+
+    // Every field the five columns used to answer is still reachable, by role
+    // rather than by column, because the card draws them all.
+    const QModelIndex index = model.index(0, 0);
+    QCOMPARE(index.data(ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("Build fails"));
+    QCOMPARE(index.data(ThreadListModel::SendersRole).toString(),
+             QStringLiteral("alice@example.org"));
+    QVERIFY(index.data(ThreadListModel::DateRole).toDateTime().isValid());
+
+    // A single-message thread offers no expander: totalCount includes the root
+    // message, which is the card itself.
+    QCOMPARE(index.data(ThreadListModel::ReplyCountRole).toInt(), 0);
+}
+
+void TestThreadListModel::aFlatThreadStillListsItsReplies()
+{
+    // A thread whose messages carry no reply structure: notmuch returns them
+    // all from get_toplevel_messages at depth 0, which is what happens when the
+    // mail has no usable In-Reply-To. Measured in the user's own database:
+    // of 396 inbox threads, three are like this, one of them nine messages
+    // deep, and every one of them showed a reply count that expanded to
+    // nothing because the model kept only nodes with depth > 0.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"),
+                                      QStringLiteral("flat thread"));
+    thread.totalCount = 3;
+    model.appendBatch({ thread });
+
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 0),
+                              makeNode(QStringLiteral("m2@example.org"), 0) });
+
+    const QModelIndex root = model.index(0, 0);
+
+    // Two children, not zero: the FIRST message is the root card itself, and
+    // the rest are its replies however flat the thread is.
+    QCOMPARE(model.rowCount(root), 2);
+    QCOMPARE(model.index(0, 0, root).data(ThreadListModel::MessageIdRole)
+                 .toString(),
+             QStringLiteral("m1@example.org"));
+
+    // And the count the card advertises must agree with the rows beneath it,
+    // or the expander opens onto nothing.
+    QCOMPARE(root.data(ThreadListModel::ReplyCountRole).toInt(),
+             model.rowCount(root));
+}
+
+void TestThreadListModel::theRootCardKnowsItsOwnMessage()
+{
+    // The root card IS the thread's first message, so it has to be able to say
+    // which message that is. Without this the pane renders the whole thread
+    // when the root is selected, and the first message is unreachable: the
+    // only rows offering it are the replies, and it is not one of them.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"),
+                                      QStringLiteral("a subject"));
+    thread.totalCount = 2;
+    model.appendBatch({ thread });
+
+    const QModelIndex root = model.index(0, 0);
+
+    // Before the replies are loaded there is nothing to report, and the caller
+    // must fall back to loading the whole thread rather than a wrong message.
+    QVERIFY(root.data(ThreadListModel::MessageIdRole).toString().isEmpty());
+
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1) });
+
+    QCOMPARE(root.data(ThreadListModel::MessageIdRole).toString(),
+             QStringLiteral("m0@example.org"));
+
+    // And it is the FIRST message, not just any of them: the reply must still
+    // report its own.
+    QCOMPARE(model.index(0, 0, root).data(ThreadListModel::MessageIdRole)
+                 .toString(),
+             QStringLiteral("m1@example.org"));
+}
+
+void TestThreadListModel::replyShowsOnlyItsOwnTags()
+{
+    ThreadListModel model;
+    ThreadSummary thread;
+    thread.threadId = QStringLiteral("T1");
+    thread.subject = QStringLiteral("Build fails");
+    thread.totalCount = 2;
+    thread.tags = { QStringLiteral("inbox"), QStringLiteral("work") };
+    model.appendBatch({ thread });
+
+    MessageNode reply;
+    reply.messageId = QStringLiteral("M2");
+    reply.threadId = QStringLiteral("T1");
+    reply.from = QStringLiteral("bob@example.org");
+    reply.depth = 1;
+    // Two the thread already has, one it does not.
+    reply.tags = { QStringLiteral("inbox"), QStringLiteral("work"),
+                   QStringLiteral("todo") };
+
+    // Led by the thread's FIRST message, which is what the worker sends and
+    // what the root card draws. setThreadMessages drops it by position.
+    MessageNode root;
+    root.messageId = QStringLiteral("M1");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    model.setThreadMessages(QStringLiteral("T1"), { root, reply });
+
+    const QModelIndex threadIndex = model.index(0, 0);
+    QVERIFY(model.hasChildren(threadIndex));
+    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+    QVERIFY(replyIndex.isValid());
+
+    const QStringList own =
+        replyIndex.data(ThreadListModel::MessageOwnTagsRole).toStringList();
+    QCOMPARE(own, QStringList{ QStringLiteral("todo") });
+
+    // The colours must line up with the names one for one, or the delegate
+    // walks the two lists together and paints a chip in another tag's colour.
+    const QVariantList colours =
+        replyIndex.data(ThreadListModel::MessageOwnColoursRole).toList();
+    QCOMPARE(colours.size(), own.size());
+    QVERIFY(colours.first().value<QColor>().isValid());
+}
+
+void TestThreadListModel::replySharingEveryThreadTagShowsNone()
+{
+    ThreadListModel model;
+    ThreadSummary thread;
+    thread.threadId = QStringLiteral("T1");
+    thread.totalCount = 2;
+    thread.tags = { QStringLiteral("inbox"), QStringLiteral("work") };
+    model.appendBatch({ thread });
+
+    MessageNode reply;
+    reply.messageId = QStringLiteral("M2");
+    reply.threadId = QStringLiteral("T1");
+    reply.depth = 1;
+    reply.tags = { QStringLiteral("inbox"), QStringLiteral("work") };
+
+    MessageNode root;
+    root.messageId = QStringLiteral("M1");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    model.setThreadMessages(QStringLiteral("T1"), { root, reply });
+
+    const QModelIndex replyIndex = model.index(0, 0, model.index(0, 0));
+    QVERIFY(replyIndex.isValid());
+    QVERIFY(replyIndex.data(ThreadListModel::MessageOwnTagsRole)
+                .toStringList()
+                .isEmpty());
+
+    // A thread row has no thread to differ from, so it never answers these:
+    // its own chips come from PillTagsRole.
+    QVERIFY(model.index(0, 0)
+                .data(ThreadListModel::MessageOwnTagsRole)
+                .toStringList()
+                .isEmpty());
 }
 
 QTEST_MAIN(TestThreadListModel)

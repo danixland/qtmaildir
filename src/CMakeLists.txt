@@ -5,6 +5,7 @@ add_library(qtmaildir_lib STATIC
     requestinterceptor.cpp
     htmlbuilder.cpp
     cidschemehandler.cpp
+    cardlayout.cpp
     notmuchworker.cpp
     tagchip.cpp
     tagcolors.cpp

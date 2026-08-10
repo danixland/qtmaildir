@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(qtmaildir VERSION 0.13.0 LANGUAGES CXX)
+project(qtmaildir VERSION 0.14.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

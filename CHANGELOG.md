@@ -11,6 +11,21 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-10
+
+The thread list stops going stale. A sync running in the background now
+updates it directly: new mail appears, threads you have read leave, and
+whatever you were in the middle of stays where it was. Reading a thread out of
+a view no longer strands you either, since the message pane says when the
+thread it is showing has left the list and offers to bring it back.
+
+### Upgrading
+
+Nothing to change. The "Background sync completed. Press Enter in the query bar
+to refresh." message is gone because there is nothing left to press Enter for;
+if that keystroke is in your fingers, it still re-runs the query and is now
+simply redundant.
+
 ### Changed
 
 - The thread list now follows a background sync on its own. New mail appears

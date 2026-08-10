@@ -30,6 +30,7 @@ private slots:
     void everyCardIsTheSameHeight();
     void threeLinesStackWithoutOverlapping();
     void replyIndentsByDepth();
+    void aDepthZeroReplyStillIndents();
     void indentStopsAtTheCap();
     void expanderSitsOnTheSecondLine();
     void expanderIsEmptyWithoutReplies();
@@ -137,6 +138,41 @@ void TestCardLayout::replyIndentsByDepth()
         QCOMPARE(spine.top(), rect.top());
         QCOMPARE(spine.bottom(), rect.bottom());
     }
+}
+
+void TestCardLayout::aDepthZeroReplyStillIndents()
+{
+    // A reply in a FLAT thread carries depth 0, because notmuch reports every
+    // message of a thread with no usable In-Reply-To as a top-level message.
+    // It is still a reply: it is a child row under the root card, and it has
+    // to read as one.
+    //
+    // Treating depth 0 as "no nesting" left those replies flush against their
+    // thread with no spine, while a nested thread's replies indented normally,
+    // so the list showed two different shapes for the same relationship.
+    const QFont font;
+    const int h = CardLayout::heightFor(font);
+    const QRect rect(0, 0, 400, h);
+
+    CardLayout::Input flatReply;
+    flatReply.isMessage = true;
+    flatReply.depth = 0;
+
+    const CardLayout root = CardLayout::compute(threadInput(), rect, font);
+    const CardLayout reply = CardLayout::compute(flatReply, rect, font);
+
+    QVERIFY2(reply.contentLeft > root.contentLeft,
+             "a depth-0 reply sits flush with its thread, so a flat thread's "
+             "replies look like more threads");
+    QVERIFY2(!reply.spines.isEmpty(),
+             "a depth-0 reply has no spine, so nothing joins it to the thread "
+             "above it");
+
+    // And it lands at the same place a depth-1 reply does: the two are the
+    // same relationship and notmuch's numbering is the only difference.
+    const CardLayout nested = CardLayout::compute(replyInput(1), rect, font);
+    QCOMPARE(reply.contentLeft, nested.contentLeft);
+    QCOMPARE(reply.spines.size(), nested.spines.size());
 }
 
 void TestCardLayout::indentStopsAtTheCap()

@@ -103,7 +103,17 @@ CardLayout CardLayout::compute(const Input &input, const QRect &rect,
 
     // Indent, capped. qMin rather than a branch so depth 5 and depth 50 land
     // in exactly the same place.
-    const int depth = qMin(input.depth, kMaxDepth);
+    //
+    // A MESSAGE row is nested at least one level whatever depth it reports.
+    // notmuch numbers every message of a thread with no usable In-Reply-To as
+    // depth 0, so a flat thread's replies arrived here claiming no nesting and
+    // drew flush against their own thread with no spine, while a nested
+    // thread's replies indented normally: two different shapes on screen for
+    // the same relationship. Being a child row IS the nesting; the depth only
+    // says how much further to go.
+    const int effectiveDepth =
+        input.isMessage ? qMax(1, input.depth) : input.depth;
+    const int depth = qMin(effectiveDepth, kMaxDepth);
     const int indent = depth * kIndentStep;
     out.contentLeft = textLeft + kPaddingX + indent;
 

@@ -73,6 +73,14 @@ private slots:
     void tagChangeForUnknownThreadIsIgnored();
     void tagChangeRoundTripsForRevert();
     void modelPassesQtTester();
+    void reconcileAddsNewThreadsInTheOrderGiven();
+    void reconcileRemovesThreadsThatNoLongerMatch();
+    void reconcileKeepsSurvivingRowsAndTheirExpansion();
+    void reconcileUpdatesTagsOnASurvivingThread();
+    void reconcileOnAnEmptyModelFillsIt();
+    void reconcileWithAnIdenticalResultChangesNothing();
+    void reconcileMovesAThreadBumpedByANewReply();
+    void reconcileKeepsAMovedRowsPersistentIndex();
 };
 
 static ThreadSummary makeThread(const QString &id, const QString &subject)
@@ -1170,6 +1178,246 @@ void TestThreadListModel::replySharingEveryThreadTagShowsNone()
                 .data(ThreadListModel::MessageOwnTagsRole)
                 .toStringList()
                 .isEmpty());
+}
+
+void TestThreadListModel::reconcileAddsNewThreadsInTheOrderGiven()
+{
+    // Item 35b. The auto-refresh hands the model a fresh result set and the
+    // model works out the difference, rather than being cleared and refilled.
+    //
+    // Position comes from the result, never from a rule of this model's own:
+    // the query is sorted by the worker, so with newest-first a new thread
+    // arrives at the front and with oldest-first at the back. A model that
+    // forced new rows to the top would contradict the sort the user chose.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("One")),
+                        makeThread(QStringLiteral("t2"),
+                                   QStringLiteral("Two")) });
+
+    model.reconcile({ makeThread(QStringLiteral("t3"),
+                                 QStringLiteral("Newest")),
+                      makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("One")),
+                      makeThread(QStringLiteral("t2"),
+                                 QStringLiteral("Two")) });
+
+    QCOMPARE(model.rowCount(), 3);
+    QCOMPARE(model.threadAt(0).threadId, QStringLiteral("t3"));
+    QCOMPARE(model.threadAt(1).threadId, QStringLiteral("t1"));
+    QCOMPARE(model.threadAt(2).threadId, QStringLiteral("t2"));
+}
+
+void TestThreadListModel::reconcileRemovesThreadsThatNoLongerMatch()
+{
+    // A thread read out of an Unread view stops matching, and the list has to
+    // say so. Leaving it would make the list disagree with its own query, and
+    // every view-wide action (Mark all read) acts on what the list holds.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("One")),
+                        makeThread(QStringLiteral("t2"),
+                                   QStringLiteral("Two")) });
+
+    model.reconcile({ makeThread(QStringLiteral("t2"),
+                                 QStringLiteral("Two")) });
+
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.threadAt(0).threadId, QStringLiteral("t2"));
+}
+
+void TestThreadListModel::reconcileKeepsSurvivingRowsAndTheirExpansion()
+{
+    // The whole point of reconciling rather than clearing. A surviving thread
+    // must keep the SAME row identity, because the view's selection, its
+    // expanded state and the open message all hang off persistent indexes: a
+    // beginResetModel drops every one of them, which is what made the old
+    // refresh close the thread being read.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("One")),
+                        makeThread(QStringLiteral("t2"),
+                                   QStringLiteral("Two")) });
+
+    MessageNode root = makeNode(QStringLiteral("m1"), 0);
+    MessageNode reply = makeNode(QStringLiteral("m2"), 1);
+    model.setThreadMessages(QStringLiteral("t1"), { root, reply });
+    QCOMPARE(model.rowCount(model.index(0, 0)), 1);
+
+    const QPersistentModelIndex survivor(model.index(0, 0));
+    QVERIFY(survivor.isValid());
+
+    // t2 leaves, t3 arrives, t1 stays put.
+    model.reconcile({ makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("One")),
+                      makeThread(QStringLiteral("t3"),
+                                 QStringLiteral("Three")) });
+
+    QVERIFY2(survivor.isValid(),
+             "reconciling invalidated a surviving row, so the selection and "
+             "the open thread would be lost exactly as a reset loses them");
+    QCOMPARE(model.threadAt(survivor.row()).threadId, QStringLiteral("t1"));
+
+    // Its loaded replies survive too, or the thread collapses under the reader.
+    QCOMPARE(model.rowCount(model.index(survivor.row(), 0)), 1);
+}
+
+void TestThreadListModel::reconcileUpdatesTagsOnASurvivingThread()
+{
+    // A thread that stays but changed state: read elsewhere, tagged by a
+    // filter, flagged on the phone. The row has to repaint, or the list shows
+    // stale state while claiming to be current.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("One")) });
+    QVERIFY(model.threadAt(0).tags.contains(QStringLiteral("unread")));
+
+    ThreadSummary readNow = makeThread(QStringLiteral("t1"),
+                                       QStringLiteral("One"));
+    readNow.tags = QStringList{ QStringLiteral("inbox") };
+
+    QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+    model.reconcile({ readNow });
+
+    QCOMPARE(model.rowCount(), 1);
+    QVERIFY2(!model.threadAt(0).tags.contains(QStringLiteral("unread")),
+             "a surviving thread kept its stale tags");
+    QVERIFY2(!changed.isEmpty(),
+             "the row's new state was stored without repainting it");
+}
+
+void TestThreadListModel::reconcileOnAnEmptyModelFillsIt()
+{
+    // Item 35a's case, now reached through the same path as every other
+    // refresh rather than through a special one: read the view empty, cron
+    // indexes new mail, it appears.
+    ThreadListModel model;
+    QCOMPARE(model.rowCount(), 0);
+
+    model.reconcile({ makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("New")) });
+
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.threadAt(0).threadId, QStringLiteral("t1"));
+}
+
+void TestThreadListModel::reconcileWithAnIdenticalResultChangesNothing()
+{
+    // The common case: the sync brought nothing this query cares about. It
+    // runs every ten minutes under a reader, so it must not churn rows, and
+    // must not emit a reset that would collapse an expanded thread.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("One")),
+                        makeThread(QStringLiteral("t2"),
+                                   QStringLiteral("Two")) });
+
+    const QPersistentModelIndex kept(model.index(1, 0));
+    QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy inserted(&model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy removed(&model, &QAbstractItemModel::rowsRemoved);
+
+    model.reconcile({ makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("One")),
+                      makeThread(QStringLiteral("t2"),
+                                 QStringLiteral("Two")) });
+
+    QCOMPARE(model.rowCount(), 2);
+    QVERIFY2(reset.isEmpty(), "an unchanged result reset the model");
+    QVERIFY2(inserted.isEmpty(), "an unchanged result inserted rows");
+    QVERIFY2(removed.isEmpty(), "an unchanged result removed rows");
+    QVERIFY(kept.isValid());
+    QCOMPARE(kept.row(), 1);
+}
+
+void TestThreadListModel::reconcileMovesAThreadBumpedByANewReply()
+{
+    // The case the other reconcile tests all miss, and the commonest reordering
+    // there is: an old thread gets a new reply, so under newest-first the
+    // worker returns it at the FRONT although it was already on screen. It is
+    // neither an arrival nor a departure, and a reconcile that only handles
+    // those two leaves it where it was, showing an order the query does not
+    // agree with.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("One")),
+                        makeThread(QStringLiteral("t2"),
+                                   QStringLiteral("Two")),
+                        makeThread(QStringLiteral("t3"),
+                                   QStringLiteral("Three")) });
+
+    // t3 was replied to and now sorts first.
+    model.reconcile({ makeThread(QStringLiteral("t3"),
+                                 QStringLiteral("Three")),
+                      makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("One")),
+                      makeThread(QStringLiteral("t2"),
+                                 QStringLiteral("Two")) });
+
+    QCOMPARE(model.rowCount(), 3);
+    QCOMPARE(model.threadAt(0).threadId, QStringLiteral("t3"));
+    QCOMPARE(model.threadAt(1).threadId, QStringLiteral("t1"));
+    QCOMPARE(model.threadAt(2).threadId, QStringLiteral("t2"));
+}
+
+void TestThreadListModel::reconcileKeepsAMovedRowsPersistentIndex()
+{
+    // A reordering seen from the VIEW's side rather than the data's.
+    //
+    // reconcile() places rows with beginMoveRows, and the assertions on
+    // threadAt() cannot tell a correct move from a broken one: QVector::move
+    // reorders the storage whatever Qt was told, so the data lands right even
+    // if the signal is wrong and only a persistent index reports the
+    // difference. A real view's selection rides on exactly that.
+    //
+    // Every move reconcile() makes is upwards, which is a property of the walk
+    // and not of this data: the result is walked front to back, so rows ahead
+    // of the target are already final and a misplaced survivor is always
+    // pulled forward. The model asserts that invariant.
+    ThreadListModel model;
+
+    // Fatal, and attached BEFORE the move. The tester is what actually checks
+    // the beginMoveRows arguments against the rows that end up moving; the
+    // assertions below read m_threads, which QVector::move reorders correctly
+    // whatever destination Qt was told. Without this a wrong destination
+    // corrupts only what the VIEW is told, and every assertion here still
+    // passes while a real view's selection lands on the wrong row.
+    QAbstractItemModelTester tester(
+        &model, QAbstractItemModelTester::FailureReportingMode::Fatal);
+    Q_UNUSED(tester);
+
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("One")),
+                        makeThread(QStringLiteral("t2"),
+                                   QStringLiteral("Two")),
+                        makeThread(QStringLiteral("t3"),
+                                   QStringLiteral("Three")) });
+
+    const QPersistentModelIndex moved(model.index(0, 0));
+    QVERIFY(moved.isValid());
+
+    // t1 ends last. Reached by t2 and t3 each being pulled forward past it,
+    // which is what makes t1's persistent index the thing under test: it is
+    // displaced twice without ever being the row that moves.
+    model.reconcile({ makeThread(QStringLiteral("t2"),
+                                 QStringLiteral("Two")),
+                      makeThread(QStringLiteral("t3"),
+                                 QStringLiteral("Three")),
+                      makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("One")) });
+
+    QCOMPARE(model.rowCount(), 3);
+    QCOMPARE(model.threadAt(0).threadId, QStringLiteral("t2"));
+    QCOMPARE(model.threadAt(1).threadId, QStringLiteral("t3"));
+    QCOMPARE(model.threadAt(2).threadId, QStringLiteral("t1"));
+
+    // The persistent index followed the row rather than being invalidated,
+    // which is what keeps a selection on a thread that reordered under it.
+    // This is the assertion the destination adjustment is answerable to: with
+    // the wrong destination the DATA still lands correctly (QVector::move does
+    // not care what Qt was told) and only this reports the difference.
+    QVERIFY2(moved.isValid(), "a moved row lost its persistent index");
+    QCOMPARE(moved.row(), 2);
 }
 
 QTEST_MAIN(TestThreadListModel)

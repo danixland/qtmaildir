@@ -20,6 +20,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QFocusEvent>
 #include <QCloseEvent>
 #include <QDir>
 #include <QKeyEvent>
@@ -99,6 +100,27 @@ private slots:
     void aLocalSyncIsNotReportedAsABackgroundOne();
     void aLocalSyncsOwnLockIsNeverReportedAsBackground();
     void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
+    void aCronSyncRefreshesTheListWithoutAQuery();
+    void aCronSyncRefreshesOverASelectionWithoutClearingIt();
+    void aCronSyncDoesNotRefreshBeforeAnyQueryHasRun();
+    void aRefreshAddsNewMailAndDropsWhatStoppedMatching();
+    void theOpenThreadLeavingTheListRaisesTheStaleNotice();
+    void aThreadStillMatchingRaisesNoStaleNotice();
+    void theStaleNoticeCarriesTheMessageBeingRead();
+    void recoveringAStaleThreadQueriesTheWholeThread();
+    void recoveryReselectsTheMessageThatWasBeingRead();
+    void recoveryOnTheFirstMessageSelectsTheThreadRow();
+    void aUserQueryAbandonsAPendingRecovery();
+    void blankingThePaneAlsoDropsTheStaleNotice();
+    void aNewQueryDropsTheStaleNotice();
+    void aFinishedBackgroundSyncStopsSayingItIsRunning();
+    void aRefreshDoesNotStampOverASelectionMessage();
+    void aRefreshDoesNotOpenNewMailByItself();
+    void openingAnotherMessageDropsTheStaleNoticeOfThePreviousOne();
+    void theStaleNoticeKeepsTheMessageOfAThreadRootToo();
+    void recoveryExpandsTheThreadAndSelectsRatherThanOnlyPointing();
+    void recoveryFromAnExpandedThreadRestoresTheReply();
+    void theRecoveryButtonSurvivesThePaneBeingBlanked();
     void anUnobservableLockTableLeavesTheSyncButtonUsable();
     void theStatusBarFollowsTheSyncPhase();
     void aSelectedReadThreadIsNotDimmedIntoTheHighlight();
@@ -2357,12 +2379,18 @@ void TestMainWindow::aLocalSyncIsNotReportedAsABackgroundOne()
              qPrintable(QStringLiteral("a background sync was not announced, "
                                        "status says '%1'").arg(status->text())));
 
+    // The finish is no longer ANNOUNCED, since item 35b made the refresh
+    // silent, but it must still be acted on: the running message it wrote is
+    // retired. Asserting the absence of "running" rather than the presence of
+    // "completed" keeps the test on this window's subject, which is that the
+    // lock period was attributed to a background sync rather than to a local
+    // one, without pinning wording that has already changed once.
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
                                     SyncMonitor::State::Idle));
-    QVERIFY2(status->text().contains(QStringLiteral("Background")),
-             qPrintable(QStringLiteral("a finished background sync was not "
-                                       "announced, status says '%1'")
+    QVERIFY2(!status->text().contains(QStringLiteral("running")),
+             qPrintable(QStringLiteral("a finished background sync left the bar "
+                                       "claiming it was still running: '%1'")
                             .arg(status->text())));
 
 }
@@ -2437,14 +2465,1029 @@ void TestMainWindow::aSkippedLocalSyncStillReportsTheOtherRunFinishing()
              qPrintable(QStringLiteral("a skip was reported as a failure: '%1'")
                             .arg(status->text())));
 
-    // The other run finishing must still be announced.
+    // The other run finishing must still be ACTED ON. What that means depends
+    // on the state of the list, and this fixture has an empty one with nothing
+    // selected, so item 35a's free-refresh branch is what a handed-back lock
+    // reaches: the window re-runs the query rather than printing "press Enter".
+    //
+    // Asserting the generation rather than the status text is deliberate. The
+    // property under test is that the Idle was attributed to the OTHER run
+    // instead of being swallowed as this window's own; which of the two
+    // responses it then produces is item 35a's business, and pinning the
+    // wording here would fail every time that decision is revisited.
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    const quint64 before = window.currentGenerationForTesting();
+
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
                                     SyncMonitor::State::Idle));
-    QVERIFY2(status->text().contains(QStringLiteral("Background")),
-             qPrintable(QStringLiteral("after a skipped local sync, the other "
-                                       "run finishing was swallowed; status "
-                                       "says '%1'").arg(status->text())));
+    QVERIFY2(window.currentGenerationForTesting() > before,
+             "after a skipped local sync, the other run finishing was "
+             "swallowed rather than attributed to the background sync");
+}
+
+void TestMainWindow::aCronSyncRefreshesTheListWithoutAQuery()
+{
+    // Item 35b. A background sync brings the list up to date on its own, with
+    // no keystroke: this is the whole point of the item, and it holds whether
+    // the list is empty or full.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    // The refresh is observed as a NEW query being issued. There is no worker
+    // in this fixture, so no result ever arrives; what is asserted is that the
+    // query went out at all, which is what used to be missing.
+    const quint64 before = window.currentGenerationForTesting();
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+
+    QVERIFY2(window.currentGenerationForTesting() > before,
+             "a finished cron sync did not refresh the list");
+}
+
+void TestMainWindow::aCronSyncRefreshesOverASelectionWithoutClearingIt()
+{
+    // The behaviour 0.8.0 refused to build and the reason it refused: a refresh
+    // used to mean runCurrentQuery(), which clears the model, the selection and
+    // the message pane, so firing it on a cron timer would close the thread
+    // being read six times an hour.
+    //
+    // refreshCurrentQuery() reconciles instead, so the refresh runs AND the
+    // selection survives. A test that only checked the query was issued would
+    // pass against the destructive version, which is the version this item
+    // exists to avoid.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("T1"),
+                                    { QStringLiteral("unread") }) });
+    const QModelIndex first = model->index(0, 0, QModelIndex());
+    QVERIFY(first.isValid());
+    view->setCurrentIndex(first);
+    QVERIFY2(view->selectionModel()->hasSelection(),
+             "the fixture failed to select a row, so this proves nothing");
+
+    const quint64 before = window.currentGenerationForTesting();
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+
+    QVERIFY2(window.currentGenerationForTesting() > before,
+             "a cron sync did not refresh a populated list");
+
+    // The rows are untouched until the result comes back, and the selection is
+    // still there. A clear() would have emptied both.
+    QCOMPARE(model->rowCount(QModelIndex()), 1);
+    QVERIFY2(view->selectionModel()->hasSelection(),
+             "the refresh cleared the selection, which is what made the old "
+             "one unusable on a cron timer");
+}
+
+void TestMainWindow::aCronSyncDoesNotRefreshBeforeAnyQueryHasRun()
+{
+    // The query bar holds text the user has typed but not run, and a refresh
+    // must not execute it: that is a search they never asked for. The refresh
+    // re-runs the LAST RUN query, so with none there is nothing to do.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:draft-i-was-typing"));
+
+    const quint64 before = window.currentGenerationForTesting();
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+
+    QCOMPARE(window.currentGenerationForTesting(), before);
+}
+
+void TestMainWindow::aRefreshAddsNewMailAndDropsWhatStoppedMatching()
+{
+    // The round trip end to end, driven through the real handlers: the refresh
+    // query goes out, its batches accumulate, and the result reconciles into
+    // the model in one go.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    model->appendBatch({ makeThread(QStringLiteral("T1"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("T2"),
+                                    { QStringLiteral("unread") }) });
+    QCOMPARE(model->rowCount(QModelIndex()), 2);
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    const quint64 refresh = window.currentGenerationForTesting();
+
+    // T2 was read elsewhere and no longer matches; T3 is new mail.
+    const QVector<ThreadSummary> result{
+        makeThread(QStringLiteral("T3"), { QStringLiteral("unread") }),
+        makeThread(QStringLiteral("T1"), { QStringLiteral("unread") })
+    };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, refresh));
+
+    // Nothing has changed yet: a refresh applies its result whole, never batch
+    // by batch, or the first batch would delete every row after it.
+    QCOMPARE(model->rowCount(QModelIndex()), 2);
+    QCOMPARE(model->threadAt(0).threadId, QStringLiteral("T1"));
+
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 2), Q_ARG(quint64, refresh));
+
+    QCOMPARE(model->rowCount(QModelIndex()), 2);
+    QCOMPARE(model->threadAt(0).threadId, QStringLiteral("T3"));
+    QCOMPARE(model->threadAt(1).threadId, QStringLiteral("T1"));
+}
+
+void TestMainWindow::theOpenThreadLeavingTheListRaisesTheStaleNotice()
+{
+    // The user is reading a thread when a refresh drops it: read the last
+    // unread message and the thread stops matching tag:unread. The pane keeps
+    // rendering it, correctly, so without a notice the message becomes an
+    // orphan with no route back to its thread.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+
+    model->appendBatch({ makeThread(QStringLiteral("T1"),
+                                    { QStringLiteral("unread") }) });
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    QCOMPARE(window.currentThreadId(), QStringLiteral("T1"));
+    QVERIFY(pane->staleThreadId().isEmpty());
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    const quint64 refresh = window.currentGenerationForTesting();
+
+    // The refresh comes back empty: the thread was read and is gone.
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 0), Q_ARG(quint64, refresh));
+
+    QCOMPARE(model->rowCount(QModelIndex()), 0);
+    QCOMPARE(pane->staleThreadId(), QStringLiteral("T1"));
+}
+
+void TestMainWindow::aThreadStillMatchingRaisesNoStaleNotice()
+{
+    // The common case, and the guard on the test above: a refresh that changes
+    // nothing must be invisible. A notice on every sync would be noise, and it
+    // would be a lie.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+
+    model->appendBatch({ makeThread(QStringLiteral("T1"),
+                                    { QStringLiteral("unread") }) });
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    const quint64 refresh = window.currentGenerationForTesting();
+
+    const QVector<ThreadSummary> result{
+        makeThread(QStringLiteral("T1"), { QStringLiteral("unread") })
+    };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, refresh));
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 1), Q_ARG(quint64, refresh));
+
+    QCOMPARE(model->rowCount(QModelIndex()), 1);
+    QVERIFY2(pane->staleThreadId().isEmpty(),
+             "a thread that still matches was reported as stale");
+}
+
+void TestMainWindow::theStaleNoticeCarriesTheMessageBeingRead()
+{
+    // Reading reply four of eight when the thread drops out. Recovery has to
+    // restore the READER'S place, so the notice carries the message id as well
+    // as the thread; without it the thread reopens at its first message.
+    //
+    // Selecting a message row clears m_currentThreadId, so a notice keyed on
+    // that alone never fires for exactly the reader who is deepest into a
+    // thread. That is the case this pins.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+
+    ThreadSummary thread = makeThread(QStringLiteral("T1"),
+                                      { QStringLiteral("unread") });
+    thread.totalCount = 3;
+    model->appendBatch({ thread });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("T1");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("T1"), { root, reply });
+
+    const QModelIndex threadIndex = model->index(0, 0, QModelIndex());
+    const QModelIndex replyIndex = model->index(0, 0, threadIndex);
+    QVERIFY(replyIndex.isValid());
+    view->setCurrentIndex(replyIndex);
+
+    // A message row, so the window is tracking a message rather than a thread.
+    QVERIFY2(window.currentThreadId().isEmpty(),
+             "the fixture selected a thread row, so this proves nothing");
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    const quint64 refresh = window.currentGenerationForTesting();
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 0), Q_ARG(quint64, refresh));
+
+    QCOMPARE(pane->staleThreadId(), QStringLiteral("T1"));
+    QCOMPARE(pane->staleMessageId(), QStringLiteral("m1@example.org"));
+}
+
+void TestMainWindow::recoveringAStaleThreadQueriesTheWholeThread()
+{
+    // Clicking "Show it anyway" runs thread:<id>, not a query for the single
+    // message: the user asked to get the whole conversation back, with their
+    // place in it, so the list has to offer every message of it.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    QMetaObject::invokeMethod(&window, "recoverStaleThread",
+                              Q_ARG(QString, QStringLiteral("T1")),
+                              Q_ARG(QString, QStringLiteral("m1@example.org")));
+
+    QCOMPARE(queryEdit->text(), QStringLiteral("thread:T1"));
+}
+
+void TestMainWindow::recoveryReselectsTheMessageThatWasBeingRead()
+{
+    // The whole point of carrying the message id: reading reply four of eight,
+    // the thread comes back, and the selection lands on reply four rather than
+    // at the top of the thread.
+    //
+    // Driven through the real handlers because that is the only way the
+    // sequencing is exercised: the query has to come back before the thread
+    // can be expanded, and the expansion before the reply row exists at all.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    QMetaObject::invokeMethod(&window, "recoverStaleThread",
+                              Q_ARG(QString, QStringLiteral("T1")),
+                              Q_ARG(QString, QStringLiteral("m2@example.org")));
+    const quint64 generation = window.currentGenerationForTesting();
+
+    ThreadSummary thread = makeThread(QStringLiteral("T1"), {});
+    thread.totalCount = 3;
+    const QVector<ThreadSummary> result{ thread };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, generation));
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 1), Q_ARG(quint64, generation));
+
+    // The thread is listed, and nothing can be selected inside it yet: its
+    // replies are not loaded, so the recovery is still pending.
+    QCOMPARE(model->rowCount(QModelIndex()), 1);
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    MessageNode first;
+    first.messageId = QStringLiteral("m1@example.org");
+    first.threadId = QStringLiteral("T1");
+    first.depth = 1;
+    MessageNode target;
+    target.messageId = QStringLiteral("m2@example.org");
+    target.threadId = QStringLiteral("T1");
+    target.depth = 1;
+    const QVector<MessageNode> nodes{ root, first, target };
+    QMetaObject::invokeMethod(&window, "onThreadTreeLoaded",
+                              Q_ARG(QVector<MessageNode>, nodes),
+                              Q_ARG(quint64, generation));
+
+    const QModelIndex current = view->currentIndex();
+    QVERIFY2(current.isValid(), "recovery selected nothing");
+    QVERIFY2(model->isMessageRow(current),
+             "recovery landed on the thread rather than on the message");
+    QCOMPARE(model->messageAt(current).messageId,
+             QStringLiteral("m2@example.org"));
+}
+
+void TestMainWindow::recoveryOnTheFirstMessageSelectsTheThreadRow()
+{
+    // The trap in the model: setThreadMessages DROPS the depth-0 message,
+    // because the root card is that message. So a reader recovering from the
+    // thread's first message must land on the ROOT row; looking for it among
+    // the children finds nothing and would leave the selection nowhere.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    QMetaObject::invokeMethod(&window, "recoverStaleThread",
+                              Q_ARG(QString, QStringLiteral("T1")),
+                              Q_ARG(QString, QStringLiteral("m0@example.org")));
+    const quint64 generation = window.currentGenerationForTesting();
+
+    ThreadSummary thread = makeThread(QStringLiteral("T1"), {});
+    thread.totalCount = 2;
+    const QVector<ThreadSummary> result{ thread };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, generation));
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("T1");
+    reply.depth = 1;
+    const QVector<MessageNode> nodes{ root, reply };
+    QMetaObject::invokeMethod(&window, "onThreadTreeLoaded",
+                              Q_ARG(QVector<MessageNode>, nodes),
+                              Q_ARG(quint64, generation));
+
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 1), Q_ARG(quint64, generation));
+
+    const QModelIndex current = view->currentIndex();
+    QVERIFY2(current.isValid(), "recovery selected nothing");
+    QVERIFY2(!model->isMessageRow(current),
+             "the thread's first message is the ROOT row, not a child");
+    QCOMPARE(model->threadAt(current.row()).threadId, QStringLiteral("T1"));
+}
+
+void TestMainWindow::aUserQueryAbandonsAPendingRecovery()
+{
+    // A recovery spans two round-trips, so the user can type a query in the
+    // middle of one. That is them choosing to go somewhere else, and the
+    // pending selection must not follow them there: restoring a thread's
+    // message into a result the user asked for something else from would yank
+    // the view out from under them.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    // Recovering the thread with NO message pinned, so the pending recovery
+    // selects its thread row the moment that thread appears. A recovery
+    // waiting on a specific reply would pass this test without the guard,
+    // simply by never reaching its target: it would sit expanding a thread
+    // whose replies this fixture never delivers.
+    QMetaObject::invokeMethod(&window, "recoverStaleThread",
+                              Q_ARG(QString, QStringLiteral("T1")),
+                              Q_ARG(QString, QString()));
+
+    // The user changes their mind before the recovery's query comes back.
+    queryEdit->setText(QStringLiteral("tag:flagged"));
+    queryEdit->returnPressed();
+    const quint64 generation = window.currentGenerationForTesting();
+
+    // That query happens to contain the same thread, which is what makes this
+    // a trap rather than a theoretical case: the recovery would find its
+    // target and select it.
+    ThreadSummary thread = makeThread(QStringLiteral("T1"), {});
+    thread.totalCount = 2;
+    const QVector<ThreadSummary> result{
+        makeThread(QStringLiteral("T9"), {}), thread
+    };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, generation));
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 2), Q_ARG(quint64, generation));
+
+    QVERIFY2(!view->currentIndex().isValid(),
+             "an abandoned recovery selected a row in the query the user ran "
+             "instead");
+}
+
+void TestMainWindow::blankingThePaneAlsoDropsTheStaleNotice()
+{
+    // Reported by the user against the first build of item 35b. The notice
+    // outlived the message it describes: blanking the pane left the bar sitting
+    // above an empty pane, still naming a thread that was no longer shown, with
+    // a button offering to recover it.
+    //
+    // The bar belongs to the rendered message, exactly as the remote-content
+    // bar does, and MessageView::clear() already hides that one. This is the
+    // same rule applied to the same place.
+    const Config config;
+    MainWindow window(config);
+
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+
+    pane->setStaleThread(QStringLiteral("T1"),
+                         QStringLiteral("m1@example.org"));
+    QCOMPARE(pane->staleThreadId(), QStringLiteral("T1"));
+
+    pane->clear();
+
+    QVERIFY2(pane->staleThreadId().isEmpty(),
+             "the stale notice survived the pane being blanked, so it names a "
+             "message that is no longer displayed");
+    QVERIFY2(pane->staleMessageId().isEmpty(),
+             "the stale notice kept the message id of a cleared pane");
+}
+
+void TestMainWindow::aNewQueryDropsTheStaleNotice()
+{
+    // The user's actual route to the bug: read a thread out of a view, get the
+    // notice, then type a new query. The pane blanks and the bar must go with
+    // it. Driven through the window rather than through MessageView::clear()
+    // directly, because the defect was that nothing on this path called it.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+
+    model->appendBatch({ makeThread(QStringLiteral("T1"),
+                                    { QStringLiteral("unread") }) });
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    const quint64 refresh = window.currentGenerationForTesting();
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 0), Q_ARG(quint64, refresh));
+    QCOMPARE(pane->staleThreadId(), QStringLiteral("T1"));
+
+    // The user runs a different query.
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    QVERIFY2(pane->staleThreadId().isEmpty(),
+             "after a new query the notice still offered to recover the thread "
+             "from the previous view");
+}
+
+void TestMainWindow::aFinishedBackgroundSyncStopsSayingItIsRunning()
+{
+    // Reported by the user against item 35b. "Background sync running..." is
+    // written straight to the status label when the lock appears, and the
+    // "Background sync completed" message on the way out was the only thing
+    // that ever replaced it. Removing that message, so a refresh could be
+    // silent, left the bar claiming a sync was running long after it finished.
+    //
+    // Silent means "says nothing NEW", not "leaves a stale claim standing".
+    const Config config;
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    QVERIFY2(status->text().contains(QStringLiteral("running")),
+             qPrintable(QStringLiteral("the fixture never announced a running "
+                                       "sync, status says '%1'")
+                            .arg(status->text())));
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+
+    QVERIFY2(!status->text().contains(QStringLiteral("running")),
+             qPrintable(QStringLiteral("the status bar still claims a sync is "
+                                       "running after it finished: '%1'")
+                            .arg(status->text())));
+}
+
+void TestMainWindow::aRefreshDoesNotStampOverASelectionMessage()
+{
+    // The other half, and the reason this is not simply "always write the
+    // thread count". A refresh runs on a cron timer under a user who may be
+    // doing something, and the bar carries their selection count while they
+    // are. Overwriting that every ten minutes is the noise the silence rule
+    // exists to prevent.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+
+    model->appendBatch({ makeThread(QStringLiteral("T1"), {}),
+                         makeThread(QStringLiteral("T2"), {}) });
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    view->selectionModel()->select(model->index(1, 0, QModelIndex()),
+                                   QItemSelectionModel::Select);
+
+    const QString before = status->text();
+    QVERIFY2(!before.isEmpty(),
+             "the fixture left the status bar empty, so this proves nothing");
+
+    // A refresh completes with no sync ever having been announced.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    const quint64 refresh = window.currentGenerationForTesting();
+    const QVector<ThreadSummary> result{
+        makeThread(QStringLiteral("T1"), {}), makeThread(QStringLiteral("T2"), {})
+    };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, refresh));
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 2), Q_ARG(quint64, refresh));
+
+    QCOMPARE(status->text(), before);
+}
+
+void TestMainWindow::aRefreshDoesNotOpenNewMailByItself()
+{
+    // Reported by the user against item 35b. A thread read to the end empties
+    // an Unread view; the refresh then brings in one new message, and it opens
+    // ITSELF in the message pane, marking it read two seconds later without
+    // the user ever having looked at it.
+    //
+    // Nothing in MainWindow selects it: QTreeView sets a current index of its
+    // own when rows are inserted into a model that had none, and selecting a
+    // row is what loads it. An automatic refresh must not do that, or a cron
+    // timer decides what the user is reading.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    // The view has been read empty: no rows, nothing current.
+    QCOMPARE(model->rowCount(QModelIndex()), 0);
+    QVERIFY(!view->currentIndex().isValid());
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    const quint64 refresh = window.currentGenerationForTesting();
+
+    const QVector<ThreadSummary> result{
+        makeThread(QStringLiteral("NEW"), { QStringLiteral("unread") })
+    };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, refresh));
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 1), Q_ARG(quint64, refresh));
+
+    QCOMPARE(model->rowCount(QModelIndex()), 1);
+
+    // Insertion alone does not do it, which is why the bug only showed up when
+    // the user came back from another desktop: QTreeView gives itself a current
+    // index when it takes FOCUS with none set. Reproduced here rather than
+    // asserted from the report, since a test that only inserts rows passes
+    // against the defect.
+    view->setFocus();
+    QApplication::sendEvent(view, new QFocusEvent(QEvent::FocusIn));
+
+    QVERIFY2(window.currentThreadId().isEmpty(),
+             "the refresh opened the new mail in the message pane, which marks "
+             "it read without the user having looked at it");
+}
+
+void TestMainWindow::openingAnotherMessageDropsTheStaleNoticeOfThePreviousOne()
+{
+    // The other half of the user's report: the pane showed the new message
+    // while the notice above it still named the thread they had been reading.
+    //
+    // The notice itself was right at the moment it was raised. What made it a
+    // lie was the pane being replaced underneath it, so this pins the rule that
+    // the notice belongs to whatever is currently rendered: selecting anything
+    // else retires it, exactly as blanking the pane does.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    model->appendBatch({ makeThread(QStringLiteral("OLD"),
+                                    { QStringLiteral("unread") }) });
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+
+    // The refresh drops the thread being read and brings in new mail.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    const quint64 refresh = window.currentGenerationForTesting();
+    const QVector<ThreadSummary> result{
+        makeThread(QStringLiteral("NEW"), { QStringLiteral("unread") })
+    };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, refresh));
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 1), Q_ARG(quint64, refresh));
+
+    QCOMPARE(pane->staleThreadId(), QStringLiteral("OLD"));
+
+    // The user chooses to open the new mail themselves.
+    const QModelIndex fresh = model->index(0, 0, QModelIndex());
+    QVERIFY(fresh.isValid());
+    QCOMPARE(model->threadAt(0).threadId, QStringLiteral("NEW"));
+    view->setCurrentIndex(fresh);
+    view->selectionModel()->select(fresh, QItemSelectionModel::Select);
+
+    QVERIFY2(pane->staleThreadId().isEmpty(),
+             "the notice still named the previous thread while the pane showed "
+             "a different message");
+}
+
+void TestMainWindow::theStaleNoticeKeepsTheMessageOfAThreadRootToo()
+{
+    // Reported by the user: recovering a thread they were reading brought the
+    // thread back collapsed, with the pane blank, instead of reopening the
+    // message they had been on.
+    //
+    // The cause is that a thread ROOT sets both ids. The root card IS the
+    // thread's first message and the pane renders exactly that message, so
+    // m_currentThreadId and m_currentMessageId are both filled; the notice read
+    // the message id only when the thread id was EMPTY, so the root case threw
+    // away a message id it had. Recovery then had nothing to restore, landed on
+    // the thread row and never expanded it.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    ThreadSummary thread = makeThread(QStringLiteral("T1"),
+                                      { QStringLiteral("unread") });
+    thread.totalCount = 4;
+    model->appendBatch({ thread });
+
+    // The root knows its own message once the tree is loaded, which is what
+    // makes the pane show one message rather than the conversation.
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("T1");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("T1"), { root, reply });
+
+    const QModelIndex threadIndex = model->index(0, 0, QModelIndex());
+    view->setCurrentIndex(threadIndex);
+    view->selectionModel()->select(threadIndex, QItemSelectionModel::Select);
+    QCOMPARE(window.currentThreadId(), QStringLiteral("T1"));
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+    const quint64 refresh = window.currentGenerationForTesting();
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 0), Q_ARG(quint64, refresh));
+
+    QCOMPARE(pane->staleThreadId(), QStringLiteral("T1"));
+    QVERIFY2(!pane->staleMessageId().isEmpty(),
+             "the notice dropped the message of a thread root, so recovery has "
+             "nothing to reopen and lands on a collapsed thread");
+    QCOMPARE(pane->staleMessageId(), QStringLiteral("m0@example.org"));
+}
+
+void TestMainWindow::recoveryExpandsTheThreadAndSelectsRatherThanOnlyPointing()
+{
+    // The rest of the same report: recovery brought the thread back COLLAPSED
+    // with the pane BLANK. Two separate faults behind one symptom.
+    //
+    // setCurrentIndex() alone sets a current row without selecting it, and
+    // since the fix for the auto-open defect onThreadSelected() ignores exactly
+    // that: an unselected current index is Qt's housekeeping, not the user. So
+    // recovery pointed at the row and nothing rendered.
+    //
+    // And nothing expanded the thread, so the reply the user had been reading
+    // was not on screen even when it was the target.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    // Recovering onto the thread's FIRST message, which is the root card: the
+    // case the user hit by opening a thread rather than a reply.
+    QMetaObject::invokeMethod(&window, "recoverStaleThread",
+                              Q_ARG(QString, QStringLiteral("T1")),
+                              Q_ARG(QString, QStringLiteral("m0@example.org")));
+    const quint64 generation = window.currentGenerationForTesting();
+
+    ThreadSummary thread = makeThread(QStringLiteral("T1"), {});
+    thread.totalCount = 4;
+    const QVector<ThreadSummary> result{ thread };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, generation));
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 1), Q_ARG(quint64, generation));
+
+    // No tree reply. This is the user's actual case and the one the earlier
+    // test missed: the thread comes back from the query with its replies NOT
+    // yet loaded, which is the normal state of a freshly queried row. Recovery
+    // has to ask for them rather than assuming they are already there.
+    const QModelIndex threadIndex = model->index(0, 0, QModelIndex());
+    QVERIFY(threadIndex.isValid());
+    QCOMPARE(model->rowCount(threadIndex), 0);
+
+    QVERIFY2(view->selectionModel()->hasSelection(),
+             "recovery pointed at the row without selecting it, so nothing "
+             "renders and the pane stays blank");
+    QCOMPARE(window.currentThreadId(), QStringLiteral("T1"));
+    QVERIFY2(view->isExpanded(threadIndex),
+             "recovery brought the thread back collapsed, so the conversation "
+             "the user was reading is not on screen");
+}
+
+void TestMainWindow::recoveryFromAnExpandedThreadRestoresTheReply()
+{
+    // The user's case, staged exactly: a thread ALREADY EXPANDED with the
+    // fourth reply selected and rendered, dropped by a refresh, then recovered.
+    // Reported twice as still broken while the earlier recovery tests passed,
+    // which means those tests were not reproducing it.
+    //
+    // What they missed is the whole round trip. Recovery re-runs thread:<id>,
+    // and that query REPLACES the model contents, so the recovered thread
+    // arrives collapsed with no replies loaded whatever state the old row was
+    // in. The reply the user wants therefore does not exist as a row at the
+    // moment recovery first runs, and the only thing that can create it is the
+    // tree reply arriving after an expand.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    // Reading reply 4 of a 4-message thread, expanded.
+    ThreadSummary thread = makeThread(QStringLiteral("T1"),
+                                      { QStringLiteral("unread") });
+    thread.totalCount = 4;
+    model->appendBatch({ thread });
+
+    QVector<MessageNode> nodes;
+    for (int i = 0; i < 4; ++i) {
+        MessageNode n;
+        n.messageId = QStringLiteral("m%1@example.org").arg(i);
+        n.threadId = QStringLiteral("T1");
+        n.depth = i == 0 ? 0 : 1;
+        nodes.append(n);
+    }
+    model->setThreadMessages(QStringLiteral("T1"), nodes);
+
+    const QModelIndex threadIndex = model->index(0, 0, QModelIndex());
+    view->expand(threadIndex);
+    QCOMPARE(model->rowCount(threadIndex), 3);
+
+    const QModelIndex fourth = model->index(2, 0, threadIndex);
+    QVERIFY(fourth.isValid());
+    QCOMPARE(model->messageAt(fourth).messageId,
+             QStringLiteral("m3@example.org"));
+    view->setCurrentIndex(fourth);
+    view->selectionModel()->select(fourth, QItemSelectionModel::Select);
+
+    // The refresh drops it, and the user follows the notice.
+    QMetaObject::invokeMethod(&window, "recoverStaleThread",
+                              Q_ARG(QString, QStringLiteral("T1")),
+                              Q_ARG(QString, QStringLiteral("m3@example.org")));
+    const quint64 generation = window.currentGenerationForTesting();
+
+    // The recovery query comes back: ONE collapsed thread, no replies. This is
+    // what the query really returns, and the state the earlier tests skipped.
+    const QVector<ThreadSummary> recovered{ thread };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, recovered),
+                              Q_ARG(quint64, generation));
+    QMetaObject::invokeMethod(&window, "onQueryFinished",
+                              Q_ARG(int, 1), Q_ARG(quint64, generation));
+
+    const QModelIndex back = model->index(0, 0, QModelIndex());
+    QVERIFY(back.isValid());
+    QVERIFY2(view->isExpanded(back),
+             "the recovered thread came back collapsed");
+
+    // Expanding asks the worker for the tree; that reply is what creates the
+    // reply rows. Without it the conversation is not on screen at all.
+    QMetaObject::invokeMethod(&window, "onThreadTreeLoaded",
+                              Q_ARG(QVector<MessageNode>, nodes),
+                              Q_ARG(quint64, generation));
+
+    QVERIFY2(view->isExpanded(back),
+             "the thread collapsed again once its replies arrived");
+    QCOMPARE(model->rowCount(back), 3);
+
+    const QModelIndex current = view->currentIndex();
+    QVERIFY2(current.isValid(), "recovery left nothing selected");
+    QVERIFY2(model->isMessageRow(current),
+             "recovery landed on the thread rather than on the reply the user "
+             "was reading");
+    QCOMPARE(model->messageAt(current).messageId,
+             QStringLiteral("m3@example.org"));
+}
+
+void TestMainWindow::theRecoveryButtonSurvivesThePaneBeingBlanked()
+{
+    // The defect that survived six wrong diagnoses and every other recovery
+    // test in this file, because all of them reach the slot through
+    // invokeMethod, which COPIES its arguments.
+    //
+    // MessageView emitted the signal with its own members, so a direct
+    // connection handed MainWindow::recoverStaleThread() references to them.
+    // That slot calls runCurrentQuery(), which blanks the pane, which calls
+    // setStaleThread() and assigns to those very members. The ids the slot was
+    // still holding went empty mid-call, the recovery target was stored as an
+    // empty string, and nothing was ever recovered: the thread came back
+    // collapsed with the pane blank.
+    //
+    // Driven through the real button so the real signal runs. A test that
+    // calls the slot directly cannot see this and will pass against it.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+    auto *button =
+        pane->findChild<QPushButton *>(QStringLiteral("staleThreadButton"));
+    QVERIFY(button);
+
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    pane->setStaleThread(QStringLiteral("T1"),
+                         QStringLiteral("m3@example.org"));
+    QCOMPARE(pane->staleThreadId(), QStringLiteral("T1"));
+
+    button->click();
+
+    // The query the button ran is the thread's own, which is only true if the
+    // id survived the round trip.
+    QCOMPARE(queryEdit->text(), QStringLiteral("thread:T1"));
+
+    // And the target is still pending, waiting for the result. Empty here means
+    // the reference was clobbered and the recovery is already dead.
+    QVERIFY2(window.hasPendingRecoveryForTesting(),
+             "the recovery target was lost during the slot, so the thread will "
+             "come back collapsed with a blank pane");
 }
 
 void TestMainWindow::theSyncActionIsDisabledWhileABackgroundSyncHoldsTheLock()

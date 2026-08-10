@@ -18,6 +18,8 @@
 
 #include "threadlistmodel.h"
 
+#include <QSet>
+
 #include <QBrush>
 #include <QFont>
 #include <QGuiApplication>
@@ -549,6 +551,108 @@ void ThreadListModel::appendBatch(const QVector<ThreadSummary> &batch)
     for (const ThreadSummary &summary : batch)
         m_threads.append(ThreadNode{ summary, {}, {}, false });
     endInsertRows();
+}
+
+void ThreadListModel::reconcile(const QVector<ThreadSummary> &threads)
+{
+    // Removals first, walking BACKWARDS. Each beginRemoveRows renumbers
+    // everything after it, so a forward walk would delete by stale indices; a
+    // backward one only ever disturbs rows it has already passed.
+    //
+    // One signal per contiguous run rather than per row: a view rebuilds its
+    // selection and its persistent indexes on every one, and an Unread view
+    // emptied by a sync can drop dozens at once.
+    QSet<QString> wanted;
+    wanted.reserve(threads.size());
+    for (const ThreadSummary &summary : threads)
+        wanted.insert(summary.threadId);
+
+    for (int row = m_threads.size() - 1; row >= 0; --row) {
+        if (wanted.contains(m_threads.at(row).summary.threadId))
+            continue;
+        int first = row;
+        while (first > 0
+               && !wanted.contains(m_threads.at(first - 1).summary.threadId))
+            --first;
+        beginRemoveRows({}, first, row);
+        m_threads.remove(first, row - first + 1);
+        endRemoveRows();
+        row = first;
+    }
+
+    // What survived, by id, so the second pass can tell an arrival from a
+    // thread that merely moved.
+    QHash<QString, int> present;
+    present.reserve(m_threads.size());
+    for (int row = 0; row < m_threads.size(); ++row)
+        present.insert(m_threads.at(row).summary.threadId, row);
+
+    // Insertions, forwards, at the position the RESULT gives them. Walking the
+    // result in order means each new thread is placed against rows already
+    // agreed on, so the model ends in the result's order without this having to
+    // know what that order means.
+    for (int target = 0; target < threads.size(); ++target) {
+        const ThreadSummary &summary = threads.at(target);
+        const auto it = present.constFind(summary.threadId);
+
+        if (it == present.constEnd()) {
+            const int at = qMin(target, m_threads.size());
+            beginInsertRows({}, at, at);
+            m_threads.insert(at, ThreadNode{ summary, {}, {}, false });
+            endInsertRows();
+
+            // Every later row shifted by one, and the map is read again on the
+            // next iteration.
+            for (auto entry = present.begin(); entry != present.end(); ++entry) {
+                if (entry.value() >= at)
+                    ++entry.value();
+            }
+            continue;
+        }
+
+        // A survivor that MOVED, which is neither an arrival nor a departure
+        // and is the commonest reordering there is: a new reply bumps an old
+        // thread to the front under newest-first. beginMoveRows, not a
+        // remove-and-insert pair, because a removed row takes its persistent
+        // index, its selection and its expansion with it, which is exactly what
+        // this method exists to keep.
+        //
+        // Always UPWARDS, and that is a property of the walk rather than an
+        // assumption about the data. Positions ahead of `target` are already
+        // final, so a survivor found at a later row is pulled forward and one
+        // found earlier cannot exist: it would have been placed on a previous
+        // iteration. A downward branch here would be unreachable, so there
+        // isn't one, and the destination needs no adjustment (Qt reads it
+        // before the source is removed, which only shifts a downward move).
+        int row = it.value();
+        if (row != target) {
+            Q_ASSERT(row > target);
+            beginMoveRows({}, row, row, {}, target);
+            m_threads.move(row, target);
+            endMoveRows();
+
+            // Every row between the two shifted one place later.
+            for (auto entry = present.begin(); entry != present.end(); ++entry) {
+                if (entry.value() >= target && entry.value() < row)
+                    ++entry.value();
+            }
+            present[summary.threadId] = target;
+            row = target;
+        }
+
+        // Keep the ROW, replace the summary. The node is not reconstructed,
+        // because its children and its loaded flag are the expansion state this
+        // whole method exists to preserve.
+        if (m_threads.at(row).summary.tags != summary.tags
+            || m_threads.at(row).summary.subject != summary.subject
+            || m_threads.at(row).summary.authors != summary.authors
+            || m_threads.at(row).summary.date != summary.date
+            || m_threads.at(row).summary.totalCount != summary.totalCount
+            || m_threads.at(row).summary.matchedCount != summary.matchedCount) {
+            m_threads[row].summary = summary;
+            emit dataChanged(index(row, 0), index(row, 0));
+        }
+    }
 }
 
 void ThreadListModel::clear()

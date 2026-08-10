@@ -155,6 +155,16 @@ public:
     /// reopened, so a test standing in for the worker needs the current value.
     quint64 statsGenerationForTesting() const { return m_statsGeneration; }
 
+    /// Whether a stale-thread recovery is still waiting for its result.
+    ///
+    /// A test seam. The recovery target is cleared as a matter of course by any
+    /// query the user runs, so "is it still set immediately after the button"
+    /// is the only way to see that it survived the slot that set it.
+    bool hasPendingRecoveryForTesting() const
+    {
+        return !m_recoverThreadId.isEmpty();
+    }
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
@@ -165,6 +175,23 @@ protected:
 
 private slots:
     void runCurrentQuery();
+
+    /// Brings back a thread that stopped matching, and restores the reader's
+    /// place inside it.
+    ///
+    /// Runs `thread:<id>` so the whole conversation is listed rather than the
+    /// single message, then expands it and selects `messageId` once the rows
+    /// exist. Both steps are queued round-trips to the worker, so the ids are
+    /// remembered in m_recoverThreadId / m_recoverMessageId and acted on as the
+    /// replies arrive.
+    ///
+    /// A slot because MessageView's notice connects to it, and because the
+    /// sequencing above is only testable by driving it through the same entry
+    /// point the button uses.
+    void recoverStaleThread(const QString &threadId, const QString &messageId);
+
+    /// Selects the remembered message once its thread's rows have loaded.
+    void applyPendingRecovery();
     void onThreadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void onQueryFinished(int total, quint64 generation);
     void onThreadSelected(const QModelIndex &current, const QModelIndex &previous);
@@ -389,6 +416,27 @@ private:
     /// Sends every edit held while the lock was busy, oldest first.
     void flushHeldEdits();
 
+    /// Re-runs the current query and reconciles the result into the model.
+    ///
+    /// The non-destructive counterpart to `runCurrentQuery()`, and what a sync
+    /// fires: nothing is cleared, so the selection, the expanded threads, the
+    /// undo stack and the message being read all survive. New threads appear
+    /// where the sort puts them and threads that stopped matching leave.
+    ///
+    /// Does nothing when no query has run yet, since there is nothing to
+    /// re-run.
+    void refreshCurrentQuery();
+
+    /// Shows or hides the message pane's "no longer matches" notice.
+    ///
+    /// Called after a refresh, which is the only thing that can remove a row
+    /// from under a reader. A thread read out of an Unread view is the ordinary
+    /// case: the pane keeps rendering it, correctly, while the list no longer
+    /// offers it anywhere, and without this the message quietly becomes an
+    /// orphan with no route back.
+    void updateStaleThreadNotice();
+
+
     /// A tag change not yet sent to the worker, because a sync held the write
     /// lock when the user made it.
     ///
@@ -512,6 +560,63 @@ private:
     /// Discriminates a stats reply from a dialog that has since been closed
     /// and reopened, so an old answer cannot fill in a newer dialog.
     quint64 m_statsGeneration = 0;
+
+    /// The generation of a REFRESH query, run after a sync to bring the list
+    /// up to date without disturbing it.
+    ///
+    /// Numbered from the same counter as an ordinary query, so a refresh and a
+    /// user query can never share an id, but tracked separately because the two
+    /// consume their results differently: an ordinary query appends into a
+    /// cleared model as batches arrive, while a refresh accumulates every batch
+    /// and reconciles once at the end. Zero when no refresh is in flight.
+    ///
+    /// A user query started while a refresh is running silently supersedes it:
+    /// the refresh's batches are still collected but its result is dropped, for
+    /// the same reason the generation counter exists at all. Reconciling it
+    /// would fight the query the user just typed.
+    quint64 m_refreshGeneration = 0;
+
+    /// Threads collected from a refresh query, complete only once its
+    /// queryFinished arrives.
+    ///
+    /// Held rather than applied per batch because reconcile() needs the WHOLE
+    /// result to tell a thread that stopped matching from one that simply has
+    /// not arrived yet. Reconciling batch by batch would delete every row the
+    /// first batch did not contain, emptying the list and refilling it, which
+    /// is the reset this exists to avoid.
+    QVector<ThreadSummary> m_refreshThreads;
+
+    /// The thread and message a stale-thread recovery is waiting to select.
+    ///
+    /// Recovery spans two queued round-trips (the query, then the reply walk),
+    /// so the target cannot be a local variable. Cleared once the selection
+    /// lands, or by any query the user runs in the meantime: that is them
+    /// choosing to go somewhere else, and restoring a selection into a result
+    /// they did not ask for would yank the view.
+    QString m_recoverThreadId;
+    QString m_recoverMessageId;
+
+    /// The thread the pane's current MESSAGE belongs to.
+    ///
+    /// Selecting a message row clears m_currentThreadId (the pane shows one
+    /// message, not a conversation), so without this a reader three replies
+    /// deep has no thread to check against the refreshed list, and the stale
+    /// notice never appears for them. Not obtainable from the model after the
+    /// fact: ThreadListModel::threadIdForMessage() searches the rows, and by
+    /// the time this is needed the thread has left them.
+    QString m_currentMessageThreadId;
+
+    /// True while the status bar is showing this window's own "Background sync
+    /// running..." message.
+    ///
+    /// A refresh after a cron sync is deliberately silent, so it writes nothing
+    /// to the bar. That left the running message standing after the sync
+    /// finished, because the "completed" message it replaced was the only thing
+    /// that ever cleared it. Silence means saying nothing NEW, not leaving a
+    /// stale claim on screen: this marks the one string the Idle branch is
+    /// entitled to retire, so it cannot overwrite a selection count or anything
+    /// else the user is actually reading.
+    bool m_announcedExternalSync = false;
 
     /// Holds the sync log and its close button, so the pane can be dismissed.
     QWidget *m_syncLogPane = nullptr;

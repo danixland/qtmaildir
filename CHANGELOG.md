@@ -11,6 +11,25 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Changed
+
+- The thread list now follows a background sync on its own. New mail appears
+  where the sort puts it, threads that stopped matching leave, and threads whose
+  state changed repaint, with no keystroke. Previously the status bar asked you
+  to press Enter, because refreshing meant re-running the query, which cleared
+  the list, the selection and the message pane; the list is now reconciled
+  instead, so an expanded thread stays expanded, the selection stays put and the
+  message being read stays on screen. The "Background sync completed" message is
+  gone: a refresh that changes nothing should be invisible.
+
+### Added
+
+- A notice above the message when the thread being read no longer matches the
+  current query, with a button that brings it back. Reading a thread to the end
+  of an Unread view now removes it from the list as it should, and this is the
+  way back to it: the whole thread is listed, and the message that was on screen
+  is re-selected, so returning to reply four of eight lands on reply four.
+
 ## [0.13.0] - 2026-08-10
 
 The thread list stops being a table. Each thread is a card of three lines,

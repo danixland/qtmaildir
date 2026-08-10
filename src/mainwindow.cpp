@@ -626,6 +626,8 @@ void MainWindow::buildUi()
             this, [this](const QString &text) { m_statusLabel->setText(text); });
     connect(m_messageView, &MessageView::queryRequested,
             this, &MainWindow::onPlaceholderQueryRequested);
+    connect(m_messageView, &MessageView::staleThreadRecoveryRequested,
+            this, &MainWindow::recoverStaleThread);
 
     m_splitter = new QSplitter(Qt::Horizontal, central);
     m_splitter->addWidget(m_threadView);
@@ -867,6 +869,7 @@ void MainWindow::registerActions()
         // CLAUDE.md.
         m_currentThreadId.clear();
         m_currentMessageId.clear();
+        m_currentMessageThreadId.clear();
         m_messageView->clear();
         showPlaceholderPane();
         m_markReadTimer->stop();
@@ -901,6 +904,7 @@ void MainWindow::registerActions()
 
         m_currentThreadId.clear();
         m_currentMessageId.clear();
+        m_currentMessageThreadId.clear();
         m_messageView->clear();
         showPlaceholderPane();
         m_markReadTimer->stop();
@@ -1480,6 +1484,15 @@ void MainWindow::runCurrentQuery()
     // Kept so loadThread() can work out which messages of a thread matched.
     m_lastQuery = query;
 
+    // A query the user ran abandons any recovery still in flight. Recovery
+    // spans two round-trips, so a query typed in the middle of one would
+    // otherwise have its result hijacked: the pending selection finds its
+    // thread in a result the user asked for something else from, and the view
+    // jumps. recoverStaleThread() sets the target AFTER calling this, so its
+    // own query does not clear it.
+    m_recoverThreadId.clear();
+    m_recoverMessageId.clear();
+
     ++m_generation;
     m_model->clear();
     m_messageView->clear();
@@ -1513,6 +1526,17 @@ void MainWindow::onThreadsReady(const QVector<ThreadSummary> &threads,
 {
     if (generation != m_generation)
         return;  // Superseded by a newer query.
+
+    // A refresh accumulates instead of appending. Its batches must not reach
+    // the model one at a time: reconcile() decides what to REMOVE from what the
+    // result does not contain, so applying the first batch alone would delete
+    // every row after it, then the next batch would put some back. The list
+    // would churn and every expanded thread would collapse.
+    if (generation == m_refreshGeneration) {
+        m_refreshThreads.append(threads);
+        return;
+    }
+
     m_model->appendBatch(threads);
 }
 
@@ -1520,6 +1544,30 @@ void MainWindow::onQueryFinished(int total, quint64 generation)
 {
     if (generation != m_generation)
         return;
+
+    // The refresh's result is complete only now, so this is where it lands.
+    // One reconcile for the whole set, not one per batch.
+    if (generation == m_refreshGeneration) {
+        m_refreshGeneration = 0;
+        m_model->reconcile(m_refreshThreads);
+        m_refreshThreads.clear();
+
+        // The count in the status bar describes the current view and has just
+        // changed, but a refresh is meant to be silent, so it updates the
+        // FALLBACK text without stamping over whatever the bar is showing.
+        m_defaultStatus = tr("%n thread(s)", "", total);
+
+        // A refresh leaves the view complete exactly as a query does: every
+        // matching row is present, so view-wide actions stay honest.
+        m_queryComplete = true;
+        updateViewWideActions();
+
+        // The open thread may have stopped matching, which the user has to be
+        // told about: the pane keeps rendering it while the list no longer
+        // offers it anywhere.
+        updateStaleThreadNotice();
+        return;
+    }
     // The query's own result is what the bar says when nothing more pressing
     // is happening, so a transient message falls back to it rather than to
     // nothing.
@@ -1530,6 +1578,11 @@ void MainWindow::onQueryFinished(int total, quint64 generation)
     // a thing that can honestly be acted on.
     m_queryComplete = true;
     updateViewWideActions();
+
+    // A recovery's own thread:<id> query landing. The rows exist now, so the
+    // thread can be expanded; the message inside it is selected once its
+    // replies arrive.
+    applyPendingRecovery();
 }
 
 void MainWindow::updateViewWideActions()
@@ -1692,6 +1745,7 @@ void MainWindow::onSelectionChanged()
     m_markReadThreadId.clear();
     m_currentThreadId.clear();
     m_currentMessageId.clear();
+    m_currentMessageThreadId.clear();
     m_messageView->clear();
     showPlaceholderPane();
 }
@@ -1701,6 +1755,29 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
 {
     if (!current.isValid())
         return;
+
+    // A current index the user did not put there. QTreeView gives itself one
+    // when it takes FOCUS with none set (verified against Qt 6.11: inserting
+    // rows does not do it, focusing the view does), and it sets current WITHOUT
+    // selecting. Before item 35b nothing could reach that state, because a
+    // populated list always had a current row; now a refresh can drop mail into
+    // a view the user read empty, and coming back to the window from another
+    // desktop would open the new message and mark it read two seconds later
+    // without them ever having looked at it.
+    //
+    // Every real route here (a click, an arrow key, selectRowAt) selects the
+    // row as well, so requiring a selection separates the user's intent from
+    // Qt's housekeeping without weakening any of them.
+    if (!m_threadView->selectionModel()->isSelected(current))
+        return;
+
+    // The notice belongs to whatever the pane is showing, and it is about to
+    // show something else. Retired here rather than only in MessageView::clear()
+    // because selecting a row RE-RENDERS the pane instead of blanking it, so
+    // the bar would otherwise sit over a message it does not describe. That is
+    // the second half of the reported defect: the pane had moved on and the
+    // notice had not.
+    m_messageView->setStaleThread(QString(), QString());
 
     // A selection spanning more than one row is aimed at a bulk action, not at
     // reading. current follows the keyboard cursor as the selection extends, so
@@ -1724,6 +1801,7 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
         m_markReadThreadId.clear();
         m_currentThreadId.clear();
         m_currentMessageId.clear();
+        m_currentMessageThreadId.clear();
         m_messageView->clear();
         showPlaceholderPane();
         return;
@@ -1747,6 +1825,9 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
 
         m_currentThreadId.clear();
         m_currentMessageId = node.messageId;
+        // Remembered for the stale notice: the pane shows one message, but the
+        // thread it came from is what the refreshed list is checked against.
+        m_currentMessageThreadId = node.threadId;
         m_messageView->setTags(node.tags);
         QMetaObject::invokeMethod(m_worker, "loadMessage", Qt::QueuedConnection,
                                   Q_ARG(QString, node.messageId),
@@ -1780,6 +1861,7 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     }
 
     m_currentMessageId.clear();
+    m_currentMessageThreadId.clear();
     QMetaObject::invokeMethod(m_worker, "loadThread", Qt::QueuedConnection,
                               Q_ARG(QString, m_currentThreadId),
                               Q_ARG(QString, m_lastQuery),
@@ -1836,6 +1918,10 @@ void MainWindow::onThreadTreeLoaded(const QVector<MessageNode> &nodes,
     // expansions can be in flight at once, and pairing them by order would
     // attach one thread's replies to the other.
     m_model->setThreadMessages(nodes.first().threadId, nodes);
+
+    // A stale-thread recovery waits for exactly this: the message it wants to
+    // select does not exist as a row until the replies land.
+    applyPendingRecovery();
 }
 
 void MainWindow::onThreadLoaded(const QVector<MessageRef> &messages,
@@ -2137,6 +2223,169 @@ void MainWindow::onTagsApplied(const TagChange &change)
     }
 }
 
+void MainWindow::refreshCurrentQuery()
+{
+    // The null guard is not defensive padding, it is a reachable path found by
+    // this item's own test crashing the constructor. SyncMonitor::start() polls
+    // SYNCHRONOUSLY (src/syncmonitor.cpp:52), so a machine whose lock file is
+    // idle at that moment emits stateChanged(Idle) from inside buildUi(), while
+    // m_model and the worker are still null. Nothing to refresh at that point
+    // anyway: the startup query has not run.
+    if (!m_model || !m_worker)
+        return;
+
+    // m_lastQuery, not the text in the query bar: the bar holds whatever the
+    // user has typed since, which may be a query they never ran. Refreshing to
+    // that would execute a search they did not ask for.
+    if (m_lastQuery.isEmpty())
+        return;
+
+    // Nothing is cleared. No m_model->clear(), no m_undoStack.clear(), no
+    // m_messageView->clear(): that list is exactly what runCurrentQuery()
+    // destroys and what makes it unusable on a cron timer.
+    m_refreshGeneration = ++m_generation;
+    m_refreshThreads.clear();
+
+    const auto sort = m_sortOrder->currentIndex() == 1
+                          ? NotmuchWorker::OldestFirst
+                          : NotmuchWorker::NewestFirst;
+    QMetaObject::invokeMethod(m_worker, "runQuery", Qt::QueuedConnection,
+                              Q_ARG(QString, m_lastQuery),
+                              Q_ARG(quint64, m_refreshGeneration),
+                              Q_ARG(NotmuchWorker::SortOrder, sort));
+}
+
+void MainWindow::updateStaleThreadNotice()
+{
+    // Which thread the pane is showing depends on what was selected: a thread
+    // row sets m_currentThreadId, a message row clears it and sets
+    // m_currentMessageId instead, so the message case has to be resolved back
+    // to its thread. Reading only m_currentThreadId would leave a reader who is
+    // three replies deep with no notice at all, which is the commonest way to
+    // be deep in a thread in the first place.
+    // The message id is carried whenever there IS one, whichever row kind put
+    // it there. A thread ROOT sets both: the root card is the thread's first
+    // message and the pane renders that message alone, so treating the message
+    // id as the message-row case only threw it away for the commonest way to
+    // open a thread, and recovery then had nothing to reopen.
+    QString threadId = m_currentThreadId;
+    const QString messageId = m_currentMessageId;
+    if (threadId.isEmpty())
+        threadId = m_currentMessageThreadId;
+
+    if (threadId.isEmpty()) {
+        m_messageView->setStaleThread(QString(), QString());
+        return;
+    }
+
+    // Present means matching: the model holds exactly the query's result after
+    // a reconcile.
+    for (int row = 0; row < m_model->rowCount(QModelIndex()); ++row) {
+        if (m_model->threadAt(row).threadId == threadId) {
+            m_messageView->setStaleThread(QString(), QString());
+            return;
+        }
+    }
+
+    m_messageView->setStaleThread(threadId, messageId);
+}
+
+void MainWindow::recoverStaleThread(const QString &threadId,
+                                    const QString &messageId)
+{
+    if (threadId.isEmpty())
+        return;
+
+    // thread:<id> lists the WHOLE conversation rather than the single message,
+    // which is what the user asked for: eight messages, with the fourth
+    // selected, matching what the pane already shows.
+    m_queryEdit->setText(QStringLiteral("thread:%1").arg(threadId));
+    runCurrentQuery();
+
+    // Set AFTER the query, which clears any pending recovery: this one is the
+    // query's own reason for running and must survive it.
+    //
+    // Remembered across the two queued round-trips this takes: the query has to
+    // come back before the thread can be expanded, and the expansion before the
+    // message row exists to select.
+    m_recoverThreadId = threadId;
+    m_recoverMessageId = messageId;
+}
+
+void MainWindow::applyPendingRecovery()
+{
+    if (m_recoverThreadId.isEmpty())
+        return;
+
+    for (int row = 0; row < m_model->rowCount(QModelIndex()); ++row) {
+        const QModelIndex thread = m_model->index(row, 0, QModelIndex());
+        if (m_model->threadAt(row).threadId != m_recoverThreadId)
+            continue;
+
+        // Expanded in every case, and FIRST. The user was reading a
+        // conversation, so bringing it back collapsed hides the thing they
+        // asked to get back to, whether their message was the root or a reply.
+        // Expanding is also what asks the worker for the replies, so it has to
+        // happen before any attempt to find one.
+        m_threadView->expand(thread);
+
+        // The thread's first message IS the root card rather than a child row:
+        // setThreadMessages drops depth 0 because the root stands for it, so
+        // looking for it among the children finds nothing and the selection
+        // would silently land nowhere.
+        //
+        // selectRowAt(), not setCurrentIndex(): a current index without a
+        // selection is what QTreeView sets by itself on focus, and
+        // onThreadSelected() deliberately ignores that, so pointing at the row
+        // renders nothing and leaves the pane blank.
+        if (m_recoverMessageId.isEmpty()
+            || m_model->data(thread, ThreadListModel::MessageIdRole).toString()
+                   == m_recoverMessageId) {
+            selectRowAt(thread);
+            m_recoverThreadId.clear();
+            m_recoverMessageId.clear();
+            return;
+        }
+
+        // A reply cannot be selected until the replies exist. The expand above
+        // asked for them, and this runs again when they arrive.
+        //
+        // The thread is selected NOW rather than waiting, because a freshly
+        // queried row does not know its own first message either: the root's
+        // MessageIdRole is empty until the tree loads
+        // (`src/threadlistmodel.cpp`), so the root check above cannot match yet
+        // and returning here would leave the user looking at a collapsed thread
+        // and a blank pane until the replies happen to arrive. Selecting the
+        // thread renders its first message immediately, which is the right
+        // answer outright when that is what they were reading, and is refined
+        // to the correct reply on the next pass when it is not.
+        //
+        // The target is deliberately NOT cleared: this pass is provisional.
+        if (m_model->rowCount(thread) == 0) {
+            selectRowAt(thread);
+            return;
+        }
+
+        for (int child = 0; child < m_model->rowCount(thread); ++child) {
+            const QModelIndex reply = m_model->index(child, 0, thread);
+            if (m_model->messageAt(reply).messageId != m_recoverMessageId)
+                continue;
+            selectRowAt(reply);
+            m_recoverThreadId.clear();
+            m_recoverMessageId.clear();
+            return;
+        }
+
+        // The thread came back without the message: it was deleted, or moved
+        // between accounts. Land on the thread rather than leaving the user
+        // with nothing selected.
+        selectRowAt(thread);
+        m_recoverThreadId.clear();
+        m_recoverMessageId.clear();
+        return;
+    }
+}
+
 void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
 {
     if (state == SyncMonitor::State::Running) {
@@ -2154,6 +2403,7 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
         m_externalSyncBusy = true;
         updateSyncControls();
         m_statusLabel->setText(tr("Background sync running..."));
+        m_announcedExternalSync = true;
         return;
     }
 
@@ -2177,19 +2427,40 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
     m_externalSyncBusy = false;
     updateSyncControls();
 
-    // Deliberately reports rather than refreshes. runCurrentQuery() clears the
-    // undo stack, the selection and the message pane, which is right for a
-    // query the user typed and hostile for one fired by a cron timer: with a
-    // sync every ten minutes it would discard undo history and close the thread
-    // being read, up to six times an hour, with no action from the user.
+    // Refreshes, unconditionally, and says nothing about it.
     //
-    // Unknown is not worth reporting either. It means the lock table could not
-    // be read, so nothing was observed, and "sync finished" would be a claim
-    // this cannot support.
+    // 0.8.0 refused to refresh here because runCurrentQuery() clears the undo
+    // stack, the selection and the message pane, which is right for a query the
+    // user typed and hostile for one fired by a cron timer. The status bar
+    // asked the user to press Enter instead. That made the list quietly stale:
+    // new mail indexed by cron never appeared, and an Unread view read to the
+    // end stayed empty in front of it.
+    //
+    // The answer is not to weigh the cost, it is to remove it.
+    // refreshCurrentQuery() reconciles the result into the model instead of
+    // resetting it, so a surviving thread keeps its row, its expansion and its
+    // selection, and the message being read stays on screen. Nothing has to be
+    // preserved by declining to run.
+    //
+    // No status message: a refresh that changes nothing must be invisible, and
+    // one that adds mail is announced by the mail appearing. Six "sync
+    // completed" messages an hour are noise reporting the expected.
+    //
+    // Unknown is not refreshed. It means the lock table could not be read, so
+    // no sync was observed, and refreshing on it would re-query on every failed
+    // poll rather than after a sync.
+    // Retire our own running message, and only that one. The refresh below says
+    // nothing, which is right for a sync that changed nothing, but "says
+    // nothing" must not mean "leaves 'Background sync running...' on screen
+    // after it stopped". Anything else in the bar belongs to the user (a
+    // selection count, a tag result) and is left alone.
+    if (m_announcedExternalSync) {
+        m_announcedExternalSync = false;
+        m_statusLabel->setText(m_defaultStatus);
+    }
+
     if (state == SyncMonitor::State::Idle) {
-        showTransientStatus(
-            tr("Background sync completed. Press Enter in the query bar to "
-               "refresh."));
+        refreshCurrentQuery();
 
         // Item 54. A cron sync carries the edits to the mail store exactly as a
         // local one does, so the count it cleared has to be cleared here too.

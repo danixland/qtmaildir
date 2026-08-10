@@ -188,6 +188,47 @@ MessageView::MessageView(QWidget *parent)
     blockedRow->addWidget(m_loadRemoteButton);
     blockedRow->addStretch();
 
+    // The stale-thread notice, deliberately the same shape as the row above:
+    // a sentence and a button, above the message, leaving it readable. The
+    // user asked for this rather than for a dialog, and a dialog would be
+    // wrong anyway, since nothing here needs an answer before the message can
+    // be read.
+    m_staleBar = new QWidget(this);
+    m_staleBar->setObjectName(QStringLiteral("staleThreadBar"));
+    m_staleLabel = new QLabel(
+        tr("This thread no longer matches the current query."), m_staleBar);
+    m_staleButton = new QPushButton(tr("Show it anyway"), m_staleBar);
+    m_staleButton->setObjectName(QStringLiteral("staleThreadButton"));
+    connect(m_staleButton, &QPushButton::clicked, this, [this] {
+        if (m_staleThreadId.isEmpty())
+            return;
+
+        // COPIES, not the members themselves, and this is load-bearing rather
+        // than tidy. A direct connection passes these by reference all the way
+        // into MainWindow::recoverStaleThread(), which calls runCurrentQuery(),
+        // which blanks the pane, which calls setStaleThread() and assigns to
+        // the very members those references name. The ids then read as empty
+        // for the rest of the slot, so the recovery target was stored as an
+        // empty string and nothing was ever recovered: the thread came back
+        // collapsed with a blank pane, which is exactly the reported symptom.
+        //
+        // Invisible to a test that reaches the slot through invokeMethod,
+        // because that copies the arguments; it needs the real signal.
+        const QString threadId = m_staleThreadId;
+        const QString messageId = m_staleMessageId;
+
+        // The message on screen goes with the request. Recovering the thread
+        // alone would reopen it at its first message, and the user was reading
+        // message four of eight.
+        emit staleThreadRecoveryRequested(threadId, messageId);
+    });
+    auto *staleRow = new QHBoxLayout(m_staleBar);
+    staleRow->setContentsMargins(0, 0, 0, 0);
+    staleRow->addWidget(m_staleLabel);
+    staleRow->addWidget(m_staleButton);
+    staleRow->addStretch();
+    m_staleBar->hide();
+
     m_attachmentBar = new QWidget(this);
     m_attachmentBar->setObjectName(QStringLiteral("attachmentBar"));
     new QHBoxLayout(m_attachmentBar);
@@ -200,6 +241,7 @@ MessageView::MessageView(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(headerRow);
     layout->addLayout(blockedRow);
+    layout->addWidget(m_staleBar);
     layout->addWidget(m_view, 1);
     layout->addWidget(m_attachmentBar);
     layout->addWidget(m_tagStrip);
@@ -278,6 +320,12 @@ void MessageView::clear()
     m_headerLabel->clear();
     m_blockedLabel->hide();
     m_loadRemoteButton->hide();
+
+    // The stale notice describes the message that WAS rendered, so it goes with
+    // it, for the same reason as the blocked-content bar above. Left behind, it
+    // sits over a blank pane naming a thread that is no longer shown, and its
+    // button offers to recover a thread the user has navigated away from.
+    setStaleThread(QString(), QString());
 
     // clear() does not go through render(), so the bar has to be emptied
     // here or the previous thread's attachments stay offered.
@@ -652,6 +700,14 @@ void MessageView::saveAttachment(const Attachment &attachment)
     // Reported, not silent: a save with no feedback is the same failure as
     // acting on a thread and seeing nothing change.
     emit statusMessage(tr("Saved %1").arg(written));
+}
+
+void MessageView::setStaleThread(const QString &threadId,
+                                 const QString &messageId)
+{
+    m_staleThreadId = threadId;
+    m_staleMessageId = messageId;
+    m_staleBar->setVisible(!threadId.isEmpty());
 }
 
 void MessageView::toggleHtml()

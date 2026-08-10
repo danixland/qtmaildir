@@ -180,6 +180,20 @@ public:
     void appendBatch(const QVector<ThreadSummary> &batch);
     void clear();
 
+    /// Brings the model to `threads` without resetting it.
+    ///
+    /// Used by the automatic refresh after a sync, where clear() plus
+    /// appendBatch() is the wrong tool: a reset invalidates every index, so the
+    /// selection, the expanded threads and the message being read all go with
+    /// it. Rows are matched by thread id, so a surviving thread keeps its
+    /// identity, its persistent index and its loaded replies.
+    ///
+    /// Order comes from `threads` and is never imposed here. The worker sorts
+    /// the query, so a new thread lands at the front under newest-first and at
+    /// the back under oldest-first; forcing new rows to the top would
+    /// contradict the sort the user selected.
+    void reconcile(const QVector<ThreadSummary> &threads);
+
     ThreadSummary threadAt(int row) const;
 
     /// Fills in a thread's message rows once the worker has walked its tree.

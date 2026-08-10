@@ -104,6 +104,28 @@ public:
     qreal zoomFactor() const;
     void setZoomFactor(qreal factor);
 
+    /// Shows or hides the notice saying the rendered thread no longer matches
+    /// the current query.
+    ///
+    /// Modelled on the remote-content bar rather than on a dialog: the message
+    /// stays readable underneath, and the way back is one click. Passing an
+    /// empty id hides it.
+    ///
+    /// The pane does not decide this for itself. It renders whatever it was
+    /// last given and has no idea what the thread list holds, so the window
+    /// tells it after a refresh.
+    /// `messageId` is the message on screen, empty when a whole thread is
+    /// rendered. It rides along so recovery can restore the reader's place
+    /// rather than reopening the thread at its first message.
+    void setStaleThread(const QString &threadId, const QString &messageId);
+
+    /// The thread the stale notice offers to bring back, empty when hidden.
+    QString staleThreadId() const { return m_staleThreadId; }
+
+    /// The message the stale notice would restore, empty when a whole thread
+    /// is rendered or the notice is hidden.
+    QString staleMessageId() const { return m_staleMessageId; }
+
 public slots:
     void toggleHtml();
     void loadRemoteContent();
@@ -124,6 +146,16 @@ signals:
     /// mutated or sent), but "a link in a message does something inside the
     /// app" is a boundary worth keeping shut rather than arguing about.
     void queryRequested(const QString &query);
+
+    /// The user asked to see a thread that stopped matching the current query.
+    ///
+    /// Carries the thread id and the message that was on screen, because
+    /// recovering the thread alone would land the user on its first message
+    /// rather than the one they were reading. The window runs the query,
+    /// expands the thread and restores the selection; the view knows none of
+    /// that.
+    void staleThreadRecoveryRequested(const QString &threadId,
+                                      const QString &messageId);
 
 protected:
     /// Turns Ctrl+wheel over the body into zoom, and Ctrl+middle-click into a
@@ -185,6 +217,13 @@ private:
     QLabel *m_headerLabel = nullptr;
     QLabel *m_blockedLabel = nullptr;
     QPushButton *m_loadRemoteButton = nullptr;
+
+    /// The stale-thread notice and the thread it offers to restore.
+    QWidget *m_staleBar = nullptr;
+    QLabel *m_staleLabel = nullptr;
+    QPushButton *m_staleButton = nullptr;
+    QString m_staleThreadId;
+    QString m_staleMessageId;
     QPushButton *m_detailsButton = nullptr;
     QWidget *m_attachmentBar = nullptr;
     TagStrip *m_tagStrip = nullptr;

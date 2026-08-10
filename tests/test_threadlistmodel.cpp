@@ -47,22 +47,20 @@ private slots:
     void appendingEmptyBatchIsNoOp();
     void clearResetsModel();
     void reportsSubjectAndAuthors();
-    void subjectShowsMessageCountOnlyForRealThreads();
+    void theReplyCountExcludesTheRootMessage();
     void unreadThreadsRenderBold();
     void readThreadsAreDimmedAndUnreadAreNot();
     void flaggedThreadsShowAStar();
     void pillTagsExcludeWhatTheRowAlreadyShows();
-    void theStarColumnIsNarrowAndCarriesNoText();
     void theUnreadCueDoesNotDependOnFontWeight();
     void aDoomedThreadKeepsItsContrastEvenWhenRead();
-    void tagsAreTheFirstColumnAndSubjectTheLast();
     void accountTagBecomesAChipLabel();
     void unreadStylingSurvivesAnAccountChip();
     void accountChipUsesTheConfiguredColour();
     void deletedThreadsAreRedAndStruckThrough();
-    void attachmentColumnIsFirstAndMarksOnlyTaggedThreads();
+    void attachmentIsMarkedOnlyOnTaggedThreads();
     void spamThreadsAreOrangeAndStruckThrough();
-    void doomedStylingCoversEveryColumn();
+    void doomedStylingCoversTheWholeCard();
     void ordinaryThreadsCarryNoRowColour();
     void threadIdIsReachableFromAnIndex();
     void invalidIndexesReturnNothing();
@@ -120,7 +118,7 @@ void TestThreadListModel::repliesBecomeChildRowsUnderTheirThread()
     QCOMPARE(model.rowCount(root), 2);
 
     const QModelIndex child =
-        model.index(0, ThreadListModel::SubjectColumn, root);
+        model.index(0, 0, root);
     QVERIFY(child.isValid());
     QCOMPARE(model.parent(child), model.index(0, 0, QModelIndex()));
 
@@ -159,20 +157,17 @@ void TestThreadListModel::messageRowsShowTheirOwnSenderAndSubject()
                    QStringLiteral("Re: A subject")) });
 
     const QModelIndex root = model.index(0, 0, QModelIndex());
-    const QModelIndex authors =
-        model.index(0, ThreadListModel::AuthorsColumn, root);
-    const QModelIndex subject =
-        model.index(0, ThreadListModel::SubjectColumn, root);
+    const QModelIndex reply = model.index(0, 0, root);
 
-    QCOMPARE(model.data(authors, Qt::DisplayRole).toString(),
+    QCOMPARE(model.data(reply, ThreadListModel::SendersRole).toString(),
              QStringLiteral("Bob <bob@example.org>"));
-    QCOMPARE(model.data(subject, Qt::DisplayRole).toString(),
+    QCOMPARE(model.data(reply, ThreadListModel::SubjectRole).toString(),
              QStringLiteral("Re: A subject"));
 
     // No tag strip under a child row. The strip is a row-wide band carrying the
     // THREAD's tags; one under every reply would stripe the list and repeat the
     // same tags down the whole expansion.
-    QVERIFY(model.data(subject, ThreadListModel::PillTagsRole)
+    QVERIFY(model.data(reply, ThreadListModel::PillTagsRole)
                 .toStringList().isEmpty());
 }
 
@@ -397,10 +392,10 @@ void TestThreadListModel::rootRowsSurviveTheTreeConversion()
 
     // A tree model reports its roots under an INVALID parent.
     QCOMPARE(model.rowCount(QModelIndex()), 1);
-    QCOMPARE(model.columnCount(QModelIndex()), ThreadListModel::ColumnCount);
+    QCOMPARE(model.columnCount(QModelIndex()), 1);
 
     const QModelIndex root =
-        model.index(0, ThreadListModel::SubjectColumn, QModelIndex());
+        model.index(0, 0, QModelIndex());
     QVERIFY(root.isValid());
     QVERIFY(!model.parent(root).isValid());
     QCOMPARE(model.data(root, ThreadListModel::ThreadIdRole).toString(),
@@ -422,7 +417,7 @@ void TestThreadListModel::startsEmpty()
 {
     ThreadListModel model;
     QCOMPARE(model.rowCount(), 0);
-    QCOMPARE(model.columnCount(), ThreadListModel::ColumnCount);
+    QCOMPARE(model.columnCount(), 1);
 }
 
 void TestThreadListModel::appendsBatches()
@@ -467,21 +462,21 @@ void TestThreadListModel::reportsSubjectAndAuthors()
     ThreadListModel model;
     model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("hello")) });
 
-    const QModelIndex authors = model.index(0, ThreadListModel::AuthorsColumn);
-    QCOMPARE(model.data(authors, Qt::DisplayRole).toString(),
+    // One index, every field, by role. The card draws them all at once, so
+    // reading them through Qt::DisplayRole as five columns did is no longer
+    // possible: DisplayRole answers the subject alone.
+    const QModelIndex card = model.index(0, 0);
+    QCOMPARE(model.data(card, ThreadListModel::SendersRole).toString(),
              QStringLiteral("Alice"));
+    QVERIFY(model.data(card, ThreadListModel::DateRole).toDateTime().isValid());
+    QCOMPARE(model.data(card, ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("hello"));
 
-    const QModelIndex date = model.index(0, ThreadListModel::DateColumn);
-    QVERIFY(!model.data(date, Qt::DisplayRole).toString().isEmpty());
-
-    // Tags are no longer a column; they reach the strip under the message
-    // pane through a role instead.
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
-    QCOMPARE(model.data(subject, ThreadListModel::TagsRole).toStringList(),
+    QCOMPARE(model.data(card, ThreadListModel::TagsRole).toStringList(),
              QStringList({ QStringLiteral("inbox"), QStringLiteral("unread") }));
 }
 
-void TestThreadListModel::subjectShowsMessageCountOnlyForRealThreads()
+void TestThreadListModel::theReplyCountExcludesTheRootMessage()
 {
     ThreadListModel model;
 
@@ -491,12 +486,18 @@ void TestThreadListModel::subjectShowsMessageCountOnlyForRealThreads()
     multi.totalCount = 4;
     model.appendBatch({ single, multi });
 
-    QCOMPARE(model.data(model.index(0, ThreadListModel::SubjectColumn),
-                        Qt::DisplayRole).toString(),
-             QStringLiteral("alone"));
-    QCOMPARE(model.data(model.index(1, ThreadListModel::SubjectColumn),
-                        Qt::DisplayRole).toString(),
-             QStringLiteral("group (4)"));
+    // The count used to be a "(4)" suffix on the subject. It is the expander
+    // on the card's second line now, and it counts REPLIES: totalCount
+    // includes the root message, which is the card itself.
+    QCOMPARE(model.data(model.index(0, 0),
+                        ThreadListModel::ReplyCountRole).toInt(), 0);
+    QCOMPARE(model.data(model.index(1, 0),
+                        ThreadListModel::ReplyCountRole).toInt(), 3);
+
+    // And the subject is bare, with no count spliced into it.
+    QCOMPARE(model.data(model.index(1, 0),
+                        ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("group"));
 }
 
 void TestThreadListModel::unreadThreadsRenderBold()
@@ -507,11 +508,11 @@ void TestThreadListModel::unreadThreadsRenderBold()
     model.appendBatch({ read, makeThread(QStringLiteral("t2"), QStringLiteral("unread")) });
 
     const QVariant readFont =
-        model.data(model.index(0, ThreadListModel::SubjectColumn), Qt::FontRole);
+        model.data(model.index(0, 0), Qt::FontRole);
     QVERIFY(!readFont.isValid());
 
     const QVariant unreadFont =
-        model.data(model.index(1, ThreadListModel::SubjectColumn), Qt::FontRole);
+        model.data(model.index(1, 0), Qt::FontRole);
     QVERIFY(unreadFont.isValid());
     QVERIFY(unreadFont.value<QFont>().bold());
 }
@@ -534,10 +535,10 @@ void TestThreadListModel::readThreadsAreDimmedAndUnreadAreNot()
         { read, makeThread(QStringLiteral("t2"), QStringLiteral("unread")) });
 
     const QVariant readFg =
-        model.data(model.index(0, ThreadListModel::SubjectColumn),
+        model.data(model.index(0, 0),
                    Qt::ForegroundRole);
     const QVariant unreadFg =
-        model.data(model.index(1, ThreadListModel::SubjectColumn),
+        model.data(model.index(1, 0),
                    Qt::ForegroundRole);
 
     QVERIFY2(readFg.isValid(), "a read thread carries no dimming");
@@ -559,16 +560,17 @@ void TestThreadListModel::flaggedThreadsShowAStar()
                                 QStringLiteral("flagged") };
     model.appendBatch({ plain, starred });
 
-    const QString none =
-        model.data(model.index(0, ThreadListModel::FlagColumn),
-                   Qt::DisplayRole).toString();
-    const QString star =
-        model.data(model.index(1, ThreadListModel::FlagColumn),
-                   Qt::DisplayRole).toString();
+    QVERIFY2(!model.data(model.index(0, 0),
+                         ThreadListModel::IsFlaggedRole).toBool(),
+             "an unflagged thread reports itself flagged");
+    QVERIFY2(model.data(model.index(1, 0),
+                        ThreadListModel::IsFlaggedRole).toBool(),
+             "a flagged thread does not report itself flagged");
 
-    QVERIFY2(none.isEmpty(), "an unflagged thread shows something in the column");
-    QVERIFY2(!star.isEmpty(), "a flagged thread shows nothing");
-    QCOMPARE(star, ThreadListModel::flagGlyph());
+    // The glyph the delegate draws from that flag must be something a font can
+    // render: an unrenderable codepoint shows as tofu, which reads as
+    // breakage rather than as a mark.
+    QVERIFY(!ThreadListModel::flagGlyph().isEmpty());
 }
 
 void TestThreadListModel::pillTagsExcludeWhatTheRowAlreadyShows()
@@ -592,7 +594,7 @@ void TestThreadListModel::pillTagsExcludeWhatTheRowAlreadyShows()
     model.appendBatch({ thread });
 
     const QStringList pills =
-        model.data(model.index(0, ThreadListModel::SubjectColumn),
+        model.data(model.index(0, 0),
                    ThreadListModel::PillTagsRole).toStringList();
 
     QVERIFY2(pills.contains(QStringLiteral("SBo")), qPrintable(pills.join(',')));
@@ -622,29 +624,6 @@ void TestThreadListModel::pillTagsExcludeWhatTheRowAlreadyShows()
     QCOMPARE(pills, sorted);
 }
 
-void TestThreadListModel::theStarColumnIsNarrowAndCarriesNoText()
-{
-    // A marker column, like the paperclip beside it: centred, and never
-    // carrying the subject or anything else that would want width.
-    ThreadListModel model;
-    ThreadSummary starred = makeThread(QStringLiteral("t1"),
-                                       QStringLiteral("starred"));
-    starred.tags = QStringList{ QStringLiteral("flagged") };
-    model.appendBatch({ starred });
-
-    const QModelIndex index = model.index(0, ThreadListModel::FlagColumn);
-    QCOMPARE(model.data(index, Qt::TextAlignmentRole).toInt(),
-             int(Qt::AlignCenter));
-
-    // The glyph is one character, whether it is the star or its fallback: a
-    // column sized for a marker cannot hold a word.
-    QCOMPARE(ThreadListModel::flagGlyph().size(), 1);
-
-    // And it says what it means, for anyone who cannot tell the glyph apart
-    // from the paperclip beside it.
-    QVERIFY(!model.data(index, Qt::ToolTipRole).toString().isEmpty());
-}
-
 void TestThreadListModel::theUnreadCueDoesNotDependOnFontWeight()
 {
     // The property that matters, stated directly: strip every font from the
@@ -657,17 +636,14 @@ void TestThreadListModel::theUnreadCueDoesNotDependOnFontWeight()
     model.appendBatch(
         { read, makeThread(QStringLiteral("t2"), QStringLiteral("unread")) });
 
-    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
-        const QVariant readFg =
-            model.data(model.index(0, column), Qt::ForegroundRole);
-        const QVariant unreadFg =
-            model.data(model.index(1, column), Qt::ForegroundRole);
+    const QVariant readFg =
+        model.data(model.index(0, 0), Qt::ForegroundRole);
+    const QVariant unreadFg =
+        model.data(model.index(1, 0), Qt::ForegroundRole);
 
-        QVERIFY2(readFg != unreadFg,
-                 qPrintable(QStringLiteral("column %1 renders read and unread "
-                                           "identically once the font is "
-                                           "ignored").arg(column)));
-    }
+    QVERIFY2(readFg != unreadFg,
+             "read and unread cards render identically once the font is "
+             "ignored");
 }
 
 void TestThreadListModel::aDoomedThreadKeepsItsContrastEvenWhenRead()
@@ -684,30 +660,9 @@ void TestThreadListModel::aDoomedThreadKeepsItsContrastEvenWhenRead()
 
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QCOMPARE(model.data(subject, Qt::ForegroundRole).value<QBrush>().color(),
              QColor(Qt::white));
-}
-
-void TestThreadListModel::tagsAreTheFirstColumnAndSubjectTheLast()
-{
-    // Subject stretches to fill the view, so whatever sits after it is pushed
-    // off-screen. Tags used to be there, which is why acting on a thread
-    // looked like it did nothing: the only column that changed was invisible.
-    QCOMPARE(ThreadListModel::SubjectColumn, ThreadListModel::ColumnCount - 1);
-
-    ThreadListModel model;
-    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("hello")) });
-    QCOMPARE(model.headerData(ThreadListModel::SubjectColumn, Qt::Horizontal,
-                              Qt::DisplayRole).toString(),
-             QStringLiteral("Subject"));
-
-    // No tags column at all: spelling out a dozen tags per row consumed most
-    // of the list's width and was unreadable.
-    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
-        QVERIFY(model.headerData(column, Qt::Horizontal, Qt::DisplayRole)
-                    .toString() != QStringLiteral("Tags"));
-    }
 }
 
 void TestThreadListModel::accountTagBecomesAChipLabel()
@@ -721,7 +676,7 @@ void TestThreadListModel::accountTagBecomesAChipLabel()
                                QStringLiteral("account-webmail-personal") };
     model.appendBatch({ thread });
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QCOMPARE(model.data(subject, ThreadListModel::AccountLabelRole).toString(),
              QStringLiteral("webmail-personal"));
     QVERIFY(model.data(subject, ThreadListModel::AccountColourRole)
@@ -732,7 +687,7 @@ void TestThreadListModel::accountTagBecomesAChipLabel()
     ThreadSummary untagged = makeThread(QStringLiteral("t2"), QStringLiteral("hi"));
     untagged.tags = QStringList{ QStringLiteral("inbox") };
     plain.appendBatch({ untagged });
-    QVERIFY(plain.data(plain.index(0, ThreadListModel::SubjectColumn),
+    QVERIFY(plain.data(plain.index(0, 0),
                        ThreadListModel::AccountLabelRole).toString().isEmpty());
 }
 
@@ -748,7 +703,7 @@ void TestThreadListModel::unreadStylingSurvivesAnAccountChip()
                                QStringLiteral("account-webmail-personal") };
     model.appendBatch({ thread });
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QVERIFY(!model.data(subject, ThreadListModel::AccountLabelRole)
                  .toString().isEmpty());
 
@@ -771,7 +726,7 @@ void TestThreadListModel::accountChipUsesTheConfiguredColour()
     thread.tags = QStringList{ QStringLiteral("account-webmail-personal") };
     model.appendBatch({ thread });
 
-    QCOMPARE(model.data(model.index(0, ThreadListModel::SubjectColumn),
+    QCOMPARE(model.data(model.index(0, 0),
                         ThreadListModel::AccountColourRole).value<QColor>(),
              QColor(QStringLiteral("#cc0000")));
 }
@@ -783,7 +738,7 @@ void TestThreadListModel::deletedThreadsAreRedAndStruckThrough()
     thread.tags = QStringList{ QStringLiteral("inbox") };
     model.appendBatch({ thread });
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QVERIFY(!model.data(subject, Qt::BackgroundRole).isValid());
 
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
@@ -808,7 +763,7 @@ void TestThreadListModel::spamThreadsAreOrangeAndStruckThrough()
 
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("spam") }, {});
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QCOMPARE(model.data(subject, Qt::BackgroundRole).value<QBrush>().color(),
              ThreadListModel::spamColour());
     QVERIFY(model.data(subject, Qt::FontRole).value<QFont>().strikeOut());
@@ -817,10 +772,12 @@ void TestThreadListModel::spamThreadsAreOrangeAndStruckThrough()
     QVERIFY(ThreadListModel::spamColour() != ThreadListModel::deletedColour());
 }
 
-void TestThreadListModel::doomedStylingCoversEveryColumn()
+void TestThreadListModel::doomedStylingCoversTheWholeCard()
 {
-    // A cue on one column would vanish the moment that column scrolled out of
-    // view, which is the bug this whole change exists to fix.
+    // The cue is on the card itself. It used to be asserted per column,
+    // because a cue on one column vanished the moment that column scrolled out
+    // of view; one column cannot scroll away, but the roles still have to be
+    // answered or a deleted card looks untouched.
     ThreadListModel model;
     ThreadSummary thread = makeThread(QStringLiteral("t1"), QStringLiteral("doomed"));
     thread.tags = QStringList{ QStringLiteral("inbox") };
@@ -828,13 +785,11 @@ void TestThreadListModel::doomedStylingCoversEveryColumn()
 
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
 
-    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
-        const QModelIndex index = model.index(0, column);
-        QVERIFY2(model.data(index, Qt::BackgroundRole).isValid(),
-                 qPrintable(QStringLiteral("column %1 has no background").arg(column)));
-        QVERIFY2(model.data(index, Qt::FontRole).value<QFont>().strikeOut(),
-                 qPrintable(QStringLiteral("column %1 is not struck through").arg(column)));
-    }
+    const QModelIndex index = model.index(0, 0);
+    QVERIFY2(model.data(index, Qt::BackgroundRole).isValid(),
+             "a deleted card has no background");
+    QVERIFY2(model.data(index, Qt::FontRole).value<QFont>().strikeOut(),
+             "a deleted card is not struck through");
 }
 
 void TestThreadListModel::ordinaryThreadsCarryNoRowColour()
@@ -848,7 +803,7 @@ void TestThreadListModel::ordinaryThreadsCarryNoRowColour()
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("deleted") }, {});
     model.applyTagChange(QStringLiteral("t1"), {}, { QStringLiteral("deleted") });
 
-    const QModelIndex subject = model.index(0, ThreadListModel::SubjectColumn);
+    const QModelIndex subject = model.index(0, 0);
     QVERIFY(!model.data(subject, Qt::BackgroundRole).isValid());
     const QVariant font = model.data(subject, Qt::FontRole);
     QVERIFY(!font.isValid() || !font.value<QFont>().strikeOut());
@@ -871,7 +826,7 @@ void TestThreadListModel::threadIdIsReachableFromAnIndex()
     model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")),
                         makeThread(QStringLiteral("t2"), QStringLiteral("two")) });
 
-    const QModelIndex index = model.index(1, ThreadListModel::SubjectColumn);
+    const QModelIndex index = model.index(1, 0);
     QCOMPARE(model.data(index, ThreadListModel::ThreadIdRole).toString(),
              QStringLiteral("t2"));
 }
@@ -889,7 +844,7 @@ void TestThreadListModel::invalidIndexesReturnNothing()
     // the reset in clear() before data() ever sees it. data() still checks its
     // own bounds, but that guard is unreachable defence, not something these
     // assertions can falsify.
-    QVERIFY(!model.index(0, ThreadListModel::ColumnCount).isValid());
+    QVERIFY(!model.index(0, 1).isValid());
     QVERIFY(!model.index(5, 0).isValid());
     QVERIFY(!model.index(-1, 0).isValid());
 
@@ -953,9 +908,9 @@ void TestThreadListModel::tagChangeSignalsExactlyTheChangedRow()
     const QModelIndex bottomRight = changed.first().at(1).value<QModelIndex>();
     QCOMPARE(topLeft.row(), 1);
     QCOMPARE(bottomRight.row(), 1);
+    // One column, so the range is a single index: the card repaints whole.
     QCOMPARE(topLeft.column(), 0);
-    // The whole row repaints: unread state changes the font of every column.
-    QCOMPARE(bottomRight.column(), ThreadListModel::ColumnCount - 1);
+    QCOMPARE(bottomRight.column(), 0);
 }
 
 void TestThreadListModel::tagChangeForUnknownThreadIsIgnored()
@@ -1006,12 +961,11 @@ void TestThreadListModel::modelPassesQtTester()
     model.clear();
 }
 
-void TestThreadListModel::attachmentColumnIsFirstAndMarksOnlyTaggedThreads()
+void TestThreadListModel::attachmentIsMarkedOnlyOnTaggedThreads()
 {
-    // Leftmost, and narrow: the point is to see an attachment without opening
-    // the thread, which only works if the column is never scrolled away.
-    QCOMPARE(ThreadListModel::AttachmentColumn, 0);
-
+    // The mark is drawn on the card's second line by CardDelegate. What the
+    // model owes it is the flag and the glyph, which is what this asserts:
+    // the column that used to carry it is gone.
     ThreadSummary plain = makeThread(QStringLiteral("t1"),
                                      QStringLiteral("no attachment"));
     ThreadSummary withFile = makeThread(QStringLiteral("t2"),
@@ -1024,13 +978,12 @@ void TestThreadListModel::attachmentColumnIsFirstAndMarksOnlyTaggedThreads()
     model.appendBatch({ plain, withFile });
 
     const QModelIndex plainCell =
-        model.index(0, ThreadListModel::AttachmentColumn);
+        model.index(0, 0);
     const QModelIndex fileCell =
-        model.index(1, ThreadListModel::AttachmentColumn);
+        model.index(1, 0);
 
-    QVERIFY(model.data(plainCell, Qt::DisplayRole).toString().isEmpty());
-    QCOMPARE(model.data(fileCell, Qt::DisplayRole).toString(),
-             ThreadListModel::attachmentGlyph());
+    QVERIFY(!model.data(plainCell, ThreadListModel::HasAttachmentRole).toBool());
+    QVERIFY(model.data(fileCell, ThreadListModel::HasAttachmentRole).toBool());
 
     // The glyph must be something a font can draw. An unrenderable codepoint
     // shows as a tofu box, which reads as breakage rather than as a marker.
@@ -1040,11 +993,6 @@ void TestThreadListModel::attachmentColumnIsFirstAndMarksOnlyTaggedThreads()
     // have an attachment on hover.
     QVERIFY(model.data(plainCell, Qt::ToolTipRole).toString().isEmpty());
     QVERIFY(!model.data(fileCell, Qt::ToolTipRole).toString().isEmpty());
-
-    // The header carries no text: a label would set a minimum width far wider
-    // than the icon and defeat the narrow column.
-    QVERIFY(model.headerData(ThreadListModel::AttachmentColumn, Qt::Horizontal,
-                             Qt::DisplayRole).toString().isEmpty());
 }
 
 void TestThreadListModel::modelHasOneColumn()

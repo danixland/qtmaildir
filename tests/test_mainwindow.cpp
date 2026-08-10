@@ -46,6 +46,12 @@
 #include "mainwindow.h"
 #include "messageview.h"
 #include "notmuchworker.h"
+#include "carddelegate.h"
+#include "cardlayout.h"
+
+#include <QImage>
+#include <QPainter>
+#include <QScrollBar>
 #include "tagchip.h"
 #include "threadlistmodel.h"
 #include "threadlistview.h"
@@ -95,10 +101,9 @@ private slots:
     void anUnobservableLockTableLeavesTheSyncButtonUsable();
     void theStatusBarFollowsTheSyncPhase();
     void aSelectedReadThreadIsNotDimmedIntoTheHighlight();
-    void thePillRowSpansTheWholeWidthNotOneColumn();
     void childRowsAreIndentedUnderTheirThread();
     void aThreadWithRepliesDrawsAVisibleExpander();
-    void noTagStripIsPaintedUnderAMessageRow();
+    void cardsNeverScrollSideways();
     void replyRowsKeepTheirTextUnderTheThreadLine();
     void clickingTheExpanderTogglesTheThread();
     void selectingAMessageRowTargetsThatMessageNotItsThread();
@@ -451,11 +456,12 @@ void TestMainWindow::headerStateFromADifferentColumnLayoutIsDiscarded()
         window.close();
     }
 
-    // Forge a state file from an older layout: same blob, wrong column count.
+    // Forge a state file from the five-column layout. Nothing reads these keys
+    // any more, and that is exactly what must be verified: a blob saved by an
+    // older version has to be ignored rather than applied to a one-column view.
     {
         QSettings state(MainWindow::uiStatePath(), QSettings::IniFormat);
-        state.setValue(QStringLiteral("threadlist/columns"),
-                       int(ThreadListModel::ColumnCount) - 1);
+        state.setValue(QStringLiteral("threadlist/columns"), 5);
         state.setValue(QStringLiteral("threadlist/header"),
                        QByteArray("not a header this model could have saved"));
     }
@@ -466,9 +472,7 @@ void TestMainWindow::headerStateFromADifferentColumnLayoutIsDiscarded()
 
     auto *view = reopened.findChild<QTreeView *>();
     QVERIFY(view);
-    QCOMPARE(view->columnWidth(ThreadListModel::AttachmentColumn), 28);
-    QCOMPARE(view->columnWidth(ThreadListModel::DateColumn), 130);
-    QCOMPARE(view->columnWidth(ThreadListModel::SubjectColumn), 520);
+    QCOMPARE(view->model()->columnCount(), 1);
 
     QFile::remove(MainWindow::uiStatePath());
     QStandardPaths::setTestModeEnabled(false);
@@ -548,83 +552,6 @@ static ThreadSummary makeThread(const QString &id, const QStringList &tags)
     return thread;
 }
 
-void TestMainWindow::thePillRowSpansTheWholeWidthNotOneColumn()
-{
-    // The pills are a row-wide strip under the cells, not content of the
-    // subject cell. Drawn from the subject column's delegate they stop at that
-    // column's edge, so a thread with several tags loses the last of them; and
-    // they inherit the column's left edge, which puts them under the subject
-    // rather than under the row.
-    //
-    // The property: pills appear to the LEFT of where the subject column
-    // starts, which no per-cell delegate on that column could produce.
-    const Config config;
-    MainWindow window(config);
-
-    auto *model = window.findChild<ThreadListModel *>();
-    QVERIFY(model);
-    auto *view = window.findChild<QTreeView *>();
-    QVERIFY(view);
-
-    ThreadSummary thread = makeThread(QStringLiteral("t1"), {});
-    thread.tags = QStringList{ QStringLiteral("mailing-list/SBo"),
-                               QStringLiteral("signed") };
-    model->appendBatch({ thread });
-
-    window.resize(1400, 300);
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
-    QApplication::processEvents();
-
-    const int subjectLeft =
-        view->columnViewportPosition(ThreadListModel::SubjectColumn);
-    QVERIFY2(subjectLeft > 40,
-             qPrintable(QStringLiteral("the subject column starts at x=%1, too "
-                                       "close to the left edge to tell a "
-                                       "row-wide strip from a subject-cell one")
-                            .arg(subjectLeft)));
-    // The strip must have somewhere to paint that the subject cell does not
-    // reach, or this test cannot fail.
-    QVERIFY2(subjectLeft < view->viewport()->width(),
-             qPrintable(QStringLiteral("the subject column is off-screen "
-                                       "(x=%1, viewport %2), so nothing it "
-                                       "draws is measurable")
-                            .arg(subjectLeft)
-                            .arg(view->viewport()->width())));
-
-    QImage shot(view->viewport()->size(), QImage::Format_ARGB32);
-    shot.fill(Qt::transparent);
-    view->viewport()->render(&shot);
-
-    // Count pixels matching the tag colours EXACTLY, not "saturated" pixels.
-    // A looser test counts the antialiased edge of the selection highlight
-    // blending into the background, which is several hundred distinct
-    // near-background colours and passes whatever the strip does. Both earlier
-    // versions of this test did precisely that.
-    QSet<QRgb> pillColours;
-    const QVariantList colours =
-        model->index(0, ThreadListModel::SubjectColumn)
-            .data(ThreadListModel::PillColoursRole).toList();
-    QVERIFY2(!colours.isEmpty(), "the model supplied no pill colours");
-    for (const QVariant &colour : colours)
-        pillColours.insert(colour.value<QColor>().rgb());
-
-    const int rowHeight = threadRowHeight(view, 0);
-    QVERIFY(rowHeight > 0);
-
-    int chipPixels = 0;
-    for (int y = 0; y < qMin(rowHeight, shot.height()); ++y) {
-        for (int x = 0; x < qMin(subjectLeft, shot.width()); ++x) {
-            if (pillColours.contains(shot.pixel(x, y) | 0xff000000))
-                ++chipPixels;
-        }
-    }
-
-    QVERIFY2(chipPixels > 0,
-             "no pill-coloured pixels left of the subject column: the strip is "
-             "still confined to that cell rather than spanning the row");
-}
-
 void TestMainWindow::childRowsAreIndentedUnderTheirThread()
 {
     const Config config;
@@ -661,14 +588,14 @@ void TestMainWindow::childRowsAreIndentedUnderTheirThread()
     view->expand(root);
     QApplication::processEvents();
 
-    // Measured on the TREE POSITION column, not on column 0. A QTreeView
-    // indents only the column carrying the expander, verified against Qt 6.11:
-    // with setTreePosition(4), column 0 reports the same left edge for a thread
-    // and its reply (0 and 0) while column 4 reports 420 and 440. Asserting on
-    // column 0 therefore fails against a perfectly indented tree.
-    const int treeColumn = ThreadListModel::SubjectColumn;
-    const QModelIndex rootCell = model->index(0, treeColumn, QModelIndex());
-    const QModelIndex child = model->index(0, treeColumn, root);
+    // One column, and setIndentation(0): Qt indents nothing, CardLayout draws
+    // the indent itself. So visualRect reports the SAME rect for a thread and
+    // its reply, and the indent has to be read off the layout rather than off
+    // the geometry. That is the trap CLAUDE.md records in reverse: there,
+    // visualRect reported an indent the text did not have; here it reports
+    // none while the text is indented.
+    const QModelIndex rootCell = model->index(0, 0, QModelIndex());
+    const QModelIndex child = model->index(0, 0, root);
     QVERIFY(child.isValid());
 
     // Guards before the claim: a probe that cannot see both rows can report
@@ -679,55 +606,84 @@ void TestMainWindow::childRowsAreIndentedUnderTheirThread()
              "the reply row has no height: it is collapsed or off-screen, and "
              "an indent test against it would pass without drawing anything");
 
-    QVERIFY2(view->visualRect(child).left() > view->visualRect(rootCell).left(),
-             "the reply is not indented relative to its thread");
-
-    // The geometry being indented is NOT the same as the reply LOOKING
-    // indented, and asserting only the former shipped a build with no visible
-    // nesting at all. A thread row draws an account chip before its subject and
-    // a reply row does not, so the reply's text starts about a chip's width to
-    // the left of the thread's; at Qt's default 20px indent that difference
-    // swallows the shift entirely.
+    // The indent is NOT in the geometry. setIndentation(0) means visualRect
+    // reports the same left edge for both rows, deliberately: CardLayout draws
+    // the indent inside the card's own rect. Asserting on visualRect here
+    // would fail against a perfectly indented list, which is the mirror of the
+    // trap CLAUDE.md records for item 20, where visualRect reported an indent
+    // the text did not have.
     //
-    // So the real property: where the TEXT lands. The reply's subject must
-    // begin to the right of the thread's, which is what the eye reads as
-    // nesting.
-    const int chipWidth =
-        TagChip::sizeFor(QFontMetrics(view->font()),
-                         model->data(rootCell, ThreadListModel::AccountLabelRole)
-                             .toString()).width();
-    QVERIFY2(chipWidth > 0,
-             "the thread row has no account chip, so this test cannot measure "
-             "the offset it is meant to compensate for");
+    // So the real property, as before: where the TEXT lands. It is read off
+    // the layout, which is what the delegate paints from.
+    CardLayout::Input threadIn;
+    threadIn.isMessage = false;
+    threadIn.depth = 0;
+    CardLayout::Input replyIn;
+    replyIn.isMessage = true;
+    replyIn.depth =
+        model->data(child, ThreadListModel::MessageDepthRole).toInt();
+    QVERIFY2(replyIn.depth > 0,
+             "the reply reports depth 0, so there is no nesting to measure");
 
-    const int threadTextLeft = view->visualRect(rootCell).left() + chipWidth;
-    QVERIFY2(view->visualRect(child).left() > threadTextLeft,
+    const QRect rect = view->visualRect(rootCell);
+    const CardLayout threadCard =
+        CardLayout::compute(threadIn, rect, view->font());
+    const CardLayout replyCard =
+        CardLayout::compute(replyIn, rect, view->font());
+
+    QVERIFY2(replyCard.contentLeft > threadCard.contentLeft,
              qPrintable(QStringLiteral("the reply's text starts at x=%1, not "
-                                       "right of the thread's text at x=%2: the "
-                                       "indent does not beat the account chip "
-                                       "and the nesting is invisible")
-                            .arg(view->visualRect(child).left())
-                            .arg(threadTextLeft)));
+                                       "right of the thread's at x=%2: the "
+                                       "nesting is invisible")
+                            .arg(replyCard.contentLeft)
+                            .arg(threadCard.contentLeft)));
+
+    // And the spine that makes the nesting read as one block rather than as an
+    // arbitrary offset.
+    QCOMPARE(replyCard.spines.size(), replyIn.depth);
+}
+
+void TestMainWindow::cardsNeverScrollSideways()
+{
+    const Config config;
+    MainWindow window(config);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    // A long subject, so the guard below is not vacuous: this is exactly the
+    // content that used to make the subject column wider than the viewport.
+    model->appendBatch({ makeThread(
+        QStringLiteral("t1"),
+        QStringList{ QStringLiteral("inbox") }) });
+    QApplication::processEvents();
+
+    // Item 51: clicking a row used to scroll the list sideways, because the
+    // subject column was wider than the viewport and auto-scroll brought the
+    // clicked index fully into view. A card is exactly viewport width, so
+    // there is nowhere to scroll to.
+    QVERIFY2(view->visualRect(model->index(0, 0)).height() > 0,
+             "no card is drawn, so there is no layout to assert about");
+    QCOMPARE(view->horizontalScrollBar()->minimum(),
+             view->horizontalScrollBar()->maximum());
 }
 
 void TestMainWindow::aThreadWithRepliesDrawsAVisibleExpander()
 {
     // The expander is the ONLY thing saying a thread can be opened, and it took
-    // four wrong attempts to get on screen, each of which looked correct in
-    // code:
+    // four wrong attempts to get on screen before item 53, each of which looked
+    // correct in code and none of which a geometry or role assertion could see.
+    // So this counts painted pixels.
     //
-    //   - QTreeView::drawBranches, the documented hook, runs BEFORE the row's
-    //     cells, so with the expander on a content column the delegate's own
-    //     background paints over it. A 60-pixel triangle survived as 8.
-    //   - Sizing it from the row rather than the branch rect put most of it
-    //     outside that rect.
-    //   - Moving it into the delegate but calling it from only one of the two
-    //     branches left every real row without one, since every real row has an
-    //     account chip and takes the other branch.
-    //
-    // None of those is visible to a test that asserts on geometry or on model
-    // roles, so this one counts painted pixels of the palette colour the glyph
-    // is drawn in.
+    // Painted through the DELEGATE rather than through viewport()->render().
+    // The viewport render returns a blank image here: CLAUDE.md records that it
+    // does so in several ordinary situations, and this test proved it again,
+    // reporting zero ink over a card the delegate demonstrably paints 2183
+    // pixels into. A probe that sees nothing cannot report on anything.
     const Config config;
     MainWindow window(config);
 
@@ -737,7 +693,7 @@ void TestMainWindow::aThreadWithRepliesDrawsAVisibleExpander()
     QVERIFY(view);
 
     // Two threads: one with replies, one without. The second is the control,
-    // and without it a test that counts text pixels would pass on any row.
+    // and without it a test that counts ink would pass on any card.
     ThreadSummary withReplies = makeThread(
         QStringLiteral("t1"),
         QStringList{ TagColors::tagForAccountKey(QStringLiteral("work")) });
@@ -748,61 +704,66 @@ void TestMainWindow::aThreadWithRepliesDrawsAVisibleExpander()
     lone.totalCount = 1;
     model->appendBatch({ withReplies, lone });
 
-    window.resize(1400, 300);
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
-    QApplication::processEvents();
+    const QModelIndex first = model->index(0, 0, QModelIndex());
+    const QModelIndex second = model->index(1, 0, QModelIndex());
 
-    const QModelIndex first =
-        model->index(0, ThreadListModel::SubjectColumn, QModelIndex());
-    const QModelIndex second =
-        model->index(1, ThreadListModel::SubjectColumn, QModelIndex());
+    // Guards: the model agrees about which thread has replies, and only that
+    // one is offered an expander at all.
+    QCOMPARE(model->data(first, ThreadListModel::ReplyCountRole).toInt(), 2);
+    QCOMPARE(model->data(second, ThreadListModel::ReplyCountRole).toInt(), 0);
 
-    // Guards: both rows on screen, and the model agreeing about which has
-    // replies. Without these a zero count could mean anything.
-    QVERIFY2(view->visualRect(first).height() > 0, "the first row is not drawn");
-    QVERIFY2(view->visualRect(second).height() > 0,
-             "the control row is not drawn");
-    QVERIFY(model->data(first, ThreadListModel::HasRepliesRole).toBool());
-    QVERIFY(!model->data(second, ThreadListModel::HasRepliesRole).toBool());
+    const QFont font = view->font();
+    const int height = CardLayout::heightFor(font);
 
-    QImage shot(view->viewport()->size(), QImage::Format_ARGB32);
-    shot.fill(Qt::transparent);
-    view->viewport()->render(&shot);
+    const auto inkInExpander = [&](const QModelIndex &index) {
+        QImage shot(400, height, QImage::Format_ARGB32);
+        shot.fill(Qt::white);
+        QPainter painter(&shot);
+        QStyleOptionViewItem option;
+        option.rect = QRect(0, 0, 400, height);
+        option.font = font;
+        option.palette = QApplication::palette();
+        option.state = QStyle::State_Enabled;
+        CardDelegate delegate;
+        delegate.paint(&painter, option, index);
+        painter.end();
 
-    // The exact colour the glyph is filled with, matched exactly rather than by
-    // a brightness threshold, which would count antialiased subject text.
-    const QRgb glyph = view->palette().color(QPalette::Text).rgb();
-
-    // Only the strip in front of the subject text, so the subject's own glyphs
-    // cannot be counted. kExpanderWidth is the room the delegate reserves.
-    const auto countGlyphPixels = [&](const QModelIndex &index) {
-        const QRect rect = view->visualRect(index);
+        const QRect rect = CardDelegate::expanderRectFor(option, index);
         int found = 0;
-        for (int y = rect.top(); y < qMin(rect.bottom(), shot.height()); ++y) {
-            for (int x = rect.left();
-                 x < qMin(rect.left() + SubjectDelegate::kExpanderWidth,
-                          shot.width());
+        for (int y = rect.top(); y <= rect.bottom() && y < shot.height(); ++y) {
+            for (int x = rect.left(); x <= rect.right() && x < shot.width();
                  ++x) {
-                if ((shot.pixel(x, y) | 0xff000000) == (glyph | 0xff000000))
+                if ((shot.pixel(x, y) | 0xff000000) != 0xffffffffu)
                     ++found;
             }
         }
-        return found;
+
+        // Guard on the probe itself: prove it can see the card's own text
+        // before trusting it about the expander. A probe that finds no ink
+        // anywhere reports "nothing was drawn" whatever the delegate did.
+        int anyInk = 0;
+        for (int y = 0; y < shot.height(); ++y)
+            for (int x = 0; x < shot.width(); ++x)
+                if ((shot.pixel(x, y) | 0xff000000) != 0xffffffffu)
+                    ++anyInk;
+        return std::pair<int, int>(found, anyInk);
     };
 
-    const int drawn = countGlyphPixels(first);
-    const int control = countGlyphPixels(second);
+    const auto [drawn, drawnAnywhere] = inkInExpander(first);
+    const auto [control, controlAnywhere] = inkInExpander(second);
+
+    QVERIFY2(drawnAnywhere > 0 && controlAnywhere > 0,
+             "the probe finds no ink on either card, so it cannot report on "
+             "the expander either");
 
     QVERIFY2(drawn > 12,
-             qPrintable(QStringLiteral("only %1 expander pixels: the glyph is "
-                                       "clipped or painted over, which is how "
-                                       "it shipped as an invisible dot")
-                            .arg(drawn)));
-
-    // The control must have none, or the count above is measuring something
-    // every row draws.
-    QCOMPARE(control, 0);
+             qPrintable(QStringLiteral("only %1 pixels in the expander's rect: "
+                                       "the reply count is clipped or painted "
+                                       "over").arg(drawn)));
+    QVERIFY2(control == 0,
+             qPrintable(QStringLiteral("a thread with no replies drew %1 "
+                                       "pixels where an expander would go")
+                            .arg(control)));
 }
 
 void TestMainWindow::selectingAThreadRowNamesHowManyMessagesItStandsFor()
@@ -1110,7 +1071,7 @@ void TestMainWindow::clickingTheExpanderTogglesTheThread()
 
     const QModelIndex root = model->index(0, 0, QModelIndex());
     const QModelIndex subject =
-        model->index(0, ThreadListModel::SubjectColumn, QModelIndex());
+        model->index(0, 0, QModelIndex());
     const QRect rect = view->visualRect(subject);
 
     // Guards: the row is drawn, it claims to have replies, and it starts
@@ -1119,11 +1080,15 @@ void TestMainWindow::clickingTheExpanderTogglesTheThread()
     QVERIFY(model->data(subject, ThreadListModel::HasRepliesRole).toBool());
     QVERIFY(!view->isExpanded(root));
 
-    // Aimed at the glyph itself: the delegate reserves kExpanderWidth at the
-    // left of the subject cell and centres the triangle in it.
-    const QPoint hit(rect.left() + SubjectDelegate::kExpanderWidth / 2,
-                     rect.top() + SubjectDelegate::kRowPadding
-                         + QFontMetrics(view->font()).height() / 2);
+    // Aimed at the rect the delegate reports, not at one reconstructed here:
+    // the drawn target and the clickable one cannot drift if both come from
+    // the same call.
+    QStyleOptionViewItem option;
+    option.rect = rect;
+    option.font = view->font();
+    const QRect expander = CardDelegate::expanderRectFor(option, subject);
+    QVERIFY2(!expander.isEmpty(), "the card offers no expander to click");
+    const QPoint hit = expander.center();
 
     QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, hit);
     QApplication::processEvents();
@@ -1177,7 +1142,7 @@ void TestMainWindow::replyRowsKeepTheirTextUnderTheThreadLine()
     QApplication::processEvents();
 
     const QModelIndex child =
-        model->index(0, ThreadListModel::AuthorsColumn, root);
+        model->index(0, 0, root);
     const QRect rect = view->visualRect(child);
     QVERIFY2(rect.height() > 0, "the reply row is not on screen");
 
@@ -1201,121 +1166,6 @@ void TestMainWindow::replyRowsKeepTheirTextUnderTheThreadLine()
                                        "reply's sender cell: the row was "
                                        "painted over after its text was drawn")
                             .arg(textPixels)));
-}
-
-void TestMainWindow::noTagStripIsPaintedUnderAMessageRow()
-{
-    // The strip is a row-wide band of the THREAD's tags. Painted under every
-    // reply as well it would stripe the list and repeat identical tags down the
-    // whole expansion.
-    //
-    // TWO independent guards stop that, and this test is aimed at the SECOND:
-    // the model returns no pills for a child row, and the view skips child rows
-    // in its walk. Asserting against the real model tests only the first, and
-    // the view's guard can be deleted without the test noticing: verified by
-    // mutation, which passed with the skip removed. So the model is replaced
-    // here by one that hands out pills for EVERY row, thread and reply alike,
-    // leaving the view's own skip as the only thing that can keep the reply
-    // rows clean.
-    /// Hands out the same pills for a message row as for a thread row, which
-    /// the real model never does. Without this the view's skip is unobservable.
-    class PillsEverywhereModel : public ThreadListModel
-    {
-    public:
-        QVariant data(const QModelIndex &index, int role) const override
-        {
-            if (role == PillTagsRole) {
-                return QStringList{ QStringLiteral("mailing-list/SBo"),
-                                    QStringLiteral("signed") };
-            }
-            if (role == PillColoursRole) {
-                return QVariantList{ QVariant::fromValue(QColor(Qt::magenta)),
-                                     QVariant::fromValue(QColor(Qt::cyan)) };
-            }
-            return ThreadListModel::data(index, role);
-        }
-    };
-
-    PillsEverywhereModel model;
-    ThreadListView view;
-    view.setModel(&model);
-    view.setTreePosition(ThreadListModel::SubjectColumn);
-    view.setUniformRowHeights(true);
-
-    // The delegates MainWindow installs, and not optional here. The strip's
-    // band is measured against SubjectDelegate::rowHeightFor; without the
-    // delegate the rows take the default height, the band overflows into the
-    // row below, and the thread's own strip paints across the reply. That
-    // reads exactly like a missing skip in the walk and is not one.
-    view.setItemDelegate(new RowStyleDelegate(&view));
-    view.setItemDelegateForColumn(ThreadListModel::SubjectColumn,
-                                  new SubjectDelegate(&view));
-    view.setColumnWidth(ThreadListModel::AttachmentColumn, 28);
-    view.setColumnWidth(ThreadListModel::FlagColumn, 28);
-    view.setColumnWidth(ThreadListModel::DateColumn, 130);
-    view.setColumnWidth(ThreadListModel::AuthorsColumn, 180);
-    view.setColumnWidth(ThreadListModel::SubjectColumn, 520);
-
-    ThreadSummary thread = makeThread(QStringLiteral("t1"), {});
-    thread.tags = QStringList{ QStringLiteral("mailing-list/SBo"),
-                               QStringLiteral("signed") };
-    model.appendBatch({ thread });
-
-    MessageNode first;
-    first.messageId = QStringLiteral("m0@example.org");
-    first.threadId = QStringLiteral("t1");
-    first.depth = 0;
-    MessageNode reply;
-    reply.messageId = QStringLiteral("m1@example.org");
-    reply.threadId = QStringLiteral("t1");
-    reply.depth = 1;
-    model.setThreadMessages(QStringLiteral("t1"), { first, reply });
-
-    view.resize(1400, 300);
-    view.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&view));
-
-    const QModelIndex root = model.index(0, 0, QModelIndex());
-    view.expand(root);
-    QApplication::processEvents();
-
-    const QModelIndex child = model.index(0, 0, root);
-    const QRect childRect = view.visualRect(child);
-    QVERIFY2(childRect.height() > 0, "the reply row is not on screen");
-
-    // The exact colours the stub supplies, so an antialiased edge of anything
-    // else cannot be counted as a pill.
-    QSet<QRgb> pillColours;
-    pillColours.insert(QColor(Qt::magenta).rgb());
-    pillColours.insert(QColor(Qt::cyan).rgb());
-
-    QImage shot(view.viewport()->size(), QImage::Format_ARGB32);
-    shot.fill(Qt::transparent);
-    view.viewport()->render(&shot);
-
-    // Guard proving the probe can see pills at all: the THREAD row must have
-    // them, or a zero count under the reply proves nothing about the reply.
-    const QRect rootRect = view.visualRect(root);
-    int threadPills = 0;
-    for (int y = rootRect.top(); y < qMin(rootRect.bottom(), shot.height()); ++y) {
-        for (int x = 0; x < shot.width(); ++x) {
-            if (pillColours.contains(shot.pixel(x, y) | 0xff000000))
-                ++threadPills;
-        }
-    }
-    QVERIFY2(threadPills > 0,
-             "no pill pixels under the THREAD row either, so this probe cannot "
-             "tell a missing strip from a broken render");
-
-    int replyPills = 0;
-    for (int y = childRect.top(); y < qMin(childRect.bottom(), shot.height()); ++y) {
-        for (int x = 0; x < shot.width(); ++x) {
-            if (pillColours.contains(shot.pixel(x, y) | 0xff000000))
-                ++replyPills;
-        }
-    }
-
-    QCOMPARE(replyPills, 0);
 }
 
 void TestMainWindow::aSelectedReadThreadIsNotDimmedIntoTheHighlight()
@@ -1383,15 +1233,15 @@ void TestMainWindow::aSelectedReadThreadIsNotDimmedIntoTheHighlight()
     QVERIFY2(delegate, "the thread view has no styled delegate");
 
     const QModelIndex index =
-        model->index(0, ThreadListModel::SubjectColumn);
+        model->index(0, 0);
 
     // initStyleOption is protected, so the resolved palette is reached the way
     // the painter does: through a subclass that exposes it.
-    struct Probe : SubjectDelegate {
-        using SubjectDelegate::initStyleOption;
+    struct Probe : CardDelegate {
+        using CardDelegate::initStyleOption;
     };
     const auto *probe = static_cast<const Probe *>(
-        static_cast<const SubjectDelegate *>(delegate));
+        static_cast<const CardDelegate *>(delegate));
 
     probe->initStyleOption(&selected, index);
     probe->initStyleOption(&unselected, index);

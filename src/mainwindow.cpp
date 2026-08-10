@@ -42,7 +42,7 @@
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStatusBar>
-#include <QTableView>
+#include <QScrollBar>
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -52,6 +52,8 @@
 #include "mimeparser.h"
 #include "notmuchworker.h"
 #include "querycompleter.h"
+#include "carddelegate.h"
+#include "cardlayout.h"
 #include "tagchip.h"
 #include "tagdialog.h"
 #include "threadlistmodel.h"
@@ -157,20 +159,9 @@ void MainWindow::restoreUiState()
         m_splitter->restoreState(splitter);
     }
 
-    // A header blob saved against a different set of columns must be
-    // discarded, not restored. QHeaderView::restoreState() returns TRUE for a
-    // blob with fewer sections than the model and applies the old widths to
-    // the wrong columns: adding the attachment column in front shifted every
-    // saved width one place right, silently mangling the layout with no error
-    // to detect it by (verified on Qt 6.11). The column count is stored
-    // alongside and the blob is only used when it still matches.
-    const QByteArray header = state.value(QStringLiteral("threadlist/header"))
-                                  .toByteArray();
-    const int savedColumns =
-        state.value(QStringLiteral("threadlist/columns")).toInt();
-    if (!header.isEmpty() && savedColumns == ThreadListModel::ColumnCount) {
-        m_threadView->header()->restoreState(header);
-    }
+    // No thread-list header state is read. The pane is one column drawn whole
+    // by CardDelegate, so there are no widths to restore; a blob saved by an
+    // older version is simply ignored (item 53's Upgrading note).
 
     // The config value is the starting point for a profile that has never
     // zoomed; once the user does, the state file is what they last had.
@@ -187,11 +178,6 @@ void MainWindow::saveUiState() const
     state.setValue(QStringLiteral("window/geometry"), saveGeometry());
     state.setValue(QStringLiteral("window/state"), saveState());
     state.setValue(QStringLiteral("window/splitter"), m_splitter->saveState());
-    state.setValue(QStringLiteral("threadlist/header"),
-                   m_threadView->header()->saveState());
-    // Guards the blob above: see restoreUiState().
-    state.setValue(QStringLiteral("threadlist/columns"),
-                   int(ThreadListModel::ColumnCount));
     state.setValue(QStringLiteral("message/zoom"), m_messageView->zoomFactor());
 }
 
@@ -543,83 +529,42 @@ void MainWindow::buildUi()
     // delegate is confined to one column's rectangle.
     m_threadView = new ThreadListView(central);
     m_threadView->setModel(m_model);
+    m_threadView->setItemDelegate(new CardDelegate(this));
+    m_threadView->setHeaderHidden(true);
     m_threadView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_threadView->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_threadView->header()->setStretchLastSection(false);
-    // Every column Interactive, Subject included: Stretch and ResizeToContents
-    // both compute a width and discard the user's drag. Nothing absorbs spare
-    // width as a result, so the columns end where they end.
-    for (int column = 0; column < ThreadListModel::ColumnCount; ++column) {
-        m_threadView->header()->setSectionResizeMode(
-            column, QHeaderView::Interactive);
-    }
 
-    // The expander goes on the subject column, not on column 0. Column 0 is the
-    // narrow attachment marker, and an expander there has no room: it pushes the
-    // paperclip out of a 28px column entirely.
-    m_threadView->setTreePosition(ThreadListModel::SubjectColumn);
-
-    // No style-drawn branch decoration. SubjectDelegate draws the expander
-    // itself, because drawBranches runs BEFORE the row's cells and the
-    // delegate's own background paints straight over anything put there: a
-    // 60-pixel triangle survived as 8 pixels, indistinguishable from the
-    // near-invisible dot this replaces. Leaving both enabled would draw the
-    // theme's dot underneath the delegate's glyph.
+    // No style-drawn branch decoration. CardDelegate draws the expander itself,
+    // because drawBranches runs BEFORE the row's cells and the delegate's own
+    // background paints straight over anything put there: a 60-pixel triangle
+    // once survived as 8. Leaving both enabled would draw the theme's dot
+    // underneath the delegate's glyph.
     m_threadView->setRootIsDecorated(false);
 
-    // Wider than Qt's default 20px, and the reason is specific rather than
-    // aesthetic. A thread row carries an account chip in front of its subject
-    // and a reply row does not, so a reply's text already starts roughly a
-    // chip's width (~60px) to the LEFT of its thread's. At the default indent
-    // the 20px shift is swallowed by that difference and the replies read as
-    // flush with the thread, or even outdented. Verified against the running
-    // app, not assumed: visualRect reported a correct 20px indent while the
-    // rendered text showed none, because the geometry is indented and the
-    // delegate then lays the text out from its own left edge.
-    m_threadView->setIndentation(SubjectDelegate::kReplyIndent);
-
-    // Two delegates, and the split is not cosmetic. RowStyleDelegate carries
-    // only the selection fix every column needs: the read/unread dimming
-    // arrives as a Qt::ForegroundRole, which Qt's painting prefers over the
-    // highlight, leaving a selected read row grey on the selection colour.
-    //
-    // SubjectDelegate adds the account chip and the tag pills, and must go on
-    // the subject column ALONE. It reads AccountLabelRole, a property of the
-    // row rather than of a cell, so installed view-wide it draws the chip into
-    // every column: tried once, and the list came out with a chip repeated
-    // four times per row.
-    m_threadView->setItemDelegate(new RowStyleDelegate(this));
-    m_threadView->setItemDelegateForColumn(ThreadListModel::SubjectColumn,
-                                           new SubjectDelegate(this));
+    // Zero, because CardLayout draws the indent itself. Qt's own indentation
+    // would shift the card's rect, and every rect on the card is measured from
+    // that rect's left edge, so the two would compound.
+    m_threadView->setIndentation(0);
 
     // One height for every row. A QTreeView has no vertical header to carry a
-    // default section size, so the height comes from uniformRowHeights plus the
-    // delegate's own sizeHint. uniformRowHeights is not merely an optimisation
-    // here: without it the tree measures every row separately and the tag strip,
-    // which is painted OUTSIDE any cell, is not accounted for in any of those
-    // measurements, so rows collapse to text height and the strip is clipped.
+    // default section size, so the height comes from uniformRowHeights plus
+    // CardDelegate::sizeHint.
     m_threadView->setUniformRowHeights(true);
-    // Widening a column past the viewport scrolls rather than squeezing the
-    // others. Per-pixel so the scroll does not jump a whole column at a time.
-    // Banding, so the eye can follow a row across four columns and a pill
-    // strip without losing it. The colour comes from the palette's
-    // AlternateBase, so it follows the desktop theme.
+
+    // Banding, so the eye can follow a card across the pane. The colour comes
+    // from the palette's AlternateBase, so it follows the desktop theme.
     m_threadView->setAlternatingRowColors(true);
 
-    m_threadView->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_threadView->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    // A card is exactly viewport width, so there is nothing to scroll to
+    // sideways. Turning the bar off is what closes item 51: a click used to
+    // scroll the list horizontally, because the subject column was wider than
+    // the viewport and auto-scroll brought the clicked index fully into view.
+    m_threadView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    // Starting widths only; a drag overrides them, and they are what the
-    // saved-widths item will persist.
-    // Without this the attachment column cannot be narrow at all: the default
-    // minimum section size is 58px on this platform, and setColumnWidth()
-    // clamps to it silently rather than reporting the smaller value back.
-    m_threadView->header()->setMinimumSectionSize(24);
-    m_threadView->setColumnWidth(ThreadListModel::AttachmentColumn, 28);
-    m_threadView->setColumnWidth(ThreadListModel::FlagColumn, 28);
-    m_threadView->setColumnWidth(ThreadListModel::DateColumn, 130);
-    m_threadView->setColumnWidth(ThreadListModel::AuthorsColumn, 180);
-    m_threadView->setColumnWidth(ThreadListModel::SubjectColumn, 520);
+    // Scrolling a whole card at a time rather than a fraction of one, so a
+    // card is never left half above the top edge.
+    m_threadView->verticalScrollBar()->setSingleStep(
+        CardLayout::heightFor(m_threadView->font()));
 
     // Replies are loaded when a thread is expanded, not with the query.
     // Walking the reply tree of every thread in a 10k-thread result would cost
@@ -1061,7 +1006,7 @@ void MainWindow::buildMenus()
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("select_all")));
 
     m_threadView->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_threadView, &QTableView::customContextMenuRequested,
+    connect(m_threadView, &QWidget::customContextMenuRequested,
             this, &MainWindow::showThreadContextMenu);
 
     // The frequent subset only. A toolbar holding every action is as

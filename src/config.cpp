@@ -23,7 +23,9 @@
 // so this reports the same numbers rather than keeping a second copy.
 #include "messageview.h"
 
+#include <QDateTime>
 #include <QFileInfo>
+#include <QLocale>
 #include <QSettings>
 #include <QStandardPaths>
 
@@ -143,6 +145,29 @@ void Config::load(const QString &path)
                            .arg(m_toolbarIconSize));
         } else {
             m_toolbarIconSize = value;
+        }
+    }
+
+    // Absent or empty means the system locale's short format, which is what
+    // every other application on the desktop shows. Only a non-empty pattern is
+    // validated, and a rejected one falls back to that same default.
+    const QString dateFormat =
+        settings.value(QStringLiteral("date_format")).toString().trimmed();
+    if (!dateFormat.isEmpty()) {
+        // QDateTime::toString() with a pattern carrying no date or time field
+        // returns the pattern verbatim rather than failing, so "banana" would
+        // print "banana" on every card. Formatting two DIFFERENT instants and
+        // comparing is what catches that: a pattern with any real field gives
+        // two different strings, one with none gives the same string twice.
+        const QDateTime a(QDate(2028, 12, 28), QTime(22, 58));
+        const QDateTime b(QDate(2019, 1, 3), QTime(4, 5));
+        const QLocale locale = QLocale::system();
+        if (locale.toString(a, dateFormat) == locale.toString(b, dateFormat)) {
+            addProblem(QStringLiteral("Date format '%1' contains no date or "
+                                      "time field; using the system format.")
+                           .arg(dateFormat));
+        } else {
+            m_dateFormat = dateFormat;
         }
     }
 

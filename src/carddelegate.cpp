@@ -36,6 +36,7 @@ CardLayout::Input inputFor(const QModelIndex &index)
     in.isMessage = index.data(ThreadListModel::IsMessageRole).toBool();
     in.depth = index.data(ThreadListModel::MessageDepthRole).toInt();
     in.replyCount = index.data(ThreadListModel::ReplyCountRole).toInt();
+    in.dateFormat = index.data(ThreadListModel::DateFormatRole).toString();
     return in;
 }
 
@@ -172,8 +173,13 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                           Qt::ElideRight, card.senderRect.width()));
     const QDateTime date =
         index.data(ThreadListModel::DateRole).toDateTime();
-    painter->drawText(card.dateRect, Qt::AlignVCenter | Qt::AlignRight,
-                      CardLayout::formatDate(date));
+    // The same format the layout reserved width from. Reading the role again
+    // rather than a second config lookup, so the drawn string and the rect it
+    // is drawn into cannot come from different patterns.
+    painter->drawText(
+        card.dateRect, Qt::AlignVCenter | Qt::AlignRight,
+        CardLayout::formatDate(
+            date, index.data(ThreadListModel::DateFormatRole).toString()));
 
     // Line 2: the flag mark, the subject, the attachment mark.
     QString subject = index.data(ThreadListModel::SubjectRole).toString();

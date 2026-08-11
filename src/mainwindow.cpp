@@ -558,6 +558,7 @@ void MainWindow::buildUi()
     // Thread list and message pane.
     m_model = new ThreadListModel(this);
     m_model->setTagColors(&m_tagColors);
+    m_model->setDateFormat(m_config.dateFormat());
     // ThreadListView, not a plain QTableView: it paints the row-wide tag
     // strip under each row's cells, which no delegate can do because a
     // delegate is confined to one column's rectangle.

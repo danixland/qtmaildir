@@ -323,6 +323,8 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             // A reply never offers an expander: nesting past the first level is
             // drawn from depth, not from further parent-child structure.
             return 0;
+        case DateFormatRole:
+            return m_dateFormat;
         case Qt::BackgroundRole:
             // Tinted, so an expanded thread reads as one block rather than as
             // more table rows. Applied per cell here; ThreadListView fills the
@@ -480,6 +482,8 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     case ReplyCountRole:
         // totalCount includes the root message, which is the card itself.
         return qMax(0, thread.totalCount - 1);
+    case DateFormatRole:
+        return m_dateFormat;
     default:
         break;
     }

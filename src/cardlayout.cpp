@@ -21,12 +21,16 @@
 #include <QFontMetrics>
 #include <QLocale>
 
-QString CardLayout::formatDate(const QDateTime &date)
+QString CardLayout::formatDate(const QDateTime &date, const QString &format)
 {
-    // The system locale's own short format, not a hardcoded pattern: an
-    // Italian desktop writes 10/08/2025, not 2025-08-10, and a mail client
-    // that disagrees with every other application on screen is simply wrong.
-    return QLocale::system().toString(date, QLocale::ShortFormat);
+    // The system locale's own short format by default, not a hardcoded
+    // pattern: an Italian desktop writes 10/08/2025, not 2025-08-10, and a mail
+    // client that disagrees with every other application on screen is simply
+    // wrong. [general] date_format overrides it for a user who wants one
+    // specific shape regardless of the locale.
+    if (format.isEmpty())
+        return QLocale::system().toString(date, QLocale::ShortFormat);
+    return QLocale::system().toString(date, format);
 }
 
 QString CardLayout::expanderLabel(int replyCount, bool expanded)
@@ -45,17 +49,19 @@ QString CardLayout::expanderLabel(int replyCount, bool expanded)
     return QStringLiteral("%1 %2 %3").arg(glyph).arg(replyCount).arg(word);
 }
 
-QString CardLayout::widestDateSample()
+QString CardLayout::widestDateSample(const QString &format)
 {
     // A real date run through the same formatter, with the wide digits and a
     // two-digit day and month, so the reserved width matches what is drawn
     // whatever the locale's pattern turns out to be. Guessing a pattern here
     // would reintroduce the clipping this exists to prevent.
-    static const QString sample = [] {
-        const QDateTime wide(QDate(2028, 12, 28), QTime(22, 58));
-        return formatDate(wide);
-    }();
-    return sample;
+    //
+    // Not cached in a static any more: the sample depends on the format, and a
+    // single static computed for whichever format arrived first would reserve
+    // the system format's width for a custom pattern. The formatter is one
+    // QLocale call per row, which is the same cost the date itself already pays.
+    const QDateTime wide(QDate(2028, 12, 28), QTime(22, 58));
+    return formatDate(wide, format);
 }
 
 QFont CardLayout::smallFont(const QFont &cardFont)
@@ -145,7 +151,8 @@ CardLayout CardLayout::compute(const Input &input, const QRect &rect,
     QFont dateFont = font;
     dateFont.setBold(true);
     const int dateWidth =
-        QFontMetrics(dateFont).horizontalAdvance(widestDateSample());
+        QFontMetrics(dateFont).horizontalAdvance(
+            widestDateSample(input.dateFormat));
     out.dateRect = QRect(right - dateWidth, lineOneTop, dateWidth,
                          metrics.height());
     out.senderRect = QRect(out.contentLeft, lineOneTop,

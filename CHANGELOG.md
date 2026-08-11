@@ -11,6 +11,14 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- `[general] date_format`, an optional pattern for the date on a thread card.
+  Absent or empty keeps the system locale's short format, which is unchanged
+  and remains the default. A pattern containing no date or time field is
+  refused with a message rather than printing the same fixed text on every
+  card.
+
 ### Changed
 
 - The Sync button carries the refresh icon instead of a mailbox one. With the

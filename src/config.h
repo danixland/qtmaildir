@@ -114,6 +114,16 @@ public:
     /// Optional alternate notmuch config file. Empty means "let notmuch decide".
     QString notmuchConfig() const { return m_notmuchConfig; }
 
+    /// A QDateTime::toString() pattern for the date on a card, or empty for the
+    /// system locale's short format.
+    ///
+    /// Empty is both the default and what an unusable pattern falls back to, so
+    /// a caller never has to distinguish "unset" from "rejected": either way
+    /// the locale decides. Validated at load, because toString() with a pattern
+    /// carrying no date field returns the pattern verbatim, which would print
+    /// the same fixed string on every card rather than failing visibly.
+    QString dateFormat() const { return m_dateFormat; }
+
     /// The saved query to open at startup, by name. Falls back to "Unread"
     /// when unset, and to the first saved query when no query by that name
     /// exists: [queries] is read through childKeys(), which sorts
@@ -185,6 +195,7 @@ private:
     QString m_syncLog;
     int m_toolbarIconSize = 24;
     QString m_notmuchConfig;
+    QString m_dateFormat;
     qreal m_messageZoom = 1.0;
     bool m_completionOnFocus = false;
     int m_markReadDelayMs = 2000;

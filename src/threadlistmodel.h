@@ -116,6 +116,14 @@ public:
         HasAttachmentRole, ///< bool
         IsFlaggedRole,     ///< bool
         ReplyCountRole,    ///< int; 0 when a thread has no replies.
+
+        /// The [general] date_format pattern, or empty for the system's short
+        /// format. Same row value for every row.
+        ///
+        /// Supplied by the model for the same reason as PillColoursRole: it is
+        /// the one thing here that holds config, and a delegate reading config
+        /// itself would be a second source of truth.
+        DateFormatRole,
     };
 
     /// The mark drawn on a card's second line when the message has an
@@ -158,6 +166,9 @@ public:
     /// Supplies the account chip colours. Not owned; must outlive the model.
     /// Without one, chips fall back to a colour generated from the tag name.
     void setTagColors(const TagColors *colours) { m_tagColors = colours; }
+
+    /// The pattern DateFormatRole answers with. Empty means the system format.
+    void setDateFormat(const QString &format) { m_dateFormat = format; }
 
     QModelIndex index(int row, int column,
                       const QModelIndex &parent = {}) const override;
@@ -272,4 +283,5 @@ private:
 
     QVector<ThreadNode> m_threads;
     const TagColors *m_tagColors = nullptr;
+    QString m_dateFormat;
 };

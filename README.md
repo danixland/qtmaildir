@@ -129,6 +129,13 @@ identity.
 ; and quits when it finishes; "never" quits silently. A sync that fails never
 ; closes the window, so a failure cannot discard the changes quietly.
 ; sync_on_exit = ask
+; Optional. How the date on a thread card is written, as a QDateTime pattern
+; (yyyy year, MM month, dd day, hh:mm time; anything in single quotes is kept
+; literally). Absent or empty means your system locale's short format, which is
+; what every other application on your desktop shows, and is the default. A
+; pattern that contains no date or time field at all is refused with a message,
+; since it would print the same fixed text on every card.
+; date_format = yyyy-MM-dd hh:mm
 
 [completion]
 ; Optional. Extra content types offered after mimetype:, APPENDED to the

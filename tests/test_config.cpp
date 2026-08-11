@@ -52,6 +52,9 @@ private slots:
     void markReadDelayDefaultsToTwoSeconds();
     void markReadDelayIsActuallyRead();
     void markReadDelayAcceptsZeroAndNegative();
+    void dateFormatDefaultsToEmpty();
+    void dateFormatIsActuallyRead();
+    void dateFormatWithoutAFieldIsRejectedAndReported();
     void markReadDelayRejectsGarbage();
     void syncOnExitDefaultsToAsk();
     void syncOnExitReadsAllThreeValues();
@@ -568,6 +571,53 @@ void TestConfig::markReadDelayAcceptsZeroAndNegative()
                                                  "mark_read_delay_ms=-1\n")));
     QCOMPARE(never.markReadDelayMs(), -1);
     QVERIFY(never.problems().isEmpty());
+}
+
+void TestConfig::dateFormatDefaultsToEmpty()
+{
+    // Empty is what tells CardLayout to use the system's short format, which is
+    // the shipped behaviour and must survive this key existing.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n")));
+    QVERIFY(config.dateFormat().isEmpty());
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::dateFormatIsActuallyRead()
+{
+    // A pattern that is not the default, which is what proves the key is read
+    // at all: a "general/date_format" lookup matches nothing and would still
+    // pass a test that only checked the empty default.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "date_format=yyyy-MM-dd\n")));
+    QCOMPARE(config.dateFormat(), QStringLiteral("yyyy-MM-dd"));
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::dateFormatWithoutAFieldIsRejectedAndReported()
+{
+    // The specific trap: QDateTime::toString() with a pattern carrying no date
+    // or time field returns something fixed rather than failing, so this would
+    // print the same string on every card and look like a rendering fault
+    // rather than a config one.
+    //
+    // "xyz" and not a friendlier-looking word, because almost every letter is
+    // a field character: "banana" formats as "bpmnpmnpm" (a is AM/PM, n is the
+    // minute) and "hello" as "22ello" (h is the hour). Those are nonsense but
+    // they do vary with the instant, so they are not what this rejects and the
+    // check would fail against them. What it catches is a pattern whose output
+    // is CONSTANT, which is the case that silently shows one date forever.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "date_format=xyz\n")));
+    QVERIFY2(config.dateFormat().isEmpty(),
+             "a pattern with no date field was accepted");
+    QCOMPARE(config.problems().size(), 1);
+    QVERIFY(config.problems().first().contains(QStringLiteral("xyz")));
 }
 
 void TestConfig::markReadDelayRejectsGarbage()

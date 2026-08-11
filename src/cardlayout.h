@@ -46,6 +46,16 @@ struct CardLayout
         bool isMessage = false;
         int depth = 0;       ///< 0 for a thread root, 1 for a direct reply.
         int replyCount = 0;  ///< 0 means no expander.
+
+        /// A QDateTime::toString() pattern from [general] date_format, or empty
+        /// for the system's short format.
+        ///
+        /// It lives on the INPUT rather than being read where the date is
+        /// drawn, because the width reserved for the date is computed from the
+        /// same format inside compute(). A pattern reaching the painter but not
+        /// the geometry is exactly how a longer date gets elided into a rect
+        /// sized for a shorter one.
+        QString dateFormat;
     };
 
     /// Width of the account accent bar down a thread card's left edge.
@@ -129,10 +139,14 @@ struct CardLayout
     /// drawn into it come from one place: a locale whose short format is
     /// longer than the reserved rect would clip, which is exactly the fault
     /// bold text produced.
-    static QString formatDate(const QDateTime &date);
+    /// `format` is a QDateTime::toString() pattern, or empty for the system's
+    /// short format. Config validates it, so an unusable pattern never gets
+    /// this far.
+    static QString formatDate(const QDateTime &date,
+                              const QString &format = QString());
 
     /// The widest string formatDate() can return, for reserving space.
-    static QString widestDateSample();
+    static QString widestDateSample(const QString &format = QString());
 
     /// The expander's label: the reply count with its glyph, as drawn.
     ///

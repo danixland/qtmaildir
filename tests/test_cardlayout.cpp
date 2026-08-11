@@ -40,6 +40,7 @@ private slots:
     void replyCardCarriesNoAccentBar();
     void theDateFitsWhenTheCardIsBold();
     void theDateFollowsTheSystemLocale();
+    void aConfiguredDateFormatIsUsedAndReservedFor();
 };
 
 namespace {
@@ -341,6 +342,51 @@ void TestCardLayout::theDateFollowsTheSystemLocale()
                         CardLayout::formatDate(when)),
              "the reserved date width is narrower than this locale's own "
              "formatting of a date");
+}
+
+void TestCardLayout::aConfiguredDateFormatIsUsedAndReservedFor()
+{
+    const QDateTime when(QDate(2025, 8, 10), QTime(6, 26));
+
+    // A pattern deliberately much longer than any locale's short format, so
+    // the width claim below cannot pass by accident on a locale whose own
+    // dates happen to be wide enough already.
+    const QString format = QStringLiteral("dddd d MMMM yyyy 'at' hh:mm:ss");
+
+    QCOMPARE(CardLayout::formatDate(when, format),
+             QLocale::system().toString(when, format));
+    QVERIFY2(CardLayout::formatDate(when, format)
+                 != CardLayout::formatDate(when),
+             "a configured format produced the same string as the system one, "
+             "so the parameter is being ignored");
+
+    // An empty format is what an absent or rejected config key gives, and it
+    // must mean the system format rather than an empty date.
+    QCOMPARE(CardLayout::formatDate(when, QString()),
+             CardLayout::formatDate(when));
+
+    // The load-bearing half: the reserved width has to follow the SAME format,
+    // or a long pattern is elided into a rect sized for a short one. This is
+    // the fault that a static, format-independent widest-date sample produces.
+    QFont font;
+    const int h = CardLayout::heightFor(font);
+    CardLayout::Input in = threadInput();
+    in.dateFormat = format;
+    const CardLayout card = CardLayout::compute(in, QRect(0, 0, 900, h), font);
+    QFont bold = font;
+    bold.setBold(true);
+    QVERIFY2(card.dateRect.width()
+                 >= QFontMetrics(bold).horizontalAdvance(
+                        CardLayout::formatDate(when, format)),
+             "the reserved date width is narrower than the configured format's "
+             "own output");
+
+    // And it is genuinely wider than the default's, which proves the width
+    // moved with the format rather than a generous constant covering both.
+    const CardLayout plain =
+        CardLayout::compute(threadInput(), QRect(0, 0, 900, h), font);
+    QVERIFY2(card.dateRect.width() > plain.dateRect.width(),
+             "a longer date format reserved no more width than the default");
 }
 
 void TestCardLayout::theDateFitsWhenTheCardIsBold()

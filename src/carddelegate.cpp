@@ -19,6 +19,7 @@
 #include "carddelegate.h"
 
 #include "cardlayout.h"
+#include "marks.h"
 #include "threadlistmodel.h"
 
 #include <QApplication>
@@ -37,6 +38,14 @@ CardLayout::Input inputFor(const QModelIndex &index)
     in.depth = index.data(ThreadListModel::MessageDepthRole).toInt();
     in.replyCount = index.data(ThreadListModel::ReplyCountRole).toInt();
     in.dateFormat = index.data(ThreadListModel::DateFormatRole).toString();
+
+    // Item 70's marks. The layout reserves a rect for each, so these have to
+    // reach it: a mark drawn without its rect reserved lands on top of the
+    // subject rather than beside it.
+    in.flagged = index.data(ThreadListModel::IsFlaggedRole).toBool();
+    in.hasAttachment = index.data(ThreadListModel::HasAttachmentRole).toBool();
+    in.passed = index.data(ThreadListModel::IsPassedRole).toBool();
+    in.replied = index.data(ThreadListModel::IsRepliedRole).toBool();
     return in;
 }
 
@@ -190,15 +199,24 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             QStringLiteral("^\\s*(?:[Rr][Ee]\\s*:\\s*)+"));
         subject.remove(re);
     }
-    QString line2;
-    if (index.data(ThreadListModel::IsFlaggedRole).toBool())
-        line2 += ThreadListModel::flagGlyph() + QLatin1Char(' ');
-    line2 += subject;
-    if (index.data(ThreadListModel::HasAttachmentRole).toBool())
-        line2 += QLatin1Char(' ') + ThreadListModel::attachmentGlyph();
     painter->drawText(card.subjectRect, Qt::AlignVCenter | Qt::AlignLeft,
-                      metrics.elidedText(line2, Qt::ElideRight,
+                      metrics.elidedText(subject, Qt::ElideRight,
                                          card.subjectRect.width()));
+
+    // Item 70's marks, drawn into the rects the layout reserved rather than
+    // appended to the subject STRING as glyphs. The colour is the pen's, which
+    // is already resolved above against selection and the read/unread
+    // foreground, so a mark follows its card's text exactly: white on a
+    // selected row, dimmed on a read one.
+    const QColor markColour = painter->pen().color();
+    const auto drawMark = [&](const QRect &rect, Marks::Mark mark) {
+        if (!rect.isEmpty())
+            Marks::paint(painter, rect, mark, markColour);
+    };
+    drawMark(card.flagRect, Marks::Mark::Flagged);
+    drawMark(card.attachmentRect, Marks::Mark::Attachment);
+    drawMark(card.passedRect, Marks::Mark::Passed);
+    drawMark(card.repliedRect, Marks::Mark::Replied);
 
     // The reply count, which is also the expander, drawn as a PILL.
     //
@@ -243,7 +261,30 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         painter->setPen(option.state & QStyle::State_Selected
                             ? option.palette.highlightedText().color()
                             : text);
-        painter->drawText(card.expanderRect, Qt::AlignCenter, label);
+
+        // The triangle is a drawn mark since item 70, not a glyph in the label,
+        // so the pill lays out its two pieces itself: the mark, a gap, then the
+        // count. The layout reserved width for exactly this (ascent + kMarkGap),
+        // so the two must agree or the text drifts out of its own background.
+        const QFontMetrics pillMetrics(painter->font());
+        const int side = pillMetrics.ascent();
+        const int textWidth = pillMetrics.horizontalAdvance(label);
+        const int contentWidth = side + CardLayout::kMarkGap + textWidth;
+        const int left = card.expanderRect.left()
+                         + (card.expanderRect.width() - contentWidth) / 2;
+        const QRect markRect(left,
+                             card.expanderRect.top()
+                                 + (card.expanderRect.height() - side) / 2,
+                             side, side);
+        Marks::paint(painter, markRect,
+                     option.state & QStyle::State_Open
+                         ? Marks::Mark::ExpanderExpanded
+                         : Marks::Mark::ExpanderCollapsed,
+                     painter->pen().color());
+        painter->drawText(QRect(markRect.right() + 1 + CardLayout::kMarkGap,
+                                card.expanderRect.top(), textWidth,
+                                card.expanderRect.height()),
+                          Qt::AlignVCenter | Qt::AlignLeft, label);
         painter->restore();
     }
 

@@ -54,6 +54,7 @@ private slots:
     void readThreadsAreDimmedAndUnreadAreNot();
     void flaggedThreadsShowAStar();
     void pillTagsExcludeWhatTheRowAlreadyShows();
+    void aTagDrawnAsAMarkIsNotAlsoAChip();
     void theUnreadCueDoesNotDependOnFontWeight();
     void aDoomedThreadKeepsItsContrastEvenWhenRead();
     void accountTagBecomesAChipLabel();
@@ -583,10 +584,6 @@ void TestThreadListModel::flaggedThreadsShowAStar()
                         ThreadListModel::IsFlaggedRole).toBool(),
              "a flagged thread does not report itself flagged");
 
-    // The glyph the delegate draws from that flag must be something a font can
-    // render: an unrenderable codepoint shows as tofu, which reads as
-    // breakage rather than as a mark.
-    QVERIFY(!ThreadListModel::flagGlyph().isEmpty());
 }
 
 void TestThreadListModel::pillTagsExcludeWhatTheRowAlreadyShows()
@@ -1001,14 +998,45 @@ void TestThreadListModel::attachmentIsMarkedOnlyOnTaggedThreads()
     QVERIFY(!model.data(plainCell, ThreadListModel::HasAttachmentRole).toBool());
     QVERIFY(model.data(fileCell, ThreadListModel::HasAttachmentRole).toBool());
 
-    // The glyph must be something a font can draw. An unrenderable codepoint
-    // shows as a tofu box, which reads as breakage rather than as a marker.
-    QVERIFY(!ThreadListModel::attachmentGlyph().isEmpty());
-
     // Only the marked thread gets a tooltip, or an empty cell would claim to
     // have an attachment on hover.
     QVERIFY(model.data(plainCell, Qt::ToolTipRole).toString().isEmpty());
     QVERIFY(!model.data(fileCell, Qt::ToolTipRole).toString().isEmpty());
+}
+
+void TestThreadListModel::aTagDrawnAsAMarkIsNotAlsoAChip()
+{
+    // Items 69 and 70. passed and replied are drawn marks on line two now, so a
+    // chip repeating the word puts the same fact on the card twice. Caught by
+    // rendering a real card rather than by any existing test, which is why this
+    // one exists: every geometry assertion passed while the row said "passed"
+    // as both an arrow and a green pill.
+    ThreadListModel model;
+    ThreadSummary thread = makeThread(QStringLiteral("t1"),
+                                      QStringLiteral("subject"));
+    thread.tags = { QStringLiteral("inbox"),   QStringLiteral("flagged"),
+                    QStringLiteral("attachment"), QStringLiteral("passed"),
+                    QStringLiteral("replied"),    QStringLiteral("project") };
+    model.appendBatch({ thread });
+
+    const QStringList pills =
+        model.data(model.index(0, 0), ThreadListModel::PillTagsRole)
+            .toStringList();
+
+    for (const QString &drawn : { QStringLiteral("flagged"),
+                                  QStringLiteral("attachment"),
+                                  QStringLiteral("passed"),
+                                  QStringLiteral("replied") }) {
+        QVERIFY2(!pills.contains(drawn),
+                 qPrintable(QStringLiteral("'%1' is drawn as a mark and still "
+                                           "appears as a chip")
+                                .arg(drawn)));
+    }
+
+    // Guard: a tag with no mark still becomes a chip, or the assertions above
+    // would pass against a model that dropped every pill.
+    QVERIFY2(pills.contains(QStringLiteral("project")),
+             "an ordinary tag lost its chip, so the filter is too broad");
 }
 
 void TestThreadListModel::modelHasOneColumn()

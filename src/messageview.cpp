@@ -25,6 +25,7 @@
 #include <QFontDatabase>
 #include <QPlainTextEdit>
 #include <QDir>
+#include <QBuffer>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -392,6 +393,39 @@ void MessageView::showError(const QString &text, const QString &filePath)
     setDocument(html);
 }
 
+QString MessageView::headerMark(Marks::Mark mark) const
+{
+    // A data: URI rather than a resource path, for the same reason the marks
+    // are compiled in rather than shipped in a .qrc, and one more besides: this
+    // string goes into a QLabel's rich text, and Qt resolves a src= against the
+    // resource system only when one is registered. The image travels with the
+    // markup instead.
+    //
+    // Rendered at the label's OWN text colour so the mark tracks the palette
+    // exactly as the subject beside it does, on a light or a dark theme.
+    const int side = QFontMetrics(m_headerLabel->font()).ascent();
+    const QPixmap pm = Marks::pixmap(mark, QSize(side, side),
+                                     m_headerLabel->palette().color(
+                                         QPalette::WindowText),
+                                     m_headerLabel->devicePixelRatioF());
+    if (pm.isNull())
+        return {};
+
+    QByteArray png;
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    if (!pm.save(&buffer, "PNG"))
+        return {};
+
+    // A hair of margin on both sides, so a mark does not touch the subject.
+    return QStringLiteral(
+               "<img src=\"data:image/png;base64,%1\" width=\"%2\" "
+               "height=\"%3\" style=\"vertical-align: middle;\">&nbsp;")
+        .arg(QString::fromLatin1(png.toBase64()))
+        .arg(side)
+        .arg(side);
+}
+
 void MessageView::updateHeader()
 {
     if (m_items.isEmpty()) {
@@ -406,7 +440,30 @@ void MessageView::updateHeader()
     // Re: prefixes that add nothing.
     const QString subject = m_items.first().message.subject;
 
-    QString text = QStringLiteral("<b>%1</b>").arg(subject.toHtmlEscaped());
+    // Item 70's marks, beside the subject and OUTSIDE the message area. The
+    // user asked for these two only: whether the thread is flagged and whether
+    // it carries an attachment, which are the two states worth knowing before
+    // reading. They belong to the header label, which is application chrome,
+    // rather than to the generated document, which is untrusted content in a
+    // sandboxed web view.
+    //
+    // Any message in the thread having the state marks the whole thread, since
+    // the header describes the thread: an attachment on reply four is still an
+    // attachment the reader wants to know about.
+    const bool anyFlagged = std::any_of(
+        m_items.cbegin(), m_items.cend(),
+        [](const ThreadRenderItem &item) { return item.flagged; });
+    const bool anyAttachment = std::any_of(
+        m_items.cbegin(), m_items.cend(), [](const ThreadRenderItem &item) {
+            return !item.message.attachments.isEmpty();
+        });
+
+    QString text;
+    if (anyFlagged)
+        text += headerMark(Marks::Mark::Flagged);
+    text += QStringLiteral("<b>%1</b>").arg(subject.toHtmlEscaped());
+    if (anyAttachment)
+        text += headerMark(Marks::Mark::Attachment);
 
     // The header adapts to what it can say honestly. From, To and Cc are
     // per-message, and the pane shows a whole thread, so they are only

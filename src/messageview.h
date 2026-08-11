@@ -23,6 +23,7 @@
 #include <QWidget>
 
 #include "htmlbuilder.h"
+#include "marks.h"
 #include "mimeparser.h"
 
 class QLabel;
@@ -175,6 +176,10 @@ protected:
 private:
     void render();
     void updateHeader();
+
+    /// One header mark as an <img> data: URI, sized and coloured to the header
+    /// label's own font and palette. Empty when the mark cannot be rendered.
+    QString headerMark(Marks::Mark mark) const;
     void setDocument(const QString &html);
 
     /// Rebuilds the attachment bar from m_items. Called from render(), so a

@@ -74,6 +74,21 @@ colours, the selection and `BackgroundRole` across cells it did not own. With
 one column there is nothing to span, so the `paintEvent` and its band
 arithmetic are deleted and none of that applies any more.
 
+**The panes' marks are shipped SVGs, not font glyphs and not a `.qrc`.** `Marks`
+(`src/marks.h`) carries six payloads as compiled-in string literals, generated
+from `assets/icons/marks/*.svg`, which stay the editable originals. Not a
+resource, because `src/CMakeLists.txt` already records that a qrc in the static
+library registers itself from a global initialiser the linker drops, and the
+tests link the library rather than the executable. Every payload paints with
+`fill="currentColor"`, which `QSvgRenderer` renders BLACK rather than resolving;
+`Marks::pixmap` composites the real colour with `CompositionMode_SourceIn`, which
+is what lets one asset serve a light and a dark palette. The toolbar and menus
+still use `QIcon::fromTheme` and must keep doing so: the split between "panes are
+ours, chrome is the system's" is item 70's whole point. A tag drawn as a mark
+must not also appear as a chip, which `isDrawnAsAMark()` in `threadlistmodel.cpp`
+enforces for both roles at once; the duplicate survived every geometry test and
+was found only by rendering a card and looking at it.
+
 **A card layout must be testable without a painter.** `CardLayout` computes
 every rect on a card and touches no `QPainter` and no widget, so the geometry
 has tests that a blank render cannot defeat. When changing what a card shows,

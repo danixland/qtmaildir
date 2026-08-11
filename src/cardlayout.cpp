@@ -33,20 +33,46 @@ QString CardLayout::formatDate(const QDateTime &date, const QString &format)
     return QLocale::system().toString(date, format);
 }
 
+int CardLayout::markSide(const QFont &font)
+{
+    // Derived from the font's ascent rather than fixed, so the marks grow with
+    // the user's text size. A pixel count settled on one desktop is wrong on
+    // the next one, and qt6ct sets fonts in PIXELS, where pointSizeF() returns
+    // -1 (see the note in this file's header) which is why the metric and not
+    // the size is the thing measured.
+    //
+    // Ascent rather than height: height includes the descent, which no mark
+    // occupies, and marks sized from it read noticeably larger than the text
+    // beside them.
+    const int side = QFontMetrics(font).ascent();
+
+    // Floor of 8: below that the shapes stop being tellable apart, which is the
+    // defect item 70 exists to fix rather than one to reintroduce at a small
+    // font size.
+    return qMax(8, side);
+}
+
 QString CardLayout::expanderLabel(int replyCount, bool expanded)
 {
     // "3 replies", not a bare "3". The count alone reads as an unexplained
     // number beside the subject, and the word is what says the card opens.
     //
+    // The triangle is NO LONGER part of this string. Item 70 made it a drawn
+    // mark, so the pill reserves a rect for it and the delegate paints it; a
+    // glyph left here would be a second triangle beside the drawn one. The
+    // `expanded` parameter therefore no longer changes the label, and is kept
+    // because both states are still measured: the pill must not change width
+    // when the card opens, and a caller that stopped passing the state would
+    // hide that requirement rather than satisfy it.
+    //
     // Not translated through tr() here because CardLayout is a plain struct
     // rather than a QObject; the delegate is where a translated build would
     // wrap this, and the string is deliberately kept in one place so there is
     // exactly one thing to change.
-    const QString glyph = expanded ? QStringLiteral("\u25be")
-                                   : QStringLiteral("\u25b8");
+    Q_UNUSED(expanded);
     const QString word = replyCount == 1 ? QStringLiteral("reply")
                                          : QStringLiteral("replies");
-    return QStringLiteral("%1 %2 %3").arg(glyph).arg(replyCount).arg(word);
+    return QStringLiteral("%1 %2").arg(replyCount).arg(word);
 }
 
 QString CardLayout::widestDateSample(const QString &format)
@@ -172,17 +198,58 @@ CardLayout CardLayout::compute(const Input &input, const QRect &rect,
             expanderLabel(input.replyCount, false));
         const int expanded = smallMetrics.horizontalAdvance(
             expanderLabel(input.replyCount, true));
+        // The triangle is a drawn mark since item 70, so the pill has to
+        // reserve its width explicitly. It came free from the text metrics
+        // while it was a glyph in the label, which is exactly the kind of
+        // width that disappears silently when the glyph does.
+        const int triangle = smallMetrics.ascent() + kMarkGap;
         const int countWidth =
-            qMax(collapsed, expanded) + kPillPaddingX * 2;
+            qMax(collapsed, expanded) + triangle + kPillPaddingX * 2;
         out.expanderRect = QRect(right - countWidth, lineTwoTop, countWidth,
                                  metrics.height());
     }
 
-    const int subjectRight = out.expanderRect.isEmpty()
-                                 ? right
-                                 : out.expanderRect.left() - kPaddingX;
-    out.subjectRect = QRect(out.contentLeft, lineTwoTop,
-                            qMax(0, subjectRight - out.contentLeft),
+    // Item 70's marks. Until it they were glyphs inside the subject string, so
+    // the text metrics reserved their width without anyone arranging it; as
+    // icons they need rects, and the subject needs to end before them or it
+    // runs underneath.
+    //
+    // Laid out from the RIGHT, inwards: the expander is already placed, and
+    // each mark present takes the next slot to its left. The subject then gets
+    // whatever is left, which is what keeps a card with four marks from eliding
+    // its subject to nothing on a narrow window: the marks are small and fixed,
+    // the subject is the elastic part.
+    const int side = markSide(font);
+    const int markTop = lineTwoTop + (metrics.height() - side) / 2;
+    int markRight = out.expanderRect.isEmpty()
+                        ? right
+                        : out.expanderRect.left() - kPaddingX;
+
+    // Order matters and is the drawing order reversed: placing right to left
+    // here puts attachment nearest the subject and replied furthest right,
+    // which is the order the delegate then paints them in.
+    const auto placeMark = [&](bool present, QRect &target) {
+        if (!present)
+            return;
+        target = QRect(markRight - side, markTop, side, side);
+        markRight = target.left() - kMarkGap;
+    };
+    placeMark(input.replied, out.repliedRect);
+    placeMark(input.passed, out.passedRect);
+    placeMark(input.hasAttachment, out.attachmentRect);
+
+    // The flag sits at the START of line two, where the glyph did, so a flagged
+    // card still reads flagged from the left edge. It indents the subject
+    // rather than overlapping it.
+    int subjectLeft = out.contentLeft;
+    if (input.flagged) {
+        out.flagRect = QRect(out.contentLeft, markTop, side, side);
+        subjectLeft = out.flagRect.right() + 1 + kMarkGap;
+    }
+
+    const int subjectRight = markRight;
+    out.subjectRect = QRect(subjectLeft, lineTwoTop,
+                            qMax(0, subjectRight - subjectLeft),
                             metrics.height());
 
     out.tagRect = QRect(out.contentLeft, lineThreeTop,

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Forwarded: arrow head at the right, shaft sweeping down and back to a
+       tail at lower left. Mirror image of replied.svg about x=8, so the two
+       read as one pair. -->
+  <path fill="currentColor" d="M 9.2,2.2
+    V 5.0
+    H 7.3
+    C 4.1,5.0 1.8,7.4 1.8,10.8
+    V 13.8
+    a 0.9,0.9 0 0 0 1.75,0.28
+    C 4.2,12.1 5.6,10.9 7.3,10.9
+    H 9.2
+    V 13.7
+    L 15.0,7.95
+    Z"/>
+</svg>

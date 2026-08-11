@@ -115,6 +115,14 @@ public:
         DateRole,          ///< A QDateTime. The delegate formats it.
         HasAttachmentRole, ///< bool
         IsFlaggedRole,     ///< bool
+
+        /// bool; the message was forwarded, from the Maildir "P" flag.
+        /// Item 69 draws this as a mark where it used to read as the word
+        /// "passed" in the tag strip.
+        IsPassedRole,
+
+        /// bool; the message was replied to, from the Maildir "R" flag.
+        IsRepliedRole,
         ReplyCountRole,    ///< int; 0 when a thread has no replies.
 
         /// The [general] date_format pattern, or empty for the system's short
@@ -126,13 +134,7 @@ public:
         DateFormatRole,
     };
 
-    /// The mark drawn on a card's second line when the message has an
-    /// attachment. A paperclip when the system font can draw it, "*" otherwise.
-    static QString attachmentGlyph();
 
-    /// The mark drawn on a card's second line when the message is flagged.
-    /// A star when the system font can draw it, "*" otherwise.
-    static QString flagGlyph();
 
     /// Row fill for a thread tagged `deleted`, and for one tagged `spam`.
     /// Muted rather than saturated: a bulk delete paints every selected row,

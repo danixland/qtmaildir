@@ -32,6 +32,16 @@ struct ThreadRenderItem
     /// Matched messages render in full; unmatched collapse to a one-line stub.
     bool expanded = true;
 
+    /// Whether the message is flagged, for the mark beside the subject in the
+    /// message pane's header (item 70).
+    ///
+    /// Carried here rather than derived from `message`, because it comes from
+    /// the notmuch TAGS and ParsedMessage holds only what the MIME parser found
+    /// in the file. MessageRef already answers both, so this costs no query.
+    /// Unused by the generated HTML itself: the header is a QLabel above the
+    /// web view, not part of the sandboxed document.
+    bool flagged = false;
+
     /// Disambiguates cid: references. Two newsletters in one thread commonly
     /// use the same Content-ID (cid:logo@example.org), which would collide in
     /// a single document, so every reference is rewritten to

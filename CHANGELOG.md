@@ -19,6 +19,14 @@ point at which they are stable.
   one per thread, and a sync already running is never interrupted or queued
   behind. Set `auto_sync_delay_ms` in `[general]` to change the delay, or to any
   negative value to turn the behaviour off and get the previous one back.
+- The panes draw their own marks instead of borrowing font glyphs. Flagged,
+  attachment, forwarded, replied and the thread expander are six SVGs shipped
+  with the application, recoloured from your palette, so they look the same on
+  every desktop and cannot turn into a tofu box on a font that lacks a
+  codepoint. Forwarded and replied were words in the tag strip and are now marks
+  beside the subject, and the message pane shows the flagged and attachment
+  marks next to the subject in its header. The toolbar and the menus are
+  untouched and still follow your icon theme.
 
 ### Fixed
 

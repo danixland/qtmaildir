@@ -35,6 +35,10 @@ private slots:
     void expanderSitsOnTheSecondLine();
     void expanderIsEmptyWithoutReplies();
     void theExpanderReadsAsAPillWithAWord();
+    void marksReserveTheirOwnSpaceRatherThanOverlappingTheSubject();
+    void anAbsentMarkReservesNothing();
+    void theFlagIndentsTheSubjectRatherThanSittingOnIt();
+    void marksDoNotCollideWithEachOtherOrTheExpander();
     void dateIsFlushRight();
     void threadCardCarriesAnAccentBar();
     void replyCardCarriesNoAccentBar();
@@ -228,15 +232,22 @@ void TestCardLayout::theExpanderReadsAsAPillWithAWord()
     // A bare "3" beside the subject reads as an unexplained number and gives
     // no hint that it can be clicked. The label carries the word, and the rect
     // carries padding for the pill drawn behind it.
-    QCOMPARE(CardLayout::expanderLabel(3, false),
-             QStringLiteral("\u25b8 3 replies"));
-    QCOMPARE(CardLayout::expanderLabel(3, true),
-             QStringLiteral("\u25be 3 replies"));
+    //
+    // NO triangle in the label since item 70: it is a drawn mark now, and a
+    // glyph left here would be a second triangle beside the drawn one. The
+    // label is the words alone, and the state no longer changes it.
+    QCOMPARE(CardLayout::expanderLabel(3, false), QStringLiteral("3 replies"));
+    QCOMPARE(CardLayout::expanderLabel(3, true), QStringLiteral("3 replies"));
 
     // Singular, because "1 replies" is the kind of detail that makes an
     // interface look unfinished.
-    QCOMPARE(CardLayout::expanderLabel(1, false),
-             QStringLiteral("\u25b8 1 reply"));
+    QCOMPARE(CardLayout::expanderLabel(1, false), QStringLiteral("1 reply"));
+
+    // The glyphs are gone from the label entirely. Asserted rather than assumed,
+    // because a stray one would draw underneath the mark and look like a
+    // rendering fault rather than like a stale string.
+    QVERIFY(!CardLayout::expanderLabel(3, false).contains(QChar(0x25b8)));
+    QVERIFY(!CardLayout::expanderLabel(3, true).contains(QChar(0x25be)));
 
     const QFont font;
     const int h = CardLayout::heightFor(font);
@@ -244,12 +255,17 @@ void TestCardLayout::theExpanderReadsAsAPillWithAWord()
         CardLayout::compute(threadInput(), QRect(0, 0, 400, h), font);
     const QFontMetrics small(CardLayout::smallFont(font));
 
-    // The rect must hold the label AND its padding, or the pill's background
-    // is narrower than the text sitting on it.
+    // The rect must hold the label, the drawn triangle, the gap between them
+    // AND the padding, or the pill's background is narrower than what sits on
+    // it. The triangle's width came free from the text metrics while it was a
+    // glyph in the label; since item 70 it is reserved explicitly, and this is
+    // what would catch it being forgotten.
     QVERIFY2(card.expanderRect.width()
                  >= small.horizontalAdvance(CardLayout::expanderLabel(3, false))
+                        + small.ascent() + CardLayout::kMarkGap
                         + CardLayout::kPillPaddingX * 2,
-             "the expander rect is too narrow for its own label and padding");
+             "the expander rect is too narrow for its label, its triangle and "
+             "its padding");
 
     // And it must NOT change width when the card opens: a pill that resized on
     // click would shift the subject's elision under the pointer.
@@ -257,6 +273,145 @@ void TestCardLayout::theExpanderReadsAsAPillWithAWord()
     const CardLayout expanded =
         CardLayout::compute(open, QRect(0, 0, 400, h), font);
     QCOMPARE(expanded.expanderRect.width(), card.expanderRect.width());
+}
+
+void TestCardLayout::marksReserveTheirOwnSpaceRatherThanOverlappingTheSubject()
+{
+    // Item 70. The marks were glyphs INSIDE the subject string until then, so
+    // their width came free from the text metrics and no arrangement was
+    // needed. As drawn icons they occupy rects, and a subject sized as though
+    // they were absent runs underneath them. This is the assertion that would
+    // catch that, and it cannot be made anywhere else: a rendering probe over
+    // the delegate would show overlapping ink as a plausible-looking card.
+    const QFont font;
+    const int h = CardLayout::heightFor(font);
+    const QRect rect(0, 0, 400, h);
+
+    CardLayout::Input bare = threadInput();
+    CardLayout::Input marked = threadInput();
+    marked.hasAttachment = true;
+    marked.passed = true;
+    marked.replied = true;
+
+    const CardLayout without = CardLayout::compute(bare, rect, font);
+    const CardLayout with = CardLayout::compute(marked, rect, font);
+
+    QVERIFY(!with.attachmentRect.isEmpty());
+    QVERIFY(!with.passedRect.isEmpty());
+    QVERIFY(!with.repliedRect.isEmpty());
+
+    // The subject gives up exactly the room the marks take.
+    QVERIFY2(with.subjectRect.width() < without.subjectRect.width(),
+             "the marks reserved no space, so the subject is sized as though "
+             "they were not there and its text runs underneath them");
+
+    // And every mark begins after the subject ends. Compared as exclusive
+    // edges: QRect::right() is inclusive, which is the trap this file already
+    // documents for the date.
+    const int subjectEnd = with.subjectRect.left() + with.subjectRect.width();
+    QVERIFY2(with.attachmentRect.left() >= subjectEnd,
+             "the attachment mark overlaps the subject");
+    QVERIFY2(with.passedRect.left() >= subjectEnd, "passed overlaps the subject");
+    QVERIFY2(with.repliedRect.left() >= subjectEnd,
+             "replied overlaps the subject");
+
+    // Square, so nothing is drawn stretched.
+    QCOMPARE(with.attachmentRect.width(), with.attachmentRect.height());
+}
+
+void TestCardLayout::anAbsentMarkReservesNothing()
+{
+    // A card with no attachment must not leave a hole where the mark would be:
+    // the subject is the elastic part of line two and every reserved-but-unused
+    // pixel comes out of it.
+    const QFont font;
+    const int h = CardLayout::heightFor(font);
+    const QRect rect(0, 0, 400, h);
+
+    const CardLayout card = CardLayout::compute(threadInput(), rect, font);
+
+    QVERIFY(card.flagRect.isEmpty());
+    QVERIFY(card.attachmentRect.isEmpty());
+    QVERIFY(card.passedRect.isEmpty());
+    QVERIFY(card.repliedRect.isEmpty());
+
+    // Guard: the same input WITH a mark must produce one, or the assertions
+    // above pass against a layout that never draws marks at all.
+    CardLayout::Input marked = threadInput();
+    marked.hasAttachment = true;
+    QVERIFY(!CardLayout::compute(marked, rect, font).attachmentRect.isEmpty());
+}
+
+void TestCardLayout::theFlagIndentsTheSubjectRatherThanSittingOnIt()
+{
+    // The flag is the one mark on the LEFT, where its glyph was, so a flagged
+    // card still reads flagged from the left edge.
+    const QFont font;
+    const int h = CardLayout::heightFor(font);
+    const QRect rect(0, 0, 400, h);
+
+    CardLayout::Input flagged = threadInput();
+    flagged.flagged = true;
+
+    const CardLayout plain = CardLayout::compute(threadInput(), rect, font);
+    const CardLayout marked = CardLayout::compute(flagged, rect, font);
+
+    QVERIFY(!marked.flagRect.isEmpty());
+    QCOMPARE(marked.flagRect.left(), marked.contentLeft);
+
+    // The subject starts after the flag, rather than at contentLeft with the
+    // flag drawn over it.
+    QVERIFY2(marked.subjectRect.left() > plain.subjectRect.left(),
+             "the flag did not move the subject, so it is drawn on top of it");
+    QVERIFY(marked.subjectRect.left()
+            >= marked.flagRect.left() + marked.flagRect.width());
+}
+
+void TestCardLayout::marksDoNotCollideWithEachOtherOrTheExpander()
+{
+    // All four marks at once on a card that also has an expander, which is the
+    // densest line two can get. Nothing may overlap anything.
+    const QFont font;
+    const int h = CardLayout::heightFor(font);
+    const QRect rect(0, 0, 400, h);
+
+    CardLayout::Input in = threadInput();
+    in.flagged = true;
+    in.hasAttachment = true;
+    in.passed = true;
+    in.replied = true;
+
+    const CardLayout card = CardLayout::compute(in, rect, font);
+
+    QVERIFY(!card.expanderRect.isEmpty());
+
+    // Left to right: flag, subject, attachment, passed, replied, expander.
+    const QList<QRect> ordered = { card.flagRect,   card.subjectRect,
+                                   card.attachmentRect, card.passedRect,
+                                   card.repliedRect,  card.expanderRect };
+    for (int i = 0; i + 1 < ordered.size(); ++i) {
+        const QRect &left = ordered.at(i);
+        const QRect &right = ordered.at(i + 1);
+        QVERIFY2(left.left() + left.width() <= right.left(),
+                 qPrintable(QStringLiteral("rect %1 (x %2 w %3) overlaps rect "
+                                           "%4 (x %5)")
+                                .arg(i)
+                                .arg(left.left())
+                                .arg(left.width())
+                                .arg(i + 1)
+                                .arg(right.left())));
+    }
+
+    // And the whole line stays inside the card.
+    QVERIFY(card.repliedRect.left() + card.repliedRect.width()
+            <= card.expanderRect.left());
+    QVERIFY(card.expanderRect.left() + card.expanderRect.width()
+            <= rect.right() + 1);
+
+    // The subject survives at a usable width rather than being squeezed to
+    // nothing by four marks: they are small and fixed, it is the elastic part.
+    QVERIFY2(card.subjectRect.width() > 100,
+             "four marks left the subject with almost no room on a 400px card");
 }
 
 void TestCardLayout::dateIsFlushRight()

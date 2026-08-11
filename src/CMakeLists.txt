@@ -6,6 +6,7 @@ add_library(qtmaildir_lib STATIC
     htmlbuilder.cpp
     cidschemehandler.cpp
     cardlayout.cpp
+    marks.cpp
     carddelegate.cpp
     notmuchworker.cpp
     tagchip.cpp
@@ -27,7 +28,8 @@ target_include_directories(qtmaildir_lib
            ${CMAKE_BINARY_DIR}/generated/qtmaildir)
 
 target_link_libraries(qtmaildir_lib
-    PUBLIC Qt6::Widgets Qt6::WebEngineWidgets PkgConfig::GMIME ${NOTMUCH_LIBRARY})
+    PUBLIC Qt6::Widgets Qt6::Svg Qt6::WebEngineWidgets PkgConfig::GMIME
+           ${NOTMUCH_LIBRARY})
 
 # resources.qrc belongs to the executable, not to the static library. A qrc
 # compiled into a .a registers itself from a global initialiser, and the linker

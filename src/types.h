@@ -47,6 +47,14 @@ struct ThreadSummary
 
     bool isUnread() const { return tags.contains(QStringLiteral("unread")); }
     bool isFlagged() const { return tags.contains(QStringLiteral("flagged")); }
+    /// True when this message was forwarded. The Maildir "P" (passed) flag,
+    /// which notmuch translates to a tag under maildir.synchronize_flags.
+    /// Item 68 measured the whole database: nothing derives this from a
+    /// subject line, so a "Fwd:" subject with no flag is correctly unmarked.
+    bool isPassed() const { return tags.contains(QStringLiteral("passed")); }
+
+    /// True when this message was replied to. The Maildir "R" flag.
+    bool isReplied() const { return tags.contains(QStringLiteral("replied")); }
     bool isDeleted() const { return tags.contains(QStringLiteral("deleted")); }
     bool isSpam() const { return tags.contains(QStringLiteral("spam")); }
 
@@ -73,6 +81,11 @@ struct MessageRef
     /// being pulled in only because a sibling in its thread matched. Drives
     /// whether it renders expanded or as a stub.
     bool matched = true;
+
+    /// For the message pane header's flagged mark (item 70). The tags are
+    /// already carried, so this is the same predicate MessageNode and
+    /// ThreadSummary offer rather than new state.
+    bool isFlagged() const { return tags.contains(QStringLiteral("flagged")); }
 };
 
 /// One message as a row in the thread list.
@@ -97,6 +110,14 @@ struct MessageNode
 
     bool isUnread() const { return tags.contains(QStringLiteral("unread")); }
     bool isFlagged() const { return tags.contains(QStringLiteral("flagged")); }
+    /// True when this message was forwarded. The Maildir "P" (passed) flag,
+    /// which notmuch translates to a tag under maildir.synchronize_flags.
+    /// Item 68 measured the whole database: nothing derives this from a
+    /// subject line, so a "Fwd:" subject with no flag is correctly unmarked.
+    bool isPassed() const { return tags.contains(QStringLiteral("passed")); }
+
+    /// True when this message was replied to. The Maildir "R" flag.
+    bool isReplied() const { return tags.contains(QStringLiteral("replied")); }
 
     /// notmuch applies "attachment" while indexing, so this needs no MIME
     /// parsing, exactly as on ThreadSummary.

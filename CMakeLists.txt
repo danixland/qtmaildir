@@ -11,7 +11,7 @@ set(CMAKE_AUTORCC ON)
 # that ships.
 option(QTMAILDIR_BUILD_TESTS "Build the test suite" ON)
 
-set(QTMAILDIR_QT_COMPONENTS Widgets WebEngineWidgets)
+set(QTMAILDIR_QT_COMPONENTS Widgets Svg WebEngineWidgets)
 if(QTMAILDIR_BUILD_TESTS)
     list(APPEND QTMAILDIR_QT_COMPONENTS Test)
 endif()

@@ -27,24 +27,26 @@
 #include <QFontDatabase>
 #include <QFontMetrics>
 
-QString ThreadListModel::attachmentGlyph()
+namespace {
+
+/// Whether a tag is already drawn on the card as a mark, and so must not also
+/// appear as a chip.
+///
+/// One list, consulted by both PillTagsRole (a thread's chips) and
+/// MessageOwnTagsRole (a reply's own chips). Two copies drifted apart is
+/// exactly how a tag ends up drawn twice on one row and not at all on another.
+bool isDrawnAsAMark(const QString &tag)
 {
-    // U+1F4CE PAPERCLIP, with a fallback for a system whose default font
-    // cannot draw it: an unrenderable codepoint shows as a tofu box, which
-    // reads as "something is broken" rather than "this has an attachment".
-    // Computed once; the font does not change under a running application.
-    static const QString glyph = [] {
-        const char32_t paperclip = 0x1F4CE;
-        const QString preferred = QString::fromUcs4(&paperclip, 1);
-        const QFontMetrics metrics{QFontDatabase::systemFont(
-            QFontDatabase::GeneralFont)};
-        // "*" as the fallback: ASCII, present in every practical font, and
-        // unambiguous in a column that shows nothing else.
-        return metrics.inFontUcs4(paperclip) ? preferred
-                                             : QStringLiteral("*");
-    }();
-    return glyph;
+    static const QStringList marks = {
+        QStringLiteral("flagged"),
+        QStringLiteral("attachment"),
+        QStringLiteral("passed"),
+        QStringLiteral("replied"),
+    };
+    return marks.contains(tag);
 }
+
+}   // namespace
 
 QColor ThreadListModel::deletedColour()
 {
@@ -59,22 +61,6 @@ QColor ThreadListModel::spamColour()
     // Distinct hue rather than a lighter red, so spam and deleted are told
     // apart by colour and not by shade.
     return QColor(0xa8, 0x5c, 0x18);
-}
-
-QString ThreadListModel::flagGlyph()
-{
-    // U+2605 BLACK STAR, with the same fallback reasoning as the paperclip: an
-    // unrenderable codepoint shows as tofu, which reads as breakage rather
-    // than as "flagged". The solid star, not the outlined U+2606, since it has
-    // to register at small size beside a paperclip.
-    static const QString glyph = [] {
-        const char32_t star = 0x2605;
-        const QString preferred = QString::fromUcs4(&star, 1);
-        const QFontMetrics metrics{QFontDatabase::systemFont(
-            QFontDatabase::GeneralFont)};
-        return metrics.inFontUcs4(star) ? preferred : QStringLiteral("*");
-    }();
-    return glyph;
 }
 
 QColor ThreadListModel::replyBackground()
@@ -308,6 +294,13 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
                     : QStringList();
             QStringList own;
             for (const QString &tag : node.tags) {
+                // Drawn as a mark on this row's own line two since items 69
+                // and 70, so a chip would repeat it. Filtered here as well as
+                // in PillTagsRole because "own" is a difference against the
+                // THREAD, and a reply that is flagged where its thread is not
+                // would otherwise show both the mark and the word.
+                if (isDrawnAsAMark(tag))
+                    continue;
                 if (!threadTags.contains(tag))
                     own.append(tag);
             }
@@ -343,6 +336,10 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             return node.hasAttachment();
         case IsFlaggedRole:
             return node.isFlagged();
+        case IsPassedRole:
+            return node.isPassed();
+        case IsRepliedRole:
+            return node.isReplied();
         case ReplyCountRole:
             // A reply never offers an expander: nesting past the first level is
             // drawn from depth, not from further parent-child structure.
@@ -425,16 +422,20 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         //
         // deleted and spam are kept: they repaint the whole row, so a pill is
         // redundant there too, but a doomed thread is rare and worth naming.
+        // passed and replied joined this list with item 69: they are drawn
+        // marks on line two now, so a chip repeating the word is the same
+        // duplication flagged and attachment were already dropped for. This is
+        // what item 69 asked for, "tags like Passed and Replied should use
+        // icons instead", and the chip has to go or both appear at once.
         static const QStringList hidden = {
             QStringLiteral("inbox"),
             QStringLiteral("unread"),
-            QStringLiteral("flagged"),
-            QStringLiteral("attachment"),
         };
 
         QStringList pills;
         for (const QString &tag : thread.tags) {
-            if (hidden.contains(tag) || TagColors::isAccountTag(tag))
+            if (hidden.contains(tag) || isDrawnAsAMark(tag)
+                || TagColors::isAccountTag(tag))
                 continue;
             pills.append(tag);
         }
@@ -512,6 +513,10 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         return thread.hasAttachment();
     case IsFlaggedRole:
         return thread.isFlagged();
+    case IsPassedRole:
+        return thread.isPassed();
+    case IsRepliedRole:
+        return thread.isReplied();
     case ReplyCountRole:
         // Zero in a flat list, so the card draws no expander pill. The count
         // and hasChildren() must agree: a card advertising "3 replies" that

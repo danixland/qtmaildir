@@ -2037,6 +2037,10 @@ void MainWindow::onThreadLoaded(const QVector<MessageRef> &messages,
         // Namespace prefix keeps cid: references distinct across the thread.
         item.cidPrefix = cidPrefixForIndex(i);
 
+        // For the header's marks (item 70). From the REF's tags, since the
+        // parsed message carries only what was in the file.
+        item.flagged = ref.isFlagged();
+
         // Matched messages open; the rest collapse to a stub. The last message
         // always opens, so a thread never renders as nothing but stubs.
         item.expanded = ref.matched || i == messages.size() - 1;

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Expanded: the collapsed triangle rotated 90 degrees about the centre,
+       so the pair cannot drift in weight. -->
+  <path fill="currentColor" d="M 2.38,5.38 13.62,5.38 8,12.25 Z"/>
+</svg>

@@ -1385,40 +1385,73 @@ void MainWindow::onAllTagsReady(const QStringList &tags)
     m_queryCompleter->setTags(tags);
 }
 
-namespace {
+QList<MainWindow::PlaceholderLine> MainWindow::placeholderLines() const
+{
+    // One list of (query, label-maker) pairs rather than two arrays indexed in
+    // parallel. The parallel version is what the fixed array was, and its
+    // hazard is that inserting an entry in one and not the other prints a real
+    // number against the wrong name, which reads as a plausible pane.
+    //
+    // The queries are wire format and deliberately untranslated: `tag:` is
+    // notmuch syntax, not user-facing prose. Only the labels are translated.
+    QList<PlaceholderLine> lines = {
+        { QStringLiteral("tag:unread"),
+          [this](int n) { return tr("%n unread", "", n); } },
+        { QStringLiteral("tag:flagged"),
+          [this](int n) { return tr("%n flagged", "", n); } },
+        { QStringLiteral("tag:inbox"),
+          [this](int n) { return tr("%n in inbox", "", n); } },
+    };
 
-/// The queries behind the placeholder's helper lines, in render order.
-///
-/// Wire format, deliberately untranslated: `tag:` is notmuch syntax, not user
-/// -facing prose. Only the labels beside them are translated.
-const std::array<const char *, 3> kPlaceholderQueries = {
-    "tag:unread",
-    "tag:flagged",
-    "tag:inbox",
-};
+    // Sent and drafts are composed from the account folders, not from a tag.
+    // `tag:draft` counts 0 against a real database and no draft-ish tag exists
+    // in it, so a tag-based line would be a permanent zero.
+    //
+    // Omitted entirely when no account configures the folder, rather than
+    // shown as 0: item 63 established that a missing sent folder is a real
+    // configuration, and "0 sent" claims the user has sent nothing.
+    const QString sent = m_config.allSentQuery();
+    if (!sent.isEmpty()) {
+        lines.append({ sent, [this](int n) { return tr("%n sent", "", n); } });
+    }
 
-} // namespace
+    const QString drafts = m_config.allDraftsQuery();
+    if (!drafts.isEmpty()) {
+        lines.append({ drafts,
+                       [this](int n) { return tr("%n draft(s)", "", n); } });
+    }
+
+    return lines;
+}
+
+QStringList MainWindow::placeholderQueries() const
+{
+    QStringList queries;
+    for (const PlaceholderLine &line : placeholderLines())
+        queries.append(line.query);
+    return queries;
+}
 
 QList<HtmlBuilder::PlaceholderHelper> MainWindow::placeholderHelpers() const
 {
     QList<HtmlBuilder::PlaceholderHelper> helpers;
 
-    // Empty until the first reply lands. Rendering three zeroes meanwhile
-    // would be worse than rendering nothing: a zero is a claim.
-    if (m_placeholderCounts.size() == int(kPlaceholderQueries.size())) {
-        const QStringList labels = {
-            tr("%n unread", "", m_placeholderCounts.at(0)),
-            tr("%n flagged", "", m_placeholderCounts.at(1)),
-            tr("%n in inbox", "", m_placeholderCounts.at(2)),
-        };
+    const QList<PlaceholderLine> lines = placeholderLines();
 
-        for (int i = 0; i < labels.size(); ++i) {
+    // Empty until the first reply lands. Rendering zeroes meanwhile would be
+    // worse than rendering nothing: a zero is a claim.
+    //
+    // The size check is also what keeps the pairing honest across a config
+    // that changed shape between the request and the reply: counts that do not
+    // match the current line list are not this list's answers.
+    if (m_placeholderCounts.size() == lines.size()) {
+        for (int i = 0; i < lines.size(); ++i) {
             // A query notmuch could not count yields -1; skip that line rather
             // than print a negative number at the user.
             if (m_placeholderCounts.at(i) < 0)
                 continue;
-            helpers.append({ labels.at(i),
-                             QString::fromLatin1(kPlaceholderQueries[i]) });
+            helpers.append({ lines.at(i).label(m_placeholderCounts.at(i)),
+                             lines.at(i).query });
         }
     }
 
@@ -1438,12 +1471,8 @@ void MainWindow::showPlaceholderPane()
 {
     m_messageView->showPlaceholder(placeholderHelpers());
 
-    QStringList queries;
-    for (const char *query : kPlaceholderQueries)
-        queries.append(QString::fromLatin1(query));
-
     QMetaObject::invokeMethod(m_worker, "requestCounts", Qt::QueuedConnection,
-                              Q_ARG(QStringList, queries),
+                              Q_ARG(QStringList, placeholderQueries()),
                               Q_ARG(quint64, ++m_countsGeneration));
 }
 

@@ -173,6 +173,10 @@ private slots:
     void thereIsNoSentButtonWithoutASentKey();
     void theSentButtonRunsEveryConfiguredAccount();
     void theSentButtonSurvivesABracketedPath();
+    void placeholderCountsSkipSentAndDraftsWithoutTheKeys();
+    void placeholderCountsCarrySentAndDrafts();
+    void placeholderLabelsStayPairedWithTheirQueries();
+    void placeholderCountsDropAnUncountableQuery();
     void flatModeDoesNotSurviveTheNextQuery();
     void noTwoActionsShareAnIcon();
 };
@@ -4637,6 +4641,199 @@ void TestMainWindow::theSentButtonSurvivesABracketedPath()
     button->click();
     QCOMPARE(queryEdit->text(),
              QStringLiteral("path:\"provider-a/[Provider]/Posta inviata/**\""));
+}
+
+namespace {
+
+/// Writes a config whose accounts carry a sent folder, a drafts folder, or
+/// neither. Separate from writeSentConfig() because the two keys are
+/// independent: the interesting cases here are exactly the ones where an
+/// account has one and not the other.
+struct FolderAccount {
+    QString maildir;
+    QString sent;
+    QString drafts;
+};
+
+QString writeFolderConfig(const QTemporaryDir &dir,
+                          const QList<FolderAccount> &accounts)
+{
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QSettings s(path, QSettings::IniFormat);
+    for (const FolderAccount &account : accounts) {
+        s.beginGroup(QStringLiteral("account.") + account.maildir);
+        s.setValue(QStringLiteral("maildir"), account.maildir);
+        if (!account.sent.isEmpty())
+            s.setValue(QStringLiteral("sent"), account.sent);
+        if (!account.drafts.isEmpty())
+            s.setValue(QStringLiteral("drafts"), account.drafts);
+        s.endGroup();
+    }
+    s.sync();
+    return path;
+}
+
+/// The label of the helper whose query is `query`, or a null string.
+QString labelForQuery(const QList<HtmlBuilder::PlaceholderHelper> &helpers,
+                      const QString &query)
+{
+    for (const HtmlBuilder::PlaceholderHelper &helper : helpers) {
+        if (helper.query == query)
+            return helper.label;
+    }
+    return QString();
+}
+
+}  // namespace
+
+void TestMainWindow::placeholderCountsSkipSentAndDraftsWithoutTheKeys()
+{
+    // The tag: lines are unconditional, the folder lines are not. An account
+    // with no sent or drafts folder must contribute no line at all rather than
+    // a line reading 0: item 63 established that a missing folder is a real
+    // configuration, and "0 sent" claims the user has sent nothing.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeFolderConfig(dir, {{QStringLiteral("provider-c"), {}, {}}}));
+
+    MainWindow window(config);
+
+    const QStringList queries = window.placeholderQueriesForTesting();
+    QCOMPARE(queries.size(), 3);
+    QVERIFY(queries.contains(QStringLiteral("tag:unread")));
+    QVERIFY(queries.contains(QStringLiteral("tag:flagged")));
+    QVERIFY(queries.contains(QStringLiteral("tag:inbox")));
+}
+
+void TestMainWindow::placeholderCountsCarrySentAndDrafts()
+{
+    // Both composed from the folder keys rather than from a tag. `tag:draft`
+    // counts 0 against the user's real database (measured 2026-08-11) and no
+    // draft-ish tag exists in it at all, so a tag-based drafts line would be a
+    // permanent zero that looks like working code.
+    //
+    // The account layout is the real one's shape: one account with both keys,
+    // one with drafts and NO sent, which is what proves the two are collected
+    // independently rather than per-account in one pass.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeFolderConfig(dir, {
+        {QStringLiteral("webmail-primary"), QStringLiteral("Sent"),
+         QStringLiteral("Drafts")},
+        {QStringLiteral("provider-a"), {}, QStringLiteral("[Provider]/Bozze")},
+    }));
+
+    MainWindow window(config);
+
+    const QStringList queries = window.placeholderQueriesForTesting();
+    QCOMPARE(queries.size(), 5);
+
+    // The quoting survives the trip, which is the trap this whole composition
+    // exists for: unquoted, "[" and "]" are Xapian syntax and the count reads
+    // 0 while looking like an empty folder.
+    QVERIFY2(queries.contains(config.allDraftsQuery()),
+             qPrintable(QStringLiteral("drafts query missing, got: %1")
+                            .arg(queries.join(QStringLiteral(" | ")))));
+    QVERIFY(queries.contains(config.allSentQuery()));
+    QVERIFY(config.allDraftsQuery().contains(
+        QStringLiteral("path:\"provider-a/[Provider]/Bozze/**\"")));
+
+    // The sent term comes from the account that has one, and the drafts terms
+    // from both. An implementation that emitted a folder line per account
+    // would produce four folder queries instead of two.
+    QCOMPARE(config.allSentQuery().count(QStringLiteral("path:")), 1);
+    QCOMPARE(config.allDraftsQuery().count(QStringLiteral("path:")), 2);
+}
+
+void TestMainWindow::placeholderLabelsStayPairedWithTheirQueries()
+{
+    // The defect this guards is the one the old fixed array invited: the
+    // labels were written positionally against a separate query array, so
+    // inserting an entry in one and not the other put a real number against
+    // the wrong name. Asserting the PAIRING rather than the order is what
+    // survives a later reshuffle.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeFolderConfig(dir, {
+        {QStringLiteral("webmail-primary"), QStringLiteral("Sent"),
+         QStringLiteral("Drafts")},
+    }));
+
+    MainWindow window(config);
+
+    const QStringList queries = window.placeholderQueriesForTesting();
+    QCOMPARE(queries.size(), 5);
+
+    // Distinct counts, so a label reading the wrong index cannot coincide with
+    // the right answer. Positional against the queries the window just asked
+    // for, which is exactly the contract requestCounts() replies under.
+    QVector<int> counts;
+    for (int i = 0; i < queries.size(); ++i)
+        counts.append((i + 1) * 10);
+
+    QMetaObject::invokeMethod(&window, "onCountsReady",
+                              Q_ARG(QVector<int>, counts),
+                              Q_ARG(quint64, window.countsGenerationForTesting()));
+
+    const QList<HtmlBuilder::PlaceholderHelper> helpers =
+        window.placeholderHelpersForTesting();
+
+    for (int i = 0; i < queries.size(); ++i) {
+        const QString label = labelForQuery(helpers, queries.at(i));
+        QVERIFY2(!label.isNull(),
+                 qPrintable(QStringLiteral("no helper for query '%1'")
+                                .arg(queries.at(i))));
+        QVERIFY2(label.contains(QString::number(counts.at(i))),
+                 qPrintable(QStringLiteral("query '%1' was labelled '%2', which "
+                                           "does not carry its own count %3")
+                                .arg(queries.at(i), label)
+                                .arg(counts.at(i))));
+    }
+
+    // And the folder lines say what they are, not "in inbox".
+    QVERIFY(labelForQuery(helpers, config.allSentQuery())
+                .contains(QStringLiteral("sent")));
+    QVERIFY(labelForQuery(helpers, config.allDraftsQuery())
+                .contains(QStringLiteral("draft")));
+}
+
+void TestMainWindow::placeholderCountsDropAnUncountableQuery()
+{
+    // The worker answers -1 for a query it could not count, rather than
+    // skipping the entry, precisely so the positional pairing holds. The pane
+    // must then drop that LINE rather than print a negative number, and drop
+    // only that one.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeFolderConfig(dir, {
+        {QStringLiteral("webmail-primary"), QStringLiteral("Sent"),
+         QStringLiteral("Drafts")},
+    }));
+
+    MainWindow window(config);
+
+    const QStringList queries = window.placeholderQueriesForTesting();
+    QVector<int> counts;
+    for (int i = 0; i < queries.size(); ++i)
+        counts.append(i == 0 ? -1 : (i + 1) * 10);
+
+    QMetaObject::invokeMethod(&window, "onCountsReady",
+                              Q_ARG(QVector<int>, counts),
+                              Q_ARG(quint64, window.countsGenerationForTesting()));
+
+    const QList<HtmlBuilder::PlaceholderHelper> helpers =
+        window.placeholderHelpersForTesting();
+
+    QVERIFY(labelForQuery(helpers, queries.at(0)).isNull());
+    for (int i = 1; i < queries.size(); ++i) {
+        QVERIFY2(!labelForQuery(helpers, queries.at(i)).isNull(),
+                 qPrintable(QStringLiteral("an uncountable query took '%1' "
+                                           "down with it").arg(queries.at(i))));
+    }
 }
 
 void TestMainWindow::flatModeDoesNotSurviveTheNextQuery()

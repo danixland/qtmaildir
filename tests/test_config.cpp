@@ -71,6 +71,10 @@ private slots:
     void allSentQueryIsEmptyWhenNoAccountHasOne();
     void allSentQuerySkipsAccountsWithoutTheKey();
     void allSentQueryJoinsEveryConfiguredAccount();
+    void draftsQueryIsEmptyWithoutTheKey();
+    void draftsQuerySurvivesABracketedPath();
+    void allDraftsQuerySkipsAccountsWithoutTheKey();
+    void allDraftsQueryIsIndependentOfSent();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -914,6 +918,99 @@ void TestConfig::allSentQueryJoinsEveryConfiguredAccount()
     QVERIFY(all.contains(
         QStringLiteral("path:\"provider-a/[Provider]/Posta inviata/**\"")));
     QCOMPARE(all.count(QStringLiteral(" or ")), 1);
+}
+
+void TestConfig::draftsQueryIsEmptyWithoutTheKey()
+{
+    // Optional for the same reason `sent` is, and more often absent: an
+    // account that composes elsewhere keeps no local drafts folder at all.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.provider-c]\n"
+        "maildir = provider-c\n")));
+
+    QCOMPARE(config.accounts().size(), 1);
+    QVERIFY(config.accounts().at(0).draftsQuery().isEmpty());
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::draftsQuerySurvivesABracketedPath()
+{
+    // The same quoting trap sentQuery() exists for, and it bites harder here:
+    // a real provider's drafts folder is BOTH bracketed and localised
+    // ("[Provider]/Bozze"). Unquoted, "[" and "]" are Xapian syntax and the
+    // term is parsed rather than matched, so the count reads 0 and looks like
+    // an empty drafts folder rather than a broken query.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.provider-a]\n"
+        "maildir = provider-a\n"
+        "drafts = [Provider]/Bozze\n")));
+
+    QCOMPARE(config.accounts().at(0).draftsQuery(),
+             QStringLiteral("path:\"provider-a/[Provider]/Bozze/**\""));
+}
+
+void TestConfig::allDraftsQuerySkipsAccountsWithoutTheKey()
+{
+    // The bare-"or" defect allSentQuerySkipsAccountsWithoutTheKey() records,
+    // asserted again rather than assumed to be inherited: the two compositions
+    // are separate functions and a rewrite of one does not carry the other.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.webmail-primary]\n"
+        "maildir = webmail-primary\n"
+        "drafts = Drafts\n"
+        "\n"
+        "[account.provider-c]\n"
+        "maildir = provider-c\n"
+        "\n"
+        "[account.webmail-secondary]\n"
+        "maildir = webmail-secondary\n"
+        "drafts = Drafts\n")));
+
+    const QString all = config.allDraftsQuery();
+
+    QVERIFY2(!all.contains(QStringLiteral("or  or")),
+             "an account without a drafts key left a bare 'or' in the query");
+    QVERIFY2(!all.trimmed().endsWith(QStringLiteral("or")),
+             "the query ends in a dangling 'or'");
+    QVERIFY2(!all.trimmed().startsWith(QStringLiteral("or")),
+             "the query starts with a dangling 'or'");
+    QVERIFY(!all.contains(QStringLiteral("provider-c")));
+
+    QCOMPARE(all.count(QStringLiteral("path:")), 2);
+    QCOMPARE(all.count(QStringLiteral(" or ")), 1);
+}
+
+void TestConfig::allDraftsQueryIsIndependentOfSent()
+{
+    // The two keys are independent, and one real account proves it: it
+    // configures `drafts` and has no `sent` whatsoever. A composition that
+    // walked the accounts once and emitted both from the same loop iteration
+    // would either drop this account's drafts or invent a sent term for it.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.webmail-primary]\n"
+        "maildir = webmail-primary\n"
+        "sent = Sent\n"
+        "\n"
+        "[account.provider-b]\n"
+        "maildir = provider-b\n"
+        "drafts = [Provider]/Bozze\n")));
+
+    const QString drafts = config.allDraftsQuery();
+    const QString sent = config.allSentQuery();
+
+    // One term each, from DIFFERENT accounts.
+    QCOMPARE(drafts, QStringLiteral("path:\"provider-b/[Provider]/Bozze/**\""));
+    QCOMPARE(sent, QStringLiteral("path:\"webmail-primary/Sent/**\""));
+    QVERIFY(!drafts.contains(QStringLiteral("webmail-primary")));
+    QVERIFY(!sent.contains(QStringLiteral("provider-b")));
 }
 
 QTEST_MAIN(TestConfig)

@@ -34,7 +34,13 @@ struct Account
     QString name;
     QString address;
     QString maildir;  ///< Relative to notmuch's database.path.
-    QString drafts;   ///< Unused in v1; send is v2.
+    /// The account's drafts folder, relative to maildir. Optional, exactly as
+    /// `sent` is, and absent more often: an account that composes elsewhere
+    /// keeps no local drafts folder at all.
+    ///
+    /// Composing drafts is v2. Reading them is not: the placeholder pane
+    /// counts them (item 67), which is why this is no longer unused.
+    QString drafts;
 
     /// The account's sent folder, relative to maildir. Optional and empty for
     /// an account that has none, which is a real case rather than a
@@ -81,6 +87,13 @@ struct Account
     /// selector wraps whatever query runs, so a Sent view under one account
     /// intersects to that account's sent mail and cannot leak another's.
     QString sentQuery() const;
+
+    /// Matches this account's drafts, or empty when `drafts` is unset.
+    ///
+    /// Separate from sentQuery() rather than one parameterised helper: the two
+    /// keys are independent, and one real account configures `drafts` with no
+    /// `sent` at all.
+    QString draftsQuery() const;
 };
 
 struct SavedQuery
@@ -144,6 +157,13 @@ public:
     /// ships, which is why the join lives here and is tested rather than being
     /// open-coded at the call site.
     QString allSentQuery() const;
+
+    /// Matches every configured account's drafts, or empty when none has one.
+    ///
+    /// Joins only the NON-EMPTY draftsQuery() results, for the same reason
+    /// allSentQuery() does: notmuch accepts a bare "or" without complaint and
+    /// silently answers a different question.
+    QString allDraftsQuery() const;
 
     /// A QDateTime::toString() pattern for the date on a card, or empty for the
     /// system locale's short format.

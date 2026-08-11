@@ -21,6 +21,12 @@ point at which they are stable.
 - Sent mail is shown as a flat list rather than as threads, and the cards name
   the **recipients** instead of the sender, which is you on every row.
   Selecting one opens what you sent, not the conversation your message started.
+- The blank message pane counts **sent mail and drafts** beside unread, flagged
+  and inbox. Both are composed from each account's `sent` and `drafts` folder
+  rather than from a tag, so they follow the same per-account configuration the
+  Sent view uses. A line is absent entirely when no account configures that
+  folder, rather than reading 0. The `drafts` key was already accepted and
+  documented as unused; it now has an effect.
 - `[general] date_format`, an optional pattern for the date on a thread card.
   Absent or empty keeps the system locale's short format, which is unchanged
   and remains the default. A pattern containing no date or time field is

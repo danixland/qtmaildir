@@ -47,35 +47,65 @@ QString Account::scopedQuery(const QString &query) const
     return QStringLiteral("%1 and (%2)").arg(prefix, query);
 }
 
-QString Account::sentQuery() const
-{
-    if (sent.isEmpty())
-        return QString();
+namespace {
 
-    // The QUOTES are load-bearing, not decoration. A real provider nests its
-    // sent folder under a bracketed parent, "[Provider]/Posta inviata", and
-    // "[" and "]" are Xapian syntax: unquoted, the term is parsed rather than
-    // matched and the query silently returns nothing while looking correct.
-    //
-    // The path is user config and is interpolated into a query, so this is the
-    // only place that composition happens; a caller building it by hand would
-    // be a second chance to forget the quotes.
-    return QStringLiteral("path:\"%1/%2/**\"").arg(maildir, sent);
+/// Composes `path:"<maildir>/<folder>/**"`, or empty when the folder is unset.
+///
+/// The QUOTES are load-bearing, not decoration. A real provider nests both its
+/// sent and its drafts folder under a bracketed parent with a localised name,
+/// "[Provider]/Posta inviata" and "[Provider]/Bozze", and "[" and "]" are
+/// Xapian syntax: unquoted, the term is parsed rather than matched and the
+/// query silently returns nothing while looking correct.
+///
+/// The path is user config and is interpolated into a query, so this is the
+/// only place that composition happens; a caller building it by hand would be
+/// a second chance to forget the quotes.
+QString folderQuery(const QString &maildir, const QString &folder)
+{
+    if (folder.isEmpty())
+        return QString();
+    return QStringLiteral("path:\"%1/%2/**\"").arg(maildir, folder);
 }
 
-QString Config::allSentQuery() const
+/// Joins the non-empty results of `extract` across `accounts` with " or ".
+///
+/// Collect first, join after. Appending "or" per account and trimming the
+/// result is the version that produced the defect this guards: an account with
+/// no key contributes an empty term, notmuch accepts the bare "or" without
+/// complaint, and the query quietly means something else. Measured against a
+/// real database, `A or  or B` returns 190 where the correct pair returns 211.
+QString joinAccountQueries(const QList<Account> &accounts,
+                           QString (Account::*extract)() const)
 {
-    // Collect first, join after. Appending "or" per account and trimming the
-    // result is the version that produced the defect this guards: an account
-    // with no sent key contributes an empty term, notmuch accepts the bare
-    // "or" without complaint, and the query quietly means something else.
     QStringList parts;
-    for (const Account &account : m_accounts) {
-        const QString query = account.sentQuery();
+    for (const Account &account : accounts) {
+        const QString query = (account.*extract)();
         if (!query.isEmpty())
             parts.append(query);
     }
     return parts.join(QStringLiteral(" or "));
+}
+
+} // namespace
+
+QString Account::sentQuery() const
+{
+    return folderQuery(maildir, sent);
+}
+
+QString Account::draftsQuery() const
+{
+    return folderQuery(maildir, drafts);
+}
+
+QString Config::allSentQuery() const
+{
+    return joinAccountQueries(m_accounts, &Account::sentQuery);
+}
+
+QString Config::allDraftsQuery() const
+{
+    return joinAccountQueries(m_accounts, &Account::draftsQuery);
 }
 
 QString Config::defaultPath()

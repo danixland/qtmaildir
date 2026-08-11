@@ -165,6 +165,25 @@ public:
         return !m_recoverThreadId.isEmpty();
     }
 
+    /// The placeholder's queries, in the order requestCounts() asks for them.
+    ///
+    /// A test seam. The worker's reply is paired with these POSITIONALLY, so a
+    /// test standing in for it has to know the order, and that order now
+    /// depends on config rather than on a fixed list.
+    QStringList placeholderQueriesForTesting() const
+    {
+        return placeholderQueries();
+    }
+
+    /// The helper lines as the pane would render them.
+    QList<HtmlBuilder::PlaceholderHelper> placeholderHelpersForTesting() const
+    {
+        return placeholderHelpers();
+    }
+
+    /// The generation the next counts reply must carry to be accepted.
+    quint64 countsGenerationForTesting() const { return m_countsGeneration; }
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
@@ -310,6 +329,30 @@ private:
     /// The helper lines, built from the last counts received. Rendered with
     /// whatever the previous answer was until the new one lands, so the pane
     /// never flashes empty while the worker replies.
+    /// One placeholder line: the query it counts, and how to label the answer.
+    ///
+    /// The label is a callable rather than a string because the count is not
+    /// known until the worker replies, and `tr("%n ...")` has to be given the
+    /// number to pick its plural form.
+    ///
+    /// Query and label travel together deliberately. The version this replaced
+    /// held them in two arrays indexed in parallel, where inserting an entry in
+    /// one and not the other put a real number against the wrong name.
+    struct PlaceholderLine {
+        QString query;
+        std::function<QString(int)> label;
+    };
+
+    /// The placeholder's lines, in render order.
+    ///
+    /// Built per call rather than cached: the sent and drafts lines come from
+    /// config, and a cache would be a second source of truth for the pairing
+    /// the counts reply depends on.
+    QList<PlaceholderLine> placeholderLines() const;
+
+    /// Just the queries, in the order requestCounts() asks for them.
+    QStringList placeholderQueries() const;
+
     QList<HtmlBuilder::PlaceholderHelper> placeholderHelpers() const;
 
     void showWarnings();
@@ -552,7 +595,7 @@ private:
     /// Indeterminate, shown only while a sync runs. See setSyncBusy().
     QProgressBar *m_syncProgress = nullptr;
 
-    /// The last counts the worker answered, one per kPlaceholderQueries entry.
+    /// The last counts the worker answered, one per placeholderLines() entry.
     /// Empty until the first reply, which renders the pane without its helper
     /// lines rather than with three zeroes that would be a lie.
     QVector<int> m_placeholderCounts;

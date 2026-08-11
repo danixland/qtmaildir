@@ -47,10 +47,13 @@ public:
     /// Writes one message into <folder>/cur (or new/ when unread).
     ///
     /// Returns false if the file could not be written. Call index() afterwards.
+    /// `to` defaults to a single generic recipient. Pass one explicitly to
+    /// exercise the recipient summary, which is the only thing that reads it.
     bool addMessage(const QString &folder, const QString &messageId,
                     const QString &subject, const QString &from,
                     const QString &date, const QString &body,
-                    bool unread = true, const QString &inReplyTo = QString())
+                    bool unread = true, const QString &inReplyTo = QString(),
+                    const QString &to = QStringLiteral("you@example.org"))
     {
         // Unread messages must not carry the maildir "S" flag, so they go to
         // new/ where no flags exist at all.
@@ -77,7 +80,7 @@ public:
 
         QTextStream out(&file);
         out << "From: " << from << "\n"
-            << "To: you@example.org\n"
+            << "To: " << to << "\n"
             << "Subject: " << subject << "\n"
             << "Message-ID: <" << messageId << ">\n"
             << "Date: " << date << "\n";

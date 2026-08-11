@@ -1,6 +1,7 @@
 # Sent mail: a per-account folder, a composed button, and recipients on the card
 
-**Status:** specified 2026-08-11, not implemented.
+**Status:** specified and built 2026-08-11, hand-verified by the user. See
+"Outcome" at the end for what the spec did not anticipate.
 **Resolves:** backlog item 63.
 **Size:** M, revised up from the backlog's S. The query half is the S that was
 scoped correctly; the recipients half is its own piece of work.
@@ -114,6 +115,18 @@ Built beside the saved-query buttons, running the OR of every non-empty
 `ThreadSummary` gains a recipients summary, filled in the worker, shown by
 `CardDelegate` in the sender's place when the row belongs to a Sent view.
 
+**The fold must be OPT-IN per query, and this is not a preference.** Measured
+2026-08-11 against the real database: `notmuch_message_get_header(m, "To")` is
+NOT served from the index, it reads the message file. Folding it for every
+thread of a 4411-thread inbox took **38.2 seconds**, 8.7 ms per thread. The
+same fold over the 601-thread Sent view took **663 ms**, 1.1 ms per thread,
+which the existing 200-thread batching hides.
+
+So the worker takes a flag on the query, set only when the query is a Sent one,
+and skips the walk entirely otherwise. A version that always folds turns an
+instant inbox into a 38-second one, and it would look correct in every test:
+the data is right, only the cost is wrong.
+
 ## Constraints
 
 **Do not invent a tag qtmaildir applies itself.** v1 is read-and-organize;
@@ -178,3 +191,50 @@ named `signals`, which Qt defines as a macro.
 
 The first and last are the ones that fail loudest if the quoting is wrong, and
 they are the reason to write them before the UI work rather than after.
+
+## Outcome (done 2026-08-11)
+
+Built in the three pieces above and hand-verified by the user. Four things the
+spec did not anticipate, each found by using it rather than by reading code.
+
+**A flat list, which the spec never mentioned.** The user's first report was
+that the Sent view showed the replies they had RECEIVED. That is correct
+behaviour, since the query matches messages and the list groups them into
+threads, but it is not what a Sent view is for: their stated mental model is
+that sent mail "lives on its own". `ThreadListModel::setFlatMode()` makes
+`hasChildren()` and `ReplyCountRole` answer differently and nothing else
+changes. It is one flag on the existing model rather than a second model or a
+filtered query, which was the user's condition for building it at all.
+
+**Flat mode cannot leak, and that is structural rather than careful.**
+`runQuery()` sets the mode on EVERY run, so any query that is not the Sent
+button restores the tree on its way through. The window test mutates this
+directly: making the flag one-way leaves it passing every model test and
+flattens the whole application from the first Sent click.
+
+**The pane needed its own fix, and the flat list is why.** With the list flat
+and correct, selecting a Sent row still opened the whole conversation. The
+single-message path needs `ThreadNode::first`, which is only filled when a
+thread is EXPANDED, so in a flat list it is always empty and every selection
+falls through to `loadThread`. That now takes `matchedOnly`, dropping the
+messages that did not match rather than rendering them as stubs. The per-message
+`matched` flag it needs was already computed.
+
+**The recipient fold is cheaper than the spec's measurement.** 251 ms for the
+601-thread Sent view against the 663 ms measured while specifying, because the
+worker stops at the first usable `To` per thread rather than reading every
+message. The inbox, with the flag off, is unchanged at 148 ms for 4411 threads.
+The opt-in is mutation-tested: always folding fails with "the To header was read
+for a query that never asked for it".
+
+**One mutation survived, and the comment was corrected rather than the code.**
+Removing the `haveMatchSet` guard beside `matchedOnly` changes nothing, because
+`ref.matched` is already true for every message when no query was given. The
+guard is redundant today and kept as a stated invariant at the point that
+depends on it; the test that appeared to cover it now says plainly that it does
+not.
+
+**Known limit, accepted.** A flat row is still one row per THREAD, not per sent
+message: 795 sent messages live in 601 threads here, so a thread written to
+twice appears once, dated by its newest match. The model is thread-keyed
+throughout, so per-message rows would be a different piece of work.

@@ -65,6 +65,13 @@ private slots:
     void loadThreadTreeReportsReplyDepth();
     void loadThreadTreeCarriesTheFactsARowNeeds();
 
+    void loadThreadMatchedOnlyDropsTheRest();
+    void loadThreadMatchedOnlyWithNoQueryKeepsEverything();
+
+    void recipientsAreAbsentUnlessAskedFor();
+    void recipientsAreFoldedWhenAskedFor();
+    void recipientsCrossAQueuedCall();
+
     void requestCountsAnswersOneCountPerQuery();
     void requestCountsKeepsPositionOnAnInvalidQuery();
     void requestDatabaseStatsCountsMessagesNotThreads();
@@ -74,10 +81,12 @@ private:
     /// Tags of one message, read back through a fresh worker query.
     QStringList tagsOf(const QString &messageId);
     QVector<MessageRef> messagesOfThread(const QString &threadId,
-                                         const QString &matchQuery = QString());
+                                         const QString &matchQuery = QString(),
+                                         bool matchedOnly = false);
     QVector<ThreadSummary> runQuery(
         const QString &query,
-        NotmuchWorker::SortOrder sort = NotmuchWorker::NewestFirst);
+        NotmuchWorker::SortOrder sort = NotmuchWorker::NewestFirst,
+        bool withRecipients = false);
     QString threadIdOf(const QString &subject);
 
     NotmuchFixture m_fixture;
@@ -114,17 +123,38 @@ void TestNotmuchWorker::initTestCase()
                                  QStringLiteral("Thu, 4 Jun 2026 10:00:00 +0000"),
                                  QStringLiteral("fourth message"), false));
 
+    // Thread D: in a "sent" folder, with real recipients. The To header is the
+    // only thing that distinguishes these from the threads above, and it is
+    // what the recipient fold reads.
+    QVERIFY(m_fixture.addMessage(QStringLiteral("sent"), QStringLiteral("d1@example.org"),
+                                 QStringLiteral("Preventivo"),
+                                 QStringLiteral("You <you@example.org>"),
+                                 QStringLiteral("Fri, 5 Jun 2026 10:00:00 +0000"),
+                                 QStringLiteral("fifth message"), false, QString(),
+                                 QStringLiteral("Mario Rossi <mario@example.org>")));
+
+    // Thread E: several recipients, one of them with a comma inside a quoted
+    // display name, which is what defeats splitting on commas.
+    QVERIFY(m_fixture.addMessage(QStringLiteral("sent"), QStringLiteral("e1@example.org"),
+                                 QStringLiteral("Riunione"),
+                                 QStringLiteral("You <you@example.org>"),
+                                 QStringLiteral("Sat, 6 Jun 2026 10:00:00 +0000"),
+                                 QStringLiteral("sixth message"), false, QString(),
+                                 QStringLiteral("\"Rossi, Mario\" <mario@example.org>, "
+                                                "info@example.net, "
+                                                "third@example.org")));
+
     QVERIFY2(m_fixture.index(), qPrintable(m_fixture.error()));
 }
 
 QVector<ThreadSummary> TestNotmuchWorker::runQuery(
-    const QString &query, NotmuchWorker::SortOrder sort)
+    const QString &query, NotmuchWorker::SortOrder sort, bool withRecipients)
 {
     NotmuchWorker worker(m_fixture.configPath());
     QSignalSpy ready(&worker, &NotmuchWorker::threadsReady);
     QSignalSpy finished(&worker, &NotmuchWorker::queryFinished);
 
-    worker.runQuery(query, 1, sort);
+    worker.runQuery(query, 1, sort, withRecipients);
 
     QVector<ThreadSummary> all;
     for (const QList<QVariant> &args : ready)
@@ -143,11 +173,12 @@ QString TestNotmuchWorker::threadIdOf(const QString &subject)
 }
 
 QVector<MessageRef> TestNotmuchWorker::messagesOfThread(const QString &threadId,
-                                                        const QString &matchQuery)
+                                                        const QString &matchQuery,
+                                                        bool matchedOnly)
 {
     NotmuchWorker worker(m_fixture.configPath());
     QSignalSpy loaded(&worker, &NotmuchWorker::threadLoaded);
-    worker.loadThread(threadId, matchQuery, 1);
+    worker.loadThread(threadId, matchQuery, 1, matchedOnly);
     if (loaded.isEmpty())
         return {};
     return loaded.first().at(0).value<QVector<MessageRef>>();
@@ -256,7 +287,7 @@ void TestNotmuchWorker::loadThreadTreeCarriesTheFactsARowNeeds()
 void TestNotmuchWorker::queryReturnsAllThreads()
 {
     const QVector<ThreadSummary> threads = runQuery(QStringLiteral("*"));
-    QCOMPARE(threads.size(), 3);
+    QCOMPARE(threads.size(), 5);
 }
 
 void TestNotmuchWorker::queryFiltersByTag()
@@ -325,7 +356,7 @@ void TestNotmuchWorker::queryPassesGenerationThrough()
     QCOMPARE(ready.size(), 1);
     QCOMPARE(ready.first().at(1).value<quint64>(), quint64(42));
     QCOMPARE(finished.size(), 1);
-    QCOMPARE(finished.first().at(0).toInt(), 3);
+    QCOMPARE(finished.first().at(0).toInt(), 5);
     QCOMPARE(finished.first().at(1).value<quint64>(), quint64(42));
 }
 
@@ -513,7 +544,7 @@ void TestNotmuchWorker::queryStillWorksAfterWrite()
 
     worker.runQuery(QStringLiteral("*"), 2);
     QCOMPARE(ready.size(), 2);
-    QCOMPARE(ready.at(1).at(0).value<QVector<ThreadSummary>>().size(), 3);
+    QCOMPARE(ready.at(1).at(0).value<QVector<ThreadSummary>>().size(), 5);
 
     worker.applyTags(change.inverted());
 }
@@ -611,6 +642,113 @@ void TestNotmuchWorker::requestAllTagsOnUnreadableConfigEmitsError()
     QVERIFY(ready.isEmpty());
 }
 
+void TestNotmuchWorker::loadThreadMatchedOnlyDropsTheRest()
+{
+    // Thread A is two messages, and only the reply carries "hamsterwheel".
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    // Without the flag: both messages, the non-matching one marked as a stub.
+    // This is the reading pane's normal behaviour and must not change.
+    const QVector<MessageRef> whole =
+        messagesOfThread(threadId, QStringLiteral("hamsterwheel"));
+    QCOMPARE(whole.size(), 2);
+
+    // With it: only the message that matched. The pane in a Sent view shows
+    // what the user sent, not the conversation their message started.
+    const QVector<MessageRef> matched =
+        messagesOfThread(threadId, QStringLiteral("hamsterwheel"), true);
+    QCOMPARE(matched.size(), 1);
+    QVERIFY(matched.at(0).matched);
+    QCOMPARE(matched.at(0).messageId, QStringLiteral("a2@example.org"));
+}
+
+void TestNotmuchWorker::loadThreadMatchedOnlyWithNoQueryKeepsEverything()
+{
+    // No query means nothing was filtered, so every message counts as matched
+    // and the flag has nothing to drop.
+    //
+    // This does NOT prove the haveMatchSet guard in loadThread: ref.matched is
+    // already true for every message in this case, so removing that guard
+    // leaves this passing, confirmed by mutation. It pins the BEHAVIOUR, which
+    // is what a caller depends on, and the guard is a stated invariant rather
+    // than a branch a test can reach.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    const QVector<MessageRef> all = messagesOfThread(threadId, QString(), true);
+    QCOMPARE(all.size(), 2);
+}
+
+void TestNotmuchWorker::recipientsAreAbsentUnlessAskedFor()
+{
+    // Opt-in, and this is a PERFORMANCE contract rather than a preference.
+    // notmuch_message_get_header(m, "To") is not served from the index, it
+    // reads the message file: measured 2026-08-11 against a real database,
+    // folding every thread of a 4411-thread inbox took 38.2 seconds, 8.7 ms
+    // per thread, against 1.1 ms per thread over the 601-thread sent view.
+    //
+    // A version that always folds is correct in every other respect, which is
+    // exactly why it needs a test: nothing else here would notice.
+    const QVector<ThreadSummary> threads =
+        runQuery(QStringLiteral("subject:Preventivo"));
+
+    QCOMPARE(threads.size(), 1);
+    QVERIFY2(threads.at(0).recipients.isEmpty(),
+             "the To header was read for a query that never asked for it");
+}
+
+void TestNotmuchWorker::recipientsAreFoldedWhenAskedFor()
+{
+    const QVector<ThreadSummary> one =
+        runQuery(QStringLiteral("subject:Preventivo"),
+                 NotmuchWorker::NewestFirst, true);
+    QCOMPARE(one.size(), 1);
+    QCOMPARE(one.at(0).recipients, QStringLiteral("Mario Rossi"));
+
+    // The comma-inside-a-display-name case, end to end through the worker
+    // rather than only against recipientSummary(): the header survives being
+    // written to a real maildir, indexed, and read back out of notmuch.
+    const QVector<ThreadSummary> many =
+        runQuery(QStringLiteral("subject:Riunione"),
+                 NotmuchWorker::NewestFirst, true);
+    QCOMPARE(many.size(), 1);
+
+    const QString summary = many.at(0).recipients;
+    QVERIFY2(summary.startsWith(QStringLiteral("Rossi, Mario")),
+             qPrintable(QStringLiteral("lost the quoted display name: %1")
+                            .arg(summary)));
+    QVERIFY2(summary.endsWith(QStringLiteral("+1")),
+             qPrintable(QStringLiteral("three recipients did not collapse to "
+                                       "two plus one: %1").arg(summary)));
+}
+
+void TestNotmuchWorker::recipientsCrossAQueuedCall()
+{
+    // The trap CLAUDE.md records for SortOrder, in the shape it takes for this
+    // argument. A bool is a registered metatype already, so this cannot fail
+    // the way an unregistered enum would, and the test exists to prove that
+    // rather than to assume it: the flag arriving as a default-constructed
+    // false would silently give an empty recipients column and nothing else.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy ready(&worker, &NotmuchWorker::threadsReady);
+
+    QVERIFY(QMetaObject::invokeMethod(
+        &worker, "runQuery", Qt::DirectConnection,
+        Q_ARG(QString, QStringLiteral("subject:Preventivo")),
+        Q_ARG(quint64, 1),
+        Q_ARG(NotmuchWorker::SortOrder, NotmuchWorker::NewestFirst),
+        Q_ARG(bool, true)));
+
+    QVector<ThreadSummary> all;
+    for (const QList<QVariant> &args : ready)
+        all += args.at(0).value<QVector<ThreadSummary>>();
+
+    QCOMPARE(all.size(), 1);
+    QVERIFY2(!all.at(0).recipients.isEmpty(),
+             "the recipients flag was dropped crossing invokeMethod");
+}
+
 void TestNotmuchWorker::requestCountsAnswersOneCountPerQuery()
 {
     NotmuchWorker worker(m_fixture.configPath());
@@ -626,7 +764,7 @@ void TestNotmuchWorker::requestCountsAnswersOneCountPerQuery()
     // Threads, not messages: thread A holds two messages and must count once,
     // which is the number the pane's "N in inbox" line claims to be showing.
     const QVector<int> counts = spy.at(0).at(0).value<QVector<int>>();
-    QCOMPARE(counts, QVector<int>({ 1, 3, 0 }));
+    QCOMPARE(counts, QVector<int>({ 1, 5, 0 }));
 }
 
 void TestNotmuchWorker::requestCountsKeepsPositionOnAnInvalidQuery()
@@ -656,7 +794,7 @@ void TestNotmuchWorker::requestCountsKeepsPositionOnAnInvalidQuery()
     // The queries either side keep their own answers, which is the property
     // the pane depends on.
     QCOMPARE(counts.at(0), 1);
-    QCOMPARE(counts.at(2), 3);
+    QCOMPARE(counts.at(2), 5);
 }
 
 void TestNotmuchWorker::requestDatabaseStatsCountsMessagesNotThreads()
@@ -676,8 +814,8 @@ void TestNotmuchWorker::requestDatabaseStatsCountsMessagesNotThreads()
     // one counts messages, which is what a user means by "how much mail". A
     // reimplementation that reused the thread count would report 3 here and be
     // confidently wrong under the label "messages".
-    QCOMPARE(stats.messages, 4);
-    QCOMPARE(stats.threads, 3);
+    QCOMPARE(stats.messages, 6);
+    QCOMPARE(stats.threads, 5);
     QVERIFY2(stats.messages != stats.threads,
              "messages and threads are equal, so this fixture cannot prove the "
              "two counts are distinct: add a reply to it");

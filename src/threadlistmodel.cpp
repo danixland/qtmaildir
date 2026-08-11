@@ -176,6 +176,21 @@ QModelIndex ThreadListModel::parent(const QModelIndex &child) const
     return createIndex(static_cast<int>(id), 0, static_cast<quintptr>(-1));
 }
 
+void ThreadListModel::setFlatMode(bool flat)
+{
+    if (m_flatMode == flat)
+        return;
+
+    // A full reset, not dataChanged. Flat mode changes what hasChildren() and
+    // rowCount() answer for every thread row, and a view that has already
+    // expanded one is holding indexes below it: dataChanged says "these rows
+    // are different", not "the shape under them is gone", and leaves the view
+    // drawing children the model no longer offers.
+    beginResetModel();
+    m_flatMode = flat;
+    endResetModel();
+}
+
 int ThreadListModel::rowCount(const QModelIndex &parent) const
 {
     if (!parent.isValid())
@@ -188,6 +203,11 @@ int ThreadListModel::rowCount(const QModelIndex &parent) const
         return 0;
 
     if (parent.row() < 0 || parent.row() >= m_threads.size())
+        return 0;
+
+    // Hidden, not discarded: leaving flat mode restores the tree with no
+    // reload, and an expansion loaded before the switch is still there.
+    if (m_flatMode)
         return 0;
 
     return m_threads.at(parent.row()).children.size();
@@ -207,6 +227,10 @@ bool ThreadListModel::hasChildren(const QModelIndex &parent) const
         return false;
 
     if (parent.row() < 0 || parent.row() >= m_threads.size())
+        return false;
+
+    // No expander in a flat list, whatever the thread turns out to contain.
+    if (m_flatMode)
         return false;
 
     const ThreadNode &node = m_threads.at(parent.row());
@@ -469,6 +493,15 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         // twice on the same card.
         return thread.subject;
     case SendersRole:
+        // Recipients in their place when the query supplied them, which only a
+        // Sent query does. The sender there is the user on every row and says
+        // nothing; who it went TO is the question the view exists to answer.
+        //
+        // Falls back to authors when the fold found no usable To, so a message
+        // with a malformed or absent recipient header shows the sender rather
+        // than a blank line where a name belongs.
+        if (!thread.recipients.isEmpty())
+            return thread.recipients;
         return thread.authors;
     case DateRole:
         // The QDateTime itself. Formatting belongs to the delegate now: the
@@ -480,6 +513,12 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     case IsFlaggedRole:
         return thread.isFlagged();
     case ReplyCountRole:
+        // Zero in a flat list, so the card draws no expander pill. The count
+        // and hasChildren() must agree: a card advertising "3 replies" that
+        // cannot be opened is the inert-glyph defect this project has already
+        // shipped once.
+        if (m_flatMode)
+            return 0;
         // totalCount includes the root message, which is the card itself.
         return qMax(0, thread.totalCount - 1);
     case DateFormatRole:

@@ -165,6 +165,7 @@ name = Your Name
 address = you@example.org
 maildir = work-mail        ; relative to notmuch's database.path
 drafts = Drafts            ; recorded for v2; unused today
+sent = Sent                ; optional; enables the Sent button for this account
 label = W                  ; optional chip text; defaults to the key
 color = #2f6fa8            ; optional chip colour; generated when unset
 channel = work             ; optional mbsync channel; defaults to the key
@@ -202,6 +203,44 @@ separate setting, `[general] startup_query`, rather than "the first one".
 The button text is the key you write here, so these names are yours to
 choose. `Important = tag:flagged` and `Flagged = tag:flagged` run the same
 query and differ only in what the button says.
+
+### Sent mail
+
+A **Sent** button appears beside the saved queries once at least one account
+carries a `sent` key naming its sent folder, relative to that account's
+`maildir`:
+
+```ini
+[account.work]
+maildir = work-mail
+sent = Sent
+
+[account.webmail]
+maildir = webmail
+sent = [Provider]/Posta inviata   ; nested and localised folders are fine
+
+[account.list-only]
+maildir = list-only
+; no sent key: this account is simply left out of the Sent view
+```
+
+The button composes its query from those keys every time you press it, rather
+than storing one, so adding an account or correcting a folder name is a config
+edit and nothing else. With no account selected it shows every configured
+account's sent mail; selecting one narrows it to that account. An account
+without the key is omitted silently, since keeping no sent mail locally is a
+legitimate setup rather than a mistake.
+
+Sent mail is presented differently from the rest, because it reads differently:
+
+- **A flat list, not threads.** A message you sent otherwise drags in the
+  replies you received, and a view labelled Sent then shows conversations.
+- **Cards name the recipients**, not the sender, which is you on every row.
+- **Selecting one opens what you sent**, rather than the whole conversation it
+  started.
+
+This applies only to the Sent button. The same query typed into the bar by hand
+behaves like any other query, threads and all.
 
 ## The query bar
 

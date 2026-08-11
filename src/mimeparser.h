@@ -94,6 +94,23 @@ struct Attachment
 /// subject can be far longer than that.
 QString attachmentFolderName(const QString &rfc822Date, const QString &subject);
 
+/// A one-line summary of a raw To: header, for the sender's place on a card in
+/// a Sent view.
+///
+/// Parsed with GMime rather than split on commas: a display name may CONTAIN a
+/// comma, so `"Rossi, Mario" <m@example.org>, info@example.net` is two
+/// addresses and naive splitting reports three.
+///
+/// Each address renders as its display name, falling back to the address when
+/// it has none, so a list does not mix "Mario Rossi" with a bare address. With
+/// more than `maxNames` recipients the rest collapse into "+N", mirroring the
+/// tag strip's overflow chip rather than being elided mid-name.
+///
+/// The header is untrusted and may be empty, malformed, or a group such as
+/// `undisclosed-recipients:;`. Returns an empty string when nothing usable can
+/// be read, never a partial parse.
+QString recipientSummary(const QString &rawTo, int maxNames = 2);
+
 struct ParsedMessage
 {
     bool ok = false;

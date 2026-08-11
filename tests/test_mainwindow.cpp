@@ -170,6 +170,10 @@ private slots:
     void theImportantActionIsLabelledImportant();
     void theImportantActionStillWritesTheFlaggedTag();
     void theToolbarUsesTheConfiguredIconSize();
+    void thereIsNoSentButtonWithoutASentKey();
+    void theSentButtonRunsEveryConfiguredAccount();
+    void theSentButtonSurvivesABracketedPath();
+    void flatModeDoesNotSurviveTheNextQuery();
     void noTwoActionsShareAnIcon();
 };
 
@@ -4538,6 +4542,149 @@ void TestMainWindow::theToolbarUsesTheConfiguredIconSize()
     // large), so the assertion cannot pass by the widget happening to agree
     // with the theme.
     QCOMPARE(toolBar->iconSize(), QSize(40, 40));
+}
+
+namespace {
+
+/// A config whose accounts carry the given maildir/sent pairs. An empty `sent`
+/// writes no key at all, which is the account-without-a-sent-folder case.
+QString writeSentConfig(const QTemporaryDir &dir,
+                        const QList<QPair<QString, QString>> &accounts)
+{
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QSettings s(path, QSettings::IniFormat);
+    for (const auto &account : accounts) {
+        s.beginGroup(QStringLiteral("account.") + account.first);
+        s.setValue(QStringLiteral("maildir"), account.first);
+        if (!account.second.isEmpty())
+            s.setValue(QStringLiteral("sent"), account.second);
+        s.endGroup();
+    }
+    s.sync();
+    return path;
+}
+
+}  // namespace
+
+void TestMainWindow::thereIsNoSentButtonWithoutASentKey()
+{
+    // Hidden entirely rather than present and finding nothing. An account may
+    // legitimately keep no sent mail locally, and a button that always returns
+    // an empty list reads as a broken feature rather than an absent one.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSentConfig(dir, {{QStringLiteral("provider-c"), {}}}));
+    QVERIFY(config.allSentQuery().isEmpty());
+
+    MainWindow window(config);
+    QVERIFY(!window.findChild<QPushButton *>(QStringLiteral("sentButton")));
+}
+
+void TestMainWindow::theSentButtonRunsEveryConfiguredAccount()
+{
+    // The button composes its query rather than storing one, which is the whole
+    // reason it is not a [queries] entry: a saved query is a fixed string and
+    // would not gain the third account here without the user editing it.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSentConfig(dir, {
+        {QStringLiteral("webmail-primary"), QStringLiteral("Sent")},
+        {QStringLiteral("provider-c"), {}},
+        {QStringLiteral("webmail-secondary"), QStringLiteral("Sent")},
+    }));
+
+    MainWindow window(config);
+    auto *button = window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+    QVERIFY(button);
+
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    button->click();
+    const QString query = queryEdit->text();
+
+    QVERIFY(query.contains(QStringLiteral("webmail-primary/Sent")));
+    QVERIFY(query.contains(QStringLiteral("webmail-secondary/Sent")));
+
+    // The account with no key contributes nothing, and leaves no bare "or"
+    // behind: notmuch accepts that and silently returns a different result.
+    QVERIFY(!query.contains(QStringLiteral("provider-c")));
+    QVERIFY(!query.contains(QStringLiteral("or  or")));
+    QCOMPARE(query.count(QStringLiteral(" or ")), 1);
+}
+
+void TestMainWindow::theSentButtonSurvivesABracketedPath()
+{
+    // A real provider nests its sent folder under a bracketed parent, and "["
+    // and "]" are Xapian syntax. The quoting has to survive the trip from the
+    // config through Account::sentQuery() into the query bar; unquoted, the
+    // query looks plausible and matches nothing.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSentConfig(dir, {
+        {QStringLiteral("provider-a"), QStringLiteral("[Provider]/Posta inviata")},
+    }));
+
+    MainWindow window(config);
+    auto *button = window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+    QVERIFY(button);
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    button->click();
+    QCOMPARE(queryEdit->text(),
+             QStringLiteral("path:\"provider-a/[Provider]/Posta inviata/**\""));
+}
+
+void TestMainWindow::flatModeDoesNotSurviveTheNextQuery()
+{
+    // The condition the user set for this feature: a flat Sent list is fine, a
+    // flat anything-else is not. Asserted at the window rather than the model,
+    // because the leak this guards against is in the WIRING, not in the model:
+    // setFlatMode(true) from the button with no matching false anywhere else
+    // passes every model test and flattens the app from the first Sent click
+    // until it restarts.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSentConfig(dir, {
+        {QStringLiteral("webmail-primary"), QStringLiteral("Sent")},
+    }));
+
+    MainWindow window(config);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *button = window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+    QVERIFY(button);
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    QVERIFY2(!model->flatMode(), "the model starts flat");
+
+    button->click();
+    QVERIFY2(model->flatMode(), "the Sent button did not flatten the list");
+
+    // Any other query restores the tree. Typed by hand rather than through a
+    // saved-query button, since that is the route with no flag of its own and
+    // therefore the one most likely to be forgotten.
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    QMetaObject::invokeMethod(&window, "runCurrentQuery");
+    QVERIFY2(!model->flatMode(),
+             "flat mode survived into an ordinary query, so every view after "
+             "one Sent click lost its replies");
+
+    // And back, so the button still works after the round trip.
+    button->click();
+    QVERIFY(model->flatMode());
+
+    // Even the SAME query typed by hand comes back as a tree: the flag follows
+    // the button, not the text, which is the rule the user chose.
+    queryEdit->setText(config.allSentQuery());
+    QMetaObject::invokeMethod(&window, "runCurrentQuery");
+    QVERIFY(!model->flatMode());
 }
 
 void TestMainWindow::noTwoActionsShareAnIcon()

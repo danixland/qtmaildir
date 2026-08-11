@@ -60,14 +60,25 @@ public:
 public slots:
     /// Runs a query. generation lets the UI discard results from a superseded
     /// query without the worker needing to know about cancellation.
+    /// `withRecipients` fills ThreadSummary::recipients by reading each
+    /// thread's To headers. OFF by default and deliberately opt-in: To is not
+    /// in notmuch's index, so this reads message FILES, at roughly 8.7 ms per
+    /// thread. Only a Sent query asks for it; turning it on for an inbox query
+    /// costs tens of seconds and changes nothing a user can see.
     void runQuery(const QString &query, quint64 generation,
-                  SortOrder sort = NewestFirst);
+                  SortOrder sort = NewestFirst, bool withRecipients = false);
 
     /// Loads the messages of one thread, oldest first. matchQuery is the
     /// user's current query; messages matching it render expanded, the rest
     /// as stubs.
+    /// `matchedOnly` drops the messages that did not match `matchQuery` rather
+    /// than rendering them as stubs. For the Sent view, where the thread is not
+    /// the unit the user is reading: a sent message pulls in the replies it
+    /// received, and a pane claiming to show what they sent then shows a
+    /// conversation. Ignored when `matchQuery` is empty, since nothing was
+    /// filtered and every message counts as matched.
     void loadThread(const QString &threadId, const QString &matchQuery,
-                    quint64 generation);
+                    quint64 generation, bool matchedOnly = false);
 
     /// Loads a thread as a reply TREE, for the message rows in the list.
     ///

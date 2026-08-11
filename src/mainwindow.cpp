@@ -457,6 +457,7 @@ void MainWindow::buildUi()
             this, &MainWindow::runCurrentQuery);
 
     m_queryEdit = new QLineEdit(central);
+    m_queryEdit->setObjectName(QStringLiteral("queryEdit"));
     m_queryEdit->setPlaceholderText(tr("notmuch query, e.g. tag:inbox"));
     // Qt draws the clear button inside the field and shows it only when there
     // is text, themed by the desktop. A hand-rolled button beside the bar would
@@ -552,6 +553,28 @@ void MainWindow::buildUi()
             runCurrentQuery();
         });
         queryRow->addWidget(button);
+    }
+
+    // Sent sits with the saved queries and is not one: its query is COMPOSED
+    // from the accounts' `sent` keys at click time, so adding an account or
+    // correcting a folder name is a config edit and nothing else. A [queries]
+    // entry holding the same string would go stale silently, and could not
+    // narrow to the selected account the way this does through
+    // runCurrentQuery()'s existing scope wrap.
+    //
+    // Hidden entirely when no account configures a sent folder, rather than
+    // offering a button that always finds nothing.
+    if (!m_config.allSentQuery().isEmpty()) {
+        auto *sentButton = new QPushButton(tr("Sent"), central);
+        sentButton->setObjectName(QStringLiteral("sentButton"));
+        connect(sentButton, &QPushButton::clicked, this, [this]() {
+            m_queryEdit->setText(m_config.allSentQuery());
+            // Flat for this query only. runCurrentQuery() clears it again for
+            // anything else, including the same query typed by hand, so the
+            // flag cannot outlive the button that set it.
+            runQuery(FlatResult::Yes);
+        });
+        queryRow->addWidget(sentButton);
     }
     layout->addLayout(queryRow);
 
@@ -1471,8 +1494,14 @@ void MainWindow::showWarnings()
                          problems.join(QLatin1Char('\n')));
 }
 
-void MainWindow::runCurrentQuery()
+void MainWindow::runQuery(FlatResult flat)
 {
+    // Set on EVERY run, not only when Yes. This is the line that stops flat
+    // mode leaking: any query that is not the Sent button restores the tree,
+    // so the flag cannot survive into the next view.
+    m_sentView = flat == FlatResult::Yes;
+    m_model->setFlatMode(m_sentView);
+
     QString query = m_queryEdit->text().trimmed();
 
     const QString accountKey = m_accountBox->currentData().toString();
@@ -1516,10 +1545,13 @@ void MainWindow::runCurrentQuery()
     const auto sort = m_sortOrder->currentIndex() == 1
                           ? NotmuchWorker::OldestFirst
                           : NotmuchWorker::NewestFirst;
+    // Recipients only for the Sent view: the fold reads message FILES, which
+    // is tens of seconds over an inbox. See ThreadSummary::recipients.
     QMetaObject::invokeMethod(m_worker, "runQuery", Qt::QueuedConnection,
                               Q_ARG(QString, query),
                               Q_ARG(quint64, m_generation),
-                              Q_ARG(NotmuchWorker::SortOrder, sort));
+                              Q_ARG(NotmuchWorker::SortOrder, sort),
+                              Q_ARG(bool, m_sentView));
 }
 
 void MainWindow::onThreadsReady(const QVector<ThreadSummary> &threads,
@@ -1863,10 +1895,16 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
 
     m_currentMessageId.clear();
     m_currentMessageThreadId.clear();
+    // In the Sent view the pane shows only what matched, which is what the
+    // user sent. Without this the flat list is right and the pane still opens
+    // the whole conversation, replies included, under a heading that says
+    // Sent: the row was never expanded, so the model never learned the
+    // thread's first message and this is the only path a Sent row can take.
     QMetaObject::invokeMethod(m_worker, "loadThread", Qt::QueuedConnection,
                               Q_ARG(QString, m_currentThreadId),
                               Q_ARG(QString, m_lastQuery),
-                              Q_ARG(quint64, m_generation));
+                              Q_ARG(quint64, m_generation),
+                              Q_ARG(bool, m_sentView));
 }
 
 void MainWindow::onMessageLoaded(const QVector<MessageRef> &messages,
@@ -2250,10 +2288,14 @@ void MainWindow::refreshCurrentQuery()
     const auto sort = m_sortOrder->currentIndex() == 1
                           ? NotmuchWorker::OldestFirst
                           : NotmuchWorker::NewestFirst;
+    // The SAME recipients flag the visible view was built with. A refresh that
+    // dropped it would quietly replace a Sent view's recipients with empty
+    // strings on the first background sync, while the user was reading it.
     QMetaObject::invokeMethod(m_worker, "runQuery", Qt::QueuedConnection,
                               Q_ARG(QString, m_lastQuery),
                               Q_ARG(quint64, m_refreshGeneration),
-                              Q_ARG(NotmuchWorker::SortOrder, sort));
+                              Q_ARG(NotmuchWorker::SortOrder, sort),
+                              Q_ARG(bool, m_sentView));
 }
 
 void MainWindow::updateStaleThreadNotice()

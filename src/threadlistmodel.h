@@ -170,6 +170,24 @@ public:
     /// The pattern DateFormatRole answers with. Empty means the system format.
     void setDateFormat(const QString &format) { m_dateFormat = format; }
 
+    /// One row per thread, with no expander and no reply count.
+    ///
+    /// For the Sent view, where a thread is the wrong unit: the user's model of
+    /// "what I sent" is a list, and a matching sent message otherwise drags in
+    /// the replies they RECEIVED, under a view that claims to be their outbox.
+    ///
+    /// A flag on this model rather than a second model or a filtered query, and
+    /// that is what keeps it from leaking: it is off by default, only the Sent
+    /// button turns it on, and every other query turns it off again. The
+    /// expander already comes from hasChildren() and the card's count from
+    /// ReplyCountRole, so flat mode is those two answering differently and
+    /// nothing else changes.
+    ///
+    /// The children are not discarded, only hidden. Leaving flat mode restores
+    /// the tree without reloading anything.
+    void setFlatMode(bool flat);
+    bool flatMode() const { return m_flatMode; }
+
     QModelIndex index(int row, int column,
                       const QModelIndex &parent = {}) const override;
     QModelIndex parent(const QModelIndex &child) const override;
@@ -284,4 +302,5 @@ private:
     QVector<ThreadNode> m_threads;
     const TagColors *m_tagColors = nullptr;
     QString m_dateFormat;
+    bool m_flatMode = false;
 };

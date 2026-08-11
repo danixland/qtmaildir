@@ -41,6 +41,10 @@ private slots:
     void safeFilenameStripsPathComponents();
     void pathInsideDirectoryRejectsSiblingPrefix();
     void attachmentFolderNameIsASinglePlainComponent();
+    void recipientSummaryPrefersDisplayNames();
+    void recipientSummaryKeepsACommaInsideADisplayName();
+    void recipientSummaryCollapsesTheOverflow();
+    void recipientSummarySurvivesUnusableInput();
     void folderNameSurvivesATimezoneComment();
     void savingABatchNeverOverwrites();
 
@@ -407,6 +411,78 @@ void TestMimeParser::savingABatchNeverOverwrites()
     QVERIFY(second_tar.endsWith(QStringLiteral(".gz")));
     QVERIFY2(second_tar.contains(QStringLiteral("archive.tar")),
              qPrintable(second_tar));
+}
+
+void TestMimeParser::recipientSummaryPrefersDisplayNames()
+{
+    // A display name where there is one, the address where there is not, so a
+    // list does not mix "Mario Rossi" with a bare address for no reason the
+    // reader can see.
+    QCOMPARE(recipientSummary(
+                 QStringLiteral("Mario Rossi <mario@example.org>")),
+             QStringLiteral("Mario Rossi"));
+
+    QCOMPARE(recipientSummary(QStringLiteral("info@example.net")),
+             QStringLiteral("info@example.net"));
+
+    QCOMPARE(recipientSummary(QStringLiteral(
+                 "Mario Rossi <mario@example.org>, info@example.net")),
+             QStringLiteral("Mario Rossi, info@example.net"));
+}
+
+void TestMimeParser::recipientSummaryKeepsACommaInsideADisplayName()
+{
+    // The reason this uses GMime rather than QString::split(','). A quoted
+    // display name may CONTAIN a comma, and splitting reports three recipients
+    // where there are two, with "Mario" alone as one of them.
+    const QString summary = recipientSummary(QStringLiteral(
+        "\"Rossi, Mario\" <mario@example.org>, info@example.net"));
+
+    QCOMPARE(summary, QStringLiteral("Rossi, Mario, info@example.net"));
+
+    // Stated separately, because the QCOMPARE above would also pass a naive
+    // implementation that happened to rejoin the pieces in the same order.
+    QVERIFY2(!summary.contains(QStringLiteral("+")),
+             "a comma inside a display name was counted as another recipient");
+}
+
+void TestMimeParser::recipientSummaryCollapsesTheOverflow()
+{
+    // "+N" rather than eliding mid-name, mirroring the tag strip's overflow
+    // chip: a card has one line for this and a truncated name is worse than an
+    // honest count.
+    QCOMPARE(recipientSummary(QStringLiteral(
+                 "a@example.org, b@example.org, c@example.org, "
+                 "d@example.org")),
+             QStringLiteral("a@example.org, b@example.org +2"));
+
+    // Exactly at the limit does not collapse: a "+0" would be absurd.
+    QCOMPARE(recipientSummary(
+                 QStringLiteral("a@example.org, b@example.org")),
+             QStringLiteral("a@example.org, b@example.org"));
+}
+
+void TestMimeParser::recipientSummarySurvivesUnusableInput()
+{
+    // The header is untrusted and every one of these is real mail.
+    //
+    // The empty string is the one that crashes if unguarded:
+    // internet_address_list_parse returns NULL for it rather than an empty
+    // list, verified against GMime directly.
+    QVERIFY(recipientSummary(QString()).isEmpty());
+    QVERIFY(recipientSummary(QStringLiteral("")).isEmpty());
+    QVERIFY(recipientSummary(QStringLiteral("   ")).isEmpty());
+
+    // Not a crash and not a lie: a group with no members has no names to show.
+    const QString group =
+        recipientSummary(QStringLiteral("undisclosed-recipients:;"));
+    QVERIFY2(!group.contains(QStringLiteral("@")),
+             qPrintable(QStringLiteral("a memberless group produced an "
+                                       "address: %1").arg(group)));
+
+    // Garbage parses to something or to nothing, but never to a crash.
+    recipientSummary(QStringLiteral("<<<>>>"));
+    recipientSummary(QStringLiteral("\"unterminated <a@example.org>"));
 }
 
 QTEST_MAIN(TestMimeParser)

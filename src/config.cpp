@@ -47,6 +47,37 @@ QString Account::scopedQuery(const QString &query) const
     return QStringLiteral("%1 and (%2)").arg(prefix, query);
 }
 
+QString Account::sentQuery() const
+{
+    if (sent.isEmpty())
+        return QString();
+
+    // The QUOTES are load-bearing, not decoration. A real provider nests its
+    // sent folder under a bracketed parent, "[Provider]/Posta inviata", and
+    // "[" and "]" are Xapian syntax: unquoted, the term is parsed rather than
+    // matched and the query silently returns nothing while looking correct.
+    //
+    // The path is user config and is interpolated into a query, so this is the
+    // only place that composition happens; a caller building it by hand would
+    // be a second chance to forget the quotes.
+    return QStringLiteral("path:\"%1/%2/**\"").arg(maildir, sent);
+}
+
+QString Config::allSentQuery() const
+{
+    // Collect first, join after. Appending "or" per account and trimming the
+    // result is the version that produced the defect this guards: an account
+    // with no sent key contributes an empty term, notmuch accepts the bare
+    // "or" without complaint, and the query quietly means something else.
+    QStringList parts;
+    for (const Account &account : m_accounts) {
+        const QString query = account.sentQuery();
+        if (!query.isEmpty())
+            parts.append(query);
+    }
+    return parts.join(QStringLiteral(" or "));
+}
+
 QString Config::defaultPath()
 {
     const QString base =
@@ -280,6 +311,12 @@ void Config::load(const QString &path)
         account.address = settings.value(QStringLiteral("address")).toString();
         account.maildir = settings.value(QStringLiteral("maildir")).toString();
         account.drafts = settings.value(QStringLiteral("drafts")).toString();
+
+        // Optional, and absent for an account that keeps no sent mail locally.
+        // Trimmed because a trailing space would land inside the quoted path
+        // and match nothing, which is invisible in a config file.
+        account.sent =
+            settings.value(QStringLiteral("sent")).toString().trimmed();
 
         // Both optional, and both describe this account's chip in the thread
         // list. An account tag is a different taxonomy from a functional one,

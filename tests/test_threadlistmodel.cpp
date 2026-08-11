@@ -81,6 +81,9 @@ private slots:
     void reconcileWithAnIdenticalResultChangesNothing();
     void reconcileMovesAThreadBumpedByANewReply();
     void reconcileKeepsAMovedRowsPersistentIndex();
+    void flatModeOffersNoExpanderAndNoReplyCount();
+    void flatModeIsOffByDefaultAndReversible();
+    void recipientsReplaceTheSenderWhenPresent();
 };
 
 static ThreadSummary makeThread(const QString &id, const QString &subject)
@@ -1418,6 +1421,107 @@ void TestThreadListModel::reconcileKeepsAMovedRowsPersistentIndex()
     // not care what Qt was told) and only this reports the difference.
     QVERIFY2(moved.isValid(), "a moved row lost its persistent index");
     QCOMPARE(moved.row(), 2);
+}
+
+void TestThreadListModel::flatModeOffersNoExpanderAndNoReplyCount()
+{
+    // A sent message lives on its own: the user's mental model of "what I sent"
+    // is a list, not a set of conversations, and a thread pulled in whole shows
+    // the replies they received under a view that claims to be their outbox.
+    //
+    // Deliberately not a second model or a filtered query. The expander is
+    // driven by hasChildren() and the card's count by ReplyCountRole, both
+    // already here, so flat mode is those two answering differently.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("Subject")) });
+
+    const QModelIndex thread = model.index(0, 0);
+    QVERIFY(thread.isValid());
+
+    // The tree shape, before anything is turned off. Guards the assertions
+    // below: a test whose subject was already flat would pass either way.
+    QVERIFY2(model.hasChildren(thread),
+             "the fixture thread is not expandable, so this proves nothing");
+    QCOMPARE(model.data(thread, ThreadListModel::ReplyCountRole).toInt(), 1);
+
+    model.setFlatMode(true);
+
+    QVERIFY2(!model.hasChildren(thread),
+             "a flat list still offered an expander");
+    QCOMPARE(model.data(thread, ThreadListModel::ReplyCountRole).toInt(), 0);
+
+    // rowCount has to agree, or the view draws an expander it cannot open, or
+    // opens onto rows the card said were not there.
+    QCOMPARE(model.rowCount(thread), 0);
+
+    // The thread itself is still a row. Flat means one row per thread, not
+    // fewer threads.
+    QCOMPARE(model.rowCount(), 1);
+}
+
+void TestThreadListModel::flatModeIsOffByDefaultAndReversible()
+{
+    // The whole condition the user set for this feature: it must not leak into
+    // any other view. Off by default is what guarantees that, and returning to
+    // false has to restore the tree rather than leaving the model flattened
+    // for the next query.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("Subject")) });
+
+    const QModelIndex thread = model.index(0, 0);
+    QVERIFY2(model.hasChildren(thread),
+             "a fresh model is flat, so every ordinary view lost its replies");
+
+    model.setFlatMode(true);
+    QVERIFY(!model.hasChildren(thread));
+
+    model.setFlatMode(false);
+    QVERIFY2(model.hasChildren(thread),
+             "leaving flat mode did not restore the tree");
+    QCOMPARE(model.data(thread, ThreadListModel::ReplyCountRole).toInt(), 1);
+}
+
+void TestThreadListModel::recipientsReplaceTheSenderWhenPresent()
+{
+    // In a Sent view the sender is the user on every row, so the card shows
+    // who it went TO instead. One role, so the delegate needs no branch and
+    // cannot disagree with the model about which name a row is showing.
+    ThreadListModel model;
+
+    ThreadSummary sent = makeThread(QStringLiteral("t1"),
+                                    QStringLiteral("Preventivo"));
+    sent.authors = QStringLiteral("You");
+    sent.recipients = QStringLiteral("Mario Rossi");
+
+    // No recipients: an ordinary view, where authors is the answer. Same
+    // fixture otherwise, so the difference is the field and nothing else.
+    ThreadSummary received = makeThread(QStringLiteral("t2"),
+                                        QStringLiteral("Newsletter"));
+    received.authors = QStringLiteral("Carol");
+
+    model.appendBatch({ sent, received });
+
+    QCOMPARE(model.data(model.index(0, 0),
+                        ThreadListModel::SendersRole).toString(),
+             QStringLiteral("Mario Rossi"));
+    QCOMPARE(model.data(model.index(1, 0),
+                        ThreadListModel::SendersRole).toString(),
+             QStringLiteral("Carol"));
+
+    // A thread whose To could not be parsed falls back rather than showing an
+    // empty name. The fold returns an empty string for a malformed or absent
+    // header, and a blank where a sender belongs reads as a rendering fault.
+    ThreadSummary unparseable = makeThread(QStringLiteral("t3"),
+                                           QStringLiteral("Broken"));
+    unparseable.authors = QStringLiteral("You");
+    unparseable.recipients = QString();
+    model.appendBatch({ unparseable });
+
+    QCOMPARE(model.data(model.index(2, 0),
+                        ThreadListModel::SendersRole).toString(),
+             QStringLiteral("You"));
 }
 
 QTEST_MAIN(TestThreadListModel)

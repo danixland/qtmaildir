@@ -173,8 +173,25 @@ protected:
     /// this the action fires from inside the bar and the query never runs.
     bool eventFilter(QObject *watched, QEvent *event) override;
 
+public:
+    /// Whether the result of a query is shown as a flat list of threads rather
+    /// than as an expandable tree.
+    ///
+    /// Only the Sent button asks for Yes. Every other route runs the no-arg
+    /// slot, which passes No, so flat mode cannot outlive the view that asked
+    /// for it: the same query typed by hand comes back as a tree.
+    enum class FlatResult { No, Yes };
+    Q_ENUM(FlatResult)
+
+private:
+    /// The real query runner. Kept off the slot list deliberately: a slot with
+    /// a defaulted argument does not satisfy QObject::connect, which matches
+    /// signal and slot arity at compile time, so the zero-argument slot below
+    /// is what widgets connect to.
+    void runQuery(FlatResult flat);
+
 private slots:
-    void runCurrentQuery();
+    void runCurrentQuery() { runQuery(FlatResult::No); }
 
     /// Brings back a thread that stopped matching, and restores the reader's
     /// place inside it.
@@ -642,6 +659,15 @@ private:
     /// the whole result set rather than the batches that have arrived so far.
     /// Gates mark_all_read, which cannot honestly say "all" before then.
     bool m_queryComplete = false;
+
+    /// Whether the CURRENT view is the Sent one, and therefore whether it is
+    /// flat and carries recipients.
+    ///
+    /// Held rather than recomputed because a background refresh re-runs the
+    /// same query without going through the Sent button: without this, the
+    /// first cron sync would silently turn a Sent view back into a tree of
+    /// senders while the user was reading it.
+    bool m_sentView = false;
     QString m_lastQuery;
     QString m_currentThreadId;
 

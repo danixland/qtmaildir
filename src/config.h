@@ -36,6 +36,18 @@ struct Account
     QString maildir;  ///< Relative to notmuch's database.path.
     QString drafts;   ///< Unused in v1; send is v2.
 
+    /// The account's sent folder, relative to maildir. Optional and empty for
+    /// an account that has none, which is a real case rather than a
+    /// misconfiguration: an account may keep no sent mail locally at all.
+    ///
+    /// A key rather than a <maildir>/Sent convention because the folder is not
+    /// uniform across providers. Measured across one real setup: two accounts
+    /// use `Sent`, two nest a localised name under a bracketed parent
+    /// (`[Provider]/Posta inviata`), and one has no sent folder whatsoever. A
+    /// convention would produce an empty view for the nested ones and a wrong
+    /// one for the account that has none.
+    QString sent;
+
     /// Chip colour in the thread list. Invalid when unset, in which case one
     /// is generated from the account tag's name.
     QColor color;
@@ -62,6 +74,13 @@ struct Account
 
     /// Restricts a notmuch query to this account's subtree.
     QString scopedQuery(const QString &query) const;
+
+    /// Matches this account's sent mail, or empty when `sent` is unset.
+    ///
+    /// Composes with scopedQuery() rather than replacing it: the account
+    /// selector wraps whatever query runs, so a Sent view under one account
+    /// intersects to that account's sent mail and cannot leak another's.
+    QString sentQuery() const;
 };
 
 struct SavedQuery
@@ -113,6 +132,18 @@ public:
 
     /// Optional alternate notmuch config file. Empty means "let notmuch decide".
     QString notmuchConfig() const { return m_notmuchConfig; }
+
+    /// Matches every configured account's sent mail, or empty when no account
+    /// configures one.
+    ///
+    /// Joins only the NON-EMPTY sentQuery() results. An account without a
+    /// `sent` key contributes nothing, and joining it anyway would leave a bare
+    /// `or` in the query. notmuch does not reject that: `A or  or B` returns
+    /// 190 messages where the correct pair returns 211, measured directly. A
+    /// malformed query that still returns plausible mail is the failure that
+    /// ships, which is why the join lives here and is tested rather than being
+    /// open-coded at the call site.
+    QString allSentQuery() const;
 
     /// A QDateTime::toString() pattern for the date on a card, or empty for the
     /// system locale's short format.

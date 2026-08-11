@@ -24,6 +24,7 @@
 
 #include <cstdlib>
 
+#include "mimeparser.h"
 #include "nmraii.h"
 
 namespace {
@@ -44,6 +45,45 @@ QStringList tagsOf(notmuch_thread_t *thread)
     for (; notmuch_tags_valid(tags.get()); notmuch_tags_move_to_next(tags.get()))
         result.append(QString::fromUtf8(notmuch_tags_get(tags.get())));
     return result;
+}
+
+/// Who a thread's messages were addressed to, summarised for one line.
+///
+/// EXPENSIVE, and only called when a query asks. "To" is not served from
+/// notmuch's index, so every call here reads message FILES: 8.7 ms per thread
+/// measured against a real database, which is 38 seconds over a 4411-thread
+/// inbox. See ThreadSummary::recipients.
+///
+/// The messages come from the THREAD and are owned by it, freed when it is
+/// freed (notmuch.h:1637). They are therefore held raw and never wrapped in
+/// NmMessage, which would call notmuch_message_destroy on memory the thread
+/// frees again, and the walk finishes before the caller drops the thread. This
+/// is the same rule walkReplies follows, and getting it wrong is a double-free
+/// rather than a leak.
+QString recipientsOf(notmuch_thread_t *thread)
+{
+    // The first message with a usable To wins. A thread is one conversation,
+    // and the alternative, folding every message's recipients together, is the
+    // participants-list problem item 2 rejected: it produces a union that
+    // misdescribes itself the moment a thread has replies going both ways.
+    notmuch_messages_t *messages = notmuch_thread_get_messages(thread);
+    for (; notmuch_messages_valid(messages);
+         notmuch_messages_move_to_next(messages)) {
+        notmuch_message_t *message = notmuch_messages_get(messages);
+        if (!message)
+            continue;
+
+        // Returns "" for a missing header and NULL on error, and the two mean
+        // different things only to notmuch: both are "nothing to show" here.
+        const char *to = notmuch_message_get_header(message, "To");
+        if (!to || !*to)
+            continue;
+
+        const QString summary = recipientSummary(QString::fromUtf8(to));
+        if (!summary.isEmpty())
+            return summary;
+    }
+    return QString();
 }
 
 /// Collects the message ids a query matches. Returns false if the query could
@@ -187,7 +227,7 @@ void NotmuchWorker::close()
 }
 
 void NotmuchWorker::runQuery(const QString &query, quint64 generation,
-                             SortOrder sort)
+                             SortOrder sort, bool withRecipients)
 {
     if (!openReadOnly())
         return;
@@ -231,6 +271,8 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
         summary.totalCount = notmuch_thread_get_total_messages(thread.get());
         summary.matchedCount = notmuch_thread_get_matched_messages(thread.get());
         summary.tags = tagsOf(thread.get());
+        if (withRecipients)
+            summary.recipients = recipientsOf(thread.get());
 
         batch.append(summary);
         ++total;
@@ -250,7 +292,7 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
 
 void NotmuchWorker::loadThread(const QString &threadId,
                                const QString &matchQuery,
-                               quint64 generation)
+                               quint64 generation, bool matchedOnly)
 {
     if (!openReadOnly())
         return;
@@ -303,6 +345,17 @@ void NotmuchWorker::loadThread(const QString &threadId,
         ref.filePath = QString::fromUtf8(notmuch_message_get_filename(message.get()));
         ref.tags = tagsOf(message.get());
         ref.matched = !haveMatchSet || matchedIds.contains(ref.messageId);
+
+        // Dropped rather than rendered as a stub.
+        //
+        // haveMatchSet is redundant here and kept deliberately: ref.matched is
+        // already true for every message when no query was given, so the two
+        // conditions cannot disagree today. It states the invariant this
+        // depends on at the point that depends on it, so a later change to how
+        // ref.matched is computed cannot silently empty the pane.
+        if (matchedOnly && haveMatchSet && !ref.matched)
+            continue;
+
         result.append(ref);
     }
 

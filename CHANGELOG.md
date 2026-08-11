@@ -13,6 +13,14 @@ point at which they are stable.
 
 ### Added
 
+- **A Sent view.** A new `sent` key on each `[account.*]` names that account's
+  sent folder, and a Sent button beside Inbox, Unread and Important shows what
+  you sent across every account that configures one. Selecting an account
+  narrows it to that account. The button is absent entirely when no account has
+  the key.
+- Sent mail is shown as a flat list rather than as threads, and the cards name
+  the **recipients** instead of the sender, which is you on every row.
+  Selecting one opens what you sent, not the conversation your message started.
 - `[general] date_format`, an optional pattern for the date on a thread card.
   Absent or empty keeps the system locale's short format, which is unchanged
   and remains the default. A pattern containing no date or time field is

@@ -64,6 +64,13 @@ private slots:
     void malformedExtraMimetypeIsSkipped();
     void syncChannelDefaultsToTheAccountKey();
     void syncChannelIsActuallyRead();
+    void sentQueryIsEmptyWithoutTheKey();
+    void sentQueryComposesThePath();
+    void sentQuerySurvivesABracketedPath();
+    void sentQueryComposesWithScopedQuery();
+    void allSentQueryIsEmptyWhenNoAccountHasOne();
+    void allSentQuerySkipsAccountsWithoutTheKey();
+    void allSentQueryJoinsEveryConfiguredAccount();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -753,6 +760,160 @@ void TestConfig::syncChannelIsActuallyRead()
     QCOMPARE(config.accounts().size(), 1);
     QCOMPARE(config.accounts().at(0).syncChannel(),
              QStringLiteral("mail-firstlast"));
+}
+
+void TestConfig::sentQueryIsEmptyWithoutTheKey()
+{
+    // Optional exactly as drafts is. A real account can legitimately have no
+    // sent folder at all, and the Sent view omits it silently rather than
+    // reporting a config problem on every launch about nothing.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.provider-c]\n"
+        "maildir = provider-c\n")));
+
+    QCOMPARE(config.accounts().size(), 1);
+    QVERIFY(config.accounts().at(0).sentQuery().isEmpty());
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::sentQueryComposesThePath()
+{
+    // Relative to maildir, the same way the account's own scope is, so the two
+    // cannot disagree about where the account lives.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.webmail-primary]\n"
+        "maildir = webmail-primary\n"
+        "sent = Sent\n")));
+
+    QCOMPARE(config.accounts().at(0).sentQuery(),
+             QStringLiteral("path:\"webmail-primary/Sent/**\""));
+}
+
+void TestConfig::sentQuerySurvivesABracketedPath()
+{
+    // The load-bearing case, and the reason this is a config key rather than a
+    // <maildir>/Sent convention. A real provider nests its sent folder under a
+    // BRACKETED parent and localises the name: "[Provider]/Posta inviata".
+    //
+    // "[" and "]" are Xapian syntax. The quotes around the whole path are what
+    // make the query work at all, and an implementation that built this without
+    // them returns nothing while looking entirely plausible.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.provider-a]\n"
+        "maildir = provider-a\n"
+        "sent = [Provider]/Posta inviata\n")));
+
+    const QString query = config.accounts().at(0).sentQuery();
+    QCOMPARE(query,
+             QStringLiteral("path:\"provider-a/[Provider]/Posta inviata/**\""));
+
+    // Stated separately from the QCOMPARE above: the quoting is the property
+    // that matters, and a later change to the surrounding syntax must not be
+    // able to drop it while still matching a rewritten expected string.
+    QVERIFY2(query.contains(QStringLiteral("\"provider-a/[Provider]")),
+             "the composed path is not quoted, so Xapian will read the "
+             "brackets as syntax and the query will match nothing");
+}
+
+void TestConfig::sentQueryComposesWithScopedQuery()
+{
+    // A Sent view under one account must not show another account's sent mail.
+    // The account selector wraps whatever query runs, so the composed sent
+    // query has to survive being scoped rather than bypassing it.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.webmail-primary]\n"
+        "maildir = webmail-primary\n"
+        "sent = Sent\n")));
+
+    const Account account = config.accounts().at(0);
+    const QString scoped = account.scopedQuery(account.sentQuery());
+
+    QCOMPARE(scoped,
+             QStringLiteral("path:\"webmail-primary/**\" and "
+                            "(path:\"webmail-primary/Sent/**\")"));
+}
+
+void TestConfig::allSentQueryIsEmptyWhenNoAccountHasOne()
+{
+    // Empty rather than a query matching nothing, so the caller can hide the
+    // Sent button entirely instead of offering one that finds no mail.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.provider-c]\n"
+        "maildir = provider-c\n")));
+
+    QVERIFY(config.allSentQuery().isEmpty());
+}
+
+void TestConfig::allSentQuerySkipsAccountsWithoutTheKey()
+{
+    // Joining an account with no `sent` key would leave a bare "or" in the
+    // query, and notmuch does not reject that: it silently returns a DIFFERENT
+    // result. Measured directly against a real database, `A or  or B` returns
+    // 190 where the correct pair returns 211.
+    //
+    // A malformed query that still returns plausible mail is the failure that
+    // ships, so this asserts the shape of the string rather than a count.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.webmail-primary]\n"
+        "maildir = webmail-primary\n"
+        "sent = Sent\n"
+        "\n"
+        "[account.provider-c]\n"
+        "maildir = provider-c\n"
+        "\n"
+        "[account.webmail-secondary]\n"
+        "maildir = webmail-secondary\n"
+        "sent = Sent\n")));
+
+    const QString all = config.allSentQuery();
+
+    QVERIFY2(!all.contains(QStringLiteral("or  or")),
+             "an account without a sent key left a bare 'or' in the query");
+    QVERIFY2(!all.trimmed().endsWith(QStringLiteral("or")),
+             "the query ends in a dangling 'or'");
+    QVERIFY2(!all.trimmed().startsWith(QStringLiteral("or")),
+             "the query starts with a dangling 'or'");
+    QVERIFY(!all.contains(QStringLiteral("provider-c")));
+
+    // Exactly two terms joined, one per account that configures the key.
+    QCOMPARE(all.count(QStringLiteral("path:")), 2);
+    QCOMPARE(all.count(QStringLiteral(" or ")), 1);
+}
+
+void TestConfig::allSentQueryJoinsEveryConfiguredAccount()
+{
+    // Including a bracketed provider path, which is the case the quoting
+    // exists for and the one most likely to be broken by a later rewrite of
+    // this composition.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.webmail-primary]\n"
+        "maildir = webmail-primary\n"
+        "sent = Sent\n"
+        "\n"
+        "[account.provider-a]\n"
+        "maildir = provider-a\n"
+        "sent = [Provider]/Posta inviata\n")));
+
+    const QString all = config.allSentQuery();
+
+    QVERIFY(all.contains(QStringLiteral("path:\"webmail-primary/Sent/**\"")));
+    QVERIFY(all.contains(
+        QStringLiteral("path:\"provider-a/[Provider]/Posta inviata/**\"")));
+    QCOMPARE(all.count(QStringLiteral(" or ")), 1);
 }
 
 QTEST_MAIN(TestConfig)

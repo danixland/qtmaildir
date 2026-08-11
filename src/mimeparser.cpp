@@ -213,6 +213,65 @@ QString Attachment::saveWithoutOverwriting(const QString &directory,
     return target;
 }
 
+QString recipientSummary(const QString &rawTo, int maxNames)
+{
+    const QByteArray utf8 = rawTo.trimmed().toUtf8();
+    if (utf8.isEmpty())
+        return {};
+
+    // Returns NULL rather than an empty list for input it cannot make anything
+    // of, including the empty string. Guarded above and again here: the header
+    // is untrusted and this is the crash if it is not.
+    InternetAddressList *list = internet_address_list_parse(nullptr,
+                                                            utf8.constData());
+    if (!list)
+        return {};
+
+    QStringList names;
+    int total = 0;
+    const int count = internet_address_list_length(list);
+    for (int i = 0; i < count; ++i) {
+        InternetAddress *address = internet_address_list_get_address(list, i);
+        if (!address)
+            continue;
+
+        // A group (`undisclosed-recipients:;`) has a name but no address, and
+        // its members, if any, are a list of their own. Only mailboxes are
+        // counted: naming the group would print "undisclosed-recipients" as
+        // though it were a person.
+        if (!INTERNET_ADDRESS_IS_MAILBOX(address))
+            continue;
+
+        ++total;
+        if (names.size() >= maxNames)
+            continue;
+
+        const char *name = internet_address_get_name(address);
+        const QString display = name ? QString::fromUtf8(name).trimmed()
+                                     : QString();
+        if (!display.isEmpty()) {
+            names.append(display);
+            continue;
+        }
+        const char *addr = internet_address_mailbox_get_addr(
+            INTERNET_ADDRESS_MAILBOX(address));
+        if (addr)
+            names.append(QString::fromUtf8(addr));
+        else
+            --total;  // Neither a name nor an address: nothing to show.
+    }
+    g_object_unref(list);
+
+    if (names.isEmpty())
+        return {};
+
+    QString summary = names.join(QStringLiteral(", "));
+    const int hidden = total - names.size();
+    if (hidden > 0)
+        summary += QStringLiteral(" +%1").arg(hidden);
+    return summary;
+}
+
 QString attachmentFolderName(const QString &rfc822Date, const QString &subject)
 {
     // The date prefix sorts chronologically in a file manager. A Date: header

@@ -11,6 +11,35 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-11
+
+Sent mail becomes a place you can go. A Sent button beside Inbox, Unread and
+Important shows what you sent across every account, as a flat list of
+recipients rather than as threads, because a message you sent is not a
+conversation you are following. The blank pane counts sent mail and drafts
+alongside unread, flagged and inbox, and the date on a thread card can now be
+given a format of your own.
+
+### Upgrading
+
+Both new features read per-account folder names, and neither appears until you
+name them. Add `sent` and `drafts` to each `[account.*]` section that has them:
+
+```ini
+[account.example]
+maildir = example
+sent = Sent
+drafts = Drafts
+```
+
+Providers that nest a localised folder under a bracketed parent take the full
+path, e.g. `sent = [Provider]/Posta inviata`. An account that keeps no sent or
+drafts folder locally simply omits the key: the Sent button and the counted
+lines are absent rather than empty, and nothing warns about it.
+
+`drafts` was already accepted and documented as having no effect. If you set it
+earlier, it now counts drafts on the blank pane.
+
 ### Added
 
 - **A Sent view.** A new `sent` key on each `[account.*]` names that account's

@@ -11,6 +11,24 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- A tag change now syncs itself out, about two seconds after you stop making
+  changes, instead of waiting for the Sync button or your cron job. The delay is
+  a debounce, so tagging several threads in a row produces one sync rather than
+  one per thread, and a sync already running is never interrupted or queued
+  behind. Set `auto_sync_delay_ms` in `[general]` to change the delay, or to any
+  negative value to turn the behaviour off and get the previous one back.
+
+### Fixed
+
+- A sync you started no longer clears the message pane and the undo stack. It
+  now reconciles the thread list the way a background sync already did, so a
+  message stays on screen and open while the list updates around it. If the
+  thread has stopped matching the current query, which is what happens when the
+  message you are reading in Unread gets marked read, the pane keeps showing it
+  and offers "Show it anyway" instead of going blank.
+
 ## [0.15.0] - 2026-08-11
 
 Sent mail becomes a place you can go. A Sent button beside Inbox, Unread and

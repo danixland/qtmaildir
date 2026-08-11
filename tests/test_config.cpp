@@ -35,6 +35,10 @@ private slots:
     void toolbarIconSizeIsActuallyRead();
     void toolbarIconSizeIsClampedAndReported();
     void toolbarIconSizeRejectsGarbage();
+    void autoSyncDelayDefaultsTo2000();
+    void autoSyncDelayIsActuallyRead();
+    void autoSyncDelayKeepsZeroAndNegative();
+    void autoSyncDelayRejectsGarbage();
     void accountWithoutMaildirIsRejected();
     void scopedQueryWrapsCorrectly();
     void absentSyncCommandIsNoticeNotProblem();
@@ -265,6 +269,82 @@ void TestConfig::toolbarIconSizeRejectsGarbage()
     config.load(path);
 
     QCOMPARE(config.toolbarIconSize(), 24);
+    QVERIFY(!config.problems().isEmpty());
+}
+
+void TestConfig::autoSyncDelayDefaultsTo2000()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral("[general]\n"));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.autoSyncDelayMs(), 2000);
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::autoSyncDelayIsActuallyRead()
+{
+    // [general] keys are read WITHOUT the general/ prefix. A key that silently
+    // matched nothing would leave the 2000 default in place and pass every
+    // behavioural test in test_mainwindow, since those arm the timer at the
+    // default anyway.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "auto_sync_delay_ms = 500\n"
+    ));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.autoSyncDelayMs(), 500);
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::autoSyncDelayKeepsZeroAndNegative()
+{
+    // Neither is an error and neither may be clamped: 0 means sync on the next
+    // trip through the event loop, and negative disables the automatic sync,
+    // which is the only way to get the pre-0.16.0 behaviour back. Clamping
+    // either to the default would take that switch away.
+    QTemporaryDir dir;
+    const QString zero = writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "auto_sync_delay_ms = 0\n"
+    ));
+
+    Config immediate;
+    immediate.load(zero);
+    QCOMPARE(immediate.autoSyncDelayMs(), 0);
+    QVERIFY(immediate.problems().isEmpty());
+
+    QTemporaryDir dir2;
+    const QString off = writeIni(dir2, QStringLiteral(
+        "[general]\n"
+        "auto_sync_delay_ms = -1\n"
+    ));
+
+    Config disabled;
+    disabled.load(off);
+    QCOMPARE(disabled.autoSyncDelayMs(), -1);
+    QVERIFY(disabled.problems().isEmpty());
+}
+
+void TestConfig::autoSyncDelayRejectsGarbage()
+{
+    // Falls back to the default and says so, matching mark_read_delay_ms.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "auto_sync_delay_ms = soon\n"
+    ));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.autoSyncDelayMs(), 2000);
     QVERIFY(!config.problems().isEmpty());
 }
 

@@ -390,6 +390,17 @@ private:
     /// Redraws the unsynced-edits indicator from pendingEditCount().
     void updatePendingIndicator();
 
+    /// Arms the debounce that syncs a confirmed tag edit out on its own
+    /// (item 71). Does nothing when the delay is negative, when no sync command
+    /// is configured, or when nothing is actually pending.
+    void scheduleAutoSync();
+
+    /// Starts the debounced automatic sync, unless a sync is already running
+    /// (local or external) or the edits it would carry are already gone.
+    ///
+    /// Q_INVOKABLE so a test can fire the debounce without waiting it out.
+    Q_INVOKABLE void runAutoSync();
+
     /// Records one confirmed (message, tag) change, cancelling it against an
     /// opposite change already outstanding for the same pair.
     void recordPendingEdit(const QString &messageId, const QString &tag,
@@ -755,6 +766,14 @@ private:
     /// selection when it fires, so a timer that outlives its thread does
     /// nothing rather than marking the wrong one.
     QString m_markReadThreadId;
+
+    /// Debounces the automatic sync that follows a tag edit (item 71).
+    ///
+    /// Single-shot and RESTARTED by every confirmed edit, for the same reason
+    /// m_markReadTimer is: tagging a multi-row selection confirms one write per
+    /// thread, and one sync per thread is exactly what a debounce exists to
+    /// prevent.
+    QTimer *m_autoSyncTimer = nullptr;
 
     /// The optimistic update awaiting confirmation, kept so a worker error can
     /// put the model back. Only the most recent one: mutations are sent from

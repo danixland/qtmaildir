@@ -81,6 +81,11 @@ private slots:
     void returnInTheQueryBarRunsTheQueryNotOpenThread();
     void markReadTimerRestartsRatherThanStacking();
     void markReadTimerIsNotArmedForAReadThread();
+    void aConfirmedEditArmsTheAutoSync();
+    void autoSyncDebouncesABurstOfEdits();
+    void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
+    void autoSyncSkipsWhileABackgroundSyncIsRunning();
+    void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
     void markReadCanBeDisabled();
     void pendingEditCountSurvivesAQuery();
     void aFailedSyncDoesNotClearThePendingCount();
@@ -3542,6 +3547,253 @@ void TestMainWindow::theSyncActionIsDisabledWhileABackgroundSyncHoldsTheLock()
              "the sync action was not re-enabled after the background sync");
 
     MainWindow::setLocksPathForTesting(QStringLiteral("/proc/locks"));
+}
+
+// Item 71. A confirmed tag edit arms a debounce that syncs it out, so an edit
+// no longer waits for a manual sync or the user's cron job.
+//
+// All four of these assert on the TIMER rather than on a sync actually running.
+// Starting a real one from a test would launch the configured command, and the
+// thing worth guarding here is the decision to sync, not QProcess.
+static QString writeSyncConfig(QTemporaryDir &dir, const QString &extra = {})
+{
+    QDir().mkpath(dir.filePath(QStringLiteral("qtmaildir")));
+    const QString conf = dir.filePath(QStringLiteral("qtmaildir/qtmaildir.conf"));
+    QSettings s(conf, QSettings::IniFormat);
+    // /bin/true exists, so Config keeps it and MailSync reports available. A
+    // config with no command disables the automatic sync by design, which would
+    // make every one of these tests pass against a stub.
+    s.setValue(QStringLiteral("sync/command"), QStringLiteral("/bin/true"));
+    // NOT "general/auto_sync_delay_ms": QSettings' INI backend treats a section
+    // literally named [general] as its own fallback section and strips it, so a
+    // prefixed lookup silently matches nothing. Writing it prefixed here left
+    // the default in place and the -1 case read 2000.
+    if (!extra.isEmpty())
+        s.setValue(QStringLiteral("auto_sync_delay_ms"), extra);
+    s.sync();
+    return conf;
+}
+
+void TestMainWindow::aConfirmedEditArmsTheAutoSync()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSyncConfig(dir));
+    QCOMPARE(config.autoSyncDelayMs(), 2000);
+
+    MainWindow window(config);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("autoSyncTimer"));
+    QVERIFY2(timer, "no autoSyncTimer to observe");
+    QVERIFY2(!timer->isActive(), "the debounce is armed before any edit");
+
+    TagChange change;
+    change.messageIds = { QStringLiteral("m1") };
+    change.added = { QStringLiteral("flagged") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+
+    QVERIFY2(timer->isActive(), "a confirmed edit did not arm the automatic sync");
+    QCOMPARE(timer->interval(), 2000);
+}
+
+void TestMainWindow::autoSyncDebouncesABurstOfEdits()
+{
+    // The point of the debounce. "Mark all read" confirms one write per thread,
+    // and one sync per thread is what this prevents. A timer that STACKED would
+    // still be active here, so the assertion is on the count of timers and on
+    // the remaining interval having been reset, not merely on isActive().
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSyncConfig(dir));
+
+    MainWindow window(config);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("autoSyncTimer"));
+    QVERIFY(timer);
+
+    TagChange first;
+    first.messageIds = { QStringLiteral("m1") };
+    first.added = { QStringLiteral("flagged") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, first)));
+    QVERIFY(timer->isActive());
+
+    // Long enough that a restart is unambiguous. Comparing remainingTime()
+    // before and after with ">" was tried and is FLAKY: the two reads can land
+    // in the same millisecond bucket, and the test then fails against correct
+    // code. Assert instead that the remaining time went back up near the full
+    // interval, which a stacked or un-restarted timer cannot produce.
+    QTest::qWait(500);
+    const int afterWait = timer->remainingTime();
+    QVERIFY2(afterWait < 1800, "the timer did not start counting down");
+
+    TagChange second;
+    second.messageIds = { QStringLiteral("m2") };
+    second.added = { QStringLiteral("flagged") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, second)));
+
+    QVERIFY2(timer->remainingTime() > 1800,
+             "the second edit did not restart the debounce, so a burst of edits "
+             "syncs on the schedule of the FIRST one");
+    QCOMPARE(window.findChildren<QTimer *>(QStringLiteral("autoSyncTimer")).size(),
+             1);
+}
+
+void TestMainWindow::autoSyncIsNotArmedWhenDisabledOrWithNothingPending()
+{
+    // A negative delay is the switch that restores the pre-0.16.0 behaviour, so
+    // it must arm nothing at all.
+    QTemporaryDir off;
+    QVERIFY(off.isValid());
+    Config disabled;
+    disabled.load(writeSyncConfig(off, QStringLiteral("-1")));
+    QCOMPARE(disabled.autoSyncDelayMs(), -1);
+
+    MainWindow disabledWindow(disabled);
+    auto *disabledTimer =
+        disabledWindow.findChild<QTimer *>(QStringLiteral("autoSyncTimer"));
+    QVERIFY(disabledTimer);
+
+    TagChange change;
+    change.messageIds = { QStringLiteral("m1") };
+    change.added = { QStringLiteral("flagged") };
+    QVERIFY(QMetaObject::invokeMethod(&disabledWindow, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+    QVERIFY2(!disabledTimer->isActive(),
+             "auto_sync_delay_ms = -1 still armed a sync");
+
+    // An edit netted against its own inverse leaves nothing outstanding (item
+    // 28), and syncing for it would run mbsync over an unchanged mail store.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSyncConfig(dir));
+
+    MainWindow window(config);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("autoSyncTimer"));
+    QVERIFY(timer);
+
+    TagChange added;
+    added.messageIds = { QStringLiteral("m1") };
+    added.added = { QStringLiteral("unread") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, added)));
+    QVERIFY2(timer->isActive(), "the first edit did not arm anything, so the "
+                                "netting assertion below proves nothing");
+
+    timer->stop();
+    TagChange undone;
+    undone.messageIds = { QStringLiteral("m1") };
+    undone.removed = { QStringLiteral("unread") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, undone)));
+    QVERIFY2(!timer->isActive(),
+             "an edit and its inverse left nothing pending but still armed a sync");
+}
+
+void TestMainWindow::autoSyncSkipsWhileABackgroundSyncIsRunning()
+{
+    // Item 71 requires skipping rather than queueing: the cron job holds the
+    // same lock and mbsync's answer to a second run is to fail on it. The edits
+    // are not lost, they stay pending.
+    //
+    // The locks path is redirected so this does not depend on whether a real
+    // sync is running on the machine, which is item 61's failure mode.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString locks = dir.filePath(QStringLiteral("locks"));
+    {
+        QFile f(locks);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+    }
+    MainWindow::setLocksPathForTesting(locks);
+
+    Config config;
+    config.load(writeSyncConfig(dir));
+
+    MainWindow window(config);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("autoSyncTimer"));
+    QVERIFY(timer);
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+
+    TagChange change;
+    change.messageIds = { QStringLiteral("m1") };
+    change.added = { QStringLiteral("flagged") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+
+    // Armed, because the edit is real and will still need carrying. The skip
+    // belongs to the moment the timer FIRES, not to arming it.
+    QVERIFY2(timer->isActive(), "the edit did not arm the debounce at all");
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+    QVERIFY(!label->isHidden());
+
+    QVERIFY(QMetaObject::invokeMethod(&window, "runAutoSync"));
+
+    // The edit is still pending: a skipped sync must not clear the indicator,
+    // which is the fault that would leave the user quitting on unsynced work.
+    QVERIFY2(!label->isHidden(),
+             "a skipped automatic sync cleared the pending indicator");
+
+    MainWindow::setLocksPathForTesting(QStringLiteral("/proc/locks"));
+}
+
+void TestMainWindow::aSuccessfulSyncRefreshesRatherThanRerunningTheQuery()
+{
+    // Reported by hand against item 71: reading a message in the Unread view,
+    // the automatic mark-read tags it, the automatic sync fires two seconds
+    // later, and the message pane went blank because the thread had stopped
+    // matching "tag:unread".
+    //
+    // The cause was not the stale-thread notice, which handles exactly this and
+    // has since item 35. It was that onSyncFinished() called runCurrentQuery()
+    // where the cron path calls refreshCurrentQuery(): a re-run clears the
+    // model, the undo stack and the pane, so there was nothing left for the
+    // notice to describe. Before item 71 a local sync only ever followed a
+    // click on Sync, which is why the difference went unnoticed.
+    //
+    // Asserted on the UNDO STACK rather than on the pane. Both paths issue a
+    // queued query this test has no worker to answer, so the pane ends up blank
+    // either way and an assertion on it would pass against both. The undo stack
+    // is cleared by runCurrentQuery() and deliberately kept by
+    // refreshCurrentQuery(), so it names which path actually ran.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    window.findChild<QLineEdit *>()->setText(QStringLiteral("tag:unread"));
+    QMetaObject::invokeMethod(&window, "runCurrentQuery");
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }) });
+    QMetaObject::invokeMethod(&window, "onQueryFinished", Q_ARG(int, 1),
+                              Q_ARG(quint64,
+                                    window.currentGenerationForTesting()));
+
+    // A real edit, so there is something on the undo stack to lose.
+    selectThreadRow(view, 0);
+    auto *markRead = window.findChild<QAction *>(QStringLiteral("mark_all_read"));
+    QVERIFY(markRead);
+    markRead->trigger();
+    QCOMPARE(window.undoDepthForTesting(), 1);
+
+    QMetaObject::invokeMethod(&window, "onSyncFinished",
+                              Q_ARG(bool, true), Q_ARG(int, 0));
+
+    QVERIFY2(window.undoDepthForTesting() == 1,
+             "a successful sync cleared the undo stack, so it re-ran the query "
+             "instead of refreshing it, and a message open in the pane is read "
+             "out from under the user");
 }
 
 void TestMainWindow::theStatusBarFollowsTheSyncPhase()

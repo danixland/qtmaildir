@@ -485,6 +485,13 @@ void MainWindow::buildUi()
     connect(m_markReadTimer, &QTimer::timeout,
             this, &MainWindow::markCurrentThreadRead);
 
+    m_autoSyncTimer = new QTimer(this);
+    // Named for the same reason: a test can assert that an edit armed the
+    // debounce without waiting out the delay or starting a real mbsync.
+    m_autoSyncTimer->setObjectName(QStringLiteral("autoSyncTimer"));
+    m_autoSyncTimer->setSingleShot(true);
+    connect(m_autoSyncTimer, &QTimer::timeout, this, &MainWindow::runAutoSync);
+
     // The pane and its close button travel together: a QPlainTextEdit has
     // nowhere to put one, and a pane that appears on a failed sync and can
     // never be dismissed is worse than one that does not appear at all.
@@ -2194,7 +2201,22 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
             return;
         }
 
-        runCurrentQuery();
+        // refreshCurrentQuery(), NOT runCurrentQuery(). A sync this window
+        // started is not a query the user asked to re-run: runCurrentQuery()
+        // clears the model, the undo stack and the message pane, so a sync
+        // landing while a message was open read the user out of it. The cron
+        // path has reconciled instead since item 35, and there was never a
+        // reason for the two to differ.
+        //
+        // Item 71 is what made it matter. A local sync used to happen only
+        // when the user clicked Sync, where blanking was at least explicable;
+        // the automatic one fires two seconds after a tag edit, which is
+        // precisely when the user is still reading the message they tagged.
+        // Reconciling keeps the pane, and updateStaleThreadNotice() then offers
+        // "Show it anyway" for a thread that has stopped matching the query,
+        // which is the reported case: reading in Unread, the thread is marked
+        // read, and it no longer belongs to the view it was opened from.
+        refreshCurrentQuery();
         // A sync is the usual way new tags enter the database.
         requestAllTags();
     } else if (exitCode == kSyncSkippedExitCode) {
@@ -2279,6 +2301,12 @@ void MainWindow::onTagsApplied(const TagChange &change)
     }
 
     updatePendingIndicator();
+
+    // Item 71. Armed here, where a write is CONFIRMED and the pending count is
+    // already up to date, for the same reason recordPendingEdit() is called
+    // here: a sync scheduled for a write the worker went on to reject would run
+    // for nothing.
+    scheduleAutoSync();
 
     // A tag the user has just created is the one they are most likely to type
     // again, so do not wait for the next sync to offer it. A set membership
@@ -2676,6 +2704,58 @@ void MainWindow::startSync()
         return;
     }
     setSyncBusy(true);
+}
+
+void MainWindow::scheduleAutoSync()
+{
+    // Negative disables the behaviour entirely, per the config key, and that is
+    // the pre-0.16.0 behaviour: edits wait for a manual sync or the user's cron
+    // job. Checked before anything else so a disabled delay arms nothing.
+    const int delay = m_config.autoSyncDelayMs();
+    if (delay < 0)
+        return;
+
+    // No sync command means the Sync action is already disabled and startSync()
+    // would only put "No sync command configured" in the status bar. Arming a
+    // timer to say that on a delay, for something the user did not ask for, is
+    // worse than staying quiet.
+    if (!m_sync || !m_sync->isAvailable())
+        return;
+
+    // Nothing outstanding, nothing to carry. An edit netted against its own
+    // inverse leaves the count at zero (item 28), and syncing for it would run
+    // mbsync over a mail store that is already where the server left it.
+    if (pendingEditCount() == 0)
+        return;
+
+    // Restart, not stack. Tagging a multi-row selection confirms one write per
+    // thread and "mark all read" confirms one per thread in the view, so an
+    // armed-per-edit timer would be exactly the storm of syncs a debounce is
+    // for. The last edit of a burst decides when the single sync happens.
+    m_autoSyncTimer->start(delay);
+}
+
+void MainWindow::runAutoSync()
+{
+    // The user can have synced by hand, or undone the edit, in the delay. Both
+    // leave nothing to carry, and re-checking here rather than trusting the arm
+    // is what makes the debounce safe to restart freely.
+    if (pendingEditCount() == 0)
+        return;
+
+    // Skip rather than queue when a sync is already in flight, which item 71
+    // requires: the cron job holds the same lock, and mbsync's own answer to a
+    // second run is to fail on it. The edits are not lost by skipping. They stay
+    // pending, and the sync already running is very likely to carry them, since
+    // they reached the mail store at edit time.
+    //
+    // m_externalSyncBusy covers the cron job SyncMonitor can see. A lock taken
+    // between that poll and now is not visible here, and does not need to be:
+    // MailSync::start() fails on a second run and startSync() reports it.
+    if (m_externalSyncBusy || (m_sync && m_sync->isRunning()))
+        return;
+
+    startSync();
 }
 
 void MainWindow::recordPendingEdit(const QString &messageId, const QString &tag,

@@ -124,6 +124,14 @@ identity.
 ; with Ctrl+U. Arrowing quickly through a list marks only the thread you stop
 ; on, never the ones you pass through.
 ; mark_read_delay_ms = 2000
+; Optional. How long to wait after a tag change before syncing it out for you,
+; in milliseconds. Defaults to 2000. The delay is a debounce, so tagging several
+; threads in a row produces one sync after you stop, not one per thread. Zero
+; syncs immediately; any negative value turns this off, leaving changes for the
+; Sync button or your own cron job, which is how every release before 0.16.0
+; behaved. A sync already running, including one started by cron, is never
+; interrupted or queued behind: the change simply stays pending.
+; auto_sync_delay_ms = 2000
 ; Optional. What to do about unsynced tag changes when you quit. "ask" (the
 ; default) offers to sync, quit anyway, or stay; "always" syncs without asking
 ; and quits when it finishes; "never" quits silently. A sync that fails never

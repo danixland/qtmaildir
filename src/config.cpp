@@ -271,6 +271,23 @@ void Config::load(const QString &path)
         }
     }
 
+    // Item 71. Same shape as mark_read_delay_ms above, including that zero and
+    // negative are not errors: 0 syncs on the next trip through the event loop
+    // and negative disables the automatic sync entirely, which is how a user who
+    // wants only their cron job turns this off.
+    const QVariant autoSync = settings.value(QStringLiteral("auto_sync_delay_ms"));
+    if (autoSync.isValid()) {
+        bool ok = false;
+        const int value = autoSync.toString().toInt(&ok);
+        if (ok) {
+            m_autoSyncDelayMs = value;
+        } else {
+            addProblem(QStringLiteral("Auto-sync delay '%1' is not a number; "
+                                      "using the default.")
+                           .arg(autoSync.toString()));
+        }
+    }
+
     // [completion] is an ordinary section, so this one DOES take its prefix.
     // ',' separates entries and '|' separates a value from its description:
     // two different characters because QSettings splits comma lists itself,

@@ -213,6 +213,20 @@ public:
     /// the behaviour so a thread stays unread until toggled by hand.
     int markReadDelayMs() const { return m_markReadDelayMs; }
 
+    /// How long to wait after a tag edit before syncing it out on the user's
+    /// behalf. Item 71.
+    ///
+    /// Same three meanings as markReadDelayMs() above, and deliberately so: a
+    /// positive value is the debounce in milliseconds, 0 syncs on the next trip
+    /// through the event loop, and any negative value disables the behaviour so
+    /// edits wait for a manual sync or the user's cron job, which is what every
+    /// release before this one did.
+    ///
+    /// Defaults to 2000. The delay is a debounce, not a schedule: each edit
+    /// restarts it, so a burst of tagging produces one sync after the burst
+    /// rather than one per tag.
+    int autoSyncDelayMs() const { return m_autoSyncDelayMs; }
+
     /// User-supplied mimetype completions, APPENDED to the built-in list.
     /// Appending rather than replacing means a typo cannot leave completion
     /// worse off than the defaults. Mimetypes are the only completion list a
@@ -250,6 +264,7 @@ private:
     qreal m_messageZoom = 1.0;
     bool m_completionOnFocus = false;
     int m_markReadDelayMs = 2000;
+    int m_autoSyncDelayMs = 2000;
     SyncOnExit m_syncOnExit = SyncOnExit::Ask;
     QList<CompletionEntry> m_extraMimetypes;
     QString m_startupQuery = QStringLiteral("Unread");

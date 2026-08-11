@@ -11,6 +11,12 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Changed
+
+- The Sync button carries the refresh icon instead of a mailbox one. With the
+  toolbar following the desktop's "icon only" style, the icon is the whole
+  control, and a mailbox glyph read as "mail" rather than "fetch again".
+
 ## [0.14.0] - 2026-08-10
 
 The thread list stops going stale. A sync running in the background now

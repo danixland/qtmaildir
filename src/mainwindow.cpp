@@ -997,7 +997,7 @@ void MainWindow::buildMenus()
     // rather than taken from the spec on faith. A name the running theme lacks
     // still degrades to text through the null check below.
     const QHash<QString, QString> themeIcons = {
-        { QStringLiteral("sync"),    QStringLiteral("mail-receive") },
+        { QStringLiteral("sync"),    QStringLiteral("view-refresh") },
         // NOT mail-mark-read, which mark_all_read below uses. The two shared it
         // in 0.12.0, and with the toolbar icon-only the icon is the whole
         // control: two buttons with different consequences looked identical.

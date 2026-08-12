@@ -130,6 +130,14 @@ public slots:
     /// refreshing one nobody is looking at is work for nothing.
     void requestCounts(const QStringList &queries, quint64 generation);
 
+    /// Message counts for each query, positionally paired with the input.
+    ///
+    /// Beside requestCounts rather than replacing it: that one counts THREADS,
+    /// which is right for the placeholder pane because a click there produces
+    /// thread rows. A tagging rule tags messages, so a thread count would
+    /// understate any rule matching part of a large thread.
+    void requestMessageCounts(const QStringList &queries, quint64 generation);
+
     /// Database-level facts for the Maildir overview (item 34): total messages,
     /// total threads, and the number of tags.
     ///
@@ -157,6 +165,11 @@ signals:
     /// notmuch rejects yields -1 rather than dropping the entry, so the
     /// positional correspondence the caller relies on always holds.
     void countsReady(const QVector<int> &counts, quint64 generation);
+
+    /// The same positional contract as countsReady, over messages rather than
+    /// threads. A dry run over tagging rules pairs these with its own rules by
+    /// index, so an entry is never dropped.
+    void messageCountsReady(const QVector<int> &counts, quint64 generation);
 
     /// Fields left at -1 are ones notmuch could not answer, which the dialog
     /// renders as unknown rather than as zero.

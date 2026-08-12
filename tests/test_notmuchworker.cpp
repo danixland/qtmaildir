@@ -77,6 +77,9 @@ private slots:
     void requestDatabaseStatsCountsMessagesNotThreads();
     void requestDatabaseStatsOnUnreadableConfigEmitsError();
 
+    void messageCountsCountMessagesNotThreads();
+    void messageCountsReportAnInvalidQueryAsMinusOne();
+
 private:
     /// Tags of one message, read back through a fresh worker query.
     QStringList tagsOf(const QString &messageId);
@@ -795,6 +798,64 @@ void TestNotmuchWorker::requestCountsKeepsPositionOnAnInvalidQuery()
     // the pane depends on.
     QCOMPARE(counts.at(0), 1);
     QCOMPARE(counts.at(2), 5);
+}
+
+void TestNotmuchWorker::messageCountsCountMessagesNotThreads()
+{
+    // The fixture is 6 messages in 5 threads: thread A carries a reply, every
+    // other thread is a single message. That difference is the whole reason
+    // this slot exists beside requestCounts, and it is what the numbers below
+    // assert. A rule that matched one reply of a 30-message thread would be
+    // reported as 1 by a thread count, understating it by 29.
+    NotmuchWorker worker(m_fixture.configPath());
+
+    QSignalSpy messages(&worker, &NotmuchWorker::messageCountsReady);
+    QSignalSpy threads(&worker, &NotmuchWorker::countsReady);
+
+    worker.requestMessageCounts({ QStringLiteral("*") }, 1);
+    worker.requestCounts({ QStringLiteral("*") }, 1);
+
+    QCOMPARE(messages.count(), 1);
+    QCOMPARE(threads.count(), 1);
+
+    const QVector<int> messageCounts =
+        messages.first().at(0).value<QVector<int>>();
+    const QVector<int> threadCounts =
+        threads.first().at(0).value<QVector<int>>();
+
+    QCOMPARE(messageCounts, (QVector<int>{ 6 }));
+    // The guard that makes this test mean something: if requestMessageCounts
+    // were implemented with count_threads it would return 5 here and match
+    // the thread count, and the assertion above would be the only thing that
+    // caught it.
+    QCOMPARE(threadCounts, (QVector<int>{ 5 }));
+}
+
+void TestNotmuchWorker::messageCountsReportAnInvalidQueryAsMinusOne()
+{
+    // Paired positionally with the caller's rules, so a dropped answer would
+    // put a real number against the wrong rule.
+    //
+    // **notmuch's query parser rejects almost nothing**, exactly as
+    // requestCountsKeepsPositionOnAnInvalidQuery records for the thread count:
+    // `from:((((` parses and matches nothing rather than failing, measured at
+    // 0 against a throwaway database rather than assumed. So this asserts the
+    // positional contract, which is the property a dry run depends on, and not
+    // a -1 that no query string can provoke. The -1 branch remains for a
+    // notmuch_query_create allocation failure, which a test cannot reach.
+    NotmuchWorker worker(m_fixture.configPath());
+
+    QSignalSpy spy(&worker, &NotmuchWorker::messageCountsReady);
+    worker.requestMessageCounts({ QStringLiteral("from:(((("),
+                                  QStringLiteral("*") }, 1);
+
+    QCOMPARE(spy.count(), 1);
+    const QVector<int> counts = spy.first().at(0).value<QVector<int>>();
+    QCOMPARE(counts.size(), 2);
+    QCOMPARE(counts.at(0), 0);
+    // The query beside it keeps its own answer at its own position, which is
+    // what pairs a count with the rule that produced it.
+    QCOMPARE(counts.at(1), 6);
 }
 
 void TestNotmuchWorker::requestDatabaseStatsCountsMessagesNotThreads()

@@ -647,3 +647,34 @@ void NotmuchWorker::requestCounts(const QStringList &queries, quint64 generation
 
     emit countsReady(counts, generation);
 }
+
+void NotmuchWorker::requestMessageCounts(const QStringList &queries,
+                                         quint64 generation)
+{
+    if (!openReadOnly())
+        return;
+
+    QVector<int> counts;
+    counts.reserve(queries.size());
+
+    for (const QString &query : queries) {
+        NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+
+        unsigned int count = 0;
+        // -1 rather than a skipped entry, matching requestCounts: the caller
+        // pairs these with its own rules positionally, so a dropped answer
+        // would put a real number against the wrong rule.
+        if (!nmQuery ||
+            notmuch_query_count_messages(nmQuery.get(), &count)
+                != NOTMUCH_STATUS_SUCCESS) {
+            counts.append(-1);
+            continue;
+        }
+
+        // Messages, not threads: a rule tags messages, so counting threads
+        // would understate a rule matching part of a large thread.
+        counts.append(static_cast<int>(count));
+    }
+
+    emit messageCountsReady(counts, generation);
+}

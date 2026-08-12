@@ -13,6 +13,7 @@ add_library(qtmaildir_lib STATIC
     tagcolors.cpp
     tagdialog.cpp
     tagrules.cpp
+    tagrulesdialog.cpp
     tagstrip.cpp
     threadlistmodel.cpp
     threadlistview.cpp

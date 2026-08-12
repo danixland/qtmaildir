@@ -56,6 +56,7 @@
 #include "cardlayout.h"
 #include "tagchip.h"
 #include "tagdialog.h"
+#include "tagrulesdialog.h"
 #include "threadlistmodel.h"
 #include "threadlistview.h"
 #include "version.h"
@@ -831,6 +832,10 @@ void MainWindow::registerActions()
               tr("Add or remove any tag on the selected threads"), [this]() {
         editTagsOnSelection();
     });
+    addAction(QStringLiteral("tag_rules"), tr("Tagging &rules..."),
+              tr("Edit the rules that tag mail as it arrives"), [this]() {
+        showTagRulesDialog();
+    });
     addAction(QStringLiteral("toggle_html"), tr("Toggle &HTML"),
               tr("Switch the thread between HTML and plain text"), [this]() {
         m_messageView->toggleHtml();
@@ -989,6 +994,10 @@ void MainWindow::buildMenus()
     messageMenu->addAction(m_actions.value(QStringLiteral("mark_all_read")));
     messageMenu->addAction(m_actions.value(QStringLiteral("edit_tags")));
     messageMenu->addAction(m_actions.value(QStringLiteral("flag")));
+    // Separated from the entries above: those act on the selection, this edits
+    // a rule store shared with mailctl and changes nothing that is on screen.
+    messageMenu->addSeparator();
+    messageMenu->addAction(m_actions.value(QStringLiteral("tag_rules")));
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(m_actions.value(QStringLiteral("prev_thread")));
@@ -1046,6 +1055,10 @@ void MainWindow::buildMenus()
         { QStringLiteral("toggle_unread"),   QStringLiteral("mail-mark-unread") },
         { QStringLiteral("mark_all_read"),   QStringLiteral("mail-mark-read") },
         { QStringLiteral("edit_tags"),       QStringLiteral("tag") },
+        // NOT "tag", which edit_tags uses: with the toolbar icon-only the icon
+        // is the whole control, and editing the standing rules is not editing
+        // the selection's tags.
+        { QStringLiteral("tag_rules"),       QStringLiteral("configure") },
         { QStringLiteral("complete_query"),  QStringLiteral("edit-find-replace") },
         { QStringLiteral("select_all"),      QStringLiteral("edit-select-all") },
         { QStringLiteral("clear_pane"),      QStringLiteral("edit-clear") },
@@ -1287,6 +1300,44 @@ void MainWindow::onDatabaseStatsReady(const DatabaseStats &stats,
                  number(stats.tags)));
 }
 
+void MainWindow::showTagRulesDialog()
+{
+    // One dialog. A second would edit a stale copy and the last Save would
+    // silently win, which is the lost-edit case the atomic write cannot help
+    // with because both writers are this process.
+    if (m_tagRulesDialog) {
+        m_tagRulesDialog->raise();
+        m_tagRulesDialog->activateWindow();
+        return;
+    }
+
+    auto *dialog = new TagRulesDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_tagRulesDialog = dialog;
+
+    connect(dialog, &TagRulesDialog::countsRequested, this, [this, dialog]() {
+        QMetaObject::invokeMethod(
+            m_worker, "requestMessageCounts", Qt::QueuedConnection,
+            Q_ARG(QStringList, dialog->countQueries()),
+            Q_ARG(quint64, ++m_ruleCountGeneration));
+    });
+
+    dialog->show();
+}
+
+void MainWindow::onRuleCountsReady(const QVector<int> &counts,
+                                   quint64 generation)
+{
+    // Stale reply, or the dialog closed while the count was in flight. Both
+    // are ordinary rather than rare: counting every rule against a cold index
+    // takes seconds, which is long enough for the user to close the dialog or
+    // press the button again.
+    if (generation != m_ruleCountGeneration || !m_tagRulesDialog)
+        return;
+
+    m_tagRulesDialog->setCounts(counts);
+}
+
 void MainWindow::showAbout()
 {
     QDialog dialog(this);
@@ -1360,6 +1411,8 @@ void MainWindow::wireWorker()
             this, &MainWindow::onCountsReady);
     connect(m_worker, &NotmuchWorker::databaseStatsReady,
             this, &MainWindow::onDatabaseStatsReady);
+    connect(m_worker, &NotmuchWorker::messageCountsReady,
+            this, &MainWindow::onRuleCountsReady);
 
     // A confirmed write clears the pending revert: without this, a later
     // unrelated error would roll back a change that actually succeeded.

@@ -35,6 +35,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("toggle_unread"),
         QStringLiteral("mark_all_read"),
         QStringLiteral("edit_tags"),
+        QStringLiteral("tag_rules"),
         QStringLiteral("flag"),
         QStringLiteral("focus_query"),
         QStringLiteral("complete_query"),
@@ -89,6 +90,11 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Ctrl+Shift+U"), QStringLiteral("mark_all_read") },
         { QStringLiteral("Ctrl+I"),       QStringLiteral("flag") },
         { QStringLiteral("Ctrl+T"),       QStringLiteral("edit_tags") },
+        // Shifted against Ctrl+T for the same reason Ctrl+Shift+U is shifted
+        // against Ctrl+U: this is the standing version of tagging, applied to
+        // every message that arrives rather than to the selection, so it takes
+        // the harder chord.
+        { QStringLiteral("Ctrl+Shift+T"), QStringLiteral("tag_rules") },
         { QStringLiteral("Ctrl+L"),       QStringLiteral("focus_query") },
         // Ctrl+Space is the completion idiom users already carry over from
         // shells and editors, and it is a named key rather than a symbol, so

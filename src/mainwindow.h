@@ -55,6 +55,7 @@ class MessageView;
 class MailSync;
 class NotmuchWorker;
 class QueryCompleter;
+class TagRulesDialog;
 
 class MainWindow : public QMainWindow
 {
@@ -291,6 +292,14 @@ private slots:
 
     /// Runs a query the user clicked on the placeholder pane.
     void onPlaceholderQueryRequested(const QString &query);
+
+    /// Opens the auto-tagging rules editor, or raises the one already open.
+    void showTagRulesDialog();
+
+    /// Message counts for the rules dialog's queries, in the order it asked
+    /// for them. Does nothing if the dialog has since closed, or if a newer
+    /// request has superseded this one.
+    void onRuleCountsReady(const QVector<int> &counts, quint64 generation);
 
 private:
     void buildUi();
@@ -631,6 +640,28 @@ private:
     /// Discriminates a stats reply from a dialog that has since been closed
     /// and reopened, so an old answer cannot fill in a newer dialog.
     quint64 m_statsGeneration = 0;
+
+    /// The open rules dialog, or null. Held so a counts reply can reach it,
+    /// and cleared when it closes: a reply that arrives after the dialog is
+    /// gone must find nothing rather than a dangling pointer. A QPointer for
+    /// the same reason m_overviewCounts is one, and the window is open wider
+    /// here, since counting every rule takes seconds.
+    QPointer<TagRulesDialog> m_tagRulesDialog;
+
+    /// Generation of the rules dialog's counts request.
+    ///
+    /// Its OWN counter, deliberately not m_generation. That one is the QUERY
+    /// generation, and onThreadsReady, onQueryFinished, onThreadLoaded,
+    /// onThreadTreeLoaded and onMessageLoaded all compare against it directly:
+    /// bumping it here would discard whatever thread load was in flight when
+    /// the user pressed Count matches, blanking the message pane for a reason
+    /// that has nothing to do with the query. Not m_countsGeneration either,
+    /// though that one is closer: it belongs to the placeholder pane's THREAD
+    /// counts, and sharing it would let each cancel the other's reply. The two
+    /// arrive on different signals (countsReady against messageCountsReady),
+    /// so they can never be confused for one another and need not share a
+    /// counter.
+    quint64 m_ruleCountGeneration = 0;
 
     /// The generation of a REFRESH query, run after a sync to bring the list
     /// up to date without disturbing it.

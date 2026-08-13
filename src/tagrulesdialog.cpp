@@ -321,8 +321,9 @@ void TagRulesDialog::onSelectionChanged()
     m_query->setText(rule.query);
     m_note->setPlainText(rule.note);
 
-    // Parse once, on load, and keep it: Task 10's save path compares against
-    // this to decide whether the stored string may be left alone.
+    // Parse once, on load, and keep it: the save path compares against this to
+    // decide whether the stored string may be left alone, so that opening a
+    // rule and closing it cannot rewrite the file mailctl also reads.
     m_loadedQuery = RuleQuery::parse(rule.query);
 
     if (m_loadedQuery.parsed)

@@ -13,6 +13,15 @@ point at which they are stable.
 
 ### Added
 
+- The rules that tag your mail as it arrives are now visible and editable from
+  Message > Tagging rules, and each one shows how much mail it matches so you
+  can judge a rule before the next sync applies it. They live in a shared file,
+  `~/.config/mailrules/rules.json`, which the notmuch `post-new` hook reads to
+  do the tagging and which the companion `mailctl` tool can read too. The rules
+  previously lived inside the hook as shell, where nothing but a text editor
+  could see them. Each rule keeps a note, so the reasoning behind it (which
+  senders it deliberately excludes, and why) travels with the rule instead of
+  being a comment only one program could read.
 - A tag change now syncs itself out, about two seconds after you stop making
   changes, instead of waiting for the Sync button or your cron job. The delay is
   a debounce, so tagging several threads in a row produces one sync rather than
@@ -36,6 +45,31 @@ point at which they are stable.
   thread has stopped matching the current query, which is what happens when the
   message you are reading in Unread gets marked read, the pane keeps showing it
   and offers "Show it anyway" instead of going blank.
+
+### Upgrading
+
+The tagging rules moved out of the notmuch `post-new` hook and into
+`~/.config/mailrules/rules.json`. The dialog reads and writes that file, but
+nothing applies the rules until the new hook is installed, so this needs two
+files copied from the companion `mailctl` project into your notmuch hooks
+directory:
+
+```bash
+DB="$(notmuch config get database.path)"
+cp post-new mailrules.py "$DB/.notmuch/hooks/"
+chmod +x "$DB/.notmuch/hooks/post-new"
+```
+
+Keep a backup of your previous hook until a sync has run with the new one. Your
+existing rules do not convert themselves: each `notmuch tag` line becomes one
+entry in the JSON file, with the part after `tag:new and` as its query. Leave
+`tag:new` out of the stored query, the hook adds it, and do not carry over the
+final `notmuch tag -new` line, which the hook now does itself.
+
+Two behaviours of the new hook are worth knowing. It refuses to remove `unread`
+or `inbox`, since neither belongs in an unattended job that runs every ten
+minutes, and it will not consume the `tag:new` marker if the rules file fails
+to load, so a broken file delays tagging rather than losing it.
 
 ## [0.15.0] - 2026-08-11
 

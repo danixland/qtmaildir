@@ -214,6 +214,29 @@ completion descriptions. Query syntax itself is not user-facing text — notmuch
 like `tag:` and `date:` are wire format and must never be translated, only the prose
 describing them. Pre-existing code has not been audited against this rule.
 
+**The auto-tagging rules are NOT in this repo, and notmuch's parser rejects
+almost nothing.** Rules live in `~/.config/mailrules/rules.json`, applied by a
+notmuch `post-new` hook that ships from the companion `mailctl` project;
+`TagRules` here reads and writes the same file and `TagRulesDialog` edits it.
+Two things bite. A stored query carries NO scope: the hook supplies `tag:new`
+and wraps the query in parentheses, because `tag:new and a or b` binds as
+`(tag:new and a) or b` and a rule that is a disjunction of senders would escape
+its scope and match everything. And **a malformed query is not an error to
+notmuch**: `from:((((` parses cleanly and matches nothing, so a test asserting
+a failure or a `-1` count fails against correct code. This was recorded in
+`test_notmuchworker.cpp` for thread counts and then learned again, twice, while
+building the rules. Assert on the positional contract, never on a provoked
+failure.
+
+**Rule counts must count MESSAGES.** `requestCounts` counts threads, which is
+right for the placeholder pane because a click there produces thread rows. A
+rule tags messages, so a thread count understates every rule matching part of a
+large thread; `requestMessageCounts` exists beside it for that reason. The two
+are separate signals with separate generation counters, and a count request
+must never bump `m_generation`: that is the *query* generation, and bumping it
+discards any thread load in flight, blanking the message pane because the user
+asked for counts.
+
 **Config format gotcha:** QSettings treats `/` in a section name as a group separator, so
 account sections are `[account.work]`, not `[account/work]`. `childKeys` returns keys
 sorted alphabetically, never in file order. **`[general]` keys are read WITHOUT the

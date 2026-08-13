@@ -48,6 +48,7 @@ private slots:
     void aTextModeRuleStaysTextWhenAnotherRuleIsVisited();
     void leavingTextModeIsRefusedWhenTheQueryCannotBeShownAsRows();
     void aFolderRowUsesTheDropdownAndKeepsItsSuffix();
+    void theTextModeToggleSurvivesBeingSwitchedOn();
 
 private:
     QString writeRules(const QString &json);
@@ -588,6 +589,49 @@ void TestTagRules::aFolderRowUsesTheDropdownAndKeepsItsSuffix()
     QCOMPARE(reloaded.rules().size(), 1);
     QCOMPARE(reloaded.rules().at(0).query,
              QStringLiteral("path:\"account-two/**\""));
+}
+
+void TestTagRules::theTextModeToggleSurvivesBeingSwitchedOn()
+{
+    // The toggle governs the builder, so it must not live INSIDE the builder:
+    // switching to text mode hides that widget, and a checkbox parented there
+    // disappears along with the rows, leaving no way back except closing the
+    // dialog. That shipped in the first draft and a user found it by hand.
+    //
+    // Asserting on the checked state alone passes against the bug, because a
+    // hidden widget still reports its state perfectly well. The question is
+    // reachability.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    QFile out(configHome.filePath(QStringLiteral("mailrules/rules.json")));
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+    QVERIFY(dialog.textModeToggleIsReachableForTest());
+
+    dialog.setTextModeForTest(true);
+    QVERIFY2(dialog.textModeToggleIsReachableForTest(),
+             "the toggle must survive switching to text, or there is no "
+             "way back to the rows");
+
+    // And the round trip works, which is the behaviour the user wanted.
+    dialog.setTextModeForTest(false);
+    QVERIFY(!dialog.textModeForTest());
+    QVERIFY(dialog.textModeToggleIsReachableForTest());
+    QCOMPARE(dialog.rowCountForTest(), 1);
+    QCOMPARE(dialog.queryLineForTest(),
+             QStringLiteral("from:vendor.example.org"));
 }
 
 QTEST_MAIN(TestTagRules)

@@ -131,14 +131,9 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     auto *matchGroup = new QButtonGroup(this);
     matchGroup->addButton(m_matchAll);
     matchGroup->addButton(m_matchAny);
-    m_textMode = new QCheckBox(tr("Edit as &text"), m_builder);
-    m_textMode->setToolTip(
-        tr("Edit the notmuch query directly. A rule too complex to show as "
-           "rows opens this way."));
     matchRow->addWidget(m_matchAll);
     matchRow->addWidget(m_matchAny);
     matchRow->addStretch();
-    matchRow->addWidget(m_textMode);
     builderLayout->addLayout(matchRow);
 
     m_rowsLayout = new QVBoxLayout;
@@ -153,7 +148,21 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     builderLayout->addWidget(m_addExclusion, 0, Qt::AlignLeft);
 
     form->addRow(tr("Match"), m_builder);
-    form->addRow(tr("Query"), m_query);
+
+    // The toggle sits with the QUERY line, not inside m_builder, because
+    // switching to text mode HIDES m_builder. A checkbox parented there
+    // vanishes with the rows it governs, leaving no way back except closing
+    // the dialog, which is exactly what shipped in the first draft of this
+    // builder. The query row is visible in both modes, so the toggle is
+    // always reachable.
+    auto *queryRow = new QHBoxLayout;
+    m_textMode = new QCheckBox(tr("Edit as &text"), this);
+    m_textMode->setToolTip(
+        tr("Edit the notmuch query directly. A rule too complex to show as "
+           "rows opens this way."));
+    queryRow->addWidget(m_query, 1);
+    queryRow->addWidget(m_textMode);
+    form->addRow(tr("Query"), queryRow);
 
     // The query line shows what the rows compile to. Read-only in builder
     // mode: it is what actually ships to the hook, and watching it change is
@@ -473,6 +482,14 @@ void TagRulesDialog::setQueryTextForTest(const QString &text)
 void TagRulesDialog::setTextModeForTest(bool on)
 {
     m_textMode->setChecked(on);
+}
+
+bool TagRulesDialog::textModeToggleIsReachableForTest() const
+{
+    // isVisibleTo rather than isVisible: nothing is isVisible() on a dialog
+    // that was never shown, so that would report unreachable in both the
+    // working and the broken case.
+    return m_textMode->isVisibleTo(this);
 }
 
 QString TagRulesDialog::warningTextForTest() const

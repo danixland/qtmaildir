@@ -275,7 +275,7 @@ The builder replaces the query line edit. Everything else in the form stays.
 ```
 Id       [ vendor-receipts        ]   Stage [ 50 ]  [x] Applied on every sync
 
-Match    (o) all   ( ) any                        [ ] Edit as text
+Match    (o) all   ( ) any
    [From    v] [contains v] [vendor.example.org  ] [+] [-]
    [From    v] [contains v] [vendor.example.net  ] [+] [-]
 But not
@@ -287,8 +287,21 @@ Add tags     [ vendor, receipts    ]
 Remove tags  [                     ]
 Note         [ ...                 ]
 
-Query    (from:vendor.example.org or ...) and not subject:receipt  [Count matches]
+Query    (from:vendor.example.org or ...) and not subject:receipt
+                                                   [ ] Edit as text
 ```
+
+**The "Edit as text" toggle belongs to the QUERY row, not to the match row.**
+An earlier draft of this sketch put it beside the all/any radios, which is
+where it reads best and is also wrong: switching to text mode hides the
+builder, and a checkbox living inside the builder disappears with it, leaving
+no way back except closing the dialog. That shipped and a hand test found it
+within minutes. The query row is visible in both modes, so a toggle there is
+always reachable.
+
+The test for this must assert **reachability**, not the checked state. A
+hidden checkbox reports its state perfectly well, so a state assertion passes
+against the broken layout.
 
 **The query line stays visible in builder mode, read-only.** It is what ships to
 the hook, and watching it update as rows change is what makes the builder

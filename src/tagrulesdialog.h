@@ -82,6 +82,12 @@ public:
     void setTextModeForTest(bool on);
     QString warningTextForTest() const;
 
+    /// Whether the text-mode toggle would be on screen. A toggle that hides
+    /// itself when switched on is a one-way trip, and asserting only on the
+    /// checked STATE passes against that, since the state is still readable
+    /// when the widget is not.
+    bool textModeToggleIsReachableForTest() const;
+
 signals:
     /// Asks the owner to run countQueries() through the worker.
     void countsRequested();

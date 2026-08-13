@@ -1324,6 +1324,9 @@ void MainWindow::showTagRulesDialog()
     // setFolders refills the rows that exist by then.
     QMetaObject::invokeMethod(m_worker, "requestFolders", Qt::QueuedConnection);
 
+    connect(dialog, &TagRulesDialog::previewRequested,
+            this, &MainWindow::onRulePreviewRequested);
+
     connect(dialog, &TagRulesDialog::countsRequested, this, [this, dialog]() {
         QMetaObject::invokeMethod(
             m_worker, "requestMessageCounts", Qt::QueuedConnection,
@@ -1568,6 +1571,46 @@ void MainWindow::onCountsReady(const QVector<int> &counts, quint64 generation)
     // after the user opened a thread would replace the message with the logo.
     if (m_messageView->showingPlaceholder())
         m_messageView->showPlaceholder(placeholderHelpers());
+}
+
+QString MainWindow::queryTextForTesting() const
+{
+    return m_queryEdit->text();
+}
+
+QString MainWindow::selectedAccountForTesting() const
+{
+    return m_accountBox->currentData().toString();
+}
+
+void MainWindow::selectAccountForTesting(const QString &key)
+{
+    const int index = m_accountBox->findData(key);
+    if (index >= 0)
+        m_accountBox->setCurrentIndex(index);
+}
+
+void MainWindow::onRulePreviewRequested(const QString &query)
+{
+    // Unscoped, deliberately. runQuery() wraps the bar's text in the selected
+    // account's scope, and a rule query usually names its own path already
+    // (path:"work/**" is what every account rule looks like), so previewing
+    // one with an account selected would scope it twice and match nothing.
+    // That reads as "this rule collects no mail", which is the opposite of
+    // what the preview is for.
+    m_accountBox->setCurrentIndex(0);
+
+    // Through the query bar, like onPlaceholderQueryRequested: the bar then
+    // shows what is on screen and the user can edit the rule's query there
+    // before deciding to change the rule itself.
+    m_queryEdit->setText(query);
+    runCurrentQuery();
+
+    // The dialog is a separate window and may be covering this one or sitting
+    // beside it. Raising makes the result visible either way, and the dialog
+    // stays open so the two can be compared.
+    raise();
+    activateWindow();
 }
 
 void MainWindow::onPlaceholderQueryRequested(const QString &query)

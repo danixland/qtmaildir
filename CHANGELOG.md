@@ -26,6 +26,12 @@ point at which they are stable.
   on disk, so a folder that exists but has no mail in it yet is still offered.
   It stays editable, so a folder in the rules file that is no longer on disk
   still opens and still saves.
+- A **Preview in list** button in the tagging rules dialog runs the selected
+  rule's query in the main window, so you can see which mail a rule collects
+  rather than only how many messages it matches. The dialog stays open. The
+  query runs exactly as stored, without the `tag:new` scope the hook adds, and
+  the account selector is cleared first, since a rule query that names its own
+  folder would otherwise be scoped twice and match nothing.
 - The rule list and the rule editor are now divided by a draggable splitter,
   and the condition rows scroll instead of growing without limit. A rule with
   eight senders used to squeeze the list to about one visible row, since the

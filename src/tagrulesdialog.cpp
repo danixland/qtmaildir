@@ -234,6 +234,11 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     buttons->addWidget(copyButton);
     buttons->addWidget(deleteButton);
     buttons->addStretch();
+    m_previewButton = new QPushButton(tr("&Preview in list"), this);
+    m_previewButton->setToolTip(
+        tr("Run this rule's query in the main window, to see which mail it "
+           "collects. This does not tag anything."));
+    buttons->addWidget(m_previewButton);
     buttons->addWidget(refreshButton);
     layout->addLayout(buttons);
 
@@ -251,6 +256,8 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
             this, &TagRulesDialog::onCopyRule);
     connect(deleteButton, &QPushButton::clicked,
             this, &TagRulesDialog::onDeleteRule);
+    connect(m_previewButton, &QPushButton::clicked,
+            this, &TagRulesDialog::previewForTest);
     connect(refreshButton, &QPushButton::clicked,
             this, &TagRulesDialog::countsRequested);
     connect(box, &QDialogButtonBox::accepted,
@@ -367,6 +374,23 @@ int TagRulesDialog::heightDemandedBelowListForTest() const
     // dialog either, which does not track form rows at all and reads the
     // same whether the bug is present or not.
     return m_splitter->widget(1)->minimumSizeHint().height();
+}
+
+void TagRulesDialog::previewForTest()
+{
+    // Flush any half-typed edit first, so previewing shows what the rule
+    // says NOW rather than what it said when the row was selected.
+    applyEditsToCurrentRule();
+
+    const int index = currentIndex();
+    if (index < 0 || index >= m_working.size())
+        return;
+
+    const QString query = m_working.at(index).query;
+    if (query.isEmpty())
+        return;
+
+    emit previewRequested(query);
 }
 
 int TagRulesDialog::conditionAreaHeightForTest() const

@@ -20,6 +20,7 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include "config.h"
 #include "mainwindow.h"
 #include "rulequery.h"
 #include "tagrules.h"
@@ -55,6 +56,8 @@ private slots:
     void theWindowSizeIsSavedOnEveryWayOutOfTheDialog();
     void aReloadDoesNotDiscardARestoredColumnWidth();
     void manyConditionRowsDoNotSqueezeTheRuleList();
+    void previewEmitsTheRuleQueryAsStored();
+    void previewClearsTheAccountScope();
 
 private:
     QString writeRules(const QString &json);
@@ -865,6 +868,77 @@ void TestTagRules::manyConditionRowsDoNotSqueezeTheRuleList()
     QVERIFY2(dialog.conditionAreaHeightForTest() <= 200,
              qPrintable(QStringLiteral("condition area is %1px tall")
                             .arg(dialog.conditionAreaHeightForTest())));
+}
+
+void TestTagRules::previewEmitsTheRuleQueryAsStored()
+{
+    // The query goes out EXACTLY as stored: no tag:new, no wrapping
+    // parentheses. The hook adds both when it applies a rule, and a preview
+    // that copied it would show nothing at all outside a sync window, since
+    // tag:new is only set on mail that has just arrived.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    QFile out(configHome.filePath(QStringLiteral("mailrules/rules.json")));
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "promo", "query": "from:a.example.org or from:b.example.org",
+         "add": ["promo"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+    QSignalSpy spy(&dialog, &TagRulesDialog::previewRequested);
+
+    dialog.selectRuleForTest(0);
+    dialog.previewForTest();
+
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.first().at(0).toString(),
+             QStringLiteral("from:a.example.org or from:b.example.org"));
+}
+
+void TestTagRules::previewClearsTheAccountScope()
+{
+    // runQuery() wraps the bar's text in the selected account's scope. A rule
+    // query usually names its own path already (path:"work/**"), so previewing
+    // one while an account is selected would scope it twice and show nothing,
+    // which reads as "the rule matches no mail" rather than as a UI fault.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+
+    // An account that can actually BE selected. With the default empty config
+    // the selector holds only "All accounts", so it sits at index 0 already
+    // and the assertion below passes whether or not the preview clears it:
+    // measured, the mutation removing the reset survived until this config
+    // was added.
+    const QString confPath = configHome.filePath(QStringLiteral("q.conf"));
+    QFile conf(confPath);
+    QVERIFY(conf.open(QIODevice::WriteOnly | QIODevice::Text));
+    conf.write("[account.work]\nmaildir=work-mail\n");
+    conf.close();
+
+    Config config;
+    config.load(confPath);
+    QCOMPARE(config.accounts().size(), 1);
+
+    MainWindow window(config);
+    window.selectAccountForTesting(QStringLiteral("work"));
+    QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
+
+    window.previewRuleQueryForTesting(QStringLiteral("from:a.example.org"));
+
+    QCOMPARE(window.queryTextForTesting(),
+             QStringLiteral("from:a.example.org"));
+    QVERIFY2(window.selectedAccountForTesting().isEmpty(),
+             "a preview must run unscoped, or an account-scoped rule query "
+             "is wrapped twice and matches nothing");
 }
 
 QTEST_MAIN(TestTagRules)

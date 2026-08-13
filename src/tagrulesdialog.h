@@ -109,6 +109,10 @@ public:
     /// the width the user had dragged.
     void reloadListForTest();
 
+    /// Presses Preview, which is otherwise reachable only through a click on
+    /// a button whose geometry the offscreen platform does not guarantee.
+    void previewForTest();
+
     /// The height the condition-row editor asks for. This is what squeezed
     /// the rule list: a stretch factor only shares out space ABOVE each
     /// widget's minimum, so every row added here came out of the list.
@@ -132,6 +136,15 @@ public:
 signals:
     /// Asks the owner to run countQueries() through the worker.
     void countsRequested();
+
+    /// Asks the owner to run one rule's query in the main window, so the user
+    /// can see WHICH mail a rule collects rather than how much.
+    ///
+    /// The query goes out exactly as stored: no `tag:new`, and no wrapping
+    /// parentheses. The post-new hook adds both when it applies a rule, and a
+    /// preview that copied them would match nothing outside a sync window,
+    /// since `tag:new` is set only on mail that has just arrived.
+    void previewRequested(const QString &query);
 
 public slots:
     /// Corpus counts, positionally paired with countQueries().
@@ -241,6 +254,7 @@ private:
     /// still squeezed, because a stretch factor only shares out space above
     /// each widget's minimum and the form's grew with every condition row.
     QSplitter *m_splitter = nullptr;
+    QPushButton *m_previewButton = nullptr;
     QVBoxLayout *m_rowsLayout = nullptr;
     QVBoxLayout *m_exclusionsLayout = nullptr;
     QLabel *m_exclusionsHeader = nullptr;

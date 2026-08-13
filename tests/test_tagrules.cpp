@@ -42,6 +42,10 @@ private slots:
     void aNewerVersionIsRefused();
     void openingARuleFillsTheBuilderRows();
     void switchingRulesDoesNotLeakRowsBetweenThem();
+    void openingARuleWithoutEditingLeavesItByteIdentical();
+    void anUnrepresentableRuleOpensInTextMode();
+    void editingARowRewritesTheQuery();
+    void aTextModeRuleStaysTextWhenAnotherRuleIsVisited();
 
 private:
     QString writeRules(const QString &json);
@@ -311,6 +315,183 @@ void TestTagRules::switchingRulesDoesNotLeakRowsBetweenThem()
     dialog.selectRuleForTest(0);
     QCOMPARE(dialog.rowCountForTest(), 1);
     QCOMPARE(dialog.queryLineForTest(), QStringLiteral("from:one.example.org"));
+}
+
+void TestTagRules::openingARuleWithoutEditingLeavesItByteIdentical()
+{
+    // Recompiling on open would rewrite the shared file for no reason, and
+    // the companion tool would see a diff the user never made. Semantically
+    // equal is not enough: the bytes must match.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "handwritten",
+         "query": "not subject:receipt  and   from:plain.example.net",
+         "add": ["handwritten"], "stage": 50, "enabled": true},
+        {"id": "vendor",
+         "query": "(from:vendor.example.org or from:vendor.example.net) and not subject:receipt",
+         "add": ["vendor"], "stage": 50, "enabled": true},
+        {"id": "plain", "query": "from:plain.example.org",
+         "add": ["plain"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    {
+        TagRulesDialog dialog;
+        dialog.selectRuleForTest(2);
+        dialog.selectRuleForTest(1);
+        dialog.selectRuleForTest(0);
+        dialog.saveForTest();
+    }
+
+    TagRules reloaded;
+    reloaded.load(stored);
+    QCOMPARE(reloaded.rules().size(), 3);
+    // Hand-written spacing and an exclusion ahead of the positive term. Both
+    // are things compile() normalises away, and this rule is deliberately the
+    // one left current at Save, since that is the only rule the save path
+    // writes at all. The two below round trip byte for byte on their own, so
+    // neither could catch a save path that recompiles regardless.
+    QCOMPARE(reloaded.rules().at(0).query,
+             QStringLiteral("not subject:receipt  and   "
+                            "from:plain.example.net"));
+    QCOMPARE(reloaded.rules().at(1).query,
+             QStringLiteral("(from:vendor.example.org or "
+                            "from:vendor.example.net) and not subject:receipt"));
+    QCOMPARE(reloaded.rules().at(2).query,
+             QStringLiteral("from:plain.example.org"));
+}
+
+void TestTagRules::anUnrepresentableRuleOpensInTextMode()
+{
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    // body: is a perfectly good notmuch prefix this builder does not model.
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "deep", "query": "body:receipt",
+         "add": ["deep"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    {
+        TagRulesDialog dialog;
+        QVERIFY(dialog.textModeForTest());
+        dialog.saveForTest();
+    }
+
+    // Unrepresentable is not invalid: it must survive a save untouched.
+    TagRules reloaded;
+    reloaded.load(stored);
+    QCOMPARE(reloaded.rules().size(), 1);
+    QCOMPARE(reloaded.rules().at(0).query, QStringLiteral("body:receipt"));
+}
+
+void TestTagRules::editingARowRewritesTheQuery()
+{
+    // The other half of the guarantee: when rows DO change, the stored query
+    // must follow.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    {
+        TagRulesDialog dialog;
+        dialog.setRowValueForTest(0, QStringLiteral("other.example.org"));
+        dialog.saveForTest();
+    }
+
+    TagRules reloaded;
+    reloaded.load(stored);
+    QCOMPARE(reloaded.rules().size(), 1);
+    QCOMPARE(reloaded.rules().at(0).query,
+             QStringLiteral("from:other.example.org"));
+}
+
+void TestTagRules::aTextModeRuleStaysTextWhenAnotherRuleIsVisited()
+{
+    // The cross-rule question, asked directly. Text mode and m_loadedQuery are
+    // per-rule state on a dialog that has one set of widgets, so visiting a
+    // representable rule and coming back must not leave the unrepresentable one
+    // holding the other rule's mode or its parsed query. Getting that wrong
+    // recompiles a query the builder never modelled, which is data loss.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "deep", "query": "body:receipt",
+         "add": ["deep"], "stage": 50, "enabled": true},
+        {"id": "plain", "query": "from:plain.example.org",
+         "add": ["plain"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    {
+        TagRulesDialog dialog;
+        QVERIFY(dialog.textModeForTest());
+
+        dialog.selectRuleForTest(1);
+        QVERIFY2(!dialog.textModeForTest(),
+                 "a representable rule must return to the builder");
+        QCOMPARE(dialog.queryLineForTest(),
+                 QStringLiteral("from:plain.example.org"));
+
+        dialog.selectRuleForTest(0);
+        QVERIFY2(dialog.textModeForTest(),
+                 "coming back to an unrepresentable rule must be text again");
+        QCOMPARE(dialog.queryLineForTest(), QStringLiteral("body:receipt"));
+
+        dialog.saveForTest();
+    }
+
+    TagRules reloaded;
+    reloaded.load(stored);
+    QCOMPARE(reloaded.rules().size(), 2);
+    QCOMPARE(reloaded.rules().at(0).query, QStringLiteral("body:receipt"));
+    QCOMPARE(reloaded.rules().at(1).query,
+             QStringLiteral("from:plain.example.org"));
 }
 
 QTEST_MAIN(TestTagRules)

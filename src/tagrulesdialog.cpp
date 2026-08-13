@@ -162,6 +162,8 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
 
     connect(m_matchAll, &QRadioButton::toggled,
             this, &TagRulesDialog::syncQueryLine);
+    connect(m_textMode, &QCheckBox::toggled,
+            this, &TagRulesDialog::setTextMode);
     connect(m_addExclusion, &QPushButton::clicked, this, [this] {
         addRow(true);
         syncQueryLine();
@@ -326,6 +328,16 @@ void TagRulesDialog::onSelectionChanged()
     // rule and closing it cannot rewrite the file mailctl also reads.
     m_loadedQuery = RuleQuery::parse(rule.query);
 
+    // A rule the builder cannot show opens as text, and one it can show
+    // returns to the builder. Blocked, because letting setChecked run
+    // setTextMode() here would recompile and overwrite m_query mid-load.
+    {
+        const QSignalBlocker blockTextMode(m_textMode);
+        m_textMode->setChecked(!m_loadedQuery.parsed);
+    }
+    m_builder->setVisible(m_loadedQuery.parsed);
+    m_query->setReadOnly(m_loadedQuery.parsed);
+
     if (m_loadedQuery.parsed)
         rebuildRows(m_loadedQuery);
 
@@ -347,7 +359,16 @@ void TagRulesDialog::applyEditsToCurrentRule()
     rule.enabled = m_enabled->isChecked();
     rule.add = splitTags(m_add->text());
     rule.remove = splitTags(m_remove->text());
-    rule.query = m_query->text().trimmed();
+    if (m_textMode->isChecked()) {
+        rule.query = m_query->text().trimmed();
+    } else {
+        const RuleQuery current = currentQueryFromRows();
+        // Unchanged rows mean the stored string is left exactly as it was
+        // read. Recompiling an untouched rule would churn a file the
+        // companion tool also reads, showing a diff the user never made.
+        if (!(current == m_loadedQuery))
+            rule.query = current.compile();
+    }
     rule.note = m_note->toPlainText();
 
     fillItem(m_list->topLevelItem(index), rule);
@@ -429,6 +450,19 @@ void TagRulesDialog::onSave()
 QString TagRulesDialog::queryLineForTest() const
 {
     return m_query->text();
+}
+
+bool TagRulesDialog::textModeForTest() const
+{
+    return m_textMode->isChecked();
+}
+
+void TagRulesDialog::setRowValueForTest(int index, const QString &value)
+{
+    if (index < 0 || index >= m_rows.size())
+        return;
+    m_rows.at(index).value->setText(value);
+    syncQueryLine();
 }
 
 void TagRulesDialog::selectRuleForTest(int index)
@@ -585,6 +619,40 @@ RuleQuery TagRulesDialog::currentQueryFromRows() const
              value});
     }
     return query;
+}
+
+void TagRulesDialog::setTextMode(bool on)
+{
+    if (on) {
+        // Show what the rows currently mean, then hand the string over.
+        if (m_loadedQuery.parsed)
+            m_query->setText(currentQueryFromRows().compile());
+        m_builder->setVisible(false);
+        m_query->setReadOnly(false);
+        return;
+    }
+
+    // Going back needs the typed query to be representable. If it is not, the
+    // checkbox cannot clear: there are no rows that mean this query.
+    const RuleQuery parsed = RuleQuery::parse(m_query->text().trimmed());
+    if (!parsed.parsed) {
+        const QSignalBlocker block(m_textMode);
+        m_textMode->setChecked(true);
+        QMessageBox::information(
+            this, tr("Cannot show as rows"),
+            tr("This query is more than the builder can show, so it stays "
+               "as text. It is still saved and applied normally."));
+        return;
+    }
+
+    const bool wasReloading = m_reloading;
+    m_reloading = true;
+    rebuildRows(parsed);
+    m_reloading = wasReloading;
+
+    m_loadedQuery = parsed;
+    m_builder->setVisible(true);
+    m_query->setReadOnly(true);
 }
 
 void TagRulesDialog::rebuildRows(const RuleQuery &query)

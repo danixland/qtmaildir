@@ -64,6 +64,11 @@ public:
     /// Selects the rule at `index` as a click on the list would.
     void selectRuleForTest(int index);
 
+    bool textModeForTest() const;
+    void setRowValueForTest(int index, const QString &value);
+    /// Runs the Save path without showing the dialog.
+    void saveForTest() { onSave(); }
+
 signals:
     /// Asks the owner to run countQueries() through the worker.
     void countsRequested();
@@ -103,6 +108,8 @@ private:
     void populateOperators(bool exclusion);
     void updateExclusionsVisibility();
     void syncQueryLine();
+
+    void setTextMode(bool on);
 
     void rebuildRows(const RuleQuery &query);
     void applyTermToRow(Row *row, const RuleTerm &term);

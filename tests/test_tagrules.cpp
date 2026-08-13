@@ -46,6 +46,7 @@ private slots:
     void anUnrepresentableRuleOpensInTextMode();
     void editingARowRewritesTheQuery();
     void aTextModeRuleStaysTextWhenAnotherRuleIsVisited();
+    void leavingTextModeIsRefusedWhenTheQueryCannotBeShownAsRows();
 
 private:
     QString writeRules(const QString &json);
@@ -492,6 +493,55 @@ void TestTagRules::aTextModeRuleStaysTextWhenAnotherRuleIsVisited()
     QCOMPARE(reloaded.rules().at(0).query, QStringLiteral("body:receipt"));
     QCOMPARE(reloaded.rules().at(1).query,
              QStringLiteral("from:plain.example.org"));
+}
+
+void TestTagRules::leavingTextModeIsRefusedWhenTheQueryCannotBeShownAsRows()
+{
+    // The refusal is the only path that can strand a user, so it is the one
+    // most worth pinning. It reports through the warning label rather than a
+    // modal, which is what lets this test exist at all: a modal would block
+    // here and the branch would ship unverified.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+    QVERIFY(!dialog.textModeForTest());
+
+    dialog.setTextModeForTest(true);
+    QVERIFY(dialog.textModeForTest());
+
+    // Type something notmuch accepts and this builder does not model.
+    dialog.setQueryTextForTest(QStringLiteral("body:receipt"));
+    dialog.setTextModeForTest(false);
+
+    QVERIFY2(dialog.textModeForTest(),
+             "the checkbox must refuse to clear: no rows mean this query");
+    QVERIFY2(!dialog.warningTextForTest().isEmpty(),
+             "the refusal must say why, not fail silently");
+
+    // And a representable query lets the builder back, clearing the warning.
+    dialog.setQueryTextForTest(QStringLiteral("from:other.example.org"));
+    dialog.setTextModeForTest(false);
+
+    QVERIFY2(!dialog.textModeForTest(), "a representable query must return");
+    QCOMPARE(dialog.rowCountForTest(), 1);
+    QVERIFY2(dialog.warningTextForTest().isEmpty(),
+             "a stale refusal must not outlive the query that caused it");
 }
 
 QTEST_MAIN(TestTagRules)

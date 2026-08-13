@@ -69,6 +69,13 @@ public:
     /// Runs the Save path without showing the dialog.
     void saveForTest() { onSave(); }
 
+    /// Types into the query field and toggles the mode, so the refusal path
+    /// can be reached without a synthetic click. The refusal reports through
+    /// the warning label rather than a modal precisely so this is testable.
+    void setQueryTextForTest(const QString &text);
+    void setTextModeForTest(bool on);
+    QString warningTextForTest() const;
+
 signals:
     /// Asks the owner to run countQueries() through the worker.
     void countsRequested();

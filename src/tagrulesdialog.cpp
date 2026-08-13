@@ -465,6 +465,26 @@ void TagRulesDialog::setRowValueForTest(int index, const QString &value)
     syncQueryLine();
 }
 
+void TagRulesDialog::setQueryTextForTest(const QString &text)
+{
+    m_query->setText(text);
+}
+
+void TagRulesDialog::setTextModeForTest(bool on)
+{
+    m_textMode->setChecked(on);
+}
+
+QString TagRulesDialog::warningTextForTest() const
+{
+    // isVisible() is false for every child of a dialog that was never shown,
+    // so it would report no warning whatever the label held. isVisibleTo()
+    // answers the question actually being asked: would this be on screen if
+    // the dialog were.
+    return m_warningLabel->isVisibleTo(this) ? m_warningLabel->text()
+                                             : QString();
+}
+
 void TagRulesDialog::selectRuleForTest(int index)
 {
     if (index >= 0 && index < m_list->topLevelItemCount())
@@ -634,14 +654,19 @@ void TagRulesDialog::setTextMode(bool on)
 
     // Going back needs the typed query to be representable. If it is not, the
     // checkbox cannot clear: there are no rows that mean this query.
+    //
+    // Said in the warning label rather than a modal. A modal here would block
+    // any test that reaches this branch, which is how a refusal path ends up
+    // shipping unverified, and it interrupts someone who is mid-edit to tell
+    // them something the label can hold while they keep typing.
     const RuleQuery parsed = RuleQuery::parse(m_query->text().trimmed());
     if (!parsed.parsed) {
         const QSignalBlocker block(m_textMode);
         m_textMode->setChecked(true);
-        QMessageBox::information(
-            this, tr("Cannot show as rows"),
-            tr("This query is more than the builder can show, so it stays "
-               "as text. It is still saved and applied normally."));
+        m_warningLabel->setText(
+            tr("This query is more than the builder can show, so it stays as "
+               "text. It is still saved and applied normally."));
+        m_warningLabel->setVisible(true);
         return;
     }
 
@@ -653,6 +678,12 @@ void TagRulesDialog::setTextMode(bool on)
     m_loadedQuery = parsed;
     m_builder->setVisible(true);
     m_query->setReadOnly(true);
+
+    // The refusal above writes into the same label the load warnings use, so
+    // a successful return to the rows must clear it or a stale complaint
+    // outlives the query that caused it. showWarnings() restores whatever the
+    // file itself had to say.
+    showWarnings();
 }
 
 void TagRulesDialog::rebuildRows(const RuleQuery &query)

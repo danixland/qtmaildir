@@ -19,6 +19,9 @@
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QSettings>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "config.h"
 #include "mailsync.h"
 
@@ -48,6 +51,17 @@ private slots:
     void startupQueryDefaultsToUnread();
     void startupQueryHonoursTheConfiguredName();
     void unknownStartupQueryFallsBackAndReports();
+    void savedQueriesKeepTheirDocumentOrder();
+    void savedQueryFieldsAreRead();
+    void unknownFieldsSurviveARoundTrip();
+    void savedQueriesRoundTripUnchanged();
+    void migrationWritesJsonAndLeavesTheIniByteIdentical();
+    void migrationPinsEveryEntry();
+    void jsonWinsOnceItExists();
+    void malformedQueriesFileIsAProblemNotACrash();
+    void futureVersionIsRefusedAndReported();
+    void startupQueryFallsBackToDocumentOrder();
+    void scopedSavedQueryParenthesisesADisjunction();
     void generalSectionKeysAreActuallyRead();
     void messageZoomDefaultsAndValidates();
     void messageZoomOutOfRangeIsReported();
@@ -139,10 +153,10 @@ void TestConfig::parsesSavedQueries()
 
     const QList<SavedQuery> queries = config.savedQueries();
     QCOMPARE(queries.size(), 2);
-    // QSettings::childKeys() returns keys alphabetically, not in file order,
-    // so the UI button order is alphabetical. This assertion happens to hold
-    // either way since "Inbox" < "Unread", but the ordering guarantee is
-    // alphabetical, not "follows the file".
+    // Reached through migration since item 23: [queries] is read once, when
+    // queries.json is absent, and childKeys() is alphabetical, so the migrated
+    // order is too. From then on the JSON's own order wins, which is what
+    // savedQueriesKeepTheirDocumentOrder() covers.
     QCOMPARE(queries.at(0).name, QStringLiteral("Inbox"));
     QCOMPARE(queries.at(0).query, QStringLiteral("tag:inbox"));
 }
@@ -1091,6 +1105,315 @@ void TestConfig::allDraftsQueryIsIndependentOfSent()
     QCOMPARE(sent, QStringLiteral("path:\"webmail-primary/Sent/**\""));
     QVERIFY(!drafts.contains(QStringLiteral("webmail-primary")));
     QVERIFY(!sent.contains(QStringLiteral("provider-b")));
+}
+
+// ---------------------------------------------------------------------------
+// queries.json (item 23)
+// ---------------------------------------------------------------------------
+
+static QString writeQueries(const QTemporaryDir &dir, const QString &body)
+{
+    const QString path = dir.filePath(QStringLiteral("queries.json"));
+    QFile f(path);
+    f.open(QIODevice::WriteOnly);
+    f.write(body.toUtf8());
+    f.close();
+    return path;
+}
+
+/// The property the INI could not provide. "Zebra" is written first and must
+/// STAY first: alphabetical order would put it last, so this fails against any
+/// implementation that sorts, including the one being replaced.
+void TestConfig::savedQueriesKeepTheirDocumentOrder()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QString());
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Zebra",  "query": "tag:zebra" },
+            { "name": "Apple",  "query": "tag:apple" },
+            { "name": "Middle", "query": "tag:middle" }
+        ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    const QList<SavedQuery> queries = config.savedQueries();
+    QCOMPARE(queries.size(), 3);
+    QCOMPARE(queries.at(0).name, QStringLiteral("Zebra"));
+    QCOMPARE(queries.at(1).name, QStringLiteral("Apple"));
+    QCOMPARE(queries.at(2).name, QStringLiteral("Middle"));
+}
+
+void TestConfig::savedQueryFieldsAreRead()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QString());
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true },
+            { "name": "Billing", "query": "from:billing", "account": "work" }
+        ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    const QList<SavedQuery> queries = config.savedQueries();
+    QCOMPARE(queries.size(), 2);
+
+    QCOMPARE(queries.at(0).name, QStringLiteral("Inbox"));
+    QCOMPARE(queries.at(0).query, QStringLiteral("tag:inbox"));
+    QVERIFY(queries.at(0).pinned);
+    QVERIFY(queries.at(0).account.isEmpty());
+
+    // pinned defaults to false, which is what puts a query in the menu rather
+    // than on the row.
+    QVERIFY(!queries.at(1).pinned);
+    QCOMPARE(queries.at(1).account, QStringLiteral("work"));
+}
+
+/// A field written by a later build must survive an older build's save, or a
+/// downgrade silently strips config the user set.
+void TestConfig::unknownFieldsSurviveARoundTrip()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QString());
+    const QString queriesPath = writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "colour_scheme": "solarized",
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "icon": "mail-inbox" }
+        ]
+    })"));
+
+    Config config;
+    config.load(path);
+    QVERIFY(config.saveSavedQueries());
+
+    QFile f(queriesPath);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+    f.close();
+
+    QCOMPARE(root.value(QStringLiteral("colour_scheme")).toString(),
+             QStringLiteral("solarized"));
+    const QJsonObject entry =
+        root.value(QStringLiteral("queries")).toArray().at(0).toObject();
+    QCOMPARE(entry.value(QStringLiteral("icon")).toString(),
+             QStringLiteral("mail-inbox"));
+}
+
+void TestConfig::savedQueriesRoundTripUnchanged()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QString());
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Zebra", "query": "tag:zebra", "pinned": true },
+            { "name": "Apple", "query": "from:a@example.org", "account": "work" }
+        ]
+    })"));
+
+    Config first;
+    first.load(path);
+    QVERIFY(first.saveSavedQueries());
+
+    Config second;
+    second.load(path);
+
+    const QList<SavedQuery> a = first.savedQueries();
+    const QList<SavedQuery> b = second.savedQueries();
+    QCOMPARE(b.size(), a.size());
+    for (int i = 0; i < a.size(); ++i) {
+        QCOMPARE(b.at(i).name, a.at(i).name);
+        QCOMPARE(b.at(i).query, a.at(i).query);
+        QCOMPARE(b.at(i).pinned, a.at(i).pinned);
+        QCOMPARE(b.at(i).account, a.at(i).account);
+    }
+}
+
+/// Asserts the INI is byte-identical, NOT that it still parses. Re-reading it
+/// through QSettings would pass against a rewrite that kept every value while
+/// dropping the comments and key order, which is the loss this design exists
+/// to avoid.
+void TestConfig::migrationWritesJsonAndLeavesTheIniByteIdentical()
+{
+    QTemporaryDir dir;
+    const QString ini = QStringLiteral(
+        "; a comment the user wrote and expects to keep\n"
+        "[queries]\n"
+        "Unread=tag:unread\n"
+        "Inbox=tag:inbox\n"
+        "\n"
+        "[general]\n"
+        "startup_query=Unread\n"
+    );
+    const QString path = writeIni(dir, ini);
+
+    QFile before(path);
+    QVERIFY(before.open(QIODevice::ReadOnly));
+    const QByteArray originalBytes = before.readAll();
+    before.close();
+
+    Config config;
+    config.load(path);
+
+    const QString queriesPath = dir.filePath(QStringLiteral("queries.json"));
+    QVERIFY2(QFile::exists(queriesPath), "migration did not write queries.json");
+
+    QFile after(path);
+    QVERIFY(after.open(QIODevice::ReadOnly));
+    const QByteArray afterBytes = after.readAll();
+    after.close();
+
+    QCOMPARE(afterBytes, originalBytes);
+
+    // The [queries] section is left in place, so an older build still works.
+    QVERIFY(afterBytes.contains("[queries]"));
+    QVERIFY(afterBytes.contains("; a comment the user wrote"));
+}
+
+/// A migrated query that was not pinned would vanish from the query row, which
+/// on the first launch after an upgrade looks like data loss.
+void TestConfig::migrationPinsEveryEntry()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[queries]\n"
+        "Inbox=tag:inbox\n"
+        "Unread=tag:unread\n"
+    ));
+
+    Config config;
+    config.load(path);
+
+    const QList<SavedQuery> queries = config.savedQueries();
+    QCOMPARE(queries.size(), 2);
+    for (const SavedQuery &query : queries)
+        QVERIFY2(query.pinned, qPrintable(
+            QStringLiteral("migrated query '%1' is not pinned").arg(query.name)));
+}
+
+/// Once the JSON exists, [queries] is dead. Two sources of truth was the
+/// option this design rejected.
+void TestConfig::jsonWinsOnceItExists()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[queries]\n"
+        "FromTheIni=tag:ini\n"
+    ));
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [ { "name": "FromTheJson", "query": "tag:json" } ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    const QList<SavedQuery> queries = config.savedQueries();
+    QCOMPARE(queries.size(), 1);
+    QCOMPARE(queries.at(0).name, QStringLiteral("FromTheJson"));
+}
+
+void TestConfig::malformedQueriesFileIsAProblemNotACrash()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QString());
+    writeQueries(dir, QStringLiteral("{ this is not json at all"));
+
+    Config config;
+    config.load(path);
+
+    QVERIFY(config.savedQueries().isEmpty());
+    QVERIFY2(!config.problems().isEmpty(),
+             "a malformed queries.json must be reported");
+}
+
+/// Refusing an unknown version is the same contract rules.json keeps: a file
+/// from a newer build is not silently reinterpreted, and above all is not
+/// overwritten with a lossy reading of itself.
+void TestConfig::futureVersionIsRefusedAndReported()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QString());
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 99,
+        "queries": [ { "name": "Inbox", "query": "tag:inbox" } ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    QVERIFY(config.savedQueries().isEmpty());
+    QVERIFY(!config.problems().isEmpty());
+}
+
+/// The fallback stops meaning "alphabetically first" and starts meaning "first
+/// in the user's own order". "Zebra" first proves it: alphabetical would pick
+/// "Apple".
+void TestConfig::startupQueryFallsBackToDocumentOrder()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_query=NoSuchQuery\n"
+    ));
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Zebra", "query": "tag:zebra" },
+            { "name": "Apple", "query": "tag:apple" }
+        ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    QCOMPARE(config.startupSavedQuery().name, QStringLiteral("Zebra"));
+}
+
+/// The parentheses are load-bearing. Without them `path:... and a or b` binds
+/// as `(path:... and a) or b`, so a query saved with a disjunction escapes its
+/// account scope and matches every account.
+void TestConfig::scopedSavedQueryParenthesisesADisjunction()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "name=Test User\n"
+        "address=user@example.org\n"
+        "maildir=work-mail\n"
+    ));
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Either",
+              "query": "from:a@example.org or from:b@example.org",
+              "account": "work" }
+        ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    const QString scoped = config.resolvedQuery(config.savedQueries().at(0));
+    QCOMPARE(scoped, QStringLiteral(
+        "path:\"work-mail/**\" and "
+        "(from:a@example.org or from:b@example.org)"));
+
+    // An account key naming nothing resolves to the bare query rather than a
+    // scope built from an empty maildir, which would be path:"/**".
+    SavedQuery orphan;
+    orphan.name = QStringLiteral("Orphan");
+    orphan.query = QStringLiteral("tag:inbox");
+    orphan.account = QStringLiteral("deleted-account");
+    QCOMPARE(config.resolvedQuery(orphan), QStringLiteral("tag:inbox"));
 }
 
 QTEST_MAIN(TestConfig)

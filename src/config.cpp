@@ -24,8 +24,14 @@
 #include "messageview.h"
 
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLocale>
+#include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
 
@@ -36,6 +42,14 @@ namespace {
 /// above 64 the toolbar is taller than the thread rows it sits over.
 constexpr int kMinToolbarIconSize = 16;
 constexpr int kMaxToolbarIconSize = 64;
+
+/// queries.json format version. Bump only for a BREAKING change: an optional
+/// field needs no bump, because an older build preserves what it does not
+/// understand rather than dropping it.
+///
+/// Unlike rules.json this file has ONE implementation, so a bump here is not a
+/// two-repo change and no hook stops tagging if it is half-deployed.
+constexpr int kQueriesFormatVersion = 1;
 
 } // namespace
 
@@ -397,17 +411,10 @@ void Config::load(const QString &path)
         m_accounts.append(account);
     }
 
-    settings.beginGroup(QStringLiteral("queries"));
-    // QSettings::childKeys() returns keys in alphabetical order, not file
-    // order, so the saved-query button order in the UI is alphabetical too.
-    // A hand-rolled parser would be needed to preserve file order; not
-    // needed in v1.
-    for (const QString &name : settings.childKeys())
-        m_savedQueries.append({ name, settings.value(name).toString() });
-    settings.endGroup();
+    loadSavedQueries(path, settings);
 
-    // Checked here rather than where startup_query is read: [queries] is not
-    // parsed until now. Only a name the user actually wrote is worth a
+    // Checked here rather than where startup_query is read: the saved queries
+    // are not parsed until now. Only a name the user actually wrote is worth a
     // problem; the built-in default naming a query they never created is not
     // something they got wrong.
     if (m_startupQueryWasSet && !m_savedQueries.isEmpty()
@@ -417,6 +424,162 @@ void Config::load(const QString &path)
                                   "opening '%2' instead.")
                        .arg(m_startupQuery, startupSavedQuery().name));
     }
+}
+
+QString Config::queriesPath(const QString &configPath)
+{
+    return QFileInfo(configPath).absolutePath()
+           + QStringLiteral("/queries.json");
+}
+
+void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
+{
+    m_queriesPath = queriesPath(configPath);
+
+    QFile file(m_queriesPath);
+    if (!file.exists()) {
+        // Migration. Read [queries] once, write the JSON, and leave the INI
+        // section alone: stripping it would mean rewriting a hand-edited file
+        // with QSettings, which drops comments and key order across the WHOLE
+        // file. A few stale lines the user can delete by hand is the cheaper
+        // loss, and it keeps a downgrade working.
+        settings.beginGroup(QStringLiteral("queries"));
+        const QStringList names = settings.childKeys();
+        for (const QString &name : names) {
+            SavedQuery query;
+            query.name = name;
+            query.query = settings.value(name).toString();
+            // Pinned, because these are buttons today. A migration that left
+            // them unpinned would empty the query row on the first launch
+            // after an upgrade, which reads as data loss.
+            query.pinned = true;
+            m_savedQueries.append(query);
+        }
+        settings.endGroup();
+
+        // Order is alphabetical here because childKeys() is genuinely all the
+        // INI knows. The user reorders once and it sticks from then on.
+        if (!names.isEmpty() && !saveSavedQueries()) {
+            addProblem(QStringLiteral("Could not write saved queries to %1.")
+                           .arg(m_queriesPath));
+        }
+        return;
+    }
+
+    if (!file.open(QIODevice::ReadOnly)) {
+        addProblem(QStringLiteral("Could not read %1: %2.")
+                       .arg(m_queriesPath, file.errorString()));
+        m_queriesRefused = true;
+        return;
+    }
+
+    QJsonParseError error;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(file.readAll(), &error);
+    file.close();
+
+    if (error.error != QJsonParseError::NoError || !document.isObject()) {
+        addProblem(QStringLiteral("%1 is not valid JSON: %2.")
+                       .arg(m_queriesPath, error.errorString()));
+        m_queriesRefused = true;
+        return;
+    }
+
+    const QJsonObject root = document.object();
+    const int version =
+        root.value(QStringLiteral("version")).toInt(kQueriesFormatVersion);
+    if (version != kQueriesFormatVersion) {
+        // Refused rather than guessed at, and the refusal blocks the save:
+        // rewriting a newer document with this build's reading of it would
+        // destroy whatever the newer build stored.
+        addProblem(QStringLiteral("%1 has format version %2; this build "
+                                  "understands %3. Saved queries were not "
+                                  "loaded.")
+                       .arg(m_queriesPath)
+                       .arg(version)
+                       .arg(kQueriesFormatVersion));
+        m_queriesRefused = true;
+        return;
+    }
+
+    for (auto it = root.begin(); it != root.end(); ++it) {
+        if (it.key() != QStringLiteral("version")
+            && it.key() != QStringLiteral("queries"))
+            m_queriesUnknown.insert(it.key(), it.value());
+    }
+
+    const QJsonArray array = root.value(QStringLiteral("queries")).toArray();
+    for (const QJsonValue &value : array) {
+        const QJsonObject object = value.toObject();
+        SavedQuery query;
+        query.name = object.value(QStringLiteral("name")).toString();
+        query.query = object.value(QStringLiteral("query")).toString();
+        query.pinned = object.value(QStringLiteral("pinned")).toBool(false);
+        query.account = object.value(QStringLiteral("account")).toString();
+
+        if (query.name.isEmpty()) {
+            addProblem(QStringLiteral("A saved query in %1 has no name and was "
+                                      "skipped.").arg(m_queriesPath));
+            continue;
+        }
+
+        for (auto it = object.begin(); it != object.end(); ++it) {
+            static const QStringList known = {
+                QStringLiteral("name"), QStringLiteral("query"),
+                QStringLiteral("pinned"), QStringLiteral("account")
+            };
+            if (!known.contains(it.key()))
+                query.unknown.insert(it.key(), it.value());
+        }
+
+        m_savedQueries.append(query);
+    }
+}
+
+bool Config::saveSavedQueries() const
+{
+    if (m_queriesPath.isEmpty() || m_queriesRefused)
+        return false;
+
+    QJsonArray array;
+    for (const SavedQuery &query : m_savedQueries) {
+        QJsonObject object;
+        object.insert(QStringLiteral("name"), query.name);
+        object.insert(QStringLiteral("query"), query.query);
+        if (query.pinned)
+            object.insert(QStringLiteral("pinned"), true);
+        if (!query.account.isEmpty())
+            object.insert(QStringLiteral("account"), query.account);
+        for (auto it = query.unknown.begin(); it != query.unknown.end(); ++it)
+            object.insert(it.key(), it.value());
+        array.append(object);
+    }
+
+    QJsonObject root = m_queriesUnknown;
+    root.insert(QStringLiteral("version"), kQueriesFormatVersion);
+    root.insert(QStringLiteral("queries"), array);
+
+    QDir().mkpath(QFileInfo(m_queriesPath).absolutePath());
+
+    // QSaveFile writes a temporary and renames on commit, so an interrupted
+    // write cannot leave a half-written file where the queries used to be.
+    QSaveFile file(m_queriesPath);
+    if (!file.open(QIODevice::WriteOnly))
+        return false;
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    return file.commit();
+}
+
+QString Config::resolvedQuery(const SavedQuery &query) const
+{
+    if (query.account.isEmpty())
+        return query.query;
+
+    const Account scope = account(query.account);
+    if (!scope.isValid())
+        return query.query;
+
+    return scope.scopedQuery(query.query);
 }
 
 SavedQuery Config::startupSavedQuery() const

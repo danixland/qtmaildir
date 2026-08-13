@@ -31,6 +31,8 @@ class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
 class QRadioButton;
+class QScrollArea;
+class QSplitter;
 class QSpinBox;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -106,6 +108,26 @@ public:
     /// a close and reopen: `resizeColumnToContents` on every reload discarded
     /// the width the user had dragged.
     void reloadListForTest();
+
+    /// The height the condition-row editor asks for. This is what squeezed
+    /// the rule list: a stretch factor only shares out space ABOVE each
+    /// widget's minimum, so every row added here came out of the list.
+    /// Measured at 120px for one row and 414px for eight before the scroll
+    /// area capped it.
+    ///
+    /// Asserted on instead of the list's rendered height because the
+    /// offscreen platform does not honour a window size, so the rendered
+    /// height there is not evidence of anything (see CLAUDE.md). Note the
+    /// size HINT, not minimumSizeHint: a QFormLayout's minimum does not track
+    /// its rows and reads the same either way, which passed against the bug.
+    int heightDemandedBelowListForTest() const;
+
+    /// How tall the condition-row area may become. The scroll area caps it;
+    /// without the cap the rows grow without bound and a long rule fills the
+    /// window again, scrolling instead of squeezing. Asserted separately
+    /// because removing the cap leaves heightDemandedBelowListForTest
+    /// unchanged, so that measure alone does not cover it.
+    int conditionAreaHeightForTest() const;
 
 signals:
     /// Asks the owner to run countQueries() through the worker.
@@ -211,6 +233,14 @@ private:
     QRadioButton *m_matchAny = nullptr;
     QCheckBox *m_textMode = nullptr;
     QWidget *m_builder = nullptr;
+    /// Scrolls the condition rows, so a rule with many of them cannot grow
+    /// the editor without bound. Shown and hidden in place of m_builder for
+    /// text mode: hiding the inner widget would leave an empty scroll area.
+    QScrollArea *m_builderScroll = nullptr;
+    /// Divides the rule list from the editor. The list had stretch 1 and was
+    /// still squeezed, because a stretch factor only shares out space above
+    /// each widget's minimum and the form's grew with every condition row.
+    QSplitter *m_splitter = nullptr;
     QVBoxLayout *m_rowsLayout = nullptr;
     QVBoxLayout *m_exclusionsLayout = nullptr;
     QLabel *m_exclusionsHeader = nullptr;

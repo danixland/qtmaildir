@@ -33,8 +33,10 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -106,7 +108,26 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
                               tr("Matches") });
     m_list->setRootIsDecorated(false);
     m_list->setUniformRowHeights(true);
-    layout->addWidget(m_list, 1);
+
+    // The list and the editor go in a splitter, and the editor's own widget
+    // holds the form. A plain QVBoxLayout gave the list stretch 1 and still
+    // let a rule with eight condition rows squeeze it to about one visible
+    // row: a stretch factor only shares out space ABOVE each widget's
+    // minimum, and the form's grew with every row. Measured before the fix,
+    // the editor asked for 120px with one row and 414px with eight.
+    auto *editor = new QWidget(this);
+    auto *editorLayout = new QVBoxLayout(editor);
+    editorLayout->setContentsMargins(0, 0, 0, 0);
+
+    m_splitter = new QSplitter(Qt::Vertical, this);
+    m_splitter->addWidget(m_list);
+    m_splitter->addWidget(editor);
+    // Neither pane collapses to nothing by dragging the handle past the end,
+    // which would hide the thing the user was trying to make room for.
+    m_splitter->setChildrenCollapsible(false);
+    m_splitter->setStretchFactor(0, 1);
+    m_splitter->setStretchFactor(1, 0);
+    layout->addWidget(m_splitter, 1);
 
     auto *form = new QFormLayout;
     m_id = new QLineEdit(this);
@@ -155,7 +176,19 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     m_addExclusion = new QPushButton(tr("Add e&xclusion"), m_builder);
     builderLayout->addWidget(m_addExclusion, 0, Qt::AlignLeft);
 
-    form->addRow(tr("Match"), m_builder);
+    // The rows scroll rather than growing without bound. The splitter alone
+    // fixes the squeeze, but only until the user drags the handle down; this
+    // caps what the editor can ever demand, so a rule with thirty senders
+    // stays as workable as one with two.
+    m_builderScroll = new QScrollArea(this);
+    m_builderScroll->setWidget(m_builder);
+    m_builderScroll->setWidgetResizable(true);
+    m_builderScroll->setFrameShape(QFrame::NoFrame);
+    m_builderScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // Roughly four rows. Enough that the common rule needs no scrolling at
+    // all, small enough that the list keeps most of the window.
+    m_builderScroll->setMaximumHeight(190);
+    form->addRow(tr("Match"), m_builderScroll);
 
     // The toggle sits with the QUERY line, not inside m_builder, because
     // switching to text mode HIDES m_builder. A checkbox parented there
@@ -187,7 +220,7 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     });
 
     form->addRow(tr("Note"), m_note);
-    layout->addLayout(form);
+    editorLayout->addLayout(form);
 
     auto *buttons = new QHBoxLayout;
     auto *addButton = new QPushButton(tr("&New"), this);
@@ -273,6 +306,11 @@ void TagRulesDialog::restoreUiState()
     if (!geometry.isEmpty())
         restoreGeometry(geometry);
 
+    const QByteArray splitter =
+        state.value(QStringLiteral("tagrules/splitter")).toByteArray();
+    if (!splitter.isEmpty())
+        m_splitter->restoreState(splitter);
+
     const QByteArray header =
         state.value(QStringLiteral("tagrules/header")).toByteArray();
     if (!header.isEmpty()) {
@@ -294,6 +332,8 @@ void TagRulesDialog::saveUiState()
     state.setValue(QStringLiteral("tagrules/geometry"), saveGeometry());
     state.setValue(QStringLiteral("tagrules/header"),
                    m_list->header()->saveState());
+    state.setValue(QStringLiteral("tagrules/splitter"),
+                   m_splitter->saveState());
 }
 
 /// Saves on the way out, whichever way that is.
@@ -312,6 +352,30 @@ void TagRulesDialog::done(int result)
 {
     saveUiState();
     QDialog::done(result);
+}
+
+int TagRulesDialog::heightDemandedBelowListForTest() const
+{
+    // The builder's PREFERRED height, which is what grows with each condition
+    // row and what the list ends up paying for. minimumSizeHint is the wrong
+    // measure and reads 580 either way: a QFormLayout's minimum does not
+    // track its rows, so a test on it passes against the bug.
+    // The EDITOR PANE's minimum, which is what the splitter refuses to
+    // shrink below and therefore what the rule list actually pays. Not the
+    // builder's size hint: that grows with every row by design and is capped
+    // by the scroll area rather than reduced. Not minimumSizeHint on the
+    // dialog either, which does not track form rows at all and reads the
+    // same whether the bug is present or not.
+    return m_splitter->widget(1)->minimumSizeHint().height();
+}
+
+int TagRulesDialog::conditionAreaHeightForTest() const
+{
+    // The CAP itself, not a qMin against the scroll area's own size hint: a
+    // QScrollArea reports a small hint whether or not it is capped, and an
+    // uncapped maximumHeight is QWIDGETSIZE_MAX, so qMin picked the hint and
+    // the assertion passed with the cap removed.
+    return m_builderScroll->maximumHeight();
 }
 
 int TagRulesDialog::columnWidthForTest(int column) const
@@ -434,7 +498,7 @@ void TagRulesDialog::onSelectionChanged()
         const QSignalBlocker blockTextMode(m_textMode);
         m_textMode->setChecked(!m_loadedQuery.parsed);
     }
-    m_builder->setVisible(m_loadedQuery.parsed);
+    m_builderScroll->setVisible(m_loadedQuery.parsed);
     m_query->setReadOnly(m_loadedQuery.parsed);
 
     if (m_loadedQuery.parsed)
@@ -818,7 +882,7 @@ void TagRulesDialog::setTextMode(bool on)
         // Show what the rows currently mean, then hand the string over.
         if (m_loadedQuery.parsed)
             m_query->setText(currentQueryFromRows().compile());
-        m_builder->setVisible(false);
+        m_builderScroll->setVisible(false);
         m_query->setReadOnly(false);
         return;
     }
@@ -847,7 +911,7 @@ void TagRulesDialog::setTextMode(bool on)
     m_reloading = wasReloading;
 
     m_loadedQuery = parsed;
-    m_builder->setVisible(true);
+    m_builderScroll->setVisible(true);
     m_query->setReadOnly(true);
 
     // The refusal above writes into the same label the load warnings use, so

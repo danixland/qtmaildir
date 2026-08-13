@@ -26,6 +26,11 @@ point at which they are stable.
   on disk, so a folder that exists but has no mail in it yet is still offered.
   It stays editable, so a folder in the rules file that is no longer on disk
   still opens and still saves.
+- The rule list and the rule editor are now divided by a draggable splitter,
+  and the condition rows scroll instead of growing without limit. A rule with
+  eight senders used to squeeze the list to about one visible row, since the
+  editor grew with every condition and the list gave up the space. Where you
+  leave the divider is remembered.
 - The tagging rules window remembers the widths of the rule list's columns. A
   column you widen also survives adding or deleting a rule, which previously
   reset it. The window's own size is saved too, but a tiling window manager

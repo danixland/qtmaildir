@@ -54,6 +54,7 @@ private slots:
     void theWindowSizeAndColumnWidthsSurviveAReopen();
     void theWindowSizeIsSavedOnEveryWayOutOfTheDialog();
     void aReloadDoesNotDiscardARestoredColumnWidth();
+    void manyConditionRowsDoNotSqueezeTheRuleList();
 
 private:
     QString writeRules(const QString &json);
@@ -321,6 +322,11 @@ void TestTagRules::switchingRulesDoesNotLeakRowsBetweenThem()
     // And back, to prove the first rule was not overwritten by loading the
     // second.
     dialog.selectRuleForTest(0);
+    // The row widgets are created during the select and their size hints are
+    // not valid until the layout has run, which needs the event loop: without
+    // this the builder reports the same height for one row and for eight, and
+    // the test passes against the bug.
+    QCoreApplication::processEvents();
     QCOMPARE(dialog.rowCountForTest(), 1);
     QCOMPARE(dialog.queryLineForTest(), QStringLiteral("from:one.example.org"));
 }
@@ -793,6 +799,72 @@ void TestTagRules::aReloadDoesNotDiscardARestoredColumnWidth()
         qunsetenv("XDG_STATE_HOME");
     else
         qputenv("XDG_STATE_HOME", previousState);
+}
+
+void TestTagRules::manyConditionRowsDoNotSqueezeTheRuleList()
+{
+    // A rule with eight senders left the rule list showing about one and a
+    // half rows: the list had stretch 1, but a stretch factor only shares out
+    // space ABOVE each widget's minimum, and the form below it has no ceiling,
+    // so every condition row added to the minimum the list had to give up.
+    //
+    // Measured as the height the layout demands below the list. A rule with
+    // many rows must not demand materially more than a rule with one; what it
+    // needs beyond that belongs in the builder's own scroll area.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    QFile out(configHome.filePath(QStringLiteral("mailrules/rules.json")));
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "one", "query": "from:a.example.org",
+         "add": ["x"], "stage": 50, "enabled": true},
+        {"id": "many", "query":
+          "from:a.example.org or from:b.example.org or from:c.example.org or from:d.example.org or from:e.example.org or from:f.example.org or from:g.example.org or from:h.example.org",
+         "add": ["y"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+    dialog.show();
+
+    dialog.selectRuleForTest(0);
+    // The row widgets are created during the select and their size hints are
+    // not valid until the layout has run, which needs the event loop: without
+    // this the builder reports the same height for one row and for eight, and
+    // the test passes against the bug.
+    QCoreApplication::processEvents();
+    QCOMPARE(dialog.rowCountForTest(), 1);
+    const int withOneRow = dialog.heightDemandedBelowListForTest();
+
+    dialog.selectRuleForTest(1);
+    QCoreApplication::processEvents();
+    // Guard: the fixture must actually produce the many-row case, or this
+    // test passes by measuring the same rule twice.
+    QCOMPARE(dialog.rowCountForTest(), 8);
+    const int withEightRows = dialog.heightDemandedBelowListForTest();
+
+    // Seven extra rows at roughly 30px each would be over 200px of growth.
+    // A small increase is fine (the scroll area still has a minimum), a
+    // proportional one is the bug.
+    QVERIFY2(withEightRows - withOneRow < 100,
+             qPrintable(QStringLiteral("one row demands %1, eight demand %2")
+                            .arg(withOneRow).arg(withEightRows)));
+
+    // And the rows are CAPPED, not merely allowed to grow inside a scroll
+    // area that has no ceiling. Asserted separately because removing the cap
+    // leaves the assertion above green: the editor's minimum stays flat
+    // either way, so only the visible height of the row area distinguishes
+    // them. Without a cap a thirty-sender rule fills the window again, this
+    // time scrolling instead of squeezing.
+    QVERIFY2(dialog.conditionAreaHeightForTest() <= 200,
+             qPrintable(QStringLiteral("condition area is %1px tall")
+                            .arg(dialog.conditionAreaHeightForTest())));
 }
 
 QTEST_MAIN(TestTagRules)

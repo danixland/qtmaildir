@@ -49,6 +49,7 @@ class QPlainTextEdit;
 class QSplitter;
 class QProgressBar;
 class QTimer;
+class QToolButton;
 class QVBoxLayout;
 
 class ThreadListModel;
@@ -625,6 +626,8 @@ private:
     QUndoStack m_undoStack;
 
     QLineEdit *m_queryEdit = nullptr;
+    /// Save query, beside the field. Driven by the save_query action.
+    QToolButton *m_saveQueryButton = nullptr;
     QueryCompleter *m_queryCompleter = nullptr;
     /// Its own type, not the QTreeView base. The strip painting and the
     /// expander column are ThreadListView's, and holding the base here only

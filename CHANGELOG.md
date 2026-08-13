@@ -13,10 +13,11 @@ point at which they are stable.
 
 ### Added
 
-- A **Save query** action (`Ctrl+S`) keeps the query in the bar as a saved
-  query, naming it, optionally scoping it to one account, and choosing whether
-  it appears as a button or in a menu. Saved queries no longer have to be added
-  by hand-editing the config file (item 23).
+- A **Save query** button beside the query bar, also on the Edit menu and bound
+  to `Ctrl+S`, keeps the query in the bar as a saved query: naming it,
+  optionally scoping it to one account, and choosing whether it appears as a
+  button or in a menu. Saved queries no longer have to be added by
+  hand-editing the config file (item 23).
 - Saved queries live in `~/.config/qtmaildir/queries.json`, which carries their
   **order**, a `pinned` flag and an optional account scope. The order in the
   file is the order the buttons appear in, so rearranging them is a matter of

@@ -45,6 +45,7 @@
 #include <QScrollBar>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "mailsync.h"
@@ -348,6 +349,12 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     // also set programmatically, by the saved-query buttons and by
     // recoverStaleThread(), and the action must track those too.
     if (QAction *save = m_actions.value(QStringLiteral("save_query"))) {
+        // setDefaultAction, not a second connect: the button then takes the
+        // action's text, icon, tooltip and ENABLED state, so it cannot end up
+        // offering to save an empty query while the menu entry refuses.
+        m_saveQueryButton->setDefaultAction(save);
+        m_saveQueryButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+
         auto updateSaveState = [this, save]() {
             save->setEnabled(!m_queryEdit->text().trimmed().isEmpty());
         };
@@ -566,6 +573,16 @@ void MainWindow::buildUi()
     queryRow->addWidget(m_accountBox);
     queryRow->addWidget(m_sortOrder);
     queryRow->addWidget(m_queryEdit, 1);
+
+    // Beside the field, where a user looks for it. The menu entry and Ctrl+S
+    // were not enough on their own: saving is a thing you decide on while
+    // looking at the results, so it needs to be visible at the query bar
+    // rather than remembered. Created here and given its action in the
+    // constructor, since registerActions() has not run yet.
+    m_saveQueryButton = new QToolButton(central);
+    m_saveQueryButton->setObjectName(QStringLiteral("saveQueryButton"));
+    queryRow->addWidget(m_saveQueryButton);
+
     layout->addLayout(queryRow);
 
     buildSavedQueryRow(central, layout);

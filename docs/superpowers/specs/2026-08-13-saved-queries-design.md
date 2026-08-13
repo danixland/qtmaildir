@@ -160,6 +160,17 @@ Sent stays where it is. It is not a saved query, it is built from
 would mean generating a per-account path query into stored config, which is the
 duplication the `account`-key decision just rejected.
 
+## Editing and deleting are NOT here, and that is a defect
+
+This document specifies creating a saved query and says nothing about changing
+or removing one. That gap shipped: the first hand test produced "how do I unpin
+a query?", and the honest answer was a text editor. Recorded as **item 82**,
+sized S, and it should land before this work is called finished.
+
+Anything built there must merge the stored entry's `unknown` fields the way
+`saveCurrentQuery()` does, and must match a rename on the name the dialog was
+opened with rather than the one it returns.
+
 ## What is deliberately not here
 
 **Item 81, saving a query as a tagging rule.** A saved query is a view and costs

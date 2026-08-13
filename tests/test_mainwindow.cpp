@@ -195,6 +195,7 @@ private slots:
     void aScopedSavedQuerySelectsItsAccount();
     void anUnscopedSavedQueryClearsTheAccount();
     void theSaveQueryActionIsDisabledOnAnEmptyQuery();
+    void thereIsASaveButtonBesideTheQueryBar();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -5538,6 +5539,39 @@ void TestMainWindow::theSaveQueryActionIsDisabledOnAnEmptyQuery()
     // does emit textChanged, which is what the enabling is hung on.
     queryEdit->setText(QStringLiteral("   "));
     QVERIFY(!save->isEnabled());
+}
+
+/// A menu entry and a shortcut are not a button. The spec asks for one beside
+/// the query bar, and the user went looking for it there and did not find it.
+void TestMainWindow::thereIsASaveButtonBesideTheQueryBar()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1, "queries": []
+    })"));
+
+    MainWindow window(config);
+    auto *button =
+        window.findChild<QAbstractButton *>(QStringLiteral("saveQueryButton"));
+    QVERIFY2(button, "no Save query button beside the query bar");
+
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    // In the query row itself, not somewhere else in the window that a
+    // findChild would also reach.
+    QCOMPARE(button->parentWidget(), queryEdit->parentWidget());
+
+    // Follows the action, so it cannot offer to save an empty query while the
+    // menu entry correctly refuses.
+    queryEdit->clear();
+    QVERIFY2(!button->isEnabled(),
+             "the button must follow the action's enabled state");
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    QVERIFY(button->isEnabled());
 }
 
 #include "test_mainwindow.moc"

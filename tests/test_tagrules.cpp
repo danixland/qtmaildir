@@ -16,9 +16,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include "mainwindow.h"
 #include "rulequery.h"
 #include "tagrules.h"
 #include "tagrulesdialog.h"
@@ -49,6 +51,8 @@ private slots:
     void leavingTextModeIsRefusedWhenTheQueryCannotBeShownAsRows();
     void aFolderRowUsesTheDropdownAndKeepsItsSuffix();
     void theTextModeToggleSurvivesBeingSwitchedOn();
+    void theWindowSizeAndColumnWidthsSurviveAReopen();
+    void aReloadDoesNotDiscardARestoredColumnWidth();
 
 private:
     QString writeRules(const QString &json);
@@ -632,6 +636,101 @@ void TestTagRules::theTextModeToggleSurvivesBeingSwitchedOn()
     QCOMPARE(dialog.rowCountForTest(), 1);
     QCOMPARE(dialog.queryLineForTest(),
              QStringLiteral("from:vendor.example.org"));
+}
+
+namespace {
+
+/// Writes a two-rule file under a throwaway XDG_CONFIG_HOME. Two rules rather
+/// than one because the column-width tests reload the list, and a list with a
+/// single row hides an off-by-one in the repopulate.
+void writeTwoRules(const QTemporaryDir &configHome)
+{
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+    QFile out(configHome.filePath(QStringLiteral("mailrules/rules.json")));
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true},
+        {"id": "lists", "query": "to:list.example.org",
+         "add": ["lists"], "stage": 60, "enabled": true}
+      ]
+    })");
+    out.close();
+}
+
+} // namespace
+
+void TestTagRules::theWindowSizeAndColumnWidthsSurviveAReopen()
+{
+    // The window opened at 760x520 whatever size it was left at, and the
+    // columns reset to their computed widths on every open.
+    //
+    // XDG_STATE_HOME is redirected as well as XDG_CONFIG_HOME: the state file
+    // is where this writes, and a test must not touch the user's real
+    // ~/.local/state/qtmaildir/uistate.conf.
+    QTemporaryDir configHome;
+    QTemporaryDir stateHome;
+    QVERIFY(configHome.isValid());
+    QVERIFY(stateHome.isValid());
+    const QByteArray previousState = qgetenv("XDG_STATE_HOME");
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    qputenv("XDG_STATE_HOME", stateHome.path().toUtf8());
+    writeTwoRules(configHome);
+
+    {
+        TagRulesDialog dialog;
+        dialog.resize(900, 640);
+        dialog.setColumnWidthForTest(0, 123);
+        // The save is on close, matching where MainWindow writes its own.
+        dialog.close();
+    }
+
+    // Asserted on the stored VALUE, not on the reopened frame. Item 46: the
+    // offscreen platform does not honour a resize, so a frame comparison here
+    // would report a failure the code did not cause.
+    QSettings state(MainWindow::uiStatePath(), QSettings::IniFormat);
+    QCOMPARE(state.value(QStringLiteral("tagrules/geometry")).toByteArray()
+                 .isEmpty(), false);
+
+    {
+        TagRulesDialog reopened;
+        QCOMPARE(reopened.columnWidthForTest(0), 123);
+    }
+
+    if (previousState.isEmpty())
+        qunsetenv("XDG_STATE_HOME");
+    else
+        qputenv("XDG_STATE_HOME", previousState);
+}
+
+void TestTagRules::aReloadDoesNotDiscardARestoredColumnWidth()
+{
+    // The width did not survive a close, and it did not survive an ADD or a
+    // DELETE either: reloadList called resizeColumnToContents on every
+    // repopulate, so a restore was undone by the first thing the user did in
+    // the window. Restoring on open and reverting on the next click is worse
+    // than never restoring at all, because it looks like the setting is
+    // broken rather than absent.
+    QTemporaryDir configHome;
+    QTemporaryDir stateHome;
+    QVERIFY(configHome.isValid());
+    QVERIFY(stateHome.isValid());
+    const QByteArray previousState = qgetenv("XDG_STATE_HOME");
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    qputenv("XDG_STATE_HOME", stateHome.path().toUtf8());
+    writeTwoRules(configHome);
+
+    TagRulesDialog dialog;
+    dialog.setColumnWidthForTest(0, 137);
+    dialog.reloadListForTest();
+    QCOMPARE(dialog.columnWidthForTest(0), 137);
+
+    if (previousState.isEmpty())
+        qunsetenv("XDG_STATE_HOME");
+    else
+        qputenv("XDG_STATE_HOME", previousState);
 }
 
 QTEST_MAIN(TestTagRules)

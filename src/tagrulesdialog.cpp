@@ -20,8 +20,11 @@
 
 #include <QButtonGroup>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -31,9 +34,12 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSettings>
 #include <QSpinBox>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+
+#include "mainwindow.h"
 
 namespace {
 
@@ -72,6 +78,9 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Tagging rules"));
+    // The fallback for a first run. restoreUiState() overwrites it when a
+    // size was saved, and is called at the end of this constructor because
+    // the header state cannot be restored before the columns exist.
     resize(760, 520);
 
     m_rules.load();
@@ -244,6 +253,72 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
 
     reloadList();
     showWarnings();
+
+    // Last, and after reloadList(): a header state cannot be applied before
+    // the columns it describes exist, and reloadList is what fills them.
+    restoreUiState();
+}
+
+/// Reads the window size and the rule list's header layout back.
+///
+/// The same file MainWindow uses, under keys of its own. Machine-written
+/// state, never the hand-edited config: a column width is not something
+/// anyone edits by hand, and mixing the two puts a blob in a file the user
+/// reads.
+void TagRulesDialog::restoreUiState()
+{
+    QSettings state(MainWindow::uiStatePath(), QSettings::IniFormat);
+
+    const QByteArray geometry =
+        state.value(QStringLiteral("tagrules/geometry")).toByteArray();
+    if (!geometry.isEmpty())
+        restoreGeometry(geometry);
+
+    const QByteArray header =
+        state.value(QStringLiteral("tagrules/header")).toByteArray();
+    if (!header.isEmpty()) {
+        m_list->header()->restoreState(header);
+        // Counts as the one auto-size each column gets, so the restore is not
+        // immediately overwritten. reloadList() runs before this in the
+        // constructor and has already sized the first two; the count column
+        // has not been filled yet, and would otherwise resize over the
+        // restored width as soon as the first counts arrived.
+        m_columnsSized = true;
+        m_countColumnSized = true;
+    }
+}
+
+void TagRulesDialog::saveUiState()
+{
+    QDir().mkpath(QFileInfo(MainWindow::uiStatePath()).absolutePath());
+    QSettings state(MainWindow::uiStatePath(), QSettings::IniFormat);
+    state.setValue(QStringLiteral("tagrules/geometry"), saveGeometry());
+    state.setValue(QStringLiteral("tagrules/header"),
+                   m_list->header()->saveState());
+}
+
+/// Saves on close rather than on accept, so a size the user chose is kept
+/// whether they pressed Save or Cancel. The window's shape is not part of the
+/// edit being confirmed.
+void TagRulesDialog::closeEvent(QCloseEvent *event)
+{
+    saveUiState();
+    QDialog::closeEvent(event);
+}
+
+int TagRulesDialog::columnWidthForTest(int column) const
+{
+    return m_list->columnWidth(column);
+}
+
+void TagRulesDialog::setColumnWidthForTest(int column, int width)
+{
+    m_list->setColumnWidth(column, width);
+}
+
+void TagRulesDialog::reloadListForTest()
+{
+    reloadList();
 }
 
 void TagRulesDialog::showWarnings()
@@ -286,8 +361,15 @@ void TagRulesDialog::reloadList()
         auto *item = new QTreeWidgetItem(m_list);
         fillItem(item, rule);
     }
-    m_list->resizeColumnToContents(ColumnEnabled);
-    m_list->resizeColumnToContents(ColumnStage);
+    // Auto-sized on the FIRST fill only. After that the widths belong to the
+    // user, whether they came from a restored header or from a drag in this
+    // session, and resizing on every repopulate threw both away on the next
+    // add or delete.
+    if (!m_columnsSized) {
+        m_list->resizeColumnToContents(ColumnEnabled);
+        m_list->resizeColumnToContents(ColumnStage);
+        m_columnsSized = true;
+    }
     m_reloading = false;
 
     if (!m_working.isEmpty())
@@ -439,7 +521,12 @@ void TagRulesDialog::setCounts(const QVector<int> &counts)
             counts.at(i) < 0 ? tr("invalid")
                              : QString::number(counts.at(i)));
     }
-    m_list->resizeColumnToContents(ColumnCount);
+    // Once, like the columns in reloadList. The counts arrive after the first
+    // fill, so this column gets its own flag rather than sharing that one.
+    if (!m_countColumnSized) {
+        m_list->resizeColumnToContents(ColumnCount);
+        m_countColumnSized = true;
+    }
 }
 
 void TagRulesDialog::onSave()

@@ -56,9 +56,14 @@ public:
     /// handle and notmuch permits one per process.
     QStringList countQueries() const;
 
-    /// Account subdirectory names, for the Folder row's dropdown. Supplied by
-    /// the caller rather than read here: Config knows them, and this dialog
-    /// deliberately holds no Config of its own.
+    /// Maildir folder paths, for the Folder row's dropdown, relative to the
+    /// database root. Supplied by the caller rather than read here: they come
+    /// from a scan of the tree under notmuch's database.path, which only
+    /// NotmuchWorker can answer for, and this dialog reaches neither it nor
+    /// Config.
+    ///
+    /// Arrives AFTER the dialog is on screen, since the scan crosses to the
+    /// worker on a queued call, so this refills the rows that already exist.
     void setFolders(const QStringList &folders);
 
     /// Test seams. The builder's state is otherwise reachable only through
@@ -88,6 +93,20 @@ public:
     /// when the widget is not.
     bool textModeToggleIsReachableForTest() const;
 
+    /// Width of one rule-list column. The geometry restore is asserted on the
+    /// saved and reread VALUE rather than on the resulting frame: item 46
+    /// records that the offscreen platform does not honour a window resize,
+    /// so a test comparing frames there passes or fails for reasons that have
+    /// nothing to do with the code.
+    int columnWidthForTest(int column) const;
+    void setColumnWidthForTest(int column, int width);
+
+    /// Repopulates the rule list, as adding or deleting a rule does. Exposed
+    /// because a restored column width has to survive one of these, not only
+    /// a close and reopen: `resizeColumnToContents` on every reload discarded
+    /// the width the user had dragged.
+    void reloadListForTest();
+
 signals:
     /// Asks the owner to run countQueries() through the worker.
     void countsRequested();
@@ -104,8 +123,13 @@ private slots:
     void applyEditsToCurrentRule();
     void onSave();
 
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
 private:
     void reloadList();
+    void restoreUiState();
+    void saveUiState();
     void showWarnings();
     int currentIndex() const;
 
@@ -159,6 +183,15 @@ private:
     /// then load a rule into the form while the form still holds the previous
     /// row's text, which applyEditsToCurrentRule() has no chance to flush.
     bool m_reloading = false;
+
+    /// Each column is auto-sized to its contents ONCE, on its first fill.
+    /// After that its width belongs to the user, whether it came from a
+    /// restored header or from a drag, and resizeColumnToContents on every
+    /// repopulate threw both away on the next add or delete. Two flags rather
+    /// than one because the count column is filled later than the rest, by a
+    /// reply from the worker.
+    bool m_columnsSized = false;
+    bool m_countColumnSized = false;
 
     QTreeWidget *m_list = nullptr;
     QLineEdit *m_id = nullptr;

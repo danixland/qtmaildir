@@ -19,11 +19,16 @@ point at which they are stable.
   stays visible and is what gets saved, so a rule the builder cannot show
   opens as text and still works. Opening a rule without editing it leaves the
   stored query untouched.
-- A Folder condition picks from your configured accounts rather than being
-  typed. A folder path with a typo matches nothing and notmuch reports no
-  error, so the rule would simply never fire. The list stays editable, so a
-  folder that is in the rules file but not in your config still opens and
-  still saves.
+- A Folder condition picks from a list of every folder in your Maildir rather
+  than being typed, Drafts and Sent included, not only the top of each
+  account. A folder path with a typo matches nothing and notmuch reports no
+  error, so the rule would simply never fire. The list is read from the tree
+  on disk, so a folder that exists but has no mail in it yet is still offered.
+  It stays editable, so a folder in the rules file that is no longer on disk
+  still opens and still saves.
+- The tagging rules window remembers its size and the widths of the rule
+  list's columns. A column you widen also survives adding or deleting a rule,
+  which previously reset it.
 
 ### Fixed
 

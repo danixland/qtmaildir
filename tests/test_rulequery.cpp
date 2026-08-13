@@ -48,6 +48,8 @@ private slots:
     void aNegatedTermParsesAsANegatedOperator();
     void whatParsesCompilesBackUnchanged();
     void anOrGroupWithExclusionsParses();
+    void anUnrepresentableQueryRejectsWhole();
+    void aParenBearingValueIsARowNotAShape();
 };
 
 void TestRuleQuery::aSingleContainsTermCompiles()
@@ -322,6 +324,52 @@ void TestRuleQuery::anOrGroupWithExclusionsParses()
              QStringLiteral("(from:vendor.example.org or "
                             "from:vendor.example.net) "
                             "and not subject:receipt and not subject:refund"));
+}
+
+void TestRuleQuery::anUnrepresentableQueryRejectsWhole()
+{
+    const QStringList unrepresentable = {
+        QStringLiteral("from:a.example.org or (from:b.example.org "
+                       "or from:c.example.org)"),   // nested or inside or
+        QStringLiteral("from:a.example.org and subject:x "
+                       "or subject:y"),             // mixed, unparenthesised
+        QStringLiteral("body:receipt"),             // unrecognised prefix
+        QStringLiteral("folder:Inbox"),             // not the prefix we emit
+        QStringLiteral("receipt"),                  // bare word, no prefix
+        QStringLiteral("path:\"account-one\""),     // no /** suffix
+        QStringLiteral("from:a.example.org and"),   // trailing operator
+        QStringLiteral("date:2026-01-01..2026-02-01"),  // two-sided range
+        QStringLiteral("from:a.example.org xor subject:x"),
+        QStringLiteral("subject:\"unterminated"),   // open quote
+        QStringLiteral("(from:a.example.org or from:b.example.org)"),
+                                                    // group, nothing after it
+        QStringLiteral("(from:a.example.org and from:b.example.org) "
+                       "and not subject:x"),        // group joined by and
+    };
+
+    for (const QString &query : unrepresentable) {
+        const RuleQuery q = RuleQuery::parse(query);
+        QVERIFY2(!q.parsed, qPrintable(QStringLiteral("parsed: ") + query));
+        // Rejecting whole means keeping nothing: a half-parse is how a
+        // negation goes missing and a rule quietly matches more mail.
+        QVERIFY2(q.terms.isEmpty() && q.exclusions.isEmpty(),
+                 qPrintable(QStringLiteral("kept rows: ") + query));
+    }
+}
+
+void TestRuleQuery::aParenBearingValueIsARowNotAShape()
+{
+    // notmuch reads these parens as characters to search for, not as
+    // grouping, so the query is meaningful and matches nothing. It parses
+    // here as a From row holding that literal text, which is what it means.
+    // The property to hold is the round trip, NOT a rejection: a test
+    // expecting an error here fails against correct code.
+    const RuleQuery q = RuleQuery::parse(QStringLiteral("from:(((("));
+
+    QVERIFY(q.parsed);
+    QCOMPARE(q.terms.size(), 1);
+    QCOMPARE(q.terms.at(0).value, QStringLiteral("(((("));
+    QCOMPARE(q.compile(), QStringLiteral("from:(((("));
 }
 
 QTEST_MAIN(TestRuleQuery)

@@ -11,6 +11,16 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-13
+
+The rules that tag your mail on arrival move out of a shell script and into the
+application. They now live in a file the GUI and the companion `mailctl` tool
+both read, each rule keeping the note that explains why it is written the way it
+is, and the dialog counts how much mail a rule matches before the next sync
+applies it. A tag change also syncs itself out now, a couple of seconds after
+you stop making changes, and the panes draw their own marks rather than relying
+on whatever glyphs the desktop font happens to carry.
+
 ### Added
 
 - The rules that tag your mail as it arrives are now visible and editable from

@@ -26,9 +26,11 @@ point at which they are stable.
   on disk, so a folder that exists but has no mail in it yet is still offered.
   It stays editable, so a folder in the rules file that is no longer on disk
   still opens and still saves.
-- The tagging rules window remembers its size and the widths of the rule
-  list's columns. A column you widen also survives adding or deleting a rule,
-  which previously reset it.
+- The tagging rules window remembers the widths of the rule list's columns. A
+  column you widen also survives adding or deleting a rule, which previously
+  reset it. The window's own size is saved too, but a tiling window manager
+  sizes the window itself, so there it opens at whatever size the tile gives
+  it.
 
 ### Fixed
 

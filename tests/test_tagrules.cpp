@@ -696,6 +696,14 @@ void TestTagRules::theWindowSizeAndColumnWidthsSurviveAReopen()
     // Asserted on the stored VALUE, not on the reopened frame. Item 46: the
     // offscreen platform does not honour a resize, so a frame comparison here
     // would report a failure the code did not cause.
+    //
+    // And on a TILING compositor the frame is not the dialog's to restore at
+    // all. saveGeometry stores frameGeometry beside normalGeometry, and
+    // restoreGeometry restores the NORMAL one; under Hyprland the window is
+    // tiled to fill its slot, so the size the user drags belongs to the tile
+    // while normalGeometry stays at whatever the code last resize()d it to.
+    // Measured against the real state file: frame 2248x806, normal 760x664.
+    // Restoring 760 there is correct behaviour, not the bug it looks like.
     QSettings state(MainWindow::uiStatePath(), QSettings::IniFormat);
     QCOMPARE(state.value(QStringLiteral("tagrules/geometry")).toByteArray()
                  .isEmpty(), false);

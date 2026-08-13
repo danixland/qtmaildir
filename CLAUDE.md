@@ -430,6 +430,15 @@ The backlog at `docs/superpowers/plans/2026-08-03-post-0.1.0-usability.md` is
 whenever they use the application and hit something, so the backlog goes stale on
 its own between sessions.
 
+**The backlog holds the status table and the open sections only.** A closed
+item's section lives in `2026-08-03-post-0.1.0-usability-closed.md` beside it,
+moved there by item 73 on 2026-08-13, so grepping the backlog for a done item's
+evidence finds the table row and nothing else. Both files use one numbering
+sequence: item 42 is `## 42.` in whichever file holds it. When an item closes,
+move its section across on the same commit rather than leaving it for a later
+cleanup, which is exactly how the file reached five thousand lines the first
+time.
+
 **Read both and diff them before picking up work.** Anything in the notes with no
 item in the backlog gets appended with the next free number, in the backlog's
 own format (Observed / Cause / Approach / Constraints), with the cause **verified

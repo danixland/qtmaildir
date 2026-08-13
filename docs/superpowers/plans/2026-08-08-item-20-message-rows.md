@@ -8,7 +8,9 @@
 
 **Tech Stack:** Qt 6.11 (`QAbstractItemModel`, `QTreeView`), libnotmuch 5, GMime 3, Qt Test.
 
-**Spec:** `docs/superpowers/plans/2026-08-03-post-0.1.0-usability.md` section 20.
+**Spec:** `docs/superpowers/plans/2026-08-03-post-0.1.0-usability-closed.md`
+section 20 (the section moved there when item 20 closed; the status table row
+stays in `2026-08-03-post-0.1.0-usability.md`).
 
 **Branch:** `item-20-message-rows`.
 

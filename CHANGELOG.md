@@ -11,6 +11,60 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- A **Save query** button beside the query bar, also on the Edit menu and bound
+  to `Ctrl+S`, keeps the query in the bar as a saved query: naming it,
+  optionally scoping it to one account, and choosing whether it appears as a
+  button or in a menu. Saved queries no longer have to be added by
+  hand-editing the config file (item 23).
+- Saved queries live in `~/.config/qtmaildir/queries.json`, which carries their
+  **order**, a `pinned` flag and an optional account scope. The order in the
+  file is the order the buttons appear in, so rearranging them is a matter of
+  moving lines.
+- **Sent is a saved query now**, carrying `"generated": "sent"` instead of a
+  stored query. It is still composed from your accounts' `sent` keys every time
+  you click it, so correcting a folder name still updates it with no edit, but
+  it can now be reordered, renamed, unpinned or deleted like any other entry
+  rather than being a fixed button you did not own.
+
+- **Right-click a saved query** to edit, pin, unpin or delete it. A saved query
+  could previously be created and never changed: the only route to adjusting one
+  field was to retype the whole query under the same name, and there was no way
+  to delete one at all short of editing the file (item 82). Deleting asks first,
+  since it writes your config and is not undoable.
+
+### Changed
+
+- Saved queries have a **row of their own** beneath the query bar rather than
+  sharing it, and the unpinned ones sit behind a **More queries** menu, so the
+  query field is no longer squeezed by a long list of buttons.
+- Saved-query buttons follow the file's order instead of appearing
+  alphabetically.
+- The Sent button is no longer hardcoded beside the saved queries, so the whole
+  row now follows one rule instead of having one member that behaved
+  differently from its neighbours.
+
+### Upgrading
+
+Saved queries move out of the `[queries]` section of `qtmaildir.conf` and into
+`~/.config/qtmaildir/queries.json`. **The first launch migrates them for you**:
+the section is read, the JSON file is written from it, and every entry is
+marked pinned so your buttons stay where they were. Sent is appended as a
+`generated` entry, where its button already sat, provided an account configures
+a sent folder.
+
+Your config file is left byte-for-byte alone. The old `[queries]` section stays
+in it, ignored from then on, and can be deleted by hand whenever you like. It is
+not removed automatically because rewriting the file would discard your comments
+and reorder your keys.
+
+One behaviour changes with the move. Buttons used to appear in alphabetical
+order and now follow the file. If `[general] startup_query` names a query that
+does not exist, the fallback is likewise the first query in the file rather than
+the alphabetically first one, so a config that relied on that fallback may open
+on a different query than before.
+
 ## [0.17.0] - 2026-08-13
 
 A rule is built from rows now instead of typed into four free-text fields:

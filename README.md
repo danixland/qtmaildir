@@ -106,7 +106,7 @@ identity.
 ; point: once you zoom with Ctrl+wheel or Ctrl+/Ctrl-, that is remembered
 ; separately and this value no longer applies.
 ; message_zoom = 1.0
-; Optional. Which [queries] entry to open at startup, by name. Defaults to
+; Optional. Which saved query to open at startup, by name. Defaults to
 ; Unread. Falls back to the first saved query if no query by this name
 ; exists, and warns if you named one explicitly.
 ; startup_query = Unread
@@ -191,11 +191,6 @@ shopping = #3366cc         ; also colours shopping/amazon, shopping/nike, ...
 shopping/amazon = #ff9900  ; ... unless the exact tag overrides it
 work = #cc4444
 
-[queries]
-Inbox = tag:inbox
-Unread = tag:unread
-Important = tag:flagged
-
 [keys]
 Ctrl+E = archive
 Ctrl+D = delete
@@ -203,14 +198,73 @@ j = next_thread
 k = prev_thread
 ```
 
-Saved-query buttons appear in alphabetical order rather than file order:
-QSettings returns keys sorted, and preserving file order would mean
-hand-rolling an INI parser. Which query opens at startup is therefore a
-separate setting, `[general] startup_query`, rather than "the first one".
+### Saved queries
 
-The button text is the key you write here, so these names are yours to
-choose. `Important = tag:flagged` and `Flagged = tag:flagged` run the same
-query and differ only in what the button says.
+Saved queries live in `~/.config/qtmaildir/queries.json`, not in the config
+file. They are written by the **Save query** action (`Ctrl+S`), which names the
+query in the bar, optionally scopes it to one account, and chooses whether it
+gets a button:
+
+```json
+{
+  "version": 1,
+  "queries": [
+    { "name": "Inbox",  "query": "tag:inbox",  "pinned": true },
+    { "name": "Unread", "query": "tag:unread", "pinned": true },
+    { "name": "Billing", "query": "from:billing", "account": "work" }
+  ]
+}
+```
+
+The order in the file is the order the buttons appear in, so rearranging them
+is a matter of moving lines. `pinned` decides between a button and the **More
+queries** menu, which keeps the row usable once you have more than a handful.
+`account` names an `[account.<key>]` section and scopes the query to it, the
+same as choosing that account in the dropdown; leave it out for a query that
+spans every account.
+
+**Sent is an entry like any other**, and the one that carries `generated`
+instead of `query`:
+
+```json
+{ "name": "Sent", "generated": "sent", "pinned": true }
+```
+
+A generated query is composed from your accounts every time you click it,
+rather than stored. That is why Sent has no `query` of its own: it is built
+from every account's `sent` key, so adding an account or correcting a folder
+name updates the button with no edit here. A stored copy of the same string
+would quietly go on naming the old folder.
+
+Being an ordinary entry, it can be reordered, renamed, unpinned or deleted like
+the rest. Renaming it to `Posta inviata` changes only the label. `sent` is the
+only generator today, and it is skipped entirely when no account configures a
+sent folder, rather than offering a button that finds nothing.
+
+The name is what the button says, so `Important` and `Flagged` can run the same
+query and differ only in the label.
+
+**Right-click a saved query** (a button, or its entry in the menu) to edit it,
+move it between the row and the menu, or delete it. Deleting asks first: it
+rewrites this file and there is no undo for it. Editing a generated entry shows
+its composed query read-only, since that one is built from your accounts rather
+than stored.
+
+**Upgrading from 0.17.0 or earlier.** Saved queries used to live in a
+`[queries]` section of `qtmaildir.conf`. The first launch after upgrading reads
+that section, writes `queries.json` from it, and marks every entry pinned so
+your buttons stay where they were. Sent is added as a `generated` entry at the
+end, where its button already sat, provided an account configures a sent
+folder. Your config file is not modified: the old `[queries]` section is left
+exactly as it is, ignored from then on, and you can delete it by hand whenever
+you like. The reason it is not removed for you is that rewriting the file would
+drop your comments and reorder your keys.
+
+One behaviour changes with the move. Buttons used to appear in alphabetical
+order, because the INI backend returns keys sorted and preserving file order
+would have meant hand-rolling a parser. They now follow the file. If
+`startup_query` names a query that does not exist, the fallback is likewise the
+first query in the file rather than the alphabetically first one.
 
 ### Sent mail
 
@@ -253,7 +307,8 @@ behaves like any other query, threads and all.
 ## The query bar
 
 The bar at the top takes a notmuch query and shows the matching threads.
-Saved queries from `[queries]` sit beside it as buttons.
+Saved queries sit on their own row beneath it: the pinned ones as buttons, the
+rest behind **More queries**. `Ctrl+S` keeps the current query as a new one.
 
 Completion helps with the syntax rather than replacing it. `Ctrl+Space`
 opens the popup, and ordinary typing keeps it up to date. Candidates carry a
@@ -478,6 +533,7 @@ Defaults, all rebindable through `[keys]`:
 | `Ctrl+I` | `flag` | Mark important (adds `flagged`) |
 | `Ctrl+L` | `focus_query` | Focus and select the query bar |
 | `Ctrl+Space` | `complete_query` | Focus the query bar and offer completions |
+| `Ctrl+S` | `save_query` | Keep the current query as a saved query |
 | `Ctrl+H` | `toggle_html` | Switch the thread between HTML and plain text |
 | `Ctrl+M` | `load_remote` | Load remote images for the current thread |
 | `Ctrl+T` | `edit_tags` | Add or remove any tag on the selected threads |

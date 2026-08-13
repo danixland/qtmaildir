@@ -45,6 +45,7 @@
 #include <QScrollBar>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "mailsync.h"
@@ -56,6 +57,7 @@
 #include "cardlayout.h"
 #include "tagchip.h"
 #include "tagdialog.h"
+#include "savequerydialog.h"
 #include "tagrulesdialog.h"
 #include "threadlistmodel.h"
 #include "threadlistview.h"
@@ -339,6 +341,38 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
 
     buildUi();
     registerActions();
+
+    // After registerActions(), not inside buildUi(): the query bar exists by
+    // then but the action does not, so wiring this where the field is built
+    // silently connected nothing and left Save query enabled on an empty
+    // query. Hung on textChanged rather than textEdited, because the field is
+    // also set programmatically, by the saved-query buttons and by
+    // recoverStaleThread(), and the action must track those too.
+    if (QAction *save = m_actions.value(QStringLiteral("save_query"))) {
+        // setDefaultAction, not a second connect: the button then takes the
+        // action's text, icon, tooltip and ENABLED state, so it cannot end up
+        // offering to save an empty query while the menu entry refuses.
+        m_saveQueryButton->setDefaultAction(save);
+        // Icon AND text, unlike the toolbar, which follows the desktop's
+        // button style. This button sits in a row of text buttons, the saved
+        // queries, and an icon on its own next to them reads as a different
+        // kind of control than it is. It is also the one action whose meaning
+        // an icon alone does not carry: "save" is a shape everyone knows and
+        // the question is always "save WHAT".
+        m_saveQueryButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        // Its own text, not the action's: "&Save query..." is menu phrasing,
+        // and a button rendering the ampersand's accelerator and the ellipsis
+        // that promises a dialog reads as a menu entry that escaped. The
+        // action keeps both for the menu it lives in.
+        m_saveQueryButton->setText(tr("Save"));
+
+        auto updateSaveState = [this, save]() {
+            save->setEnabled(!m_queryEdit->text().trimmed().isEmpty());
+        };
+        connect(m_queryEdit, &QLineEdit::textChanged, this, updateSaveState);
+        updateSaveState();
+    }
+
     buildMenus();
     // After buildMenus(): QMainWindow::restoreState() matches toolbars by
     // object name, so they must already exist or their position is dropped.
@@ -543,48 +577,26 @@ void MainWindow::buildUi()
             this, &MainWindow::onExternalSyncStateChanged);
     m_syncMonitor->start();
 
-    // One row: the account dropdown, the query field, then the saved queries.
-    // The field is the only stretching item, so it is framed on both sides
-    // rather than running flush to the window edge, which is what the removed
-    // Sync button used to terminate.
-    //
-    // ponytail: no overflow handling. [queries] is unbounded and enough entries
-    // would squeeze the field, but three is the real-world case today. Item 23
-    // already specifies buttons-plus-menu and is where that belongs.
+    // The query row proper: account, sort order, the field. The saved queries
+    // used to share it and now have a row of their own below, which is what
+    // stops an unbounded list squeezing the field (item 23; the ponytail note
+    // that stood here predicted exactly this).
     queryRow->addWidget(m_accountBox);
     queryRow->addWidget(m_sortOrder);
     queryRow->addWidget(m_queryEdit, 1);
-    for (const SavedQuery &saved : m_config.savedQueries()) {
-        auto *button = new QPushButton(saved.name, central);
-        connect(button, &QPushButton::clicked, this, [this, saved]() {
-            m_queryEdit->setText(saved.query);
-            runCurrentQuery();
-        });
-        queryRow->addWidget(button);
-    }
 
-    // Sent sits with the saved queries and is not one: its query is COMPOSED
-    // from the accounts' `sent` keys at click time, so adding an account or
-    // correcting a folder name is a config edit and nothing else. A [queries]
-    // entry holding the same string would go stale silently, and could not
-    // narrow to the selected account the way this does through
-    // runCurrentQuery()'s existing scope wrap.
-    //
-    // Hidden entirely when no account configures a sent folder, rather than
-    // offering a button that always finds nothing.
-    if (!m_config.allSentQuery().isEmpty()) {
-        auto *sentButton = new QPushButton(tr("Sent"), central);
-        sentButton->setObjectName(QStringLiteral("sentButton"));
-        connect(sentButton, &QPushButton::clicked, this, [this]() {
-            m_queryEdit->setText(m_config.allSentQuery());
-            // Flat for this query only. runCurrentQuery() clears it again for
-            // anything else, including the same query typed by hand, so the
-            // flag cannot outlive the button that set it.
-            runQuery(FlatResult::Yes);
-        });
-        queryRow->addWidget(sentButton);
-    }
+    // Beside the field, where a user looks for it. The menu entry and Ctrl+S
+    // were not enough on their own: saving is a thing you decide on while
+    // looking at the results, so it needs to be visible at the query bar
+    // rather than remembered. Created here and given its action in the
+    // constructor, since registerActions() has not run yet.
+    m_saveQueryButton = new QToolButton(central);
+    m_saveQueryButton->setObjectName(QStringLiteral("saveQueryButton"));
+    queryRow->addWidget(m_saveQueryButton);
+
     layout->addLayout(queryRow);
+
+    buildSavedQueryRow(central, layout);
 
     // Thread list and message pane.
     m_model = new ThreadListModel(this);
@@ -836,6 +848,10 @@ void MainWindow::registerActions()
               tr("Edit the rules that tag mail as it arrives"), [this]() {
         showTagRulesDialog();
     });
+    addAction(QStringLiteral("save_query"), tr("&Save query..."),
+              tr("Keep the current query as a saved query"), [this]() {
+        saveCurrentQuery();
+    });
     addAction(QStringLiteral("toggle_html"), tr("Toggle &HTML"),
               tr("Switch the thread between HTML and plain text"), [this]() {
         m_messageView->toggleHtml();
@@ -982,6 +998,7 @@ void MainWindow::buildMenus()
     editMenu->addSeparator();
     editMenu->addAction(m_actions.value(QStringLiteral("focus_query")));
     editMenu->addAction(m_actions.value(QStringLiteral("complete_query")));
+    editMenu->addAction(m_actions.value(QStringLiteral("save_query")));
     editMenu->addSeparator();
     editMenu->addAction(m_actions.value(QStringLiteral("select_all")));
 
@@ -1060,6 +1077,11 @@ void MainWindow::buildMenus()
         // the selection's tags.
         { QStringLiteral("tag_rules"),       QStringLiteral("configure") },
         { QStringLiteral("complete_query"),  QStringLiteral("edit-find-replace") },
+        // NOT "document-save": that is the floppy/disk shape, which reads as
+        // "write a file somewhere" and asks the user to guess what is being
+        // written. Saving a query is bookmarking a search, and bookmark-new is
+        // the icon set every desktop already uses for "keep this for later".
+        { QStringLiteral("save_query"),      QStringLiteral("bookmark-new") },
         { QStringLiteral("select_all"),      QStringLiteral("edit-select-all") },
         { QStringLiteral("clear_pane"),      QStringLiteral("edit-clear") },
         { QStringLiteral("clear_selection"), QStringLiteral("edit-clear-all") },
@@ -1642,6 +1664,282 @@ void MainWindow::showWarnings()
 
     QMessageBox::warning(this, tr("Configuration problems"),
                          problems.join(QLatin1Char('\n')));
+}
+
+void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
+{
+    auto *row = new QWidget(parent);
+    row->setObjectName(QStringLiteral("savedQueryRow"));
+    auto *box = new QHBoxLayout(row);
+    box->setContentsMargins(0, 0, 0, 0);
+
+    // Sent is an ordinary row here, not a hardcoded button beside the others.
+    // It is still GENERATED, so its query is composed from the accounts' `sent`
+    // keys at click time and correcting a folder name stays a config edit and
+    // nothing else; what changed is that the entry can now be reordered,
+    // renamed, unpinned or removed like every other, instead of being the one
+    // control on the row the user did not own.
+    QList<SavedQuery> unpinned;
+    for (const SavedQuery &saved : m_config.savedQueries()) {
+        // A generator whose accounts configure nothing produces a button that
+        // always finds nothing. Skipped entirely, which is what the hardcoded
+        // Sent button did and is worth keeping.
+        if (saved.isGenerated() && m_config.resolvedQuery(saved).isEmpty())
+            continue;
+
+        if (!saved.pinned) {
+            unpinned.append(saved);
+            continue;
+        }
+        auto *button = new QPushButton(saved.name, row);
+        // The generated entries keep a stable object name so a test can find
+        // the sent button without depending on what the user renamed it to.
+        if (saved.generated == QStringLiteral("sent"))
+            button->setObjectName(QStringLiteral("sentButton"));
+        connect(button, &QPushButton::clicked, this,
+                [this, saved]() { runSavedQuery(saved); });
+        addSavedQueryActions(button, saved);
+        box->addWidget(button);
+    }
+
+    // Everything above is left-aligned; the stretch here pushes what follows
+    // to the right edge. The buttons are the row's content and read as a set,
+    // while the overflow menu is a control over that set, so it sits apart
+    // from them rather than trailing the last one.
+    const int contentCount = box->count();
+    box->addStretch(1);
+
+    // The overflow menu, and only when something is in it: an empty menu
+    // button is a control that always does nothing.
+    if (!unpinned.isEmpty()) {
+        auto *menuButton = new QPushButton(tr("More queries"), row);
+        menuButton->setObjectName(QStringLiteral("savedQueryMenuButton"));
+        auto *menu = new QMenu(menuButton);
+        for (const SavedQuery &saved : unpinned) {
+            QAction *action = menu->addAction(saved.name);
+            connect(action, &QAction::triggered, this,
+                    [this, saved]() { runSavedQuery(saved); });
+            // A menu entry has no context menu of its own, so its own submenu
+            // carries the same three actions; an unpinned query would
+            // otherwise be the one thing that cannot be edited or deleted.
+            auto *entryMenu = new QMenu(menu);
+            addSavedQueryActions(entryMenu, saved);
+            action->setMenu(entryMenu);
+        }
+        menuButton->setMenu(menu);
+        box->addWidget(menuButton);
+    }
+
+    layout->addWidget(row);
+
+    // Nothing on either side of the stretch leaves an empty strip of padding,
+    // so the row goes away rather than sitting there as a gap. Counted before
+    // the stretch was added, since the stretch is always there: an unpinned
+    // query with no pinned ones still needs the row for its menu.
+    if (contentCount == 0 && unpinned.isEmpty())
+        row->hide();
+}
+
+void MainWindow::addSavedQueryActions(QWidget *target, const SavedQuery &saved)
+{
+    target->setContextMenuPolicy(Qt::ActionsContextMenu);
+
+    auto *edit = new QAction(tr("Edit..."), target);
+    edit->setObjectName(QStringLiteral("editQuery"));
+    connect(edit, &QAction::triggered, this,
+            [this, saved]() { editSavedQuery(saved); });
+    target->addAction(edit);
+
+    auto *pin = new QAction(saved.pinned ? tr("Move to menu")
+                                         : tr("Show as a button"),
+                            target);
+    pin->setObjectName(QStringLiteral("pinQuery"));
+    connect(pin, &QAction::triggered, this, [this, saved]() {
+        SavedQuery toggled = saved;
+        toggled.pinned = !saved.pinned;
+        replaceSavedQuery(saved.name, toggled);
+    });
+    target->addAction(pin);
+
+    auto *separator = new QAction(target);
+    separator->setSeparator(true);
+    target->addAction(separator);
+
+    auto *remove = new QAction(tr("Delete"), target);
+    remove->setObjectName(QStringLiteral("deleteQuery"));
+    connect(remove, &QAction::triggered, this,
+            [this, saved]() { deleteSavedQuery(saved); });
+    target->addAction(remove);
+}
+
+void MainWindow::editSavedQuery(const SavedQuery &saved)
+{
+    SaveQueryDialog dialog(m_config, saved, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    // Matched on the name the dialog OPENED with. Using the returned name would
+    // leave the original entry in place and add a second one under the new
+    // name, which is a duplicate rather than a rename.
+    replaceSavedQuery(saved.name, dialog.savedQuery());
+}
+
+void MainWindow::deleteSavedQuery(const SavedQuery &saved)
+{
+    // One of the few places in this application that confirms. The rule against
+    // confirmation dialogs covers tag mutations, which are undoable through the
+    // undo stack; this writes user config, is not on that stack, and cannot be
+    // taken back.
+    if (m_confirmDelete) {
+        const auto answer = QMessageBox::question(
+            this, tr("Delete saved query"),
+            tr("Delete the saved query '%1'?").arg(saved.name),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes)
+            return;
+    }
+
+    replaceSavedQuery(saved.name, SavedQuery());
+}
+
+void MainWindow::replaceSavedQuery(const QString &originalName,
+                                   const SavedQuery &replacement)
+{
+    QList<SavedQuery> queries = m_config.savedQueries();
+    const bool removing = replacement.name.isEmpty();
+
+    for (int i = 0; i < queries.size(); ++i) {
+        if (queries.at(i).name.compare(originalName, Qt::CaseInsensitive) != 0)
+            continue;
+
+        if (removing) {
+            queries.removeAt(i);
+        } else {
+            // The unknown fields belong to the STORED entry: a field written by
+            // a later build survives an edit made here rather than being
+            // dropped on the next save.
+            SavedQuery merged = replacement;
+            merged.unknown = queries.at(i).unknown;
+            queries[i] = merged;
+        }
+        break;
+    }
+
+    m_config.setSavedQueries(queries);
+    if (!m_config.saveSavedQueries()) {
+        QMessageBox::warning(this, tr("Saved queries"),
+                             tr("Could not write the saved queries file."));
+        return;
+    }
+
+    rebuildSavedQueryRow();
+    statusBar()->showMessage(
+        removing ? tr("Deleted saved query '%1'.").arg(originalName)
+                 : tr("Updated saved query '%1'.").arg(replacement.name),
+        kStatusMessageMs);
+}
+
+void MainWindow::runSavedQuery(const SavedQuery &saved)
+{
+    // Through the dropdown, never by pre-scoping the text: runQuery() applies
+    // the selected account's path itself, so a scope baked in here would be
+    // applied twice. An unscoped query CLEARS the selection rather than
+    // inheriting whatever was there, which is the defect the rules preview hit.
+    const int index = saved.account.isEmpty()
+                          ? m_accountBox->findData(QString())
+                          : m_accountBox->findData(saved.account);
+    if (index >= 0)
+        m_accountBox->setCurrentIndex(index);
+
+    // A generated entry has no stored query: the text is composed from the
+    // accounts now, so what lands in the bar is what actually ran and the user
+    // can see and edit it.
+    m_queryEdit->setText(saved.isGenerated() ? m_config.resolvedQuery(saved)
+                                             : saved.query);
+
+    // Flat for this query only. runQuery() sets the mode on EVERY run, so the
+    // flag cannot outlive the entry that asked for it, including for the same
+    // query typed by hand afterwards.
+    runQuery(saved.flat ? FlatResult::Yes : FlatResult::No);
+}
+
+void MainWindow::saveCurrentQuery()
+{
+    const QString query = m_queryEdit->text().trimmed();
+    if (query.isEmpty())
+        return;
+
+    SaveQueryDialog dialog(m_config, query,
+                           m_accountBox->currentData().toString(), this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    QList<SavedQuery> queries = m_config.savedQueries();
+    const SavedQuery saved = dialog.savedQuery();
+
+    // Replacing by name keeps the dialog's overwrite offer honest, and keeps
+    // the entry where it already sat rather than moving it to the end.
+    bool replaced = false;
+    for (SavedQuery &existing : queries) {
+        if (existing.name.compare(saved.name, Qt::CaseInsensitive) == 0) {
+            // The unknown fields belong to the STORED entry, not to the
+            // dialog's fresh value, so a field a later build wrote survives
+            // being edited here.
+            SavedQuery merged = saved;
+            merged.unknown = existing.unknown;
+            existing = merged;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced)
+        queries.append(saved);
+
+    m_config.setSavedQueries(queries);
+    if (!m_config.saveSavedQueries()) {
+        QMessageBox::warning(this, tr("Save query"),
+                             tr("Could not write the saved queries file."));
+        return;
+    }
+
+    rebuildSavedQueryRow();
+    statusBar()->showMessage(tr("Saved query '%1'.").arg(saved.name),
+                             kStatusMessageMs);
+}
+
+void MainWindow::rebuildSavedQueryRow()
+{
+    // The row is rebuilt wholesale rather than patched: a new query can be
+    // pinned, unpinned, or replace an existing one, and each moves a different
+    // widget. Deleting and rebuilding is a handful of buttons and cannot get
+    // the three cases wrong.
+    auto *old = findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    if (!old)
+        return;
+
+    auto *layout = qobject_cast<QVBoxLayout *>(centralWidget()->layout());
+    if (!layout)
+        return;
+
+    const int index = layout->indexOf(old);
+    layout->removeWidget(old);
+    // Reparented out NOW, not merely scheduled for deletion. deleteLater()
+    // defers destruction to the event loop, so the old row goes on answering
+    // findChild() until it runs, and findChild returns the FIRST match: every
+    // lookup after a rebuild found the stale row and reported the state from
+    // before the edit. Nothing visible was wrong, which is why this only
+    // showed up as three tests failing on a row that had in fact been rebuilt.
+    old->setParent(nullptr);
+    old->deleteLater();
+
+    buildSavedQueryRow(centralWidget(), layout);
+
+    // buildSavedQueryRow appends; move it back to where the old row sat, or it
+    // lands under the thread list.
+    if (index >= 0) {
+        auto *item = layout->takeAt(layout->count() - 1);
+        layout->insertItem(index, item);
+    }
 }
 
 void MainWindow::runQuery(FlatResult flat)

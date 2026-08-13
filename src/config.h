@@ -19,11 +19,14 @@
 #pragma once
 
 #include <QColor>
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <QStringList>
 
 #include "completionentry.h"
+
+class QSettings;
 
 /// One mail account. notmuch has no concept of accounts; it sees a single flat
 /// tree. An account is therefore a path prefix within that tree plus an
@@ -96,10 +99,53 @@ struct Account
     QString draftsQuery() const;
 };
 
+/// A named query, stored in queries.json.
+///
+/// Stored as an ORDERED array, which is the whole reason the storage moved out
+/// of `[queries]`: QSettings reads a section through childKeys(), which sorts
+/// alphabetically and cannot express the order the buttons appear in.
 struct SavedQuery
 {
     QString name;
     QString query;
+
+    /// Renders as a button in the query row; otherwise it lives in the menu.
+    /// The two tiers are the point of the flag: a row that shows every saved
+    /// query does not scale past a handful.
+    bool pinned = false;
+
+    /// Account KEY, the INI group suffix ("work" from [account.work]), and
+    /// empty for a query that spans every account.
+    ///
+    /// A key rather than a maildir path: the path already lives in the account
+    /// section, and storing a second copy here would go stale the moment the
+    /// user edits it. Resolve through Config::resolvedQuery().
+    QString account;
+
+    /// Names a builtin that COMPOSES this query from the accounts at run time,
+    /// rather than storing it. Empty for an ordinary query.
+    ///
+    /// "sent" is the only one today. Its query is built from every account's
+    /// `sent` key, so adding an account or correcting a folder name is a config
+    /// edit and nothing else; a stored copy of the same string would go stale
+    /// silently. That property is why Sent used to be hardcoded beside the
+    /// saved queries instead of living with them, which left one button on the
+    /// row that could not be reordered, renamed, unpinned or removed.
+    ///
+    /// Storing the GENERATOR rather than its output keeps both: the query stays
+    /// live, and the entry is an ordinary row the user owns.
+    QString generated;
+
+    /// Lists messages rather than threads. Set for the sent view, where a
+    /// thread would fold every reply back into the conversation the user sent
+    /// one message into.
+    bool flat = false;
+
+    bool isGenerated() const { return !generated.isEmpty(); }
+
+    /// Keys this build does not understand, preserved verbatim so a file
+    /// written by a later version survives a save from this one.
+    QJsonObject unknown;
 };
 
 /// Reads ~/.config/qtmaildir/qtmaildir.conf.
@@ -117,7 +163,32 @@ public:
 
     QList<Account> accounts() const { return m_accounts; }
     Account account(const QString &key) const;
+
+    /// In document order, which IS the display order. Never sort this.
     QList<SavedQuery> savedQueries() const { return m_savedQueries; }
+    void setSavedQueries(const QList<SavedQuery> &queries)
+    {
+        m_savedQueries = queries;
+    }
+
+    /// Path of queries.json, derived from the config file's own directory so a
+    /// test can point load() at a temporary tree and get both files there.
+    static QString queriesPath(const QString &configPath);
+
+    /// Writes queries.json. False when the file could not be written, or when
+    /// the loaded file had a version this build refuses: overwriting a
+    /// newer-format file with a lossy reading of it is the one outcome worth
+    /// preventing outright.
+    bool saveSavedQueries() const;
+
+    /// The query as it should be run: scoped to its account when it names one.
+    ///
+    /// Composes through Account::scopedQuery(), whose parentheses are
+    /// load-bearing. `path:... and a or b` binds as `(path:... and a) or b`, so
+    /// an unparenthesised disjunction escapes its scope and matches every
+    /// account. An account key naming nothing returns the bare query rather
+    /// than a scope built from an empty maildir, which would be path:"/**".
+    QString resolvedQuery(const SavedQuery &query) const;
 
     /// Empty when unset; the caller disables the Sync button in that case.
     QString syncCommand() const { return m_syncCommand; }
@@ -254,8 +325,23 @@ private:
     /// Records a notice: nothing is wrong, a feature is simply not configured.
     void addNotice(const QString &message);
 
+    /// Reads queries.json, or migrates [queries] when it is absent. Called by
+    /// load(), which has already parsed the INI by then.
+    void loadSavedQueries(const QString &configPath, QSettings &settings);
+
     QList<Account> m_accounts;
     QList<SavedQuery> m_savedQueries;
+
+    /// Where saveSavedQueries() writes, remembered from load().
+    QString m_queriesPath;
+
+    /// Top-level keys of queries.json this build does not understand.
+    QJsonObject m_queriesUnknown;
+
+    /// Set when the file was refused for its version. Blocks the save, so a
+    /// document from a newer build is never overwritten with less than it held.
+    bool m_queriesRefused = false;
+
     QString m_syncCommand;
     QString m_syncLog;
     int m_toolbarIconSize = 24;

@@ -10,8 +10,26 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Run a single test binary directly for a tighter loop: `./build/tests/test_keymap`.
+Run a single test binary directly for a tighter loop, **always with the
+offscreen platform**:
+
+```bash
+QT_QPA_PLATFORM=offscreen ./build/tests/test_keymap
+```
+
 Or by ctest name (the name is the suffix, not the binary): `ctest --test-dir build -R keymap`.
+
+**Never run a test binary without `QT_QPA_PLATFORM=offscreen`, and never launch
+`./build/src/qtmaildir` unasked.** `tests/CMakeLists.txt` sets that variable for
+ctest only, so a binary invoked directly inherits the desktop's own setting
+(`wayland;xcb` here) and throws real windows onto the user's screen. Each test
+function builds its own `MainWindow`, so one direct run of `test_mainwindow`
+flashes over a hundred windows across the desktop. This is not cosmetic: the
+user has asked for it to stop, having been given a headache by it.
+
+The same applies to the application. Running it is a hand test and belongs to
+the user; ask rather than launching it, and when a change genuinely needs
+looking at, say what to look for and let them run it.
 
 Adding a test: create `tests/test_<name>.cpp` and add `add_qtmaildir_test(<name>)` to
 `tests/CMakeLists.txt`. That function links `qtmaildir_lib` and `Qt6::Test` and registers

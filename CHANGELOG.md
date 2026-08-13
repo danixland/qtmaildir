@@ -11,6 +11,28 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- The tagging rules dialog builds a rule from rows now: a field and operator
+  dropdown per condition, `+`/`-` to add and remove them, a match all/any
+  choice, and a separate "but not" block for exclusions. The notmuch query
+  stays visible and is what gets saved, so a rule the builder cannot show
+  opens as text and still works. Opening a rule without editing it leaves the
+  stored query untouched.
+- A Folder condition picks from your configured accounts rather than being
+  typed. A folder path with a typo matches nothing and notmuch reports no
+  error, so the rule would simply never fire. The list stays editable, so a
+  folder that is in the rules file but not in your config still opens and
+  still saves.
+
+### Fixed
+
+- Opening the tagging rules dialog and saving destroyed the first rule in the
+  list, even with nothing edited. The rule lost its query and its tags, then
+  vanished on the next load, since a rule with an empty query is dropped as
+  malformed. Populating the form emitted a change signal that wrote the form
+  back over the rule before the query field had been filled.
+
 ## [0.16.0] - 2026-08-13
 
 The rules that tag your mail on arrival move out of a shell script and into the

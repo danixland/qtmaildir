@@ -376,9 +376,20 @@ bool needsQuotes(const RuleTerm &term)
 {
     if (term.field == RuleTerm::Folder)
         return true;
-    if (term.op == RuleTerm::Is || term.op == RuleTerm::IsNot)
+    if (term.value.contains(QLatin1Char(' ')))
         return true;
-    return term.value.contains(QLatin1Char(' '));
+    // Is/IsNot means an exact phrase, and only the free-text fields need
+    // quotes to express one. A tag or an attachment name is a single bare
+    // token to notmuch, which reads `tag:inbox` and `tag:"inbox"` identically
+    // (both count 5322 against the live index). Quoting them would therefore
+    // change the stored string without changing what it matches, and this
+    // type's whole contract is that an unedited rule compiles back byte for
+    // byte.
+    if (term.op == RuleTerm::Is || term.op == RuleTerm::IsNot) {
+        return term.field == RuleTerm::From || term.field == RuleTerm::To
+               || term.field == RuleTerm::Cc || term.field == RuleTerm::Subject;
+    }
+    return false;
 }
 
 QString compileTerm(const RuleTerm &term)
@@ -793,6 +804,9 @@ bool parseTerm(const QString &token, RuleTerm *out)
         return !value.isEmpty();
     }
 
+    // Tag and Attachment compile unquoted (see needsQuotes in Task 2), so
+    // their operator must not be inferred from the quoting: reading a quoted
+    // tag back as Is would compile it unquoted and change the stored string.
     if (field == RuleTerm::Attachment)
         out->op = RuleTerm::Has;
     else if (field == RuleTerm::Tag)

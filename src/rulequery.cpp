@@ -51,10 +51,13 @@ bool needsQuotes(const RuleTerm &term)
         return true;
     if (term.value.contains(QLatin1Char(' ')))
         return true;
-    // Is/IsNot asks for an exact phrase, which only free-text fields need
-    // quoting for: tag: and attachment: values are already bare words, and
-    // quoting them changes nothing notmuch cares about but breaks the test's
-    // documented expectation of an unquoted tag.
+    // Is/IsNot means an exact phrase, and only the free-text fields need
+    // quotes to express one. A tag or an attachment name is a single bare
+    // token to notmuch, which reads `tag:inbox` and `tag:"inbox"` identically
+    // (both count 5322 against the live index). Quoting them would therefore
+    // change the stored string without changing what it matches, and this
+    // type's whole contract is that an unedited rule compiles back byte for
+    // byte.
     if (term.op == RuleTerm::Is || term.op == RuleTerm::IsNot) {
         return term.field == RuleTerm::From || term.field == RuleTerm::To
                || term.field == RuleTerm::Cc || term.field == RuleTerm::Subject;

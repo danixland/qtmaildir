@@ -1313,6 +1313,17 @@ void MainWindow::showTagRulesDialog()
 
     auto *dialog = new TagRulesDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    // The Folder row's dropdown. Config holds the account subdirectories and
+    // the dialog holds no Config, so they are handed over here. Account::maildir
+    // is the subtree name the Folder term compiles a path: against; the account
+    // key is a config section name and would match nothing.
+    QStringList folders;
+    for (const Account &account : m_config.accounts()) {
+        if (!account.maildir.isEmpty() && !folders.contains(account.maildir))
+            folders.append(account.maildir);
+    }
+    dialog->setFolders(folders);
     m_tagRulesDialog = dialog;
 
     connect(dialog, &TagRulesDialog::countsRequested, this, [this, dialog]() {

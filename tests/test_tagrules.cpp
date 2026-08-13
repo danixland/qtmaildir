@@ -47,6 +47,7 @@ private slots:
     void editingARowRewritesTheQuery();
     void aTextModeRuleStaysTextWhenAnotherRuleIsVisited();
     void leavingTextModeIsRefusedWhenTheQueryCannotBeShownAsRows();
+    void aFolderRowUsesTheDropdownAndKeepsItsSuffix();
 
 private:
     QString writeRules(const QString &json);
@@ -542,6 +543,51 @@ void TestTagRules::leavingTextModeIsRefusedWhenTheQueryCannotBeShownAsRows()
     QCOMPARE(dialog.rowCountForTest(), 1);
     QVERIFY2(dialog.warningTextForTest().isEmpty(),
              "a stale refusal must not outlive the query that caused it");
+}
+
+void TestTagRules::aFolderRowUsesTheDropdownAndKeepsItsSuffix()
+{
+    // A path: without its suffix matches nothing and notmuch says nothing
+    // about it, so the suffix must never depend on the user typing it.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "account", "query": "path:\"account-one/**\"",
+         "add": ["account-one"], "stage": 10, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+    dialog.setFolders({QStringLiteral("account-one"),
+                       QStringLiteral("account-two")});
+
+    // The stored rule round-trips: the row holds the bare name, and the
+    // query keeps the suffix.
+    QCOMPARE(dialog.rowCountForTest(), 1);
+    QCOMPARE(dialog.queryLineForTest(),
+             QStringLiteral("path:\"account-one/**\""));
+
+    dialog.setRowValueForTest(0, QStringLiteral("account-two"));
+    QCOMPARE(dialog.queryLineForTest(),
+             QStringLiteral("path:\"account-two/**\""));
+
+    dialog.saveForTest();
+
+    TagRules reloaded;
+    reloaded.load(stored);
+    QCOMPARE(reloaded.rules().size(), 1);
+    QCOMPARE(reloaded.rules().at(0).query,
+             QStringLiteral("path:\"account-two/**\""));
 }
 
 QTEST_MAIN(TestTagRules)

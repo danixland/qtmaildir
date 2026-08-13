@@ -461,7 +461,7 @@ void TagRulesDialog::setRowValueForTest(int index, const QString &value)
 {
     if (index < 0 || index >= m_rows.size())
         return;
-    m_rows.at(index).value->setText(value);
+    setRowValue(&m_rows[index], value);
     syncQueryLine();
 }
 
@@ -491,6 +491,44 @@ void TagRulesDialog::selectRuleForTest(int index)
         m_list->setCurrentItem(m_list->topLevelItem(index));
 }
 
+QString TagRulesDialog::rowValue(const Row &row) const
+{
+    const bool isFolder =
+        RuleTerm::Field(row.field->currentData().toInt()) == RuleTerm::Folder;
+    return (isFolder ? row.folder->currentText() : row.value->text()).trimmed();
+}
+
+void TagRulesDialog::setRowValue(Row *row, const QString &value)
+{
+    if (RuleTerm::Field(row->field->currentData().toInt()) == RuleTerm::Folder)
+        row->folder->setCurrentText(value);
+    else
+        row->value->setText(value);
+}
+
+void TagRulesDialog::setFolders(const QStringList &folders)
+{
+    m_folders = folders;
+
+    // Rows already exist by the time this is called: the constructor loads the
+    // first rule and builds its rows before the caller can hand the list over.
+    // Repopulating them here rather than only in addRow() is what stops the row
+    // on screen from opening with an empty dropdown. The current text is
+    // preserved across the refill, since the combo is editable and may hold a
+    // folder the config does not list.
+    const auto refill = [&folders](const QList<Row> &rows) {
+        for (const Row &row : rows) {
+            const QString had = row.folder->currentText();
+            QSignalBlocker block(row.folder);
+            row.folder->clear();
+            row.folder->addItems(folders);
+            row.folder->setCurrentText(had);
+        }
+    };
+    refill(m_rows);
+    refill(m_exclusionRows);
+}
+
 TagRulesDialog::Row *TagRulesDialog::addRow(bool exclusion)
 {
     Row row;
@@ -505,6 +543,13 @@ TagRulesDialog::Row *TagRulesDialog::addRow(bool exclusion)
     row.op = new QComboBox(row.container);
     row.value = new QLineEdit(row.container);
 
+    row.folder = new QComboBox(row.container);
+    // Editable so a folder present in the file but absent from the config
+    // still displays and still saves, rather than being silently blanked.
+    row.folder->setEditable(true);
+    row.folder->addItems(m_folders);
+    row.folder->setVisible(false);
+
     auto *plus = new QPushButton(QStringLiteral("+"), row.container);
     auto *minus = new QPushButton(QStringLiteral("-"), row.container);
     plus->setFixedWidth(30);
@@ -513,6 +558,7 @@ TagRulesDialog::Row *TagRulesDialog::addRow(bool exclusion)
     layout->addWidget(row.field);
     layout->addWidget(row.op);
     layout->addWidget(row.value, 1);
+    layout->addWidget(row.folder, 1);
     layout->addWidget(plus);
     layout->addWidget(minus);
 
@@ -521,14 +567,27 @@ TagRulesDialog::Row *TagRulesDialog::addRow(bool exclusion)
     rows.append(row);
     target->addWidget(row.container);
 
+    // The three widgets by pointer, never the Row by value: the row lives in a
+    // QList that reallocates as rows are added, so a copy taken here would be
+    // compared against, or written through, after that list has moved.
+    QComboBox *field = row.field;
+    QLineEdit *value = row.value;
+    QComboBox *folder = row.folder;
     connect(row.field, &QComboBox::currentIndexChanged, this,
-            [this, exclusion](int) {
+            [this, exclusion, field, value, folder](int) {
                 populateOperators(exclusion);
+                const bool isFolder =
+                    RuleTerm::Field(field->currentData().toInt())
+                    == RuleTerm::Folder;
+                value->setVisible(!isFolder);
+                folder->setVisible(isFolder);
                 syncQueryLine();
             });
     connect(row.op, &QComboBox::currentIndexChanged,
             this, [this](int) { syncQueryLine(); });
     connect(row.value, &QLineEdit::textEdited,
+            this, [this](const QString &) { syncQueryLine(); });
+    connect(row.folder, &QComboBox::currentTextChanged,
             this, [this](const QString &) { syncQueryLine(); });
     connect(plus, &QPushButton::clicked, this, [this, exclusion] {
         addRow(exclusion);
@@ -562,7 +621,7 @@ void TagRulesDialog::removeRow(bool exclusion, int index)
     // empty query, which is reachable by clearing the value rather than by
     // deleting the last row out from under the user.
     if (!exclusion && rows.size() == 1) {
-        rows[0].value->clear();
+        setRowValue(&rows[0], QString());
         return;
     }
 
@@ -622,7 +681,7 @@ RuleQuery TagRulesDialog::currentQueryFromRows() const
     query.join = m_matchAny->isChecked() ? RuleQuery::Any : RuleQuery::All;
 
     for (const Row &row : m_rows) {
-        const QString value = row.value->text().trimmed();
+        const QString value = rowValue(row);
         if (value.isEmpty())
             continue;
         query.terms.append({RuleTerm::Field(row.field->currentData().toInt()),
@@ -630,7 +689,7 @@ RuleQuery TagRulesDialog::currentQueryFromRows() const
                             value});
     }
     for (const Row &row : m_exclusionRows) {
-        const QString value = row.value->text().trimmed();
+        const QString value = rowValue(row);
         if (value.isEmpty())
             continue;
         query.exclusions.append(
@@ -712,10 +771,17 @@ void TagRulesDialog::applyTermToRow(Row *row, const RuleTerm &term)
     const QSignalBlocker blockField(row->field);
     const QSignalBlocker blockOp(row->op);
     const QSignalBlocker blockValue(row->value);
+    const QSignalBlocker blockFolder(row->folder);
 
     const int fieldIndex = row->field->findData(int(term.field));
     if (fieldIndex >= 0)
         row->field->setCurrentIndex(fieldIndex);
+
+    // The field's own handler is blocked here, so the swap it would have done
+    // has to happen explicitly or a Folder row opens showing the line edit.
+    const bool isFolder = term.field == RuleTerm::Folder;
+    row->value->setVisible(!isFolder);
+    row->folder->setVisible(isFolder);
 
     // The operator list depends on the field just set, so it must be rebuilt
     // before the operator can be found in it.
@@ -726,7 +792,7 @@ void TagRulesDialog::applyTermToRow(Row *row, const RuleTerm &term)
     if (opIndex >= 0)
         row->op->setCurrentIndex(opIndex);
 
-    row->value->setText(term.value);
+    setRowValue(row, term.value);
 }
 
 void TagRulesDialog::syncQueryLine()

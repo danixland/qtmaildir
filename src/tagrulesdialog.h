@@ -19,6 +19,7 @@
 #pragma once
 
 #include <QDialog>
+#include <QStringList>
 
 #include "rulequery.h"
 #include "tagrules.h"
@@ -54,6 +55,11 @@ public:
     /// touches the database itself, because NotmuchWorker owns the only
     /// handle and notmuch permits one per process.
     QStringList countQueries() const;
+
+    /// Account subdirectory names, for the Folder row's dropdown. Supplied by
+    /// the caller rather than read here: Config knows them, and this dialog
+    /// deliberately holds no Config of its own.
+    void setFolders(const QStringList &folders);
 
     /// Test seams. The builder's state is otherwise reachable only through
     /// synthetic clicks on widgets whose geometry the offscreen platform does
@@ -108,7 +114,14 @@ private:
         QComboBox *field = nullptr;
         QComboBox *op = nullptr;
         QLineEdit *value = nullptr;
+        /// Shown in place of `value` for a Folder row. Never visible together.
+        QComboBox *folder = nullptr;
     };
+
+    /// Reads a row's value from whichever of its two widgets the field selects,
+    /// so the read and write paths cannot disagree about where it lives.
+    QString rowValue(const Row &row) const;
+    void setRowValue(Row *row, const QString &value);
 
     Row *addRow(bool exclusion);
     void removeRow(bool exclusion, int index);
@@ -126,6 +139,8 @@ private:
     /// path compares against this to decide whether the stored string may be
     /// left alone.
     RuleQuery m_loadedQuery;
+
+    QStringList m_folders;
 
     QList<Row> m_rows;
     QList<Row> m_exclusionRows;

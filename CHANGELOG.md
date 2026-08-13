@@ -11,6 +11,36 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-13
+
+A rule is built from rows now instead of typed into four free-text fields:
+dropdowns for the field and the operator, buttons to add and remove
+conditions, and a separate block for the senders a rule should exclude. The
+stored file does not change, so the companion `mailctl` tool reads and writes
+exactly what it did before, and a rule too intricate for the rows still opens
+and still runs.
+
+This release also fixes a data-loss defect in 0.16.0: opening the tagging
+rules dialog and pressing Save destroyed the first rule in the list, with
+nothing edited.
+
+### Upgrading
+
+**If you ran 0.16.0 and opened the tagging rules dialog, check your first
+rule.** Pressing Save there blanked its query, its tags and its note, and a
+rule with an empty query is dropped as malformed on the next load, so the rule
+disappears rather than reporting an error. Nothing else in the file was
+touched.
+
+```bash
+mailctl rules list
+```
+
+A rule missing from that list, or one you remember writing and can no longer
+find, was lost this way and has to be entered again. There is no automatic
+repair: the blanked fields are not recoverable from the file itself, only from
+a backup or from a sibling rule that says the same thing.
+
 ### Added
 
 - The tagging rules dialog builds a rule from rows now: a field and operator

@@ -18,7 +18,9 @@
 
 #include "tagrulesdialog.h"
 
+#include <QButtonGroup>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -28,6 +30,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSpinBox>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -49,6 +52,19 @@ QStringList splitTags(const QString &text)
     }
     return out;
 }
+
+struct FieldEntry { RuleTerm::Field field; const char *label; };
+
+const FieldEntry kFields[] = {
+    {RuleTerm::From,       QT_TR_NOOP("From")},
+    {RuleTerm::To,         QT_TR_NOOP("To")},
+    {RuleTerm::Cc,         QT_TR_NOOP("Cc")},
+    {RuleTerm::Subject,    QT_TR_NOOP("Subject")},
+    {RuleTerm::Tag,        QT_TR_NOOP("Tag")},
+    {RuleTerm::Folder,     QT_TR_NOOP("Folder")},
+    {RuleTerm::Attachment, QT_TR_NOOP("Attachment")},
+    {RuleTerm::Date,       QT_TR_NOOP("Date")},
+};
 
 } // namespace
 
@@ -104,7 +120,53 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     form->addRow(QString(), m_enabled);
     form->addRow(tr("Add tags"), m_add);
     form->addRow(tr("Remove tags"), m_remove);
+    m_builder = new QWidget(this);
+    auto *builderLayout = new QVBoxLayout(m_builder);
+    builderLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto *matchRow = new QHBoxLayout;
+    m_matchAll = new QRadioButton(tr("Match &all"), m_builder);
+    m_matchAny = new QRadioButton(tr("Match a&ny"), m_builder);
+    m_matchAll->setChecked(true);
+    auto *matchGroup = new QButtonGroup(this);
+    matchGroup->addButton(m_matchAll);
+    matchGroup->addButton(m_matchAny);
+    m_textMode = new QCheckBox(tr("Edit as &text"), m_builder);
+    m_textMode->setToolTip(
+        tr("Edit the notmuch query directly. A rule too complex to show as "
+           "rows opens this way."));
+    matchRow->addWidget(m_matchAll);
+    matchRow->addWidget(m_matchAny);
+    matchRow->addStretch();
+    matchRow->addWidget(m_textMode);
+    builderLayout->addLayout(matchRow);
+
+    m_rowsLayout = new QVBoxLayout;
+    builderLayout->addLayout(m_rowsLayout);
+
+    m_exclusionsHeader = new QLabel(tr("But not"), m_builder);
+    builderLayout->addWidget(m_exclusionsHeader);
+    m_exclusionsLayout = new QVBoxLayout;
+    builderLayout->addLayout(m_exclusionsLayout);
+
+    m_addExclusion = new QPushButton(tr("Add e&xclusion"), m_builder);
+    builderLayout->addWidget(m_addExclusion, 0, Qt::AlignLeft);
+
+    form->addRow(tr("Match"), m_builder);
     form->addRow(tr("Query"), m_query);
+
+    // The query line shows what the rows compile to. Read-only in builder
+    // mode: it is what actually ships to the hook, and watching it change is
+    // what makes the rows trustworthy.
+    m_query->setReadOnly(true);
+
+    connect(m_matchAll, &QRadioButton::toggled,
+            this, &TagRulesDialog::syncQueryLine);
+    connect(m_addExclusion, &QPushButton::clicked, this, [this] {
+        addRow(true);
+        syncQueryLine();
+    });
+
     form->addRow(tr("Note"), m_note);
     layout->addLayout(form);
 
@@ -165,6 +227,9 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     // followed by a click on another would be silently discarded.
     connect(m_note, &QPlainTextEdit::textChanged,
             this, &TagRulesDialog::applyEditsToCurrentRule);
+
+    addRow(false);
+    updateExclusionsVisibility();
 
     reloadList();
     showWarnings();
@@ -338,4 +403,155 @@ void TagRulesDialog::onSave()
         return;
     }
     accept();
+}
+
+TagRulesDialog::Row *TagRulesDialog::addRow(bool exclusion)
+{
+    Row row;
+    row.container = new QWidget(m_builder);
+    auto *layout = new QHBoxLayout(row.container);
+    layout->setContentsMargins(0, 0, 0, 0);
+
+    row.field = new QComboBox(row.container);
+    for (const FieldEntry &entry : kFields)
+        row.field->addItem(tr(entry.label), int(entry.field));
+
+    row.op = new QComboBox(row.container);
+    row.value = new QLineEdit(row.container);
+
+    auto *plus = new QPushButton(QStringLiteral("+"), row.container);
+    auto *minus = new QPushButton(QStringLiteral("-"), row.container);
+    plus->setFixedWidth(30);
+    minus->setFixedWidth(30);
+
+    layout->addWidget(row.field);
+    layout->addWidget(row.op);
+    layout->addWidget(row.value, 1);
+    layout->addWidget(plus);
+    layout->addWidget(minus);
+
+    QList<Row> &rows = exclusion ? m_exclusionRows : m_rows;
+    QVBoxLayout *target = exclusion ? m_exclusionsLayout : m_rowsLayout;
+    rows.append(row);
+    target->addWidget(row.container);
+
+    connect(row.field, &QComboBox::currentIndexChanged, this,
+            [this, exclusion](int) {
+                populateOperators(exclusion);
+                syncQueryLine();
+            });
+    connect(row.op, &QComboBox::currentIndexChanged,
+            this, [this](int) { syncQueryLine(); });
+    connect(row.value, &QLineEdit::textEdited,
+            this, [this](const QString &) { syncQueryLine(); });
+    connect(plus, &QPushButton::clicked, this, [this, exclusion] {
+        addRow(exclusion);
+        syncQueryLine();
+    });
+
+    QWidget *container = row.container;
+    connect(minus, &QPushButton::clicked, this, [this, exclusion, container] {
+        const QList<Row> &list = exclusion ? m_exclusionRows : m_rows;
+        for (int i = 0; i < list.size(); ++i) {
+            if (list.at(i).container == container) {
+                removeRow(exclusion, i);
+                break;
+            }
+        }
+        syncQueryLine();
+    });
+
+    populateOperators(exclusion);
+    updateExclusionsVisibility();
+    return &rows.last();
+}
+
+void TagRulesDialog::removeRow(bool exclusion, int index)
+{
+    QList<Row> &rows = exclusion ? m_exclusionRows : m_rows;
+    if (index < 0 || index >= rows.size())
+        return;
+
+    // The positive section keeps at least one row: a rule with no rows has an
+    // empty query, which is reachable by clearing the value rather than by
+    // deleting the last row out from under the user.
+    if (!exclusion && rows.size() == 1) {
+        rows[0].value->clear();
+        return;
+    }
+
+    delete rows.at(index).container;
+    rows.removeAt(index);
+    updateExclusionsVisibility();
+}
+
+void TagRulesDialog::updateExclusionsVisibility()
+{
+    // Most rules have no exclusions, so an empty block on every rule is noise.
+    const bool any = !m_exclusionRows.isEmpty();
+    m_exclusionsHeader->setVisible(any);
+}
+
+void TagRulesDialog::populateOperators(bool exclusion)
+{
+    const QList<Row> &rows = exclusion ? m_exclusionRows : m_rows;
+    for (const Row &row : rows) {
+        const auto field = RuleTerm::Field(row.field->currentData().toInt());
+        const QString had = row.op->currentText();
+        QSignalBlocker block(row.op);
+        row.op->clear();
+
+        switch (field) {
+        case RuleTerm::Tag:
+        case RuleTerm::Folder:
+            row.op->addItem(tr("is"), int(RuleTerm::Is));
+            row.op->addItem(tr("is not"), int(RuleTerm::IsNot));
+            break;
+        case RuleTerm::Attachment:
+            row.op->addItem(tr("has"), int(RuleTerm::Has));
+            row.op->addItem(tr("has not"), int(RuleTerm::HasNot));
+            break;
+        case RuleTerm::Date:
+            row.op->addItem(tr("before"), int(RuleTerm::Before));
+            row.op->addItem(tr("after"), int(RuleTerm::After));
+            break;
+        default:
+            row.op->addItem(tr("contains"), int(RuleTerm::Contains));
+            row.op->addItem(tr("contains not"), int(RuleTerm::ContainsNot));
+            row.op->addItem(tr("is"), int(RuleTerm::Is));
+            row.op->addItem(tr("is not"), int(RuleTerm::IsNot));
+            break;
+        }
+
+        const int restored = row.op->findText(had);
+        if (restored >= 0)
+            row.op->setCurrentIndex(restored);
+    }
+}
+
+void TagRulesDialog::syncQueryLine()
+{
+    RuleQuery query;
+    query.parsed = true;
+    query.join = m_matchAny->isChecked() ? RuleQuery::Any : RuleQuery::All;
+
+    for (const Row &row : m_rows) {
+        const QString value = row.value->text().trimmed();
+        if (value.isEmpty())
+            continue;
+        query.terms.append({RuleTerm::Field(row.field->currentData().toInt()),
+                            RuleTerm::Op(row.op->currentData().toInt()),
+                            value});
+    }
+    for (const Row &row : m_exclusionRows) {
+        const QString value = row.value->text().trimmed();
+        if (value.isEmpty())
+            continue;
+        query.exclusions.append(
+            {RuleTerm::Field(row.field->currentData().toInt()),
+             RuleTerm::Op(row.op->currentData().toInt()),
+             value});
+    }
+
+    m_query->setText(query.compile());
 }

@@ -20,16 +20,20 @@
 
 #include <QDialog>
 
+#include "rulequery.h"
 #include "tagrules.h"
 
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
+class QRadioButton;
 class QSpinBox;
 class QTreeWidget;
 class QTreeWidgetItem;
+class QVBoxLayout;
 
 /// Views and edits the shared auto-tagging rules.
 ///
@@ -76,6 +80,24 @@ private:
     /// applyEditsToCurrentRule() so the two cannot render a rule differently.
     void fillItem(QTreeWidgetItem *item, const TagRule &rule) const;
 
+    /// One builder row's widgets, so a row can be removed as a unit.
+    struct Row
+    {
+        QWidget *container = nullptr;
+        QComboBox *field = nullptr;
+        QComboBox *op = nullptr;
+        QLineEdit *value = nullptr;
+    };
+
+    Row *addRow(bool exclusion);
+    void removeRow(bool exclusion, int index);
+    void populateOperators(bool exclusion);
+    void updateExclusionsVisibility();
+    void syncQueryLine();
+
+    QList<Row> m_rows;
+    QList<Row> m_exclusionRows;
+
     TagRules m_rules;
     QList<TagRule> m_working;   ///< Edited copy; written only on Save.
 
@@ -95,4 +117,13 @@ private:
     QCheckBox *m_enabled = nullptr;
     QLabel *m_warningLabel = nullptr;
     QPushButton *m_saveButton = nullptr;
+
+    QRadioButton *m_matchAll = nullptr;
+    QRadioButton *m_matchAny = nullptr;
+    QCheckBox *m_textMode = nullptr;
+    QWidget *m_builder = nullptr;
+    QVBoxLayout *m_rowsLayout = nullptr;
+    QVBoxLayout *m_exclusionsLayout = nullptr;
+    QLabel *m_exclusionsHeader = nullptr;
+    QPushButton *m_addExclusion = nullptr;
 };

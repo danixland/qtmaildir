@@ -55,6 +55,15 @@ public:
     /// handle and notmuch permits one per process.
     QStringList countQueries() const;
 
+    /// Test seams. The builder's state is otherwise reachable only through
+    /// synthetic clicks on widgets whose geometry the offscreen platform does
+    /// not guarantee.
+    int rowCountForTest() const { return m_rows.size(); }
+    QString queryLineForTest() const;
+
+    /// Selects the rule at `index` as a click on the list would.
+    void selectRuleForTest(int index);
+
 signals:
     /// Asks the owner to run countQueries() through the worker.
     void countsRequested();
@@ -94,6 +103,15 @@ private:
     void populateOperators(bool exclusion);
     void updateExclusionsVisibility();
     void syncQueryLine();
+
+    void rebuildRows(const RuleQuery &query);
+    void applyTermToRow(Row *row, const RuleTerm &term);
+    RuleQuery currentQueryFromRows() const;
+
+    /// The query as parsed when the current rule was loaded. Task 10's save
+    /// path compares against this to decide whether the stored string may be
+    /// left alone.
+    RuleQuery m_loadedQuery;
 
     QList<Row> m_rows;
     QList<Row> m_exclusionRows;

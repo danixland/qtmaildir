@@ -19,7 +19,9 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include "rulequery.h"
 #include "tagrules.h"
+#include "tagrulesdialog.h"
 
 /// The risk in TagRules is the format, not painting: a field silently dropped
 /// on save mis-tags real mail on the next sync, and does it quietly. These
@@ -38,6 +40,8 @@ private slots:
     void aQueryWithQuotesRoundTrips();
     void aMissingFileIsEmptyNotAnError();
     void aNewerVersionIsRefused();
+    void openingARuleFillsTheBuilderRows();
+    void switchingRulesDoesNotLeakRowsBetweenThem();
 
 private:
     QString writeRules(const QString &json);
@@ -239,6 +243,74 @@ void TestTagRules::aNewerVersionIsRefused()
     rules.load(path);
     QVERIFY(rules.rules().isEmpty());
     QCOMPARE(rules.warnings().size(), 1);
+}
+
+void TestTagRules::openingARuleFillsTheBuilderRows()
+{
+    // The dialog reads the shared store from its default path, so point the
+    // whole process at a temporary one. XDG_CONFIG_HOME is what
+    // TagRules::defaultPath() honours.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    QFile out(configHome.filePath(QStringLiteral("mailrules/rules.json")));
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor",
+         "query": "from:vendor.example.org and subject:receipt",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+
+    QCOMPARE(dialog.rowCountForTest(), 2);
+    QCOMPARE(dialog.queryLineForTest(),
+             QStringLiteral("from:vendor.example.org and subject:receipt"));
+}
+
+void TestTagRules::switchingRulesDoesNotLeakRowsBetweenThem()
+{
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    QFile out(configHome.filePath(QStringLiteral("mailrules/rules.json")));
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "one", "query": "from:one.example.org",
+         "add": ["one"], "stage": 50, "enabled": true},
+        {"id": "two",
+         "query": "from:two.example.org or from:three.example.org",
+         "add": ["two"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+
+    // The first rule is selected on open: one row, joined All by default.
+    QCOMPARE(dialog.rowCountForTest(), 1);
+    QCOMPARE(dialog.queryLineForTest(), QStringLiteral("from:one.example.org"));
+
+    dialog.selectRuleForTest(1);
+    QCOMPARE(dialog.rowCountForTest(), 2);
+    QCOMPARE(dialog.queryLineForTest(),
+             QStringLiteral("from:two.example.org or from:three.example.org"));
+
+    // And back, to prove the first rule was not overwritten by loading the
+    // second.
+    dialog.selectRuleForTest(0);
+    QCOMPARE(dialog.rowCountForTest(), 1);
+    QCOMPARE(dialog.queryLineForTest(), QStringLiteral("from:one.example.org"));
 }
 
 QTEST_MAIN(TestTagRules)

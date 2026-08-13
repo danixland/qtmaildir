@@ -295,12 +295,23 @@ void TagRulesDialog::onSelectionChanged()
     const int index = currentIndex();
     if (index < 0 || index >= m_working.size())
         return;
-    const TagRule &rule = m_working.at(index);
+    // By value: every setter below can reach applyEditsToCurrentRule(), which
+    // writes into m_working, and a reference into that list would then be read
+    // back half overwritten.
+    const TagRule rule = m_working.at(index);
 
-    // The note's textChanged fires from setPlainText below, which would then
-    // write the rule just loaded back over the rule now current. Harmless when
-    // they are the same rule, destructive when the selection is what changed.
-    const QSignalBlocker blockNote(m_note);
+    // Populating the form emits change signals whose handlers write the form
+    // back onto the working copy, so the rule just loaded would be written over
+    // whichever rule is now current. Harmless when they are the same rule,
+    // destructive when the selection is what changed. m_enabled::toggled and
+    // the note's textChanged both do this, and the widgets are populated in an
+    // order where m_enabled fires while m_query still holds the PREVIOUS rule's
+    // text, which emptied the query of the first rule opened. The reloading
+    // flag is the existing guard for exactly this, so it covers the whole load,
+    // including rebuildRows: populating combo boxes and line edits fires
+    // currentIndexChanged, which runs syncQueryLine.
+    const bool wasReloading = m_reloading;
+    m_reloading = true;
 
     m_id->setText(rule.id);
     m_stage->setValue(rule.stage);
@@ -309,6 +320,15 @@ void TagRulesDialog::onSelectionChanged()
     m_remove->setText(rule.remove.join(QStringLiteral(", ")));
     m_query->setText(rule.query);
     m_note->setPlainText(rule.note);
+
+    // Parse once, on load, and keep it: Task 10's save path compares against
+    // this to decide whether the stored string may be left alone.
+    m_loadedQuery = RuleQuery::parse(rule.query);
+
+    if (m_loadedQuery.parsed)
+        rebuildRows(m_loadedQuery);
+
+    m_reloading = wasReloading;
 }
 
 void TagRulesDialog::applyEditsToCurrentRule()
@@ -403,6 +423,17 @@ void TagRulesDialog::onSave()
         return;
     }
     accept();
+}
+
+QString TagRulesDialog::queryLineForTest() const
+{
+    return m_query->text();
+}
+
+void TagRulesDialog::selectRuleForTest(int index)
+{
+    if (index >= 0 && index < m_list->topLevelItemCount())
+        m_list->setCurrentItem(m_list->topLevelItem(index));
 }
 
 TagRulesDialog::Row *TagRulesDialog::addRow(bool exclusion)
@@ -529,7 +560,7 @@ void TagRulesDialog::populateOperators(bool exclusion)
     }
 }
 
-void TagRulesDialog::syncQueryLine()
+RuleQuery TagRulesDialog::currentQueryFromRows() const
 {
     RuleQuery query;
     query.parsed = true;
@@ -552,6 +583,56 @@ void TagRulesDialog::syncQueryLine()
              RuleTerm::Op(row.op->currentData().toInt()),
              value});
     }
+    return query;
+}
 
-    m_query->setText(query.compile());
+void TagRulesDialog::rebuildRows(const RuleQuery &query)
+{
+    while (!m_rows.isEmpty())
+        delete m_rows.takeLast().container;
+    while (!m_exclusionRows.isEmpty())
+        delete m_exclusionRows.takeLast().container;
+
+    m_matchAll->setChecked(query.join == RuleQuery::All);
+    m_matchAny->setChecked(query.join == RuleQuery::Any);
+
+    for (const RuleTerm &term : query.terms)
+        applyTermToRow(addRow(false), term);
+    for (const RuleTerm &term : query.exclusions)
+        applyTermToRow(addRow(true), term);
+
+    if (m_rows.isEmpty())
+        addRow(false);   // Always one row to type into.
+
+    updateExclusionsVisibility();
+}
+
+void TagRulesDialog::applyTermToRow(Row *row, const RuleTerm &term)
+{
+    const QSignalBlocker blockField(row->field);
+    const QSignalBlocker blockOp(row->op);
+    const QSignalBlocker blockValue(row->value);
+
+    const int fieldIndex = row->field->findData(int(term.field));
+    if (fieldIndex >= 0)
+        row->field->setCurrentIndex(fieldIndex);
+
+    // The operator list depends on the field just set, so it must be rebuilt
+    // before the operator can be found in it.
+    populateOperators(false);
+    populateOperators(true);
+
+    const int opIndex = row->op->findData(int(term.op));
+    if (opIndex >= 0)
+        row->op->setCurrentIndex(opIndex);
+
+    row->value->setText(term.value);
+}
+
+void TagRulesDialog::syncQueryLine()
+{
+    if (m_reloading)
+        return;
+    m_query->setText(currentQueryFromRows().compile());
+    applyEditsToCurrentRule();
 }

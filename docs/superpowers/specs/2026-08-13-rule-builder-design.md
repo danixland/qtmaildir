@@ -221,7 +221,12 @@ an empty query and must open in the builder ready to receive a row.
 
 Everything else sets `parsed = false`: nested parens beyond that one shape,
 mixed `and`/`or` without parens, `xor`, an unrecognised prefix (`body:`, `mid:`,
-`folder:`), a bare word with no prefix, a `path:` not ending in `/**`.
+`folder:`), a bare word with no prefix, a `path:` not ending in `/**`, a
+two-sided `date:` range, a trailing operator, an unterminated quote.
+
+A parenthesis **inside a value** is not a shape at all: `from:((((` is a From
+term whose value happens to contain parens, and it parses and round-trips like
+any other. Only a parenthesis in grouping position is a shape question.
 
 ### The parser is strict, and that is the safety property
 
@@ -334,10 +339,16 @@ terms and tests exactly the same thing.
 
 **Rejection tests**, which carry the safety property. Queries that must set
 `parsed = false` and must not partially parse: nested `or` inside `or`, mixed
-`and`/`or` without parens, `body:foo`, a bare word, a `path:` without `/**`, and
-`from:((((`. That last asserts **our** rejection, never a provoked notmuch
-failure: `CLAUDE.md` records twice that notmuch accepts it cleanly, and a test
-expecting an error there fails against correct code.
+`and`/`or` without parens, `body:foo`, a bare word, a `path:` without `/**`, a
+two-sided `date:` range, and a trailing operator.
+
+**`from:((((` is not among them, and the reason is worth stating.** notmuch
+treats those parens as characters to search for rather than as grouping, so the
+query is meaningful, matches nothing, and reports no error. This parser accepts
+it as a From row whose value is that literal text, which is what it means. The
+assertion there is the **round trip**, never a rejection and never a provoked
+notmuch failure: `CLAUDE.md` records twice that notmuch accepts it cleanly, and
+a test expecting an error fails against correct code.
 
 **Compile tests** for every field and operator pair including both negations,
 and the parenthesisation rule at its boundary: `join == Any` with zero

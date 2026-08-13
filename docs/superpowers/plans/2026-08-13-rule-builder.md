@@ -1113,6 +1113,11 @@ void TestRuleQuery::anUnrepresentableQueryRejectsWhole()
         QStringLiteral("date:2026-01-01..2026-02-01"),  // two-sided range
         QStringLiteral("from:a.example.org xor subject:x"),
     };
+    // NOT in this list: `from:((((`. It parses, as a From row whose value is
+    // the literal text `((((`, and round-trips byte for byte. That is exactly
+    // what the query means to notmuch, which treats the parens as characters
+    // to search for rather than as grouping, so the row tells the truth and
+    // rejecting it would buy nothing. See the test below.
 
     for (const QString &query : unrepresentable) {
         const RuleQuery q = RuleQuery::parse(query);
@@ -1126,11 +1131,19 @@ void TestRuleQuery::anUnrepresentableQueryRejectsWhole()
 
 void TestRuleQuery::aMalformedQueryIsRejectedNotDiagnosed()
 {
-    // notmuch accepts `from:((((` cleanly and matches nothing, so there is no
-    // failure to observe and a test asserting one fails against correct code.
-    // The assertion is on OUR rejection only.
+    // notmuch accepts `from:((((` cleanly and matches nothing: the parens are
+    // characters it searches for, not grouping. So there is no failure to
+    // observe, and a test asserting one fails against correct code.
+    //
+    // This parser accepts it too, as a From row whose value is that literal
+    // text, which is what the query actually means. What must hold is the
+    // round trip, not a rejection: displaying it as a row and compiling it
+    // back must not alter the stored string.
     const RuleQuery q = RuleQuery::parse(QStringLiteral("from:(((("));
-    QVERIFY(!q.parsed);
+    QVERIFY(q.parsed);
+    QCOMPARE(q.terms.size(), 1);
+    QCOMPARE(q.terms.at(0).value, QStringLiteral("(((("));
+    QCOMPARE(q.compile(), QStringLiteral("from:(((("));
 }
 ```
 

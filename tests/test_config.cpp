@@ -67,6 +67,7 @@ private slots:
     void anUnknownGeneratorResolvesToNothingAndReports();
     void migrationAddsSentWhenAnAccountHasOne();
     void migrationAddsNoSentWithoutTheKey();
+    void aGeneratedEntryWritesNoRedundantKeys();
     void generalSectionKeysAreActuallyRead();
     void messageZoomDefaultsAndValidates();
     void messageZoomOutOfRangeIsReported();
@@ -1570,6 +1571,55 @@ void TestConfig::migrationAddsNoSentWithoutTheKey()
     const QList<SavedQuery> queries = config.savedQueries();
     QCOMPARE(queries.size(), 1);
     QCOMPARE(queries.at(0).name, QStringLiteral("Inbox"));
+}
+
+/// The file is meant to be hand-edited, so a key that carries no information
+/// is a key the reader has to skip past. `query` says nothing on a generated
+/// entry, and `flat` is implied by the sent generator.
+void TestConfig::aGeneratedEntryWritesNoRedundantKeys()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, twoAccountsWithSent());
+    const QString queriesPath = writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Sent", "generated": "sent", "pinned": true },
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true }
+        ]
+    })"));
+
+    Config config;
+    config.load(path);
+    QVERIFY(config.saveSavedQueries());
+
+    QFile f(queriesPath);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    const QJsonArray array = QJsonDocument::fromJson(f.readAll())
+                                 .object()
+                                 .value(QStringLiteral("queries"))
+                                 .toArray();
+    f.close();
+
+    const QJsonObject sent = array.at(0).toObject();
+    QCOMPARE(sent.value(QStringLiteral("generated")).toString(),
+             QStringLiteral("sent"));
+    QVERIFY2(!sent.contains(QStringLiteral("query")),
+             "a generated entry has no query of its own to store");
+    QVERIFY2(!sent.contains(QStringLiteral("flat")),
+             "the sent generator implies flat; storing it says nothing");
+
+    // The ordinary entry is untouched by any of that.
+    const QJsonObject inbox = array.at(1).toObject();
+    QCOMPARE(inbox.value(QStringLiteral("query")).toString(),
+             QStringLiteral("tag:inbox"));
+
+    // And it all still reads back the same.
+    Config reloaded;
+    reloaded.load(path);
+    QCOMPARE(reloaded.savedQueries().size(), 2);
+    QVERIFY(reloaded.savedQueries().at(0).isGenerated());
+    QVERIFY2(reloaded.savedQueries().at(0).flat,
+             "flat must come back from the generator, not from the file");
 }
 
 QTEST_MAIN(TestConfig)

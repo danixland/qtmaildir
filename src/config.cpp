@@ -589,16 +589,24 @@ bool Config::saveSavedQueries() const
 
     QJsonArray array;
     for (const SavedQuery &query : m_savedQueries) {
+        // Only what carries information. The file is hand-editable, so a key
+        // that always holds the same value, or one the generator already
+        // implies, is just something the reader has to skip past. Same reason
+        // `pinned` and `account` are written only when set.
         QJsonObject object;
         object.insert(QStringLiteral("name"), query.name);
-        object.insert(QStringLiteral("query"), query.query);
+        if (query.isGenerated()) {
+            object.insert(QStringLiteral("generated"), query.generated);
+        } else {
+            object.insert(QStringLiteral("query"), query.query);
+        }
         if (query.pinned)
             object.insert(QStringLiteral("pinned"), true);
         if (!query.account.isEmpty())
             object.insert(QStringLiteral("account"), query.account);
-        if (query.isGenerated())
-            object.insert(QStringLiteral("generated"), query.generated);
-        if (query.flat)
+        // Skipped when the generator already implies it, which loadSavedQueries
+        // reapplies on the way back in.
+        if (query.flat && query.generated != QStringLiteral("sent"))
             object.insert(QStringLiteral("flat"), true);
         for (auto it = query.unknown.begin(); it != query.unknown.end(); ++it)
             object.insert(it.key(), it.value());

@@ -22,6 +22,11 @@ point at which they are stable.
   **order**, a `pinned` flag and an optional account scope. The order in the
   file is the order the buttons appear in, so rearranging them is a matter of
   moving lines.
+- **Sent is a saved query now**, carrying `"generated": "sent"` instead of a
+  stored query. It is still composed from your accounts' `sent` keys every time
+  you click it, so correcting a folder name still updates it with no edit, but
+  it can now be reordered, renamed, unpinned or deleted like any other entry
+  rather than being a fixed button you did not own.
 
 ### Changed
 
@@ -30,13 +35,18 @@ point at which they are stable.
   query field is no longer squeezed by a long list of buttons.
 - Saved-query buttons follow the file's order instead of appearing
   alphabetically.
+- The Sent button is no longer hardcoded beside the saved queries, so the whole
+  row now follows one rule instead of having one member that behaved
+  differently from its neighbours.
 
 ### Upgrading
 
 Saved queries move out of the `[queries]` section of `qtmaildir.conf` and into
 `~/.config/qtmaildir/queries.json`. **The first launch migrates them for you**:
 the section is read, the JSON file is written from it, and every entry is
-marked pinned so your buttons stay where they were.
+marked pinned so your buttons stay where they were. Sent is appended as a
+`generated` entry, where its button already sat, provided an account configures
+a sent folder.
 
 Your config file is left byte-for-byte alone. The old `[queries]` section stays
 in it, ignored from then on, and can be deleted by hand whenever you like. It is

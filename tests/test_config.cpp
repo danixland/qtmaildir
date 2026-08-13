@@ -62,6 +62,11 @@ private slots:
     void futureVersionIsRefusedAndReported();
     void startupQueryFallsBackToDocumentOrder();
     void scopedSavedQueryParenthesisesADisjunction();
+    void aGeneratedQueryResolvesFromTheAccounts();
+    void aGeneratedQueryTracksAConfigChange();
+    void anUnknownGeneratorResolvesToNothingAndReports();
+    void migrationAddsSentWhenAnAccountHasOne();
+    void migrationAddsNoSentWithoutTheKey();
     void generalSectionKeysAreActuallyRead();
     void messageZoomDefaultsAndValidates();
     void messageZoomOutOfRangeIsReported();
@@ -1414,6 +1419,157 @@ void TestConfig::scopedSavedQueryParenthesisesADisjunction()
     orphan.query = QStringLiteral("tag:inbox");
     orphan.account = QStringLiteral("deleted-account");
     QCOMPARE(config.resolvedQuery(orphan), QStringLiteral("tag:inbox"));
+}
+
+// ---------------------------------------------------------------------------
+// Generated saved queries
+// ---------------------------------------------------------------------------
+
+static QString twoAccountsWithSent()
+{
+    return QStringLiteral(
+        "[account.work]\n"
+        "name=Test User\n"
+        "address=user@example.org\n"
+        "maildir=work-mail\n"
+        "sent=Sent\n"
+        "\n"
+        "[account.personal]\n"
+        "name=Test User\n"
+        "address=me@example.net\n"
+        "maildir=personal\n"
+        "sent=[Provider]/Posta inviata\n"
+    );
+}
+
+void TestConfig::aGeneratedQueryResolvesFromTheAccounts()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, twoAccountsWithSent());
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Sent", "generated": "sent", "pinned": true }
+        ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    const SavedQuery sent = config.savedQueries().at(0);
+    QVERIFY(sent.isGenerated());
+    // The stored query is empty; the text comes from the accounts.
+    QVERIFY(sent.query.isEmpty());
+    QCOMPARE(config.resolvedQuery(sent), config.allSentQuery());
+    QVERIFY(config.resolvedQuery(sent).contains(
+        QStringLiteral("path:\"work-mail/Sent/**\"")));
+    // The quotes matter: "[" and "]" are Xapian syntax and an unquoted term
+    // is parsed rather than matched.
+    QVERIFY(config.resolvedQuery(sent).contains(
+        QStringLiteral("path:\"personal/[Provider]/Posta inviata/**\"")));
+
+    // Flat, not threaded: a sent view lists messages, and that property has to
+    // travel with the entry or it is lost the moment Sent is a stored row.
+    QVERIFY(sent.flat);
+}
+
+/// The whole reason Sent is generated rather than stored. A stored copy would
+/// keep naming an account that has been renamed or a folder that has moved.
+void TestConfig::aGeneratedQueryTracksAConfigChange()
+{
+    QTemporaryDir dir;
+    const QString queries = QStringLiteral(R"({
+        "version": 1,
+        "queries": [ { "name": "Sent", "generated": "sent" } ]
+    })");
+
+    const QString before = writeIni(dir, twoAccountsWithSent());
+    writeQueries(dir, queries);
+    Config first;
+    first.load(before);
+    const QString firstResolved = first.resolvedQuery(first.savedQueries().at(0));
+
+    // The user corrects a folder name. Nothing in queries.json changes.
+    QTemporaryDir second;
+    const QString after = writeIni(second, QStringLiteral(
+        "[account.work]\n"
+        "name=Test User\n"
+        "address=user@example.org\n"
+        "maildir=work-mail\n"
+        "sent=Sent Items\n"
+    ));
+    writeQueries(second, queries);
+    Config later;
+    later.load(after);
+    const QString laterResolved = later.resolvedQuery(later.savedQueries().at(0));
+
+    QVERIFY(firstResolved != laterResolved);
+    QVERIFY(laterResolved.contains(QStringLiteral("Sent Items")));
+}
+
+void TestConfig::anUnknownGeneratorResolvesToNothingAndReports()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, twoAccountsWithSent());
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [ { "name": "Future", "generated": "not_a_generator" } ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    // Kept rather than dropped: a later build may know this generator, and
+    // silently deleting the row on save would lose it.
+    QCOMPARE(config.savedQueries().size(), 1);
+    QVERIFY(config.resolvedQuery(config.savedQueries().at(0)).isEmpty());
+    QVERIFY2(!config.problems().isEmpty(),
+             "an unknown generator must be reported, not silently inert");
+}
+
+void TestConfig::migrationAddsSentWhenAnAccountHasOne()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, twoAccountsWithSent()
+                                       + QStringLiteral(
+        "\n[queries]\n"
+        "Inbox=tag:inbox\n"
+    ));
+
+    Config config;
+    config.load(path);
+
+    const QList<SavedQuery> queries = config.savedQueries();
+    QCOMPARE(queries.size(), 2);
+    // Last, where the button already sat: after the saved queries.
+    QCOMPARE(queries.at(1).name, QStringLiteral("Sent"));
+    QVERIFY(queries.at(1).isGenerated());
+    QVERIFY(queries.at(1).pinned);
+    QVERIFY(queries.at(1).flat);
+}
+
+/// Today the button is hidden entirely when no account configures a sent
+/// folder, rather than offering one that always finds nothing. The migration
+/// must not invent a row that would do exactly that.
+void TestConfig::migrationAddsNoSentWithoutTheKey()
+{
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "name=Test User\n"
+        "address=user@example.org\n"
+        "maildir=work-mail\n"
+        "\n"
+        "[queries]\n"
+        "Inbox=tag:inbox\n"
+    ));
+
+    Config config;
+    config.load(path);
+
+    const QList<SavedQuery> queries = config.savedQueries();
+    QCOMPARE(queries.size(), 1);
+    QCOMPARE(queries.at(0).name, QStringLiteral("Inbox"));
 }
 
 QTEST_MAIN(TestConfig)

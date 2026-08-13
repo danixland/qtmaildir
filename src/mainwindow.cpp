@@ -1673,38 +1673,32 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
     auto *box = new QHBoxLayout(row);
     box->setContentsMargins(0, 0, 0, 0);
 
+    // Sent is an ordinary row here, not a hardcoded button beside the others.
+    // It is still GENERATED, so its query is composed from the accounts' `sent`
+    // keys at click time and correcting a folder name stays a config edit and
+    // nothing else; what changed is that the entry can now be reordered,
+    // renamed, unpinned or removed like every other, instead of being the one
+    // control on the row the user did not own.
     QList<SavedQuery> unpinned;
     for (const SavedQuery &saved : m_config.savedQueries()) {
+        // A generator whose accounts configure nothing produces a button that
+        // always finds nothing. Skipped entirely, which is what the hardcoded
+        // Sent button did and is worth keeping.
+        if (saved.isGenerated() && m_config.resolvedQuery(saved).isEmpty())
+            continue;
+
         if (!saved.pinned) {
             unpinned.append(saved);
             continue;
         }
         auto *button = new QPushButton(saved.name, row);
+        // The generated entries keep a stable object name so a test can find
+        // the sent button without depending on what the user renamed it to.
+        if (saved.generated == QStringLiteral("sent"))
+            button->setObjectName(QStringLiteral("sentButton"));
         connect(button, &QPushButton::clicked, this,
                 [this, saved]() { runSavedQuery(saved); });
         box->addWidget(button);
-    }
-
-    // Sent sits with the saved queries and is not one: its query is COMPOSED
-    // from the accounts' `sent` keys at click time, so adding an account or
-    // correcting a folder name is a config edit and nothing else. A stored
-    // entry holding the same string would go stale silently, and could not
-    // narrow to the selected account the way this does through
-    // runCurrentQuery()'s existing scope wrap.
-    //
-    // Hidden entirely when no account configures a sent folder, rather than
-    // offering a button that always finds nothing.
-    if (!m_config.allSentQuery().isEmpty()) {
-        auto *sentButton = new QPushButton(tr("Sent"), row);
-        sentButton->setObjectName(QStringLiteral("sentButton"));
-        connect(sentButton, &QPushButton::clicked, this, [this]() {
-            m_queryEdit->setText(m_config.allSentQuery());
-            // Flat for this query only. runCurrentQuery() clears it again for
-            // anything else, including the same query typed by hand, so the
-            // flag cannot outlive the button that set it.
-            runQuery(FlatResult::Yes);
-        });
-        box->addWidget(sentButton);
     }
 
     // Everything above is left-aligned; the stretch here pushes what follows
@@ -1751,8 +1745,16 @@ void MainWindow::runSavedQuery(const SavedQuery &saved)
     if (index >= 0)
         m_accountBox->setCurrentIndex(index);
 
-    m_queryEdit->setText(saved.query);
-    runCurrentQuery();
+    // A generated entry has no stored query: the text is composed from the
+    // accounts now, so what lands in the bar is what actually ran and the user
+    // can see and edit it.
+    m_queryEdit->setText(saved.isGenerated() ? m_config.resolvedQuery(saved)
+                                             : saved.query);
+
+    // Flat for this query only. runQuery() sets the mode on EVERY run, so the
+    // flag cannot outlive the entry that asked for it, including for the same
+    // query typed by hand afterwards.
+    runQuery(saved.flat ? FlatResult::Yes : FlatResult::No);
 }
 
 void MainWindow::saveCurrentQuery()

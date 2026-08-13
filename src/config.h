@@ -122,6 +122,27 @@ struct SavedQuery
     /// user edits it. Resolve through Config::resolvedQuery().
     QString account;
 
+    /// Names a builtin that COMPOSES this query from the accounts at run time,
+    /// rather than storing it. Empty for an ordinary query.
+    ///
+    /// "sent" is the only one today. Its query is built from every account's
+    /// `sent` key, so adding an account or correcting a folder name is a config
+    /// edit and nothing else; a stored copy of the same string would go stale
+    /// silently. That property is why Sent used to be hardcoded beside the
+    /// saved queries instead of living with them, which left one button on the
+    /// row that could not be reordered, renamed, unpinned or removed.
+    ///
+    /// Storing the GENERATOR rather than its output keeps both: the query stays
+    /// live, and the entry is an ordinary row the user owns.
+    QString generated;
+
+    /// Lists messages rather than threads. Set for the sent view, where a
+    /// thread would fold every reply back into the conversation the user sent
+    /// one message into.
+    bool flat = false;
+
+    bool isGenerated() const { return !generated.isEmpty(); }
+
     /// Keys this build does not understand, preserved verbatim so a file
     /// written by a later version survives a save from this one.
     QJsonObject unknown;

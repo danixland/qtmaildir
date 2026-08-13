@@ -223,16 +223,36 @@ queries** menu, which keeps the row usable once you have more than a handful.
 same as choosing that account in the dropdown; leave it out for a query that
 spans every account.
 
+**Sent is an entry like any other**, and the one that carries `generated`
+instead of `query`:
+
+```json
+{ "name": "Sent", "generated": "sent", "pinned": true }
+```
+
+A generated query is composed from your accounts every time you click it,
+rather than stored. That is why Sent has no `query` of its own: it is built
+from every account's `sent` key, so adding an account or correcting a folder
+name updates the button with no edit here. A stored copy of the same string
+would quietly go on naming the old folder.
+
+Being an ordinary entry, it can be reordered, renamed, unpinned or deleted like
+the rest. Renaming it to `Posta inviata` changes only the label. `sent` is the
+only generator today, and it is skipped entirely when no account configures a
+sent folder, rather than offering a button that finds nothing.
+
 The name is what the button says, so `Important` and `Flagged` can run the same
 query and differ only in the label.
 
 **Upgrading from 0.17.0 or earlier.** Saved queries used to live in a
 `[queries]` section of `qtmaildir.conf`. The first launch after upgrading reads
 that section, writes `queries.json` from it, and marks every entry pinned so
-your buttons stay where they were. Your config file is not modified: the old
-`[queries]` section is left exactly as it is, ignored from then on, and you can
-delete it by hand whenever you like. The reason it is not removed for you is
-that rewriting the file would drop your comments and reorder your keys.
+your buttons stay where they were. Sent is added as a `generated` entry at the
+end, where its button already sat, provided an account configures a sent
+folder. Your config file is not modified: the old `[queries]` section is left
+exactly as it is, ignored from then on, and you can delete it by hand whenever
+you like. The reason it is not removed for you is that rewriting the file would
+drop your comments and reorder your keys.
 
 One behaviour changes with the move. Buttons used to appear in alphabetical
 order, because the INI backend returns keys sorted and preserving file order

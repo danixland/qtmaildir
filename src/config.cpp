@@ -51,6 +51,14 @@ constexpr int kMaxToolbarIconSize = 64;
 /// two-repo change and no hook stops tagging if it is half-deployed.
 constexpr int kQueriesFormatVersion = 1;
 
+/// Generators a saved query may name in its `generated` field.
+///
+/// A closed set, checked on load so a typo is reported rather than producing a
+/// button that silently finds nothing. Adding one here needs no format bump:
+/// an older build keeps the row and reports it, which is why an unknown
+/// generator is a problem rather than a reason to drop the entry.
+const QStringList kQueryGenerators = { QStringLiteral("sent") };
+
 } // namespace
 
 QString Account::scopedQuery(const QString &query) const
@@ -457,9 +465,26 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
         }
         settings.endGroup();
 
+        // Sent was a hardcoded button beside the saved queries and becomes an
+        // ordinary row here, so it can be reordered, renamed, unpinned or
+        // removed like any other. It stays GENERATED, so it still follows the
+        // accounts. Appended last, where the button already sat.
+        //
+        // Only when an account actually configures a sent folder: the button
+        // was hidden entirely otherwise, and migrating a row that always finds
+        // nothing would be worse than what it replaces.
+        if (!allSentQuery().isEmpty()) {
+            SavedQuery sent;
+            sent.name = QStringLiteral("Sent");
+            sent.generated = QStringLiteral("sent");
+            sent.pinned = true;
+            sent.flat = true;
+            m_savedQueries.append(sent);
+        }
+
         // Order is alphabetical here because childKeys() is genuinely all the
         // INI knows. The user reorders once and it sticks from then on.
-        if (!names.isEmpty() && !saveSavedQueries()) {
+        if (!m_savedQueries.isEmpty() && !saveSavedQueries()) {
             addProblem(QStringLiteral("Could not write saved queries to %1.")
                            .arg(m_queriesPath));
         }
@@ -516,6 +541,26 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
         query.query = object.value(QStringLiteral("query")).toString();
         query.pinned = object.value(QStringLiteral("pinned")).toBool(false);
         query.account = object.value(QStringLiteral("account")).toString();
+        query.generated = object.value(QStringLiteral("generated")).toString();
+        // A generator carries its own view mode, so "sent" is flat whether or
+        // not the file says so. Storing it as a plain field would let a
+        // hand-edited or migrated-from-elsewhere row produce a THREADED sent
+        // view, which folds every reply back into the conversation the user
+        // sent one message into. The file may still set it for an ordinary
+        // query.
+        query.flat = object.value(QStringLiteral("flat")).toBool(false)
+                     || query.generated == QStringLiteral("sent");
+
+        if (query.isGenerated()
+            && !kQueryGenerators.contains(query.generated)) {
+            // Reported but KEPT. A later build may know this generator, and
+            // dropping the row here would delete it from the file on the next
+            // save, which is the same data loss the unknown-field handling
+            // exists to prevent.
+            addProblem(QStringLiteral("Saved query '%1' uses an unknown "
+                                      "generator '%2' and will find nothing.")
+                           .arg(query.name, query.generated));
+        }
 
         if (query.name.isEmpty()) {
             addProblem(QStringLiteral("A saved query in %1 has no name and was "
@@ -526,7 +571,8 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
         for (auto it = object.begin(); it != object.end(); ++it) {
             static const QStringList known = {
                 QStringLiteral("name"), QStringLiteral("query"),
-                QStringLiteral("pinned"), QStringLiteral("account")
+                QStringLiteral("pinned"), QStringLiteral("account"),
+                QStringLiteral("generated"), QStringLiteral("flat")
             };
             if (!known.contains(it.key()))
                 query.unknown.insert(it.key(), it.value());
@@ -550,6 +596,10 @@ bool Config::saveSavedQueries() const
             object.insert(QStringLiteral("pinned"), true);
         if (!query.account.isEmpty())
             object.insert(QStringLiteral("account"), query.account);
+        if (query.isGenerated())
+            object.insert(QStringLiteral("generated"), query.generated);
+        if (query.flat)
+            object.insert(QStringLiteral("flat"), true);
         for (auto it = query.unknown.begin(); it != query.unknown.end(); ++it)
             object.insert(it.key(), it.value());
         array.append(object);
@@ -572,6 +622,18 @@ bool Config::saveSavedQueries() const
 
 QString Config::resolvedQuery(const SavedQuery &query) const
 {
+    // Composed from the accounts every time it is asked for, which is the
+    // point: the answer follows the config rather than a copy of it taken when
+    // the entry was written.
+    if (query.isGenerated()) {
+        if (query.generated == QStringLiteral("sent"))
+            return allSentQuery();
+        // An unknown generator was reported on load. Empty rather than the
+        // bare stored query, which for a generated entry is empty anyway and
+        // would otherwise run as "match everything".
+        return QString();
+    }
+
     if (query.account.isEmpty())
         return query.query;
 

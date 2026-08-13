@@ -200,6 +200,9 @@ private slots:
     void thereIsASaveButtonBesideTheQueryBar();
     void theMenuIsRightAlignedAwayFromTheButtons();
     void theRowSurvivesWithNothingButUnpinnedQueries();
+    void aStoredGeneratedQueryRunsFlatAndComposed();
+    void aRenamedSentEntryKeepsWorking();
+    void aGeneratedQueryWithNothingToShowIsSkipped();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -5662,6 +5665,114 @@ void TestMainWindow::theRowSurvivesWithNothingButUnpinnedQueries()
         window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
     QVERIFY(menuButton);
     QCOMPARE(menuButton->menu()->actions().size(), 2);
+}
+
+static QString oneAccountWithSent()
+{
+    return QStringLiteral(
+        "[account.work]\n"
+        "name=Test User\n"
+        "address=user@example.org\n"
+        "maildir=work-mail\n"
+        "sent=Sent\n"
+    );
+}
+
+/// The existing Sent tests reach the generated entry through MIGRATION, since
+/// their configs have no queries.json. This one starts from a stored file, so
+/// it covers the path a user is on from the second launch onwards.
+void TestMainWindow::aStoredGeneratedQueryRunsFlatAndComposed()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Sent", "generated": "sent", "pinned": true }
+        ]
+    })"), oneAccountWithSent());
+
+    MainWindow window(config);
+    auto *button =
+        window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+    QVERIFY(button);
+
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    QVERIFY2(!model->flatMode(), "the model starts threaded");
+
+    button->click();
+
+    // Composed from the account, not read from the file: the entry stores no
+    // query at all.
+    QCOMPARE(queryEdit->text(), config.allSentQuery());
+    QVERIFY(queryEdit->text().contains(
+        QStringLiteral("path:\"work-mail/Sent/**\"")));
+    QVERIFY2(model->flatMode(),
+             "a sent view must be flat, or replies fold back into the thread");
+}
+
+/// The point of the change: Sent is the user's row now. Renaming it must not
+/// break it, which it would if anything keyed on the literal name "Sent".
+void TestMainWindow::aRenamedSentEntryKeepsWorking()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Posta inviata", "generated": "sent", "pinned": true }
+        ]
+    })"), oneAccountWithSent());
+
+    MainWindow window(config);
+    const QStringList labels = savedQueryButtonLabels(window);
+    QCOMPARE(labels, QStringList{ QStringLiteral("Posta inviata") });
+
+    auto *button =
+        window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+    QVERIFY2(button, "the generated entry lost its identity when renamed");
+
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    button->click();
+    QCOMPARE(queryEdit->text(), config.allSentQuery());
+}
+
+/// The hardcoded button was hidden entirely when no account configured a sent
+/// folder, rather than offering one that always finds nothing. A stored row
+/// must behave the same way.
+void TestMainWindow::aGeneratedQueryWithNothingToShowIsSkipped()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true },
+            { "name": "Sent", "generated": "sent", "pinned": true }
+        ]
+    })"), QStringLiteral(
+        "[account.work]\n"
+        "name=Test User\n"
+        "address=user@example.org\n"
+        "maildir=work-mail\n"
+    ));
+
+    MainWindow window(config);
+
+    // The guard: the row was built and the other entry did get a button, so a
+    // missing Sent means it was skipped rather than that nothing was built.
+    QCOMPARE(savedQueryButtonLabels(window),
+             QStringList{ QStringLiteral("Inbox") });
+    QVERIFY2(!window.findChild<QPushButton *>(QStringLiteral("sentButton")),
+             "a generated query with nothing to show must not get a button");
 }
 
 #include "test_mainwindow.moc"

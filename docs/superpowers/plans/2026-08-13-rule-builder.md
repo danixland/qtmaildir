@@ -376,9 +376,20 @@ bool needsQuotes(const RuleTerm &term)
 {
     if (term.field == RuleTerm::Folder)
         return true;
-    if (term.op == RuleTerm::Is || term.op == RuleTerm::IsNot)
+    if (term.value.contains(QLatin1Char(' ')))
         return true;
-    return term.value.contains(QLatin1Char(' '));
+    // Is/IsNot means an exact phrase, and only the free-text fields need
+    // quotes to express one. A tag or an attachment name is a single bare
+    // token to notmuch, which reads `tag:inbox` and `tag:"inbox"` identically
+    // (both count 5322 against the live index). Quoting them would therefore
+    // change the stored string without changing what it matches, and this
+    // type's whole contract is that an unedited rule compiles back byte for
+    // byte.
+    if (term.op == RuleTerm::Is || term.op == RuleTerm::IsNot) {
+        return term.field == RuleTerm::From || term.field == RuleTerm::To
+               || term.field == RuleTerm::Cc || term.field == RuleTerm::Subject;
+    }
+    return false;
 }
 
 QString compileTerm(const RuleTerm &term)
@@ -793,6 +804,9 @@ bool parseTerm(const QString &token, RuleTerm *out)
         return !value.isEmpty();
     }
 
+    // Tag and Attachment compile unquoted (see needsQuotes in Task 2), so
+    // their operator must not be inferred from the quoting: reading a quoted
+    // tag back as Is would compile it unquoted and change the stored string.
     if (field == RuleTerm::Attachment)
         out->op = RuleTerm::Has;
     else if (field == RuleTerm::Tag)
@@ -1099,6 +1113,11 @@ void TestRuleQuery::anUnrepresentableQueryRejectsWhole()
         QStringLiteral("date:2026-01-01..2026-02-01"),  // two-sided range
         QStringLiteral("from:a.example.org xor subject:x"),
     };
+    // NOT in this list: `from:((((`. It parses, as a From row whose value is
+    // the literal text `((((`, and round-trips byte for byte. That is exactly
+    // what the query means to notmuch, which treats the parens as characters
+    // to search for rather than as grouping, so the row tells the truth and
+    // rejecting it would buy nothing. See the test below.
 
     for (const QString &query : unrepresentable) {
         const RuleQuery q = RuleQuery::parse(query);
@@ -1112,11 +1131,19 @@ void TestRuleQuery::anUnrepresentableQueryRejectsWhole()
 
 void TestRuleQuery::aMalformedQueryIsRejectedNotDiagnosed()
 {
-    // notmuch accepts `from:((((` cleanly and matches nothing, so there is no
-    // failure to observe and a test asserting one fails against correct code.
-    // The assertion is on OUR rejection only.
+    // notmuch accepts `from:((((` cleanly and matches nothing: the parens are
+    // characters it searches for, not grouping. So there is no failure to
+    // observe, and a test asserting one fails against correct code.
+    //
+    // This parser accepts it too, as a From row whose value is that literal
+    // text, which is what the query actually means. What must hold is the
+    // round trip, not a rejection: displaying it as a row and compiling it
+    // back must not alter the stored string.
     const RuleQuery q = RuleQuery::parse(QStringLiteral("from:(((("));
-    QVERIFY(!q.parsed);
+    QVERIFY(q.parsed);
+    QCOMPARE(q.terms.size(), 1);
+    QCOMPARE(q.terms.at(0).value, QStringLiteral("(((("));
+    QCOMPARE(q.compile(), QStringLiteral("from:(((("));
 }
 ```
 

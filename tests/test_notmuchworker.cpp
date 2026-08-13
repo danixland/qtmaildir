@@ -80,6 +80,9 @@ private slots:
     void messageCountsCountMessagesNotThreads();
     void messageCountsReportAnInvalidQueryAsMinusOne();
 
+    void requestFoldersListsEveryMaildirFolder();
+    void requestFoldersOnUnreadableConfigEmitsError();
+
 private:
     /// Tags of one message, read back through a fresh worker query.
     QStringList tagsOf(const QString &messageId);
@@ -895,6 +898,80 @@ void TestNotmuchWorker::requestDatabaseStatsOnUnreadableConfigEmitsError()
     QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
 
     worker.requestDatabaseStats(1);
+
+    QCOMPARE(errors.size(), 1);
+    QVERIFY(ready.isEmpty());
+}
+
+void TestNotmuchWorker::requestFoldersListsEveryMaildirFolder()
+{
+    // Its own fixture rather than the shared one: this needs a NESTED folder,
+    // which is the shape a real account has (<account>/Drafts, not a flat
+    // "drafts"), and adding a message to the shared fixture would move seven
+    // count assertions in other tests for nothing.
+    NotmuchFixture fixture;
+    QVERIFY(fixture.isValid());
+    QVERIFY(fixture.addMessage(QStringLiteral("work/INBOX"),
+                               QStringLiteral("g1@example.org"),
+                               QStringLiteral("Something"),
+                               QStringLiteral("Alice <alice@example.org>"),
+                               QStringLiteral("Mon, 1 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body"), false));
+    QVERIFY(fixture.addMessage(QStringLiteral("work/Drafts"),
+                               QStringLiteral("g2@example.org"),
+                               QStringLiteral("Half written"),
+                               QStringLiteral("You <you@example.org>"),
+                               QStringLiteral("Tue, 2 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body"), false));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    // An EMPTY folder, created but never written to. mbsync makes these, and a
+    // list derived from indexed messages would not offer it. A rule may
+    // legitimately target a folder that has nothing in it yet.
+    QDir dir;
+    const QString empty = fixture.maildirPath() + QStringLiteral("/work/Archive");
+    QVERIFY(dir.mkpath(empty + QStringLiteral("/cur")));
+    QVERIFY(dir.mkpath(empty + QStringLiteral("/new")));
+    QVERIFY(dir.mkpath(empty + QStringLiteral("/tmp")));
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy ready(&worker, &NotmuchWorker::foldersReady);
+
+    worker.requestFolders();
+
+    QCOMPARE(ready.count(), 1);
+    const QStringList folders = ready.first().at(0).toStringList();
+
+    // Paths relative to the database root, which is what a Folder term
+    // compiles a path: against. Drafts is the whole point of the item: the
+    // dialog used to offer one entry per account and nothing below it.
+    QVERIFY(folders.contains(QStringLiteral("work/INBOX")));
+    QVERIFY(folders.contains(QStringLiteral("work/Drafts")));
+    QVERIFY(folders.contains(QStringLiteral("work/Archive")));
+
+    // Not the maildir plumbing, which is not a folder anyone files mail into,
+    // and not the account directory itself, which holds no cur/.
+    QVERIFY(!folders.contains(QStringLiteral("work/INBOX/cur")));
+    QVERIFY(!folders.contains(QStringLiteral("work/INBOX/new")));
+    QVERIFY(!folders.contains(QStringLiteral("work")));
+
+    // Sorted, so the dropdown does not reorder itself between openings with
+    // the same tree on disk. QDir's own order is filesystem order.
+    QStringList sorted = folders;
+    sorted.sort();
+    QCOMPARE(folders, sorted);
+}
+
+void TestNotmuchWorker::requestFoldersOnUnreadableConfigEmitsError()
+{
+    // Fails closed like every other entry point. The dialog then leaves the
+    // dropdown as it was rather than emptying it, since an empty list reads as
+    // "this account has no folders".
+    NotmuchWorker worker(QStringLiteral("/nonexistent/qtmaildir-test/config"));
+    QSignalSpy ready(&worker, &NotmuchWorker::foldersReady);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.requestFolders();
 
     QCOMPARE(errors.size(), 1);
     QVERIFY(ready.isEmpty());

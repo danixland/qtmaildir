@@ -221,7 +221,12 @@ an empty query and must open in the builder ready to receive a row.
 
 Everything else sets `parsed = false`: nested parens beyond that one shape,
 mixed `and`/`or` without parens, `xor`, an unrecognised prefix (`body:`, `mid:`,
-`folder:`), a bare word with no prefix, a `path:` not ending in `/**`.
+`folder:`), a bare word with no prefix, a `path:` not ending in `/**`, a
+two-sided `date:` range, a trailing operator, an unterminated quote.
+
+A parenthesis **inside a value** is not a shape at all: `from:((((` is a From
+term whose value happens to contain parens, and it parses and round-trips like
+any other. Only a parenthesis in grouping position is a shape question.
 
 ### The parser is strict, and that is the safety property
 
@@ -270,7 +275,7 @@ The builder replaces the query line edit. Everything else in the form stays.
 ```
 Id       [ vendor-receipts        ]   Stage [ 50 ]  [x] Applied on every sync
 
-Match    (o) all   ( ) any                        [ ] Edit as text
+Match    (o) all   ( ) any
    [From    v] [contains v] [vendor.example.org  ] [+] [-]
    [From    v] [contains v] [vendor.example.net  ] [+] [-]
 But not
@@ -282,8 +287,21 @@ Add tags     [ vendor, receipts    ]
 Remove tags  [                     ]
 Note         [ ...                 ]
 
-Query    (from:vendor.example.org or ...) and not subject:receipt  [Count matches]
+Query    (from:vendor.example.org or ...) and not subject:receipt
+                                                   [ ] Edit as text
 ```
+
+**The "Edit as text" toggle belongs to the QUERY row, not to the match row.**
+An earlier draft of this sketch put it beside the all/any radios, which is
+where it reads best and is also wrong: switching to text mode hides the
+builder, and a checkbox living inside the builder disappears with it, leaving
+no way back except closing the dialog. That shipped and a hand test found it
+within minutes. The query row is visible in both modes, so a toggle there is
+always reachable.
+
+The test for this must assert **reachability**, not the checked state. A
+hidden checkbox reports its state perfectly well, so a state assertion passes
+against the broken layout.
 
 **The query line stays visible in builder mode, read-only.** It is what ships to
 the hook, and watching it update as rows change is what makes the builder
@@ -334,10 +352,16 @@ terms and tests exactly the same thing.
 
 **Rejection tests**, which carry the safety property. Queries that must set
 `parsed = false` and must not partially parse: nested `or` inside `or`, mixed
-`and`/`or` without parens, `body:foo`, a bare word, a `path:` without `/**`, and
-`from:((((`. That last asserts **our** rejection, never a provoked notmuch
-failure: `CLAUDE.md` records twice that notmuch accepts it cleanly, and a test
-expecting an error there fails against correct code.
+`and`/`or` without parens, `body:foo`, a bare word, a `path:` without `/**`, a
+two-sided `date:` range, and a trailing operator.
+
+**`from:((((` is not among them, and the reason is worth stating.** notmuch
+treats those parens as characters to search for rather than as grouping, so the
+query is meaningful, matches nothing, and reports no error. This parser accepts
+it as a From row whose value is that literal text, which is what it means. The
+assertion there is the **round trip**, never a rejection and never a provoked
+notmuch failure: `CLAUDE.md` records twice that notmuch accepts it cleanly, and
+a test expecting an error fails against correct code.
 
 **Compile tests** for every field and operator pair including both negations,
 and the parenthesisation rule at its boundary: `join == Any` with zero

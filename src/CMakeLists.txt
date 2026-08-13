@@ -23,6 +23,7 @@ add_library(qtmaildir_lib STATIC
     messageview.cpp
     mainwindow.cpp
     querycompleter.cpp
+    rulequery.cpp
 )
 
 target_include_directories(qtmaildir_lib

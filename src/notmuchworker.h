@@ -151,6 +151,18 @@ public slots:
     /// called when the dialog is opened and never on a timer.
     void requestDatabaseStats(quint64 generation);
 
+    /// Every Maildir folder under the database root, as paths relative to it.
+    ///
+    /// From the DISK, not from the index: a folder mbsync created and nothing
+    /// has landed in yet is still a folder a tagging rule may target, and one
+    /// derived from indexed message paths would not offer it.
+    ///
+    /// Here rather than in MainWindow because the database root is
+    /// notmuch's `database.path` and this class owns the only handle that can
+    /// answer for it. Duplicating the path into config is exactly the second
+    /// source of truth the design refuses.
+    void requestFolders();
+
 signals:
     void threadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void queryFinished(int totalThreads, quint64 generation);
@@ -174,6 +186,11 @@ signals:
     /// Fields left at -1 are ones notmuch could not answer, which the dialog
     /// renders as unknown rather than as zero.
     void databaseStatsReady(const DatabaseStats &stats, quint64 generation);
+
+    /// Maildir folders relative to the database root, sorted. No generation:
+    /// the tree on disk does not change under a query, and the one consumer
+    /// asks once when its dialog opens.
+    void foldersReady(const QStringList &folders);
 
     void errorOccurred(const QString &message);
 

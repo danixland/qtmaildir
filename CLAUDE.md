@@ -317,6 +317,36 @@ current index invalid when nothing was current. A test that calls `selectAll()` 
 view therefore passes against a missing selection guard, because no signal ever fires. Test
 multi-select from a row that is already current, which is also how a user reaches it.
 
+**A `QDialog`'s buttons do not send a `QCloseEvent`.** `accept()` and `reject()`
+go through `done(int)`, which hides the dialog without ever closing a window, so
+a `closeEvent` override runs only for the window manager's X button. Anything a
+dialog must persist on the way out belongs in a `done(int)` override, which both
+buttons and `close()` reach. This shipped wrong in the rules dialog and the test
+covering it passed, because the test used `close()` and the user used Cancel:
+one route out of three. Assert every route. Underneath sits a second trap:
+`close()` on a widget that was never shown returns early WITHOUT reaching
+`done()`, so a test for the closed path has to `show()` the dialog first or it
+asserts nothing at all.
+
+**Under a tiling compositor a window's size is not the application's to
+restore, and the user's desktop is Hyprland.** `saveGeometry` stores
+`frameGeometry` and `normalGeometry`; `restoreGeometry` restores the NORMAL
+one. When the compositor tiles the window to fill its slot, the size the user
+drags is the tile's, and `normalGeometry` keeps whatever the code last passed to
+`resize()`. Measured against the real state file after a hand test: frame
+2248x806, normal 760x664, so the dialog correctly restored 760 and correctly
+looked broken. A whole session went into "the geometry restore is broken" before
+the blob was decoded. Decode the stored geometry before theorising, and expect
+`maximized` to read as a value no bool should hold, which is the tiled state Qt
+records and does not round-trip.
+
+The corollary for tests: **the offscreen platform cannot test window sizing at
+all.** It prints "This plugin does not support propagateSizeHints()" and returns
+an identical frame for a correct restore and a broken one, verified in a
+standalone program containing none of this project's code. A size assertion
+there passes against both, and a mutation putting the bug back leaves the suite
+green. Assert on the stored value, and leave the frame to a hand test.
+
 **A queued load can outlive the state that started it.** `loadThread` crosses to the worker
 on a queued connection, so its reply lands after whatever the UI did in the meantime. The
 generation counter covers a superseded *query*, not a superseded *selection*: blanking the

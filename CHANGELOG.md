@@ -11,6 +11,46 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- The tagging rules dialog builds a rule from rows now: a field and operator
+  dropdown per condition, `+`/`-` to add and remove them, a match all/any
+  choice, and a separate "but not" block for exclusions. The notmuch query
+  stays visible and is what gets saved, so a rule the builder cannot show
+  opens as text and still works. Opening a rule without editing it leaves the
+  stored query untouched.
+- A Folder condition picks from a list of every folder in your Maildir rather
+  than being typed, Drafts and Sent included, not only the top of each
+  account. A folder path with a typo matches nothing and notmuch reports no
+  error, so the rule would simply never fire. The list is read from the tree
+  on disk, so a folder that exists but has no mail in it yet is still offered.
+  It stays editable, so a folder in the rules file that is no longer on disk
+  still opens and still saves.
+- A **Preview in list** button in the tagging rules dialog runs the selected
+  rule's query in the main window, so you can see which mail a rule collects
+  rather than only how many messages it matches. The dialog stays open. The
+  query runs exactly as stored, without the `tag:new` scope the hook adds, and
+  the account selector is cleared first, since a rule query that names its own
+  folder would otherwise be scoped twice and match nothing.
+- The rule list and the rule editor are now divided by a draggable splitter,
+  and the condition rows scroll instead of growing without limit. A rule with
+  eight senders used to squeeze the list to about one visible row, since the
+  editor grew with every condition and the list gave up the space. Where you
+  leave the divider is remembered.
+- The tagging rules window remembers the widths of the rule list's columns. A
+  column you widen also survives adding or deleting a rule, which previously
+  reset it. The window's own size is saved too, but a tiling window manager
+  sizes the window itself, so there it opens at whatever size the tile gives
+  it.
+
+### Fixed
+
+- Opening the tagging rules dialog and saving destroyed the first rule in the
+  list, even with nothing edited. The rule lost its query and its tags, then
+  vanished on the next load, since a rule with an empty query is dropped as
+  malformed. Populating the form emitted a change signal that wrote the form
+  back over the rule before the query field had been filled.
+
 ## [0.16.0] - 2026-08-13
 
 The rules that tag your mail on arrival move out of a shell script and into the

@@ -185,6 +185,27 @@ public:
     /// The generation the next counts reply must carry to be accepted.
     quint64 countsGenerationForTesting() const { return m_countsGeneration; }
 
+    /// The query bar's text, and the account the selector is scoped to
+    /// (empty for "All accounts"). Both are what a rule preview writes: the
+    /// bar so the user can see and edit what ran, and the selector because
+    /// runQuery() wraps the text in the selected account's scope, which would
+    /// double-scope a rule query that already names its own path.
+    QString queryTextForTesting() const;
+    QString selectedAccountForTesting() const;
+
+    /// Scopes the view to one account, as choosing it in the selector does.
+    /// A test for the rule preview needs this: with no account selected the
+    /// box already sits at "All accounts", so asserting that a preview leaves
+    /// it there passes whether or not the preview clears it.
+    void selectAccountForTesting(const QString &key);
+
+    /// Runs a rule preview without the dialog, which the offscreen platform
+    /// cannot click a button in.
+    void previewRuleQueryForTesting(const QString &query)
+    {
+        onRulePreviewRequested(query);
+    }
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
@@ -292,6 +313,11 @@ private slots:
 
     /// Runs a query the user clicked on the placeholder pane.
     void onPlaceholderQueryRequested(const QString &query);
+
+    /// Runs one tagging rule's query in the thread list, so the user can see
+    /// which mail it collects. The rules dialog stays open; the point is to
+    /// compare the rule against its results.
+    void onRulePreviewRequested(const QString &query);
 
     /// Opens the auto-tagging rules editor, or raises the one already open.
     void showTagRulesDialog();

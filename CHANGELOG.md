@@ -28,6 +28,12 @@ point at which they are stable.
   it can now be reordered, renamed, unpinned or deleted like any other entry
   rather than being a fixed button you did not own.
 
+- **Right-click a saved query** to edit, pin, unpin or delete it. A saved query
+  could previously be created and never changed: the only route to adjusting one
+  field was to retype the whole query under the same name, and there was no way
+  to delete one at all short of editing the file (item 82). Deleting asks first,
+  since it writes your config and is not undoable.
+
 ### Changed
 
 - Saved queries have a **row of their own** beneath the query bar rather than

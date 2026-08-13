@@ -244,6 +244,12 @@ sent folder, rather than offering a button that finds nothing.
 The name is what the button says, so `Important` and `Flagged` can run the same
 query and differ only in the label.
 
+**Right-click a saved query** (a button, or its entry in the menu) to edit it,
+move it between the row and the menu, or delete it. Deleting asks first: it
+rewrites this file and there is no undo for it. Editing a generated entry shows
+its composed query read-only, since that one is built from your accounts rather
+than stored.
+
 **Upgrading from 0.17.0 or earlier.** Saved queries used to live in a
 `[queries]` section of `qtmaildir.conf`. The first launch after upgrading reads
 that section, writes `queries.json` from it, and marks every entry pinned so

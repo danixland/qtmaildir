@@ -1698,6 +1698,7 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
             button->setObjectName(QStringLiteral("sentButton"));
         connect(button, &QPushButton::clicked, this,
                 [this, saved]() { runSavedQuery(saved); });
+        addSavedQueryActions(button, saved);
         box->addWidget(button);
     }
 
@@ -1718,6 +1719,12 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
             QAction *action = menu->addAction(saved.name);
             connect(action, &QAction::triggered, this,
                     [this, saved]() { runSavedQuery(saved); });
+            // A menu entry has no context menu of its own, so its own submenu
+            // carries the same three actions; an unpinned query would
+            // otherwise be the one thing that cannot be edited or deleted.
+            auto *entryMenu = new QMenu(menu);
+            addSavedQueryActions(entryMenu, saved);
+            action->setMenu(entryMenu);
         }
         menuButton->setMenu(menu);
         box->addWidget(menuButton);
@@ -1731,6 +1738,105 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
     // query with no pinned ones still needs the row for its menu.
     if (contentCount == 0 && unpinned.isEmpty())
         row->hide();
+}
+
+void MainWindow::addSavedQueryActions(QWidget *target, const SavedQuery &saved)
+{
+    target->setContextMenuPolicy(Qt::ActionsContextMenu);
+
+    auto *edit = new QAction(tr("Edit..."), target);
+    edit->setObjectName(QStringLiteral("editQuery"));
+    connect(edit, &QAction::triggered, this,
+            [this, saved]() { editSavedQuery(saved); });
+    target->addAction(edit);
+
+    auto *pin = new QAction(saved.pinned ? tr("Move to menu")
+                                         : tr("Show as a button"),
+                            target);
+    pin->setObjectName(QStringLiteral("pinQuery"));
+    connect(pin, &QAction::triggered, this, [this, saved]() {
+        SavedQuery toggled = saved;
+        toggled.pinned = !saved.pinned;
+        replaceSavedQuery(saved.name, toggled);
+    });
+    target->addAction(pin);
+
+    auto *separator = new QAction(target);
+    separator->setSeparator(true);
+    target->addAction(separator);
+
+    auto *remove = new QAction(tr("Delete"), target);
+    remove->setObjectName(QStringLiteral("deleteQuery"));
+    connect(remove, &QAction::triggered, this,
+            [this, saved]() { deleteSavedQuery(saved); });
+    target->addAction(remove);
+}
+
+void MainWindow::editSavedQuery(const SavedQuery &saved)
+{
+    SaveQueryDialog dialog(m_config, saved, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    // Matched on the name the dialog OPENED with. Using the returned name would
+    // leave the original entry in place and add a second one under the new
+    // name, which is a duplicate rather than a rename.
+    replaceSavedQuery(saved.name, dialog.savedQuery());
+}
+
+void MainWindow::deleteSavedQuery(const SavedQuery &saved)
+{
+    // One of the few places in this application that confirms. The rule against
+    // confirmation dialogs covers tag mutations, which are undoable through the
+    // undo stack; this writes user config, is not on that stack, and cannot be
+    // taken back.
+    if (m_confirmDelete) {
+        const auto answer = QMessageBox::question(
+            this, tr("Delete saved query"),
+            tr("Delete the saved query '%1'?").arg(saved.name),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes)
+            return;
+    }
+
+    replaceSavedQuery(saved.name, SavedQuery());
+}
+
+void MainWindow::replaceSavedQuery(const QString &originalName,
+                                   const SavedQuery &replacement)
+{
+    QList<SavedQuery> queries = m_config.savedQueries();
+    const bool removing = replacement.name.isEmpty();
+
+    for (int i = 0; i < queries.size(); ++i) {
+        if (queries.at(i).name.compare(originalName, Qt::CaseInsensitive) != 0)
+            continue;
+
+        if (removing) {
+            queries.removeAt(i);
+        } else {
+            // The unknown fields belong to the STORED entry: a field written by
+            // a later build survives an edit made here rather than being
+            // dropped on the next save.
+            SavedQuery merged = replacement;
+            merged.unknown = queries.at(i).unknown;
+            queries[i] = merged;
+        }
+        break;
+    }
+
+    m_config.setSavedQueries(queries);
+    if (!m_config.saveSavedQueries()) {
+        QMessageBox::warning(this, tr("Saved queries"),
+                             tr("Could not write the saved queries file."));
+        return;
+    }
+
+    rebuildSavedQueryRow();
+    statusBar()->showMessage(
+        removing ? tr("Deleted saved query '%1'.").arg(originalName)
+                 : tr("Updated saved query '%1'.").arg(replacement.name),
+        kStatusMessageMs);
 }
 
 void MainWindow::runSavedQuery(const SavedQuery &saved)
@@ -1817,6 +1923,13 @@ void MainWindow::rebuildSavedQueryRow()
 
     const int index = layout->indexOf(old);
     layout->removeWidget(old);
+    // Reparented out NOW, not merely scheduled for deletion. deleteLater()
+    // defers destruction to the event loop, so the old row goes on answering
+    // findChild() until it runs, and findChild returns the FIRST match: every
+    // lookup after a rebuild found the stale row and reported the state from
+    // before the edit. Nothing visible was wrong, which is why this only
+    // showed up as three tests failing on a row that had in fact been rebuilt.
+    old->setParent(nullptr);
     old->deleteLater();
 
     buildSavedQueryRow(centralWidget(), layout);

@@ -42,19 +42,51 @@ SaveQueryDialog::SaveQueryDialog(const Config &config, const QString &query,
     : QDialog(parent)
     , m_config(config)
 {
+    SavedQuery initial;
+    initial.query = query;
+    initial.account = accountKey;
+    initial.pinned = true;
     setWindowTitle(tr("Save query"));
+    build(initial);
+}
 
+SaveQueryDialog::SaveQueryDialog(const Config &config,
+                                 const SavedQuery &existing, QWidget *parent)
+    : QDialog(parent)
+    , m_config(config)
+    , m_originalName(existing.name)
+    , m_generated(existing.generated)
+    , m_flat(existing.flat)
+{
+    setWindowTitle(tr("Edit saved query"));
+    build(existing);
+}
+
+void SaveQueryDialog::build(const SavedQuery &initial)
+{
     auto *layout = new QVBoxLayout(this);
     auto *form = new QFormLayout;
 
-    m_name = new QLineEdit(this);
+    m_name = new QLineEdit(initial.name, this);
     m_name->setObjectName(QStringLiteral("saveQueryName"));
     m_name->setPlaceholderText(tr("A name for this query"));
     form->addRow(tr("Name"), m_name);
 
-    m_query = new QLineEdit(query, this);
+    m_query = new QLineEdit(initial.query, this);
     m_query->setObjectName(QStringLiteral("saveQueryQuery"));
-    form->addRow(tr("Query"), m_query);
+    if (initial.isGenerated()) {
+        // A generated entry has no stored query: it is composed from the
+        // accounts every time it runs. Shown, so the user can see what it will
+        // do, but read-only, since editing it would change nothing.
+        m_query->setText(m_config.resolvedQuery(initial));
+        m_query->setReadOnly(true);
+        m_query->setToolTip(tr("Built from your accounts and not editable. "
+                               "It follows the sent folder each account "
+                               "configures."));
+        form->addRow(tr("Query"), m_query);
+    } else {
+        form->addRow(tr("Query"), m_query);
+    }
 
     // The scope is stored as an account KEY, so the entries carry the key as
     // data exactly as the main window's dropdown does. "All accounts" is the
@@ -63,15 +95,15 @@ SaveQueryDialog::SaveQueryDialog(const Config &config, const QString &query,
     m_account = new QComboBox(this);
     m_account->setObjectName(QStringLiteral("saveQueryAccount"));
     m_account->addItem(tr("All accounts"), QString());
-    for (const Account &account : config.accounts())
+    for (const Account &account : m_config.accounts())
         m_account->addItem(account.key, account.key);
-    const int index = m_account->findData(accountKey);
+    const int index = m_account->findData(initial.account);
     m_account->setCurrentIndex(index >= 0 ? index : 0);
     form->addRow(tr("Account"), m_account);
 
     m_pinned = new QCheckBox(tr("Show as a button"), this);
     m_pinned->setObjectName(QStringLiteral("saveQueryPinned"));
-    m_pinned->setChecked(true);
+    m_pinned->setChecked(initial.pinned);
     form->addRow(QString(), m_pinned);
 
     layout->addLayout(form);
@@ -108,7 +140,14 @@ void SaveQueryDialog::updateOkState()
     const bool usable = !name.isEmpty() && !m_query->text().trimmed().isEmpty();
     m_ok->setEnabled(usable);
 
-    if (!name.isEmpty() && namesAnExistingQuery(m_config, name)) {
+    // Ignores the entry being edited: warning that "Inbox" already exists
+    // while editing Inbox is noise, and the real case worth catching is a
+    // rename onto a name something else already holds.
+    const bool isItsOwnName =
+        !m_originalName.isEmpty()
+        && name.compare(m_originalName, Qt::CaseInsensitive) == 0;
+    if (!name.isEmpty() && !isItsOwnName
+        && namesAnExistingQuery(m_config, name)) {
         m_notice->setText(
             tr("A saved query named '%1' already exists and will be "
                "replaced.").arg(name));
@@ -124,5 +163,12 @@ SavedQuery SaveQueryDialog::savedQuery() const
     saved.query = m_query->text().trimmed();
     saved.account = m_account->currentData().toString();
     saved.pinned = m_pinned->isChecked();
+    // Carried through rather than re-derived: an edit must not turn a
+    // generated entry into a plain one holding a snapshot of what it happened
+    // to resolve to today.
+    saved.generated = m_generated;
+    saved.flat = m_flat;
+    if (saved.isGenerated())
+        saved.query.clear();
     return saved;
 }

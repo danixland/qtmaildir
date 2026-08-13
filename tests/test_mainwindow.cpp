@@ -203,6 +203,11 @@ private slots:
     void aStoredGeneratedQueryRunsFlatAndComposed();
     void aRenamedSentEntryKeepsWorking();
     void aGeneratedQueryWithNothingToShowIsSkipped();
+    void aSavedQueryButtonOffersEditUnpinAndDelete();
+    void unpinningMovesAQueryToTheMenu();
+    void deletingRemovesTheQueryFromTheFile();
+    void anEditedQueryKeepsItsUnknownFields();
+    void renamingReplacesRatherThanDuplicating();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -5773,6 +5778,201 @@ void TestMainWindow::aGeneratedQueryWithNothingToShowIsSkipped()
              QStringList{ QStringLiteral("Inbox") });
     QVERIFY2(!window.findChild<QPushButton *>(QStringLiteral("sentButton")),
              "a generated query with nothing to show must not get a button");
+}
+
+/// Reads queries.json back from disk, which is what "it was saved" means.
+static QJsonArray storedQueries(const QTemporaryDir &dir)
+{
+    QFile f(dir.filePath(QStringLiteral("qtmaildir/queries.json")));
+    if (!f.open(QIODevice::ReadOnly))
+        return {};
+    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+    return root.value(QStringLiteral("queries")).toArray();
+}
+
+static QAction *contextActionNamed(MainWindow &window, QWidget *target,
+                                   const QString &objectName)
+{
+    const QList<QAction *> actions = target->actions();
+    for (QAction *action : actions) {
+        if (action->objectName() == objectName)
+            return action;
+    }
+    Q_UNUSED(window);
+    return nullptr;
+}
+
+void TestMainWindow::aSavedQueryButtonOffersEditUnpinAndDelete()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true }
+        ]
+    })"));
+
+    MainWindow window(config);
+    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    QVERIFY(row);
+    auto *button = row->findChild<QPushButton *>();
+    QVERIFY(button);
+
+    // A context menu, so the actions live on the widget itself.
+    QCOMPARE(button->contextMenuPolicy(), Qt::ActionsContextMenu);
+    QVERIFY(contextActionNamed(window, button, QStringLiteral("editQuery")));
+    QVERIFY(contextActionNamed(window, button, QStringLiteral("pinQuery")));
+    QVERIFY(contextActionNamed(window, button, QStringLiteral("deleteQuery")));
+}
+
+void TestMainWindow::unpinningMovesAQueryToTheMenu()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true },
+            { "name": "Other", "query": "tag:other", "pinned": true }
+        ]
+    })"));
+
+    MainWindow window(config);
+    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    QVERIFY(row);
+    QCOMPARE(savedQueryButtonLabels(window).size(), 2);
+    QVERIFY(!window.findChild<QPushButton *>(
+        QStringLiteral("savedQueryMenuButton")));
+
+    auto *button = row->findChild<QPushButton *>();
+    QVERIFY(button);
+    QAction *pin = contextActionNamed(window, button, QStringLiteral("pinQuery"));
+    QVERIFY(pin);
+    pin->trigger();
+
+    // Off the row, into the menu, and written to the file: an unpin that only
+    // redrew would come back pinned on the next launch.
+    QCOMPARE(savedQueryButtonLabels(window), QStringList{ QStringLiteral("Other") });
+    auto *menuButton =
+        window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
+    QVERIFY(menuButton);
+    QCOMPARE(menuButton->menu()->actions().size(), 1);
+
+    const QJsonArray stored = storedQueries(dir);
+    QCOMPARE(stored.size(), 2);
+    QCOMPARE(stored.at(0).toObject().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Inbox"));
+    QVERIFY2(!stored.at(0).toObject().contains(QStringLiteral("pinned")),
+             "the unpin did not reach the file");
+}
+
+void TestMainWindow::deletingRemovesTheQueryFromTheFile()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Doomed", "query": "tag:doomed", "pinned": true },
+            { "name": "Keeper", "query": "tag:keeper", "pinned": true }
+        ]
+    })"));
+
+    MainWindow window(config);
+    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    QVERIFY(row);
+    auto *button = row->findChild<QPushButton *>();
+    QVERIFY(button);
+    QCOMPARE(button->text(), QStringLiteral("Doomed"));
+
+    QAction *del =
+        contextActionNamed(window, button, QStringLiteral("deleteQuery"));
+    QVERIFY(del);
+    // Destructive and not on the undo stack, so it confirms. Suppressed here
+    // rather than driven through the modal dialog, which would hang the test.
+    window.setConfirmDeleteForTesting(false);
+    del->trigger();
+
+    QCOMPARE(savedQueryButtonLabels(window),
+             QStringList{ QStringLiteral("Keeper") });
+
+    const QJsonArray stored = storedQueries(dir);
+    QCOMPARE(stored.size(), 1);
+    QCOMPARE(stored.at(0).toObject().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Keeper"));
+}
+
+/// A field a later build wrote must survive an edit here, or upgrading and
+/// downgrading silently strips config the user set.
+void TestMainWindow::anEditedQueryKeepsItsUnknownFields()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true,
+              "icon": "mail-inbox" }
+        ]
+    })"));
+
+    MainWindow window(config);
+
+    // Through the EDIT path, with a replacement carrying no unknown fields of
+    // its own, which is exactly what SaveQueryDialog returns. Driving this
+    // through unpin instead proved nothing: unpin copies the stored entry, so
+    // it carries `unknown` along by itself and the merge is never exercised.
+    // That version passed with the merge deleted.
+    SavedQuery edited;
+    edited.name = QStringLiteral("Inbox");
+    edited.query = QStringLiteral("tag:inbox and not tag:muted");
+    edited.pinned = true;
+    QVERIFY(edited.unknown.isEmpty());
+    window.replaceSavedQueryForTesting(QStringLiteral("Inbox"), edited);
+
+    const QJsonArray stored = storedQueries(dir);
+    QCOMPARE(stored.size(), 1);
+    const QJsonObject entry = stored.at(0).toObject();
+    // The edit landed...
+    QCOMPARE(entry.value(QStringLiteral("query")).toString(),
+             QStringLiteral("tag:inbox and not tag:muted"));
+    // ...and did not take the unknown field down with it.
+    QCOMPARE(entry.value(QStringLiteral("icon")).toString(),
+             QStringLiteral("mail-inbox"));
+}
+
+/// Renaming must match on the name the dialog OPENED with. Matching on the
+/// returned name leaves the original in place and adds a second entry.
+void TestMainWindow::renamingReplacesRatherThanDuplicating()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Old", "query": "tag:old", "pinned": true }
+        ]
+    })"));
+
+    MainWindow window(config);
+
+    SavedQuery renamed;
+    renamed.name = QStringLiteral("New");
+    renamed.query = QStringLiteral("tag:old");
+    renamed.pinned = true;
+    window.replaceSavedQueryForTesting(QStringLiteral("Old"), renamed);
+
+    const QJsonArray stored = storedQueries(dir);
+    QCOMPARE(stored.size(), 1);
+    QCOMPARE(stored.at(0).toObject().value(QStringLiteral("name")).toString(),
+             QStringLiteral("New"));
+    QCOMPARE(savedQueryButtonLabels(window), QStringList{ QStringLiteral("New") });
 }
 
 #include "test_mainwindow.moc"

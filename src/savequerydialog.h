@@ -42,6 +42,11 @@ public:
     SaveQueryDialog(const Config &config, const QString &query,
                     const QString &accountKey, QWidget *parent = nullptr);
 
+    /// Edits an entry that already exists, prefilled from it rather than from
+    /// the query bar.
+    SaveQueryDialog(const Config &config, const SavedQuery &existing,
+                    QWidget *parent = nullptr);
+
     /// The query as edited. Only meaningful after exec() returned Accepted.
     SavedQuery savedQuery() const;
 
@@ -51,7 +56,18 @@ public:
     static bool namesAnExistingQuery(const Config &config, const QString &name);
 
 private:
+    void build(const SavedQuery &initial);
     void updateOkState();
+
+    /// The name the dialog was opened on, empty when creating. The caller
+    /// matches on this rather than on the returned name, so a rename replaces
+    /// the entry instead of adding a second one beside it.
+    QString m_originalName;
+
+    /// Set for a generated entry, whose query is composed from the accounts
+    /// and cannot be edited here.
+    QString m_generated;
+    bool m_flat = false;
 
     const Config &m_config;
     QLineEdit *m_name = nullptr;

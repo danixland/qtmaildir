@@ -125,6 +125,25 @@ public:
     static void setLocksPathForTesting(const QString &path);
     static QString locksPath();
 
+    /// Suppresses the delete confirmation.
+    ///
+    /// A test seam. Deleting a saved query is destructive and not on the undo
+    /// stack, so it asks first; a test cannot answer a modal dialog without
+    /// hanging, and driving one through QTest would assert the dialog rather
+    /// than the deletion.
+    void setConfirmDeleteForTesting(bool confirm) { m_confirmDelete = confirm; }
+
+    /// Renames or replaces a stored query, as the edit dialog would on accept.
+    ///
+    /// A test seam for the rename path specifically: the dialog is modal, and
+    /// the property worth asserting is that a rename REPLACES rather than
+    /// duplicating, which is decided after the dialog returns.
+    void replaceSavedQueryForTesting(const QString &originalName,
+                                     const SavedQuery &replacement)
+    {
+        replaceSavedQuery(originalName, replacement);
+    }
+
     /// How many commands are on the undo stack.
     ///
     /// A test seam. The undo QAction is always enabled and checks canUndo()
@@ -252,6 +271,21 @@ private:
 
     /// Rebuilds the saved-query row in place after the stored list changed.
     void rebuildSavedQueryRow();
+
+    /// Hangs Edit, Pin/Unpin and Delete on a saved query's button or menu
+    /// entry. The only route to changing a stored query from the UI.
+    void addSavedQueryActions(QWidget *target, const SavedQuery &saved);
+
+    /// Replaces the entry named `originalName`, writes the file and rebuilds
+    /// the row. An empty `replacement.name` deletes it instead.
+    ///
+    /// Matched on the ORIGINAL name, not the replacement's: a rename otherwise
+    /// leaves the old entry in place and adds a second one.
+    void replaceSavedQuery(const QString &originalName,
+                           const SavedQuery &replacement);
+
+    void editSavedQuery(const SavedQuery &saved);
+    void deleteSavedQuery(const SavedQuery &saved);
 
 private slots:
     void runCurrentQuery() { runQuery(FlatResult::No); }
@@ -628,6 +662,8 @@ private:
     QLineEdit *m_queryEdit = nullptr;
     /// Save query, beside the field. Driven by the save_query action.
     QToolButton *m_saveQueryButton = nullptr;
+    /// Whether deleting a saved query asks first. Always true outside tests.
+    bool m_confirmDelete = true;
     QueryCompleter *m_queryCompleter = nullptr;
     /// Its own type, not the QTreeView base. The strip painting and the
     /// expander column are ThreadListView's, and holding the base here only

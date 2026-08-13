@@ -20,7 +20,6 @@
 
 #include <QButtonGroup>
 #include <QCheckBox>
-#include <QCloseEvent>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -297,13 +296,22 @@ void TagRulesDialog::saveUiState()
                    m_list->header()->saveState());
 }
 
-/// Saves on close rather than on accept, so a size the user chose is kept
-/// whether they pressed Save or Cancel. The window's shape is not part of the
-/// edit being confirmed.
-void TagRulesDialog::closeEvent(QCloseEvent *event)
+/// Saves on the way out, whichever way that is.
+///
+/// done() rather than closeEvent, and this distinction shipped broken: Cancel
+/// calls reject() and Save calls accept(), and NEITHER sends a QCloseEvent.
+/// Only the window manager's X button does. Saving from closeEvent therefore
+/// kept the size for the one route the buttons never take, which is how a
+/// resize followed by Cancel came back forgotten. Both buttons funnel through
+/// done(), and QWidget::close() reaches it too.
+///
+/// On every route, not only on accept: the window's shape is not part of the
+/// edit being confirmed, so Cancel should discard the rule changes and keep
+/// the size.
+void TagRulesDialog::done(int result)
 {
     saveUiState();
-    QDialog::closeEvent(event);
+    QDialog::done(result);
 }
 
 int TagRulesDialog::columnWidthForTest(int column) const

@@ -317,6 +317,17 @@ current index invalid when nothing was current. A test that calls `selectAll()` 
 view therefore passes against a missing selection guard, because no signal ever fires. Test
 multi-select from a row that is already current, which is also how a user reaches it.
 
+**A `QDialog`'s buttons do not send a `QCloseEvent`.** `accept()` and `reject()`
+go through `done(int)`, which hides the dialog without ever closing a window, so
+a `closeEvent` override runs only for the window manager's X button. Anything a
+dialog must persist on the way out belongs in a `done(int)` override, which both
+buttons and `close()` reach. This shipped wrong in the rules dialog and the test
+covering it passed, because the test used `close()` and the user used Cancel:
+one route out of three. Assert every route. Underneath sits a second trap:
+`close()` on a widget that was never shown returns early WITHOUT reaching
+`done()`, so a test for the closed path has to `show()` the dialog first or it
+asserts nothing at all.
+
 **A queued load can outlive the state that started it.** `loadThread` crosses to the worker
 on a queued connection, so its reply lands after whatever the UI did in the meantime. The
 generation counter covers a superseded *query*, not a superseded *selection*: blanking the

@@ -52,6 +52,7 @@ private slots:
     void aFolderRowUsesTheDropdownAndKeepsItsSuffix();
     void theTextModeToggleSurvivesBeingSwitchedOn();
     void theWindowSizeAndColumnWidthsSurviveAReopen();
+    void theWindowSizeIsSavedOnEveryWayOutOfTheDialog();
     void aReloadDoesNotDiscardARestoredColumnWidth();
 
 private:
@@ -683,8 +684,13 @@ void TestTagRules::theWindowSizeAndColumnWidthsSurviveAReopen()
         TagRulesDialog dialog;
         dialog.resize(900, 640);
         dialog.setColumnWidthForTest(0, 123);
-        // The save is on close, matching where MainWindow writes its own.
-        dialog.close();
+        // CANCEL, not close(). The first version of this saved from
+        // closeEvent and asserted with close(), which passes while the real
+        // dialog forgets everything: Cancel calls reject() and Save calls
+        // accept(), and neither sends a QCloseEvent. Only the window
+        // manager's X button does, so the test exercised the one path the
+        // buttons never take. The user found it by hand in one try.
+        dialog.reject();
     }
 
     // Asserted on the stored VALUE, not on the reopened frame. Item 46: the
@@ -698,6 +704,54 @@ void TestTagRules::theWindowSizeAndColumnWidthsSurviveAReopen()
         TagRulesDialog reopened;
         QCOMPARE(reopened.columnWidthForTest(0), 123);
     }
+
+    if (previousState.isEmpty())
+        qunsetenv("XDG_STATE_HOME");
+    else
+        qputenv("XDG_STATE_HOME", previousState);
+}
+
+void TestTagRules::theWindowSizeIsSavedOnEveryWayOutOfTheDialog()
+{
+    // There are three ways out and they take different code paths: Cancel
+    // calls reject(), Save calls accept(), and the window manager's X button
+    // sends a QCloseEvent. Saving from closeEvent alone covers only the
+    // third, which is how the first version of this shipped and forgot the
+    // size on both buttons. done(int) is the funnel the two buttons share and
+    // close() also reaches, so all three are asserted here rather than
+    // trusting one to stand for the others.
+    QTemporaryDir configHome;
+    QTemporaryDir stateHome;
+    QVERIFY(configHome.isValid());
+    QVERIFY(stateHome.isValid());
+    const QByteArray previousState = qgetenv("XDG_STATE_HOME");
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    qputenv("XDG_STATE_HOME", stateHome.path().toUtf8());
+    writeTwoRules(configHome);
+
+    const auto widthAfter = [&](int width, const char *how) {
+        QFile::remove(MainWindow::uiStatePath());
+        TagRulesDialog dialog;
+        // Shown, because QWidget::close() on a widget that was never visible
+        // returns early without reaching done(). The X button it stands for
+        // only exists on a window that is on screen, so testing the closed
+        // path from a hidden dialog proves nothing about it.
+        dialog.show();
+        dialog.setColumnWidthForTest(0, width);
+        if (qstrcmp(how, "reject") == 0)
+            dialog.reject();
+        else if (qstrcmp(how, "accept") == 0)
+            dialog.saveForTest();
+        else
+            dialog.close();
+
+        TagRulesDialog reopened;
+        return reopened.columnWidthForTest(0);
+    };
+
+    QCOMPARE(widthAfter(121, "reject"), 121);
+    QCOMPARE(widthAfter(122, "accept"), 122);
+    QCOMPARE(widthAfter(123, "close"), 123);
 
     if (previousState.isEmpty())
         qunsetenv("XDG_STATE_HOME");

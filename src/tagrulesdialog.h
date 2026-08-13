@@ -123,8 +123,11 @@ private slots:
     void applyEditsToCurrentRule();
     void onSave();
 
-protected:
-    void closeEvent(QCloseEvent *event) override;
+public slots:
+    /// Saves the window's size and column widths on the way out. Overridden
+    /// here rather than closeEvent because Save and Cancel do not send a
+    /// close event at all, only the window manager's X button does.
+    void done(int result) override;
 
 private:
     void reloadList();

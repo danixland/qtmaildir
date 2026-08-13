@@ -39,6 +39,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("flag"),
         QStringLiteral("focus_query"),
         QStringLiteral("complete_query"),
+        QStringLiteral("save_query"),
         QStringLiteral("select_all"),
         QStringLiteral("clear_pane"),
         QStringLiteral("clear_selection"),
@@ -100,6 +101,10 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         // shells and editors, and it is a named key rather than a symbol, so
         // no layout has to shift it.
         { QStringLiteral("Ctrl+Space"),   QStringLiteral("complete_query") },
+        // The conventional save key, and free here: nothing in this window
+        // saves a document, so Ctrl+S is unclaimed and means what a user
+        // expects it to.
+        { QStringLiteral("Ctrl+S"),       QStringLiteral("save_query") },
         // The conventional select-all key, and free here: the thread list is a
         // read-only view, so nothing else in the window wants it.
         { QStringLiteral("Ctrl+A"),       QStringLiteral("select_all") },

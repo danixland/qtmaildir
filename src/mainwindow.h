@@ -49,6 +49,7 @@ class QPlainTextEdit;
 class QSplitter;
 class QProgressBar;
 class QTimer;
+class QVBoxLayout;
 
 class ThreadListModel;
 class MessageView;
@@ -230,6 +231,26 @@ private:
     /// signal and slot arity at compile time, so the zero-argument slot below
     /// is what widgets connect to.
     void runQuery(FlatResult flat);
+
+    /// Builds the row of saved-query buttons, the overflow menu and Sent.
+    ///
+    /// Its own row since item 23: an unbounded list of buttons sharing the
+    /// query row squeezed the field, which is the whole reason for the
+    /// pinned/unpinned split.
+    void buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout);
+
+    /// Runs a saved query, taking its account scope through the dropdown.
+    ///
+    /// Not by pre-scoping the text: runQuery() already wraps the query in the
+    /// selected account's path, so a scope baked in here would be applied
+    /// twice. Setting the dropdown also shows the user what scope they are in.
+    void runSavedQuery(const SavedQuery &saved);
+
+    /// Names the current query and stores it in queries.json.
+    void saveCurrentQuery();
+
+    /// Rebuilds the saved-query row in place after the stored list changed.
+    void rebuildSavedQueryRow();
 
 private slots:
     void runCurrentQuery() { runQuery(FlatResult::No); }

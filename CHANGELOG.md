@@ -11,6 +11,43 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- A **Save query** action (`Ctrl+S`) keeps the query in the bar as a saved
+  query, naming it, optionally scoping it to one account, and choosing whether
+  it appears as a button or in a menu. Saved queries no longer have to be added
+  by hand-editing the config file (item 23).
+- Saved queries live in `~/.config/qtmaildir/queries.json`, which carries their
+  **order**, a `pinned` flag and an optional account scope. The order in the
+  file is the order the buttons appear in, so rearranging them is a matter of
+  moving lines.
+
+### Changed
+
+- Saved queries have a **row of their own** beneath the query bar rather than
+  sharing it, and the unpinned ones sit behind a **More queries** menu, so the
+  query field is no longer squeezed by a long list of buttons.
+- Saved-query buttons follow the file's order instead of appearing
+  alphabetically.
+
+### Upgrading
+
+Saved queries move out of the `[queries]` section of `qtmaildir.conf` and into
+`~/.config/qtmaildir/queries.json`. **The first launch migrates them for you**:
+the section is read, the JSON file is written from it, and every entry is
+marked pinned so your buttons stay where they were.
+
+Your config file is left byte-for-byte alone. The old `[queries]` section stays
+in it, ignored from then on, and can be deleted by hand whenever you like. It is
+not removed automatically because rewriting the file would discard your comments
+and reorder your keys.
+
+One behaviour changes with the move. Buttons used to appear in alphabetical
+order and now follow the file. If `[general] startup_query` names a query that
+does not exist, the fallback is likewise the first query in the file rather than
+the alphabetically first one, so a config that relied on that fallback may open
+on a different query than before.
+
 ## [0.17.0] - 2026-08-13
 
 A rule is built from rows now instead of typed into four free-text fields:

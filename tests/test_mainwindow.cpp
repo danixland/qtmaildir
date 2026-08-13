@@ -188,6 +188,14 @@ private slots:
     void flatModeDoesNotSurviveTheNextQuery();
     void noTwoActionsShareAnIcon();
 
+    void onlyPinnedQueriesBecomeButtons();
+    void unpinnedQueriesReachTheMenu();
+    void pinnedButtonsFollowTheDocumentOrder();
+    void theSavedQueryMenuIsHiddenWhenEveryQueryIsPinned();
+    void aScopedSavedQuerySelectsItsAccount();
+    void anUnscopedSavedQueryClearsTheAccount();
+    void theSaveQueryActionIsDisabledOnAnEmptyQuery();
+
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
     /// rather than a value because it is rebuilt per test, and QTemporaryDir
@@ -5263,6 +5271,273 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     TestMainWindow test;
     return QTest::qExec(&test, argc, argv);
+}
+
+// ---------------------------------------------------------------------------
+// Saved queries in the query row (item 23)
+// ---------------------------------------------------------------------------
+
+/// Writes a config plus a queries.json beside it, and loads both.
+static void loadWithQueries(Config &config, QTemporaryDir &dir,
+                            const QString &queriesJson,
+                            const QString &iniExtra = {})
+{
+    QDir().mkpath(dir.filePath(QStringLiteral("qtmaildir")));
+    const QString conf =
+        dir.filePath(QStringLiteral("qtmaildir/qtmaildir.conf"));
+    QFile ini(conf);
+    ini.open(QIODevice::WriteOnly | QIODevice::Text);
+    ini.write(iniExtra.toUtf8());
+    ini.close();
+
+    QFile json(dir.filePath(QStringLiteral("qtmaildir/queries.json")));
+    json.open(QIODevice::WriteOnly);
+    json.write(queriesJson.toUtf8());
+    json.close();
+
+    config.load(conf);
+}
+
+/// Buttons in the saved-query row, by label, in the order they are laid out.
+static QStringList savedQueryButtonLabels(MainWindow &window)
+{
+    QStringList labels;
+    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    if (!row)
+        return labels;
+    const QList<QPushButton *> buttons =
+        row->findChildren<QPushButton *>(QString(), Qt::FindDirectChildrenOnly);
+    for (QPushButton *button : buttons) {
+        // The menu button is not a saved query and must not be counted as one.
+        if (button->objectName() != QStringLiteral("savedQueryMenuButton"))
+            labels.append(button->text());
+    }
+    return labels;
+}
+
+void TestMainWindow::onlyPinnedQueriesBecomeButtons()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true },
+            { "name": "Buried", "query": "tag:buried" }
+        ]
+    })"));
+
+    MainWindow window(config);
+    const QStringList labels = savedQueryButtonLabels(window);
+
+    QVERIFY2(labels.contains(QStringLiteral("Inbox")),
+             "a pinned query must have a button");
+    QVERIFY2(!labels.contains(QStringLiteral("Buried")),
+             "an unpinned query must NOT have a button");
+}
+
+void TestMainWindow::unpinnedQueriesReachTheMenu()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true },
+            { "name": "Buried", "query": "tag:buried" }
+        ]
+    })"));
+
+    MainWindow window(config);
+    auto *menuButton =
+        window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
+    QVERIFY2(menuButton, "an unpinned query needs a menu to live in");
+    QVERIFY(menuButton->menu());
+
+    QStringList entries;
+    const QList<QAction *> actions = menuButton->menu()->actions();
+    for (QAction *action : actions)
+        entries.append(action->text());
+
+    QVERIFY2(entries.contains(QStringLiteral("Buried")),
+             "the unpinned query is missing from the menu");
+    // A pinned query is already a button; listing it twice is the duplicate
+    // this asserts against.
+    QVERIFY2(!entries.contains(QStringLiteral("Inbox")),
+             "a pinned query must not also appear in the menu");
+}
+
+/// The property the whole storage change was made for. "Zebra" is written
+/// first and must stay first; alphabetical order would put it last.
+void TestMainWindow::pinnedButtonsFollowTheDocumentOrder()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Zebra", "query": "tag:zebra", "pinned": true },
+            { "name": "Apple", "query": "tag:apple", "pinned": true }
+        ]
+    })"));
+
+    MainWindow window(config);
+    const QStringList labels = savedQueryButtonLabels(window);
+
+    QCOMPARE(labels.size(), 2);
+    QCOMPARE(labels.at(0), QStringLiteral("Zebra"));
+    QCOMPARE(labels.at(1), QStringLiteral("Apple"));
+}
+
+void TestMainWindow::theSavedQueryMenuIsHiddenWhenEveryQueryIsPinned()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true }
+        ]
+    })"));
+
+    MainWindow window(config);
+
+    // The guard the assertion below needs. Asserting only that the menu button
+    // is absent passed against NO implementation at all, before any of this
+    // was built, so it has to prove first that the row it is looking in was
+    // populated and that a button was found.
+    const QStringList labels = savedQueryButtonLabels(window);
+    QCOMPARE(labels, QStringList{ QStringLiteral("Inbox") });
+
+    auto *menuButton =
+        window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
+    QVERIFY2(!menuButton,
+             "an empty menu button is a control that always does nothing");
+}
+
+/// The scope goes through the account dropdown rather than being baked into
+/// the query text. runQuery() already scopes by that dropdown, so pre-scoping
+/// the text would apply the path twice, and the selection would be invisible.
+void TestMainWindow::aScopedSavedQuerySelectsItsAccount()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Billing", "query": "from:billing",
+              "account": "work", "pinned": true }
+        ]
+    })"), QStringLiteral(
+        "[account.work]\n"
+        "name=Test User\n"
+        "address=user@example.org\n"
+        "maildir=work-mail\n"
+        "\n"
+        "[account.personal]\n"
+        "name=Test User\n"
+        "address=me@example.net\n"
+        "maildir=personal\n"
+    ));
+
+    MainWindow window(config);
+    auto *accountBox =
+        window.findChild<QComboBox *>(QStringLiteral("accountBox"));
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(accountBox);
+    QVERIFY(queryEdit);
+
+    // Start somewhere else, so a passing result cannot be the default.
+    accountBox->setCurrentIndex(accountBox->findData(
+        QStringLiteral("personal")));
+    QCOMPARE(accountBox->currentData().toString(), QStringLiteral("personal"));
+
+    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    QVERIFY(row);
+    auto *button = row->findChild<QPushButton *>();
+    QVERIFY(button);
+    button->click();
+
+    QCOMPARE(accountBox->currentData().toString(), QStringLiteral("work"));
+    // The text is the bare query. The path scope is applied once, by
+    // runQuery(), from the dropdown this just set.
+    QCOMPARE(queryEdit->text(), QStringLiteral("from:billing"));
+    QVERIFY2(!queryEdit->text().contains(QStringLiteral("path:")),
+             "the scope must not be baked into the query text");
+}
+
+/// A query with no account must CLEAR the dropdown, not inherit whatever the
+/// last one left there. Confirmed against the same defect in the rules
+/// preview, where an already-selected account survived the click.
+void TestMainWindow::anUnscopedSavedQueryClearsTheAccount()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Everywhere", "query": "tag:inbox", "pinned": true }
+        ]
+    })"), QStringLiteral(
+        "[account.work]\n"
+        "name=Test User\n"
+        "address=user@example.org\n"
+        "maildir=work-mail\n"
+    ));
+
+    MainWindow window(config);
+    auto *accountBox =
+        window.findChild<QComboBox *>(QStringLiteral("accountBox"));
+    QVERIFY(accountBox);
+
+    accountBox->setCurrentIndex(accountBox->findData(QStringLiteral("work")));
+    QCOMPARE(accountBox->currentData().toString(), QStringLiteral("work"));
+
+    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    QVERIFY(row);
+    auto *button = row->findChild<QPushButton *>();
+    QVERIFY(button);
+    button->click();
+
+    QVERIFY2(accountBox->currentData().toString().isEmpty(),
+             "an unscoped saved query must clear the account selection");
+}
+
+void TestMainWindow::theSaveQueryActionIsDisabledOnAnEmptyQuery()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1, "queries": []
+    })"));
+
+    MainWindow window(config);
+    auto *save = window.findChild<QAction *>(QStringLiteral("save_query"));
+    QVERIFY2(save, "there is no way to save a query");
+
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    queryEdit->clear();
+    QVERIFY2(!save->isEnabled(),
+             "saving an empty query would store a query that matches nothing");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    QVERIFY2(save->isEnabled(), "a real query must be savable");
+
+    // Whitespace is not a query. setText does not drive a completer, but it
+    // does emit textChanged, which is what the enabling is hung on.
+    queryEdit->setText(QStringLiteral("   "));
+    QVERIFY(!save->isEnabled());
 }
 
 #include "test_mainwindow.moc"

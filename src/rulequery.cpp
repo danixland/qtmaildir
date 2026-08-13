@@ -215,6 +215,35 @@ bool parseTerm(const QString &token, RuleTerm *out)
     return true;
 }
 
+/// Splits `(A or B) and not C and not D` into its group and its remainder.
+/// Returns false when the query does not start with a balanced group.
+bool splitLeadingGroup(const QString &query, QString *group, QString *rest)
+{
+    if (!query.startsWith(QLatin1Char('(')))
+        return false;
+
+    int depth = 0;
+    bool inQuotes = false;
+    for (int i = 0; i < query.size(); ++i) {
+        const QChar c = query.at(i);
+        if (c == QLatin1Char('"'))
+            inQuotes = !inQuotes;
+        if (inQuotes)
+            continue;
+        if (c == QLatin1Char('('))
+            ++depth;
+        else if (c == QLatin1Char(')')) {
+            --depth;
+            if (depth == 0) {
+                *group = query.mid(1, i - 1).trimmed();
+                *rest = query.mid(i + 1).trimmed();
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 bool operator==(const RuleTerm &a, const RuleTerm &b)
@@ -264,6 +293,58 @@ RuleQuery RuleQuery::parse(const QString &query)
     const QString trimmed = query.trimmed();
     if (trimmed.isEmpty()) {
         // An empty query is a rule with no rows yet, not a failure.
+        out.parsed = true;
+        return out;
+    }
+
+    QString group;
+    QString rest;
+    if (splitLeadingGroup(trimmed, &group, &rest)) {
+        // Only one nested shape is representable: an `or` group followed by
+        // `and not` exclusions. Anything else rejects whole.
+        if (group.contains(QLatin1Char('(')))
+            return RuleQuery();
+
+        const RuleQuery inner = parse(group);
+        if (!inner.parsed || inner.join != Any || !inner.exclusions.isEmpty())
+            return RuleQuery();
+
+        out.join = Any;
+        out.terms = inner.terms;
+
+        if (rest.isEmpty()) {
+            // A group with nothing after it compiles back WITHOUT parens,
+            // since compile() only adds them when exclusions follow. Round
+            // trip would break, so this is not representable.
+            return RuleQuery();
+        }
+
+        // The remainder must be nothing but `and not <term>` repetitions.
+        QStringList tail;
+        if (!tokenise(rest, &tail))
+            return RuleQuery();
+
+        int i = 0;
+        while (i < tail.size()) {
+            if (tail.at(i).compare(QStringLiteral("and"),
+                                   Qt::CaseInsensitive) != 0)
+                return RuleQuery();
+            ++i;
+            if (i >= tail.size()
+                || tail.at(i).compare(QStringLiteral("not"),
+                                      Qt::CaseInsensitive) != 0)
+                return RuleQuery();
+            ++i;
+            if (i >= tail.size())
+                return RuleQuery();
+
+            RuleTerm term;
+            if (!parseTerm(tail.at(i), &term))
+                return RuleQuery();
+            out.exclusions.append(term);
+            ++i;
+        }
+
         out.parsed = true;
         return out;
     }

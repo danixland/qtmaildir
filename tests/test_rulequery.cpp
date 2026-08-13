@@ -47,6 +47,7 @@ private slots:
     void quotedValuesLoseTheirQuotes();
     void aNegatedTermParsesAsANegatedOperator();
     void whatParsesCompilesBackUnchanged();
+    void anOrGroupWithExclusionsParses();
 };
 
 void TestRuleQuery::aSingleContainsTermCompiles()
@@ -291,6 +292,8 @@ void TestRuleQuery::whatParsesCompilesBackUnchanged()
         QStringLiteral("from:vendor.example.org and not tag:inbox"),
         QStringLiteral("from:vendor.example.org and not subject:receipt "
                        "and not subject:refund"),
+        QStringLiteral("(from:one.example.org or from:two.example.org) "
+                       "and not subject:receipt"),
     };
 
     for (const QString &query : queries) {
@@ -298,6 +301,27 @@ void TestRuleQuery::whatParsesCompilesBackUnchanged()
         QVERIFY2(parsed.parsed, qPrintable(query));
         QCOMPARE(parsed.compile(), query);
     }
+}
+
+void TestRuleQuery::anOrGroupWithExclusionsParses()
+{
+    const RuleQuery q = RuleQuery::parse(
+        QStringLiteral("(from:vendor.example.org or from:vendor.example.net) "
+                       "and not subject:receipt and not subject:refund"));
+
+    QVERIFY(q.parsed);
+    QCOMPARE(q.join, RuleQuery::Any);
+    QCOMPARE(q.terms.size(), 2);
+    QCOMPARE(q.exclusions.size(), 2);
+    QCOMPARE(q.exclusions.at(0).field, RuleTerm::Subject);
+    QCOMPARE(q.exclusions.at(0).op, RuleTerm::Contains);
+    QCOMPARE(q.exclusions.at(0).value, QStringLiteral("receipt"));
+
+    // The round trip is the point: this must come back as it went in.
+    QCOMPARE(q.compile(),
+             QStringLiteral("(from:vendor.example.org or "
+                            "from:vendor.example.net) "
+                            "and not subject:receipt and not subject:refund"));
 }
 
 QTEST_MAIN(TestRuleQuery)

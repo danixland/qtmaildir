@@ -52,6 +52,7 @@
 
 #include <QImage>
 #include <QPainter>
+#include <QHBoxLayout>
 #include <QComboBox>
 #include <QScrollBar>
 #include "tagchip.h"
@@ -196,6 +197,8 @@ private slots:
     void anUnscopedSavedQueryClearsTheAccount();
     void theSaveQueryActionIsDisabledOnAnEmptyQuery();
     void thereIsASaveButtonBesideTheQueryBar();
+    void theMenuIsRightAlignedAwayFromTheButtons();
+    void theRowSurvivesWithNothingButUnpinnedQueries();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -5572,6 +5575,75 @@ void TestMainWindow::thereIsASaveButtonBesideTheQueryBar()
              "the button must follow the action's enabled state");
     queryEdit->setText(QStringLiteral("tag:inbox"));
     QVERIFY(button->isEnabled());
+}
+
+/// Right-aligned, meaning a stretch sits between the buttons and the menu.
+/// Asserted on the layout rather than on x coordinates: the offscreen platform
+/// lays out widgets, but a geometry assertion here would also pass for a row
+/// that simply ran out of width.
+void TestMainWindow::theMenuIsRightAlignedAwayFromTheButtons()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true },
+            { "name": "Buried", "query": "tag:buried" }
+        ]
+    })"));
+
+    MainWindow window(config);
+    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    QVERIFY(row);
+    auto *box = qobject_cast<QHBoxLayout *>(row->layout());
+    QVERIFY(box);
+
+    auto *menuButton =
+        window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
+    QVERIFY(menuButton);
+
+    int menuIndex = -1;
+    int stretchIndex = -1;
+    for (int i = 0; i < box->count(); ++i) {
+        QLayoutItem *item = box->itemAt(i);
+        if (item->widget() == menuButton)
+            menuIndex = i;
+        else if (!item->widget() && item->spacerItem())
+            stretchIndex = i;
+    }
+
+    QVERIFY2(stretchIndex >= 0, "the row has no stretch to align against");
+    QVERIFY2(menuIndex > stretchIndex,
+             "the menu must come AFTER the stretch to sit at the right edge");
+}
+
+/// The row must not vanish when every saved query is unpinned: the menu is
+/// then the only way to reach any of them, and hiding the row buries it.
+void TestMainWindow::theRowSurvivesWithNothingButUnpinnedQueries()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Buried", "query": "tag:buried" },
+            { "name": "AlsoBuried", "query": "tag:also" }
+        ]
+    })"));
+
+    MainWindow window(config);
+    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    QVERIFY(row);
+    QVERIFY2(!row->isHidden(),
+             "the row was hidden, so the only route to these queries is gone");
+
+    auto *menuButton =
+        window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
+    QVERIFY(menuButton);
+    QCOMPARE(menuButton->menu()->actions().size(), 2);
 }
 
 #include "test_mainwindow.moc"

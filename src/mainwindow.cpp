@@ -1692,6 +1692,13 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
         box->addWidget(sentButton);
     }
 
+    // Everything above is left-aligned; the stretch here pushes what follows
+    // to the right edge. The buttons are the row's content and read as a set,
+    // while the overflow menu is a control over that set, so it sits apart
+    // from them rather than trailing the last one.
+    const int contentCount = box->count();
+    box->addStretch(1);
+
     // The overflow menu, and only when something is in it: an empty menu
     // button is a control that always does nothing.
     if (!unpinned.isEmpty()) {
@@ -1707,12 +1714,13 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
         box->addWidget(menuButton);
     }
 
-    box->addStretch(1);
     layout->addWidget(row);
 
-    // Nothing saved and no sent folder leaves an empty strip of padding, so
-    // the row goes away rather than sitting there as a gap.
-    if (box->count() == 1)
+    // Nothing on either side of the stretch leaves an empty strip of padding,
+    // so the row goes away rather than sitting there as a gap. Counted before
+    // the stretch was added, since the stretch is always there: an unpinned
+    // query with no pinned ones still needs the row for its menu.
+    if (contentCount == 0 && unpinned.isEmpty())
         row->hide();
 }
 

@@ -1314,17 +1314,15 @@ void MainWindow::showTagRulesDialog()
     auto *dialog = new TagRulesDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
 
-    // The Folder row's dropdown. Config holds the account subdirectories and
-    // the dialog holds no Config, so they are handed over here. Account::maildir
-    // is the subtree name the Folder term compiles a path: against; the account
-    // key is a config section name and would match nothing.
-    QStringList folders;
-    for (const Account &account : m_config.accounts()) {
-        if (!account.maildir.isEmpty() && !folders.contains(account.maildir))
-            folders.append(account.maildir);
-    }
-    dialog->setFolders(folders);
     m_tagRulesDialog = dialog;
+
+    // The Folder row's dropdown, filled from the Maildir tree on disk rather
+    // than from config. Config names one subtree per account and nothing
+    // below it, so the dropdown offered five entries and no way to say Drafts
+    // or Sent, which is a folder a rule wants to target as often as a whole
+    // account. The answer comes back queued, after the dialog is already up;
+    // setFolders refills the rows that exist by then.
+    QMetaObject::invokeMethod(m_worker, "requestFolders", Qt::QueuedConnection);
 
     connect(dialog, &TagRulesDialog::countsRequested, this, [this, dialog]() {
         QMetaObject::invokeMethod(
@@ -1424,6 +1422,15 @@ void MainWindow::wireWorker()
             this, &MainWindow::onDatabaseStatsReady);
     connect(m_worker, &NotmuchWorker::messageCountsReady,
             this, &MainWindow::onRuleCountsReady);
+
+    // The rules dialog is the only consumer, and it may have been closed while
+    // the scan was in flight. No generation counter: the tree on disk does not
+    // change under a query, so a late answer is still the right one.
+    connect(m_worker, &NotmuchWorker::foldersReady, this,
+            [this](const QStringList &folders) {
+                if (m_tagRulesDialog)
+                    m_tagRulesDialog->setFolders(folders);
+            });
 
     // A confirmed write clears the pending revert: without this, a later
     // unrelated error would roll back a change that actually succeeded.

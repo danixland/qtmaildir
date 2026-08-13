@@ -20,6 +20,9 @@
 
 #include <notmuch.h>
 
+#include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
 #include <QSet>
 
 #include <cstdlib>
@@ -677,4 +680,38 @@ void NotmuchWorker::requestMessageCounts(const QStringList &queries,
     }
 
     emit messageCountsReady(counts, generation);
+}
+
+void NotmuchWorker::requestFolders()
+{
+    if (!openReadOnly())
+        return;
+
+    const QString root = QString::fromUtf8(notmuch_database_get_path(m_db));
+    if (root.isEmpty()) {
+        emit errorOccurred(
+            QStringLiteral("notmuch reports no database path."));
+        return;
+    }
+
+    // A Maildir folder is a directory holding cur/. Testing for that rather
+    // than listing every directory keeps the plumbing (cur, new, tmp) and an
+    // account's container directory out of the list; neither is somewhere mail
+    // is filed. Hidden directories are skipped, which is what excludes
+    // .notmuch itself.
+    QStringList folders;
+    QDirIterator it(root, QDir::Dirs | QDir::NoDotAndDotDot,
+                    QDirIterator::Subdirectories);
+    const QDir rootDir(root);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        if (!QFileInfo::exists(path + QStringLiteral("/cur")))
+            continue;
+        folders.append(rootDir.relativeFilePath(path));
+    }
+
+    // Sorted, so the dropdown keeps one order across openings. QDirIterator
+    // walks in filesystem order, which is neither stable nor alphabetical.
+    folders.sort();
+    emit foldersReady(folders);
 }

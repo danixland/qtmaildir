@@ -36,6 +36,54 @@ QString prefixFor(RuleTerm::Field field)
     return QString();
 }
 
+bool isNegated(RuleTerm::Op op)
+{
+    return op == RuleTerm::ContainsNot || op == RuleTerm::IsNot
+           || op == RuleTerm::HasNot;
+}
+
+/// Quoted when the operator asks for an exact phrase, and ALWAYS when the
+/// value holds a space: unquoted, the space ends the term and the remainder
+/// becomes a bare word, which widens the rule instead of breaking it.
+bool needsQuotes(const RuleTerm &term)
+{
+    if (term.field == RuleTerm::Folder)
+        return true;
+    if (term.value.contains(QLatin1Char(' ')))
+        return true;
+    // Is/IsNot asks for an exact phrase, which only free-text fields need
+    // quoting for: tag: and attachment: values are already bare words, and
+    // quoting them changes nothing notmuch cares about but breaks the test's
+    // documented expectation of an unquoted tag.
+    if (term.op == RuleTerm::Is || term.op == RuleTerm::IsNot) {
+        return term.field == RuleTerm::From || term.field == RuleTerm::To
+               || term.field == RuleTerm::Cc || term.field == RuleTerm::Subject;
+    }
+    return false;
+}
+
+QString compileTerm(const RuleTerm &term)
+{
+    QString value = term.value;
+    if (term.field == RuleTerm::Folder)
+        value += QStringLiteral("/**");
+
+    QString body;
+    if (term.field == RuleTerm::Date) {
+        body = prefixFor(term.field) + QLatin1Char(':')
+               + (term.op == RuleTerm::Before
+                      ? QStringLiteral("..") + value
+                      : value + QStringLiteral(".."));
+    } else if (needsQuotes(term)) {
+        body = prefixFor(term.field) + QStringLiteral(":\"") + value
+               + QLatin1Char('"');
+    } else {
+        body = prefixFor(term.field) + QLatin1Char(':') + value;
+    }
+
+    return isNegated(term.op) ? QStringLiteral("not ") + body : body;
+}
+
 } // namespace
 
 bool operator==(const RuleTerm &a, const RuleTerm &b)
@@ -54,8 +102,7 @@ QString RuleQuery::compile() const
     if (terms.isEmpty())
         return QString();
 
-    return prefixFor(terms.first().field) + QLatin1Char(':')
-           + terms.first().value;
+    return compileTerm(terms.first());
 }
 
 RuleQuery RuleQuery::parse(const QString &query)

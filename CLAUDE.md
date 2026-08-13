@@ -214,6 +214,14 @@ completion descriptions. Query syntax itself is not user-facing text — notmuch
 like `tag:` and `date:` are wire format and must never be translated, only the prose
 describing them. Pre-existing code has not been audited against this rule.
 
+**This application has a sibling, and one file couples them.** `mailctl`
+(`../mailctl`) is a narrow, agent-safe CLI over the same notmuch index. The two
+are independent except for `~/.config/mailrules/rules.json`, which both read and
+write. **Before changing anything about that file's format, read
+"Changing the shared rule format" at the bottom of this document.** Nothing else
+here can break mailctl: it never imports from this repo, and this repo never
+calls it.
+
 **The auto-tagging rules are NOT in this repo, and notmuch's parser rejects
 almost nothing.** Rules live in `~/.config/mailrules/rules.json`, applied by a
 notmuch `post-new` hook that ships from the companion `mailctl` project;
@@ -373,6 +381,13 @@ backlog had already specified and that shipped unbuilt (item 29). A note saying
 "X does not work" is a bug report, and it will sit in a personal notes file
 indefinitely unless someone goes looking.
 
+**The backlog covers the mail system, not only this binary.** Item 44 shipped as
+commits in BOTH this repo and `../mailctl`, and any future item touching the
+shared rule format will too. An item is not "not ours" because its work lands in
+the sibling repo; note where the work goes in the table's Note column. mailctl
+keeps its own `TODO.md` for things that are purely its own, and that file is not
+part of this reconciliation.
+
 **Then print the open items as a table, and stop.** The user picks what to work
 on; do not start on one, and do not recommend a single item as though the choice
 were made. Read the status table for anything not marked `done`, `dropped` or
@@ -463,3 +478,48 @@ button style, and both are things a user notices without reading the changelog.
 `assets/slackbuild/` carries its own version in three files and is **not** part
 of this procedure. It has been stale since 0.7.0 and the user is considering
 removing it; do not bump it as a side effect of a release.
+
+## Changing the shared rule format
+
+`~/.config/mailrules/rules.json` has **two independent implementations**, and
+they agree by test rather than by sharing code:
+
+| | reads/writes | applies rules |
+|---|---|---|
+| `src/tagrules.cpp` (here) | yes | no |
+| `mailrules.py` (`../mailctl`) | yes | via the `post-new` hook |
+
+**This is the only way work here can break mailctl.** It never imports from this
+repo and this repo never calls it, so nothing else is shared. The file is
+deliberately owned by neither: both readers preserve fields they do not
+understand (`TagRule::unknown`, `Rule.unknown`), which is what lets one tool
+save a file the other wrote without stripping it.
+
+**A format change is therefore a two-repo change, and the live hook runs every
+ten minutes on real mail.** Before touching the schema:
+
+1. Change both readers, not one. A field added here and not there is silently
+   dropped on the next save from the other side, which looks like data loss with
+   no error anywhere.
+2. Bump `kFormatVersion` / `FORMAT_VERSION` together only for a BREAKING change.
+   Both readers refuse a file whose version they do not know, which is the
+   correct behaviour and also means a half-deployed bump stops the hook from
+   tagging. Adding an optional field needs no bump.
+3. Run both suites: `ctest --test-dir build -R tagrules` here, and
+   `./test_mailrules.py && ./test_post_new.py` there.
+4. Verify the round trip across tools by hand, since no automated test spans
+   both repos: save from the dialog, then `mailctl rules list`, and confirm the
+   rule count and a note survive.
+
+**Two hook properties are safety-critical and are not this repo's to weaken.**
+The hook refuses to remove `unread` or `inbox` (`maildir.synchronize_flags` is
+true, so removing `unread` rewrites Maildir filenames and reaches the server),
+and it does not consume the `tag:new` marker when the rules fail to load
+(clearing it while rules did not run orphans that mail permanently and
+invisibly). A dialog here that offers to write such a rule would produce one the
+hook then refuses; that is the correct direction, but say so in the UI rather
+than letting it fail silently.
+
+Backfill, applying a rule to existing mail, is deliberately unbuilt. See
+`docs/superpowers/specs/2026-08-12-tagging-rules-design.md` for what it needs
+first, including the revision it forces to the no-confirmation rule above.

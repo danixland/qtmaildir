@@ -273,6 +273,19 @@ letting QCompleter overwrite the field. This has been hit twice, in
 either class. A test that uses `setText()` passes against the bug, since
 `setText` does not drive a completer at all: the keys must be typed.
 
+**No test may read the real `/proc/locks`, and restoring it after a test is a
+BUG, not cleanup.** `TestMainWindow::init()` points every test at an empty lock
+table in its own `QTemporaryDir`. Without that the suite observes the machine's
+real sync state, so a `mailsync.sh` run makes `SyncMonitor` report a sync in
+progress and tests that never mention syncing fail: measured 0 failures in 30
+runs with no lock held, 30 in 30 with one held, and it caused three separate
+misdiagnoses (item 61). Reproduce with `flock /tmp/mbsync.lock -c 'sleep 60'` in
+one shell and the suite in another. The three tests that observe a sync write
+their own table content; none of them restores `"/proc/locks"` at the end any
+more, because doing so handed the real table to the next test and re-exposed the
+whole suite. `noTestCanSeeTheRealLockTable` fails if that protection is ever
+lost.
+
 **`QItemSelectionModel::currentRowChanged` is emitted BEFORE the selection model is
 updated.** A handler on it reading `selectedRows()` sees the *previous* selection, not the
 one the user just made. Verified against Qt 6.11. This produced two separate faults in one

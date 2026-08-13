@@ -66,6 +66,9 @@ class TestMainWindow : public QObject
 {
     Q_OBJECT
 private slots:
+    void init();
+    void cleanup();
+    void noTestCanSeeTheRealLockTable();
     void everyKnownActionIsRegistered();
     void everyRegisteredActionIsKnown();
     void everyActionHasAShortcut();
@@ -184,7 +187,65 @@ private slots:
     void placeholderCountsDropAnUncountableQuery();
     void flatModeDoesNotSurviveTheNextQuery();
     void noTwoActionsShareAnIcon();
+
+private:
+    /// Owns the throwaway lock table init() points every test at. A pointer
+    /// rather than a value because it is rebuilt per test, and QTemporaryDir
+    /// removes its directory when destroyed.
+    QTemporaryDir *m_lockDir = nullptr;
 };
+
+/// Item 61. Points every test at a lock table it owns, before every test.
+///
+/// Without this the suite reads the real `/proc/locks`, so a `mailsync.sh` run
+/// on the developer's machine makes `SyncMonitor` report a sync in progress and
+/// tests that never mention syncing fail. It is not a rare race: measured 0
+/// failures in 30 runs with no lock held and 30 in 30 with one held, and it
+/// cost three separate misdiagnoses before the cause was found. Reproduce with
+/// `flock /tmp/mbsync.lock -c 'sleep 60'` in one shell and the suite in
+/// another.
+///
+/// An EMPTY file rather than a fabricated table: `SyncMonitor` reads it and
+/// finds no entry, which is exactly "no sync is running". A test that wants to
+/// see a sync writes its own content, which three already do.
+///
+/// This also replaces the pattern those three used of restoring
+/// `"/proc/locks"` when finished. That restoration was itself a defect: it
+/// handed the real table back to whichever test ran next, so one test opting
+/// in re-exposed all the others.
+void TestMainWindow::init()
+{
+    m_lockDir = new QTemporaryDir;
+    QVERIFY(m_lockDir->isValid());
+
+    const QString locks = m_lockDir->filePath(QStringLiteral("locks"));
+    QFile file(locks);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+
+    MainWindow::setLocksPathForTesting(locks);
+}
+
+void TestMainWindow::cleanup()
+{
+    // Left pointing at the temporary path deliberately. Restoring
+    // "/proc/locks" here would re-expose the next test between cleanup() and
+    // its own init(), which is the trap this fixture exists to close.
+    delete m_lockDir;
+    m_lockDir = nullptr;
+}
+
+void TestMainWindow::noTestCanSeeTheRealLockTable()
+{
+    // The guard for the fixture itself. A test that asserts on sync state
+    // proves nothing if the path silently reverts to /proc/locks, and this
+    // fails the moment init() stops being applied or someone restores the real
+    // table at the end of a test.
+    QVERIFY2(MainWindow::locksPath() != QStringLiteral("/proc/locks"),
+             "the suite is reading the real kernel lock table; a sync running "
+             "on this machine will fail unrelated tests (item 61)");
+    QVERIFY(MainWindow::locksPath().startsWith(QDir::tempPath()));
+}
 
 void TestMainWindow::everyKnownActionIsRegistered()
 {
@@ -3546,7 +3607,8 @@ void TestMainWindow::theSyncActionIsDisabledWhileABackgroundSyncHoldsTheLock()
     QVERIFY2(action->isEnabled(),
              "the sync action was not re-enabled after the background sync");
 
-    MainWindow::setLocksPathForTesting(QStringLiteral("/proc/locks"));
+    // No restore to "/proc/locks": init() points every test at its own
+    // table, and handing the real one back would re-expose the next test.
 }
 
 // Item 71. A confirmed tag edit arms a debounce that syncs it out, so an edit
@@ -3742,7 +3804,8 @@ void TestMainWindow::autoSyncSkipsWhileABackgroundSyncIsRunning()
     QVERIFY2(!label->isHidden(),
              "a skipped automatic sync cleared the pending indicator");
 
-    MainWindow::setLocksPathForTesting(QStringLiteral("/proc/locks"));
+    // No restore to "/proc/locks": init() points every test at its own
+    // table, and handing the real one back would re-expose the next test.
 }
 
 void TestMainWindow::aSuccessfulSyncRefreshesRatherThanRerunningTheQuery()
@@ -3909,7 +3972,8 @@ void TestMainWindow::theStatusBarFollowsTheSyncPhase()
         QVERIFY2(!s.contains(QStringLiteral("status=")), qPrintable(s));
     }
 
-    MainWindow::setLocksPathForTesting(QStringLiteral("/proc/locks"));
+    // No restore to "/proc/locks": init() points every test at its own
+    // table, and handing the real one back would re-expose the next test.
 }
 
 void TestMainWindow::anUnobservableLockTableLeavesTheSyncButtonUsable()

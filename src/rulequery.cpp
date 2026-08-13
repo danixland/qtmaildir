@@ -18,6 +18,8 @@
 
 #include "rulequery.h"
 
+#include <QStringList>
+
 namespace {
 
 /// The notmuch prefix each field compiles to. Wire format, never translated.
@@ -105,7 +107,28 @@ QString RuleQuery::compile() const
     if (terms.isEmpty())
         return QString();
 
-    return compileTerm(terms.first());
+    QStringList parts;
+    for (const RuleTerm &term : terms)
+        parts.append(compileTerm(term));
+
+    const QString glue = join == Any ? QStringLiteral(" or ")
+                                     : QStringLiteral(" and ");
+    QString out = parts.join(glue);
+
+    // An `or` group followed by `and not` must be parenthesised or the `and`
+    // binds tighter than the `or`: `a or b and not c` is `a or (b and not c)`,
+    // which matches every `a` whatever the exclusion says.
+    if (join == Any && !exclusions.isEmpty() && terms.size() > 1)
+        out = QLatin1Char('(') + out + QLatin1Char(')');
+
+    for (const RuleTerm &term : exclusions) {
+        // The block IS the negation, so its rows are stored un-negated and
+        // the `and not` is applied here. A row stored negated would compile
+        // to `and not not subject:x`.
+        out += QStringLiteral(" and not ") + compileTerm(term);
+    }
+
+    return out;
 }
 
 RuleQuery RuleQuery::parse(const QString &query)

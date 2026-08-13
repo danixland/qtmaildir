@@ -36,6 +36,11 @@ private slots:
     void aValueWithASpaceIsAlwaysQuoted();
     void folderAppendsTheRecursiveSuffix();
     void dateCompilesToAOneSidedRange();
+    void allJoinsWithAnd();
+    void anyJoinsWithOr();
+    void exclusionsAppendAsAndNot();
+    void anyIsParenthesisedOnlyWhenExclusionsFollow();
+    void anEmptyQueryCompilesToAnEmptyString();
 };
 
 void TestRuleQuery::aSingleContainsTermCompiles()
@@ -125,6 +130,81 @@ void TestRuleQuery::dateCompilesToAOneSidedRange()
     after.terms.append({RuleTerm::Date, RuleTerm::After,
                         QStringLiteral("2026-01-01")});
     QCOMPARE(after.compile(), QStringLiteral("date:2026-01-01.."));
+}
+
+void TestRuleQuery::allJoinsWithAnd()
+{
+    RuleQuery q;
+    q.join = RuleQuery::All;
+    q.terms.append({RuleTerm::From, RuleTerm::Contains,
+                    QStringLiteral("vendor.example.org")});
+    q.terms.append({RuleTerm::Subject, RuleTerm::Contains,
+                    QStringLiteral("receipt")});
+
+    QCOMPARE(q.compile(),
+             QStringLiteral("from:vendor.example.org and subject:receipt"));
+}
+
+void TestRuleQuery::anyJoinsWithOr()
+{
+    RuleQuery q;
+    q.join = RuleQuery::Any;
+    q.terms.append({RuleTerm::From, RuleTerm::Contains,
+                    QStringLiteral("one.example.org")});
+    q.terms.append({RuleTerm::From, RuleTerm::Contains,
+                    QStringLiteral("two.example.org")});
+
+    QCOMPARE(q.compile(),
+             QStringLiteral("from:one.example.org or from:two.example.org"));
+}
+
+void TestRuleQuery::exclusionsAppendAsAndNot()
+{
+    RuleQuery q;
+    q.join = RuleQuery::All;
+    q.terms.append({RuleTerm::From, RuleTerm::Contains,
+                    QStringLiteral("vendor.example.org")});
+    q.exclusions.append({RuleTerm::Subject, RuleTerm::Contains,
+                         QStringLiteral("receipt")});
+
+    QCOMPARE(q.compile(),
+             QStringLiteral("from:vendor.example.org "
+                            "and not subject:receipt"));
+}
+
+void TestRuleQuery::anyIsParenthesisedOnlyWhenExclusionsFollow()
+{
+    // Without the parens this binds as (a or (b and not c)), which matches
+    // everything from the first sender regardless of the exclusion.
+    RuleQuery guarded;
+    guarded.join = RuleQuery::Any;
+    guarded.terms.append({RuleTerm::From, RuleTerm::Contains,
+                          QStringLiteral("one.example.org")});
+    guarded.terms.append({RuleTerm::From, RuleTerm::Contains,
+                          QStringLiteral("two.example.org")});
+    guarded.exclusions.append({RuleTerm::Subject, RuleTerm::Contains,
+                               QStringLiteral("receipt")});
+
+    QCOMPARE(guarded.compile(),
+             QStringLiteral("(from:one.example.org or from:two.example.org) "
+                            "and not subject:receipt"));
+
+    // No exclusion, no parens: they would be noise in the stored file.
+    RuleQuery bare;
+    bare.join = RuleQuery::Any;
+    bare.terms.append({RuleTerm::From, RuleTerm::Contains,
+                       QStringLiteral("one.example.org")});
+    bare.terms.append({RuleTerm::From, RuleTerm::Contains,
+                       QStringLiteral("two.example.org")});
+
+    QCOMPARE(bare.compile(),
+             QStringLiteral("from:one.example.org or from:two.example.org"));
+}
+
+void TestRuleQuery::anEmptyQueryCompilesToAnEmptyString()
+{
+    RuleQuery q;
+    QCOMPARE(q.compile(), QString());
 }
 
 QTEST_MAIN(TestRuleQuery)

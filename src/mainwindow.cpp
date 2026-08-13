@@ -353,7 +353,18 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
         // action's text, icon, tooltip and ENABLED state, so it cannot end up
         // offering to save an empty query while the menu entry refuses.
         m_saveQueryButton->setDefaultAction(save);
-        m_saveQueryButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        // Icon AND text, unlike the toolbar, which follows the desktop's
+        // button style. This button sits in a row of text buttons, the saved
+        // queries, and an icon on its own next to them reads as a different
+        // kind of control than it is. It is also the one action whose meaning
+        // an icon alone does not carry: "save" is a shape everyone knows and
+        // the question is always "save WHAT".
+        m_saveQueryButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        // Its own text, not the action's: "&Save query..." is menu phrasing,
+        // and a button rendering the ampersand's accelerator and the ellipsis
+        // that promises a dialog reads as a menu entry that escaped. The
+        // action keeps both for the menu it lives in.
+        m_saveQueryButton->setText(tr("Save"));
 
         auto updateSaveState = [this, save]() {
             save->setEnabled(!m_queryEdit->text().trimmed().isEmpty());
@@ -1066,7 +1077,11 @@ void MainWindow::buildMenus()
         // the selection's tags.
         { QStringLiteral("tag_rules"),       QStringLiteral("configure") },
         { QStringLiteral("complete_query"),  QStringLiteral("edit-find-replace") },
-        { QStringLiteral("save_query"),      QStringLiteral("document-save") },
+        // NOT "document-save": that is the floppy/disk shape, which reads as
+        // "write a file somewhere" and asks the user to guess what is being
+        // written. Saving a query is bookmarking a search, and bookmark-new is
+        // the icon set every desktop already uses for "keep this for later".
+        { QStringLiteral("save_query"),      QStringLiteral("bookmark-new") },
         { QStringLiteral("select_all"),      QStringLiteral("edit-select-all") },
         { QStringLiteral("clear_pane"),      QStringLiteral("edit-clear") },
         { QStringLiteral("clear_selection"), QStringLiteral("edit-clear-all") },

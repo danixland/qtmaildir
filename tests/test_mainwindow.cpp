@@ -52,6 +52,7 @@
 
 #include <QImage>
 #include <QPainter>
+#include <QToolButton>
 #include <QHBoxLayout>
 #include <QComboBox>
 #include <QScrollBar>
@@ -5559,6 +5560,23 @@ void TestMainWindow::thereIsASaveButtonBesideTheQueryBar()
     auto *button =
         window.findChild<QAbstractButton *>(QStringLiteral("saveQueryButton"));
     QVERIFY2(button, "no Save query button beside the query bar");
+
+    // Icon AND text. An icon alone was the first version and read as
+    // ambiguous: "save" is a familiar shape whose meaning is always "save
+    // what?".
+    auto *toolButton = qobject_cast<QToolButton *>(button);
+    QVERIFY(toolButton);
+    QCOMPARE(toolButton->toolButtonStyle(), Qt::ToolButtonTextBesideIcon);
+    QVERIFY2(!button->icon().isNull(), "the button has no icon");
+    QVERIFY2(!button->text().isEmpty(), "the button has no text");
+
+    // Button phrasing, not the menu's: no accelerator ampersand, and no
+    // ellipsis. setDefaultAction copies the action's text, so this asserts the
+    // override survived it.
+    QVERIFY2(!button->text().contains(QLatin1Char('&')),
+             "the menu accelerator leaked onto the button");
+    QVERIFY2(!button->text().contains(QStringLiteral("...")),
+             "the menu's ellipsis leaked onto the button");
 
     auto *queryEdit =
         window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));

@@ -50,6 +50,7 @@ private slots:
     void anOrGroupWithExclusionsParses();
     void anUnrepresentableQueryRejectsWhole();
     void aParenBearingValueIsARowNotAShape();
+    void theRuleCorpusRoundTripsByteForByte();
 };
 
 void TestRuleQuery::aSingleContainsTermCompiles()
@@ -370,6 +371,44 @@ void TestRuleQuery::aParenBearingValueIsARowNotAShape()
     QCOMPARE(q.terms.size(), 1);
     QCOMPARE(q.terms.at(0).value, QStringLiteral("(((("));
     QCOMPARE(q.compile(), QStringLiteral("from:(((("));
+}
+
+void TestRuleQuery::theRuleCorpusRoundTripsByteForByte()
+{
+    // Every query SHAPE present in a real rules file, with placeholder
+    // values. Verified by hand against the live file when this was written:
+    // all seventeen rules parsed and compiled back byte for byte, none fell
+    // to text mode.
+    //
+    // A compile that differs by so much as a paren would rewrite the shared
+    // file on the next save, which the companion tool then sees as a diff
+    // nobody made.
+    const QStringList corpus = {
+        QString(),                                        // a rule with no query yet
+        QStringLiteral("path:\"account-one/**\""),
+        QStringLiteral("path:\"account-two/Inbox/topic/**\""),
+        QStringLiteral("subject:\"[list-name]\""),
+        QStringLiteral("from:notifications@service.example.org"),
+        QStringLiteral("from:one@jobs.example.org or "
+                       "from:two@jobs.example.org or "
+                       "from:three@jobs.example.org"),
+        QStringLiteral("from:mail.vendor.example.org and "
+                       "subject:\"Secure link\""),
+        QStringLiteral("(from:vendor.example.org or from:vendor.example.net) "
+                       "and not subject:receipt and not subject:refund "
+                       "and not subject:EUR"),
+    };
+
+    for (const QString &query : corpus) {
+        const RuleQuery parsed = RuleQuery::parse(query);
+        QVERIFY2(parsed.parsed, qPrintable(query));
+        QCOMPARE(parsed.compile(), query);
+
+        // And the value itself round-trips, which is what the dialog's
+        // "was this edited" comparison depends on.
+        QVERIFY2(RuleQuery::parse(parsed.compile()) == parsed,
+                 qPrintable(query));
+    }
 }
 
 QTEST_MAIN(TestRuleQuery)

@@ -41,6 +41,12 @@ private slots:
     void exclusionsAppendAsAndNot();
     void anyIsParenthesisedOnlyWhenExclusionsFollow();
     void anEmptyQueryCompilesToAnEmptyString();
+    void aFlatAndChainParses();
+    void aFlatOrChainParses();
+    void anEmptyQueryParsesToNoRows();
+    void quotedValuesLoseTheirQuotes();
+    void aNegatedTermParsesAsANegatedOperator();
+    void whatParsesCompilesBackUnchanged();
 };
 
 void TestRuleQuery::aSingleContainsTermCompiles()
@@ -205,6 +211,93 @@ void TestRuleQuery::anEmptyQueryCompilesToAnEmptyString()
 {
     RuleQuery q;
     QCOMPARE(q.compile(), QString());
+}
+
+void TestRuleQuery::aFlatAndChainParses()
+{
+    const RuleQuery q = RuleQuery::parse(
+        QStringLiteral("from:vendor.example.org and subject:receipt"));
+
+    QVERIFY(q.parsed);
+    QCOMPARE(q.join, RuleQuery::All);
+    QCOMPARE(q.terms.size(), 2);
+    QCOMPARE(q.terms.at(0).field, RuleTerm::From);
+    QCOMPARE(q.terms.at(0).op, RuleTerm::Contains);
+    QCOMPARE(q.terms.at(0).value, QStringLiteral("vendor.example.org"));
+    QCOMPARE(q.terms.at(1).field, RuleTerm::Subject);
+    QVERIFY(q.exclusions.isEmpty());
+}
+
+void TestRuleQuery::aFlatOrChainParses()
+{
+    const RuleQuery q = RuleQuery::parse(
+        QStringLiteral("from:one.example.org or from:two.example.org"));
+
+    QVERIFY(q.parsed);
+    QCOMPARE(q.join, RuleQuery::Any);
+    QCOMPARE(q.terms.size(), 2);
+}
+
+void TestRuleQuery::anEmptyQueryParsesToNoRows()
+{
+    // One shipped rule has an empty query. It must open in the builder ready
+    // to receive a row, not fall back to text mode.
+    const RuleQuery q = RuleQuery::parse(QString());
+
+    QVERIFY(q.parsed);
+    QVERIFY(q.terms.isEmpty());
+}
+
+void TestRuleQuery::quotedValuesLoseTheirQuotes()
+{
+    const RuleQuery q = RuleQuery::parse(
+        QStringLiteral("subject:\"your receipt\""));
+
+    QVERIFY(q.parsed);
+    QCOMPARE(q.terms.size(), 1);
+    QCOMPARE(q.terms.at(0).value, QStringLiteral("your receipt"));
+    QCOMPARE(q.terms.at(0).op, RuleTerm::Is);
+}
+
+void TestRuleQuery::aNegatedTermParsesAsANegatedOperator()
+{
+    const RuleQuery q = RuleQuery::parse(
+        QStringLiteral("from:vendor.example.org and not tag:inbox"));
+
+    QVERIFY(q.parsed);
+    // A trailing negation on an `and` chain becomes an exclusion: that is how
+    // the user describes these rules, and the design records the preference.
+    QCOMPARE(q.terms.size(), 1);
+    QCOMPARE(q.exclusions.size(), 1);
+    QCOMPARE(q.exclusions.at(0).field, RuleTerm::Tag);
+    QCOMPARE(q.exclusions.at(0).op, RuleTerm::Is);
+}
+
+void TestRuleQuery::whatParsesCompilesBackUnchanged()
+{
+    // The dialog decides whether to rewrite the stored string by comparing
+    // against what it parsed, so a compile that differs by so much as a quote
+    // would churn a file a second tool reads.
+    const QStringList queries = {
+        QStringLiteral("from:vendor.example.org"),
+        QStringLiteral("from:vendor.example.org and subject:receipt"),
+        QStringLiteral("from:one.example.org or from:two.example.org"),
+        QStringLiteral("subject:\"your receipt\""),
+        QStringLiteral("path:\"account-one/**\""),
+        QStringLiteral("tag:inbox"),
+        QStringLiteral("attachment:pdf"),
+        QStringLiteral("date:..2026-01-01"),
+        QStringLiteral("date:2026-01-01.."),
+        QStringLiteral("from:vendor.example.org and not tag:inbox"),
+        QStringLiteral("from:vendor.example.org and not subject:receipt "
+                       "and not subject:refund"),
+    };
+
+    for (const QString &query : queries) {
+        const RuleQuery parsed = RuleQuery::parse(query);
+        QVERIFY2(parsed.parsed, qPrintable(query));
+        QCOMPARE(parsed.compile(), query);
+    }
 }
 
 QTEST_MAIN(TestRuleQuery)

@@ -11,6 +11,23 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-14
+
+A saved query can become a tagging rule without retyping it, and a rule can no
+longer disappear because of what you called it. The name field accepts what a
+person types and cleans it into a valid id, saving says why when a rule would
+not survive being read back, and a rule already in the file with an unusable
+name is loaded so it can be repaired rather than silently ignored.
+
+### Upgrading
+
+If a rule in `~/.config/mailrules/rules.json` has a name that is not lowercase
+letters, digits and dashes, it was being dropped by every reader: invisible in
+the dialog and never applied by the `post-new` hook. It now loads with its name
+repaired, and the dialog warns that the file still holds the old one. **Open
+the tagging rules dialog and press Save** to write the repair back. Until you
+do, the hook still ignores that rule.
+
 ### Added
 
 - A saved query can be turned into a tagging rule: right-click a stored query

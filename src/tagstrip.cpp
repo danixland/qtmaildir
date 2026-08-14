@@ -18,6 +18,7 @@
 
 #include "tagstrip.h"
 
+#include <QContextMenuEvent>
 #include <QFontMetrics>
 #include <QPainter>
 
@@ -109,6 +110,50 @@ void TagStrip::resizeEvent(QResizeEvent *event)
     relayout();
 }
 
+QRect TagStrip::chipRectAt(int index) const
+{
+    if (index < 0 || index >= m_visible.size())
+        return {};
+
+    const QFontMetrics metrics(font());
+
+    // Reproduces paintEvent's own vertical placement exactly, which is derived
+    // from the font's height rather than from the chip's, so a chip whose text
+    // is shorter than the line still lands on the same baseline.
+    const int top = (height() - (metrics.height() + TagChip::kPaddingY * 2)) / 2;
+
+    int x = 0;
+    for (int i = 0; i < index; ++i)
+        x += TagChip::sizeFor(metrics, m_visible.at(i)).width() + TagChip::kSpacing;
+
+    return QRect(QPoint(x, top), TagChip::sizeFor(metrics, m_visible.at(index)));
+}
+
+QString TagStrip::chipAt(const QPoint &point) const
+{
+    for (int i = 0; i < m_visible.size(); ++i) {
+        if (chipRectAt(i).contains(point))
+            return m_visible.at(i);
+    }
+    // Deliberately nothing for the overflow chip and for empty space: the +N
+    // chip names a list, not a tag.
+    return {};
+}
+
+void TagStrip::contextMenuEvent(QContextMenuEvent *event)
+{
+    const QString tag = chipAt(event->pos());
+    if (tag.isEmpty()) {
+        // Ignored rather than accepted, so a parent that offers its own menu
+        // still gets the chance to show it.
+        event->ignore();
+        return;
+    }
+
+    event->accept();
+    emit tagContextMenuRequested(tag, event->globalPos());
+}
+
 void TagStrip::paintEvent(QPaintEvent *)
 {
     if (m_visible.isEmpty())
@@ -118,16 +163,20 @@ void TagStrip::paintEvent(QPaintEvent *)
     const QFontMetrics metrics(font());
     const int top = (height() - (metrics.height() + TagChip::kPaddingY * 2)) / 2;
 
-    int x = 0;
-    for (const QString &tag : m_visible) {
-        const QSize size = TagChip::sizeFor(metrics, tag);
+    for (int i = 0; i < m_visible.size(); ++i) {
+        const QString &tag = m_visible.at(i);
         const QColor colour = m_tagColors ? m_tagColors->colourFor(tag)
                                           : TagColors().colourFor(tag);
-        TagChip::paint(&painter, QRect(QPoint(x, top), size), tag, colour);
-        x += size.width() + TagChip::kSpacing;
+        TagChip::paint(&painter, chipRectAt(i), tag, colour);
     }
 
     if (!m_hidden.isEmpty()) {
+        // After the last visible chip. right() is inclusive, so +1 makes it an
+        // exclusive edge before the gap is added. The overflow chip is not in
+        // m_visible and so has no chipRectAt() of its own.
+        const QRect last = chipRectAt(m_visible.size() - 1);
+        const int x = last.right() + 1 + TagChip::kSpacing;
+
         const QString text = overflowText(m_hidden.size());
         const QSize size = TagChip::sizeFor(metrics, text);
         TagChip::paint(&painter, QRect(QPoint(x, top), size), text,

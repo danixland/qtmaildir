@@ -462,12 +462,12 @@ void TestMimeParser::parsesADateWithATimezoneComment()
     // silently: the attachment folder loses its prefix, and a date search
     // offers nothing with no indication why.
     const QDateTime withComment = MimeParser::parseDate(
-        QStringLiteral("Thu, 14 Aug 2026 09:30:00 +0200 (CEST)"));
+        QStringLiteral("Fri, 14 Aug 2026 09:30:00 +0200 (CEST)"));
     QVERIFY(withComment.isValid());
     QCOMPARE(withComment.date(), QDate(2026, 8, 14));
 
     const QDateTime plain = MimeParser::parseDate(
-        QStringLiteral("Thu, 14 Aug 2026 09:30:00 +0200"));
+        QStringLiteral("Fri, 14 Aug 2026 09:30:00 +0200"));
     QVERIFY(plain.isValid());
     QCOMPARE(plain.date(), QDate(2026, 8, 14));
 
@@ -1316,7 +1316,7 @@ private:
         item.message.from = QStringLiteral("Sender <sender@example.org>");
         item.message.to = QStringLiteral("Recipient <recipient@example.org>");
         item.message.cc = QStringLiteral("Copied <copied@example.org>");
-        item.message.date = QStringLiteral("Thu, 14 Aug 2026 09:30:00 +0200");
+        item.message.date = QStringLiteral("Fri, 14 Aug 2026 09:30:00 +0200");
         item.message.messageId = QStringLiteral("<abc123@example.org>");
         return item;
     }
@@ -1944,6 +1944,12 @@ to a rule already exists as save the query, then build a rule from it."
 ---
 
 ## Notes for the implementer
+
+**`Qt::RFC2822Date` also validates the weekday against the date.** Found in Task 2:
+`Thu, 14 Aug 2026` parses as INVALID because 2026-08-14 is a Friday, and the
+failure looks exactly like the timezone-comment bug this feature exists to avoid.
+Any `Date:` header written into a test fixture must carry the right weekday.
+Check with `date -d <yyyy-mm-dd> +%A` rather than guessing.
 
 **Where this is likely to go wrong, in order of probability:**
 

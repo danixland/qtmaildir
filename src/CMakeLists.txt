@@ -22,9 +22,11 @@ add_library(qtmaildir_lib STATIC
     syncmonitor.cpp
     threadcidmap.cpp
     messageview.cpp
+    messagedetailsdialog.cpp
     mainwindow.cpp
     querycompleter.cpp
     rulequery.cpp
+    searchterm.cpp
 )
 
 target_include_directories(qtmaildir_lib

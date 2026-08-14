@@ -373,6 +373,13 @@ private slots:
     /// Runs a query the user clicked on the placeholder pane.
     void onPlaceholderQueryRequested(const QString &query);
 
+    /// Runs a search asked for from the message pane.
+    ///
+    /// `extend` narrows the current query rather than replacing it. The panes
+    /// carry a finished query and no knowledge of the bar; the combining
+    /// happens here, because only the window can see what the bar holds.
+    void runSearchFromPane(const QString &query, bool extend);
+
     /// Runs one tagging rule's query in the thread list, so the user can see
     /// which mail it collects. The rules dialog stays open; the point is to
     /// compare the rule against its results.

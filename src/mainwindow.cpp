@@ -55,6 +55,7 @@
 #include "querycompleter.h"
 #include "carddelegate.h"
 #include "cardlayout.h"
+#include "searchterm.h"
 #include "tagchip.h"
 #include "tagdialog.h"
 #include "savequerydialog.h"
@@ -672,6 +673,8 @@ void MainWindow::buildUi()
             this, &MainWindow::onPlaceholderQueryRequested);
     connect(m_messageView, &MessageView::staleThreadRecoveryRequested,
             this, &MainWindow::recoverStaleThread);
+    connect(m_messageView, &MessageView::searchRequested,
+            this, &MainWindow::runSearchFromPane);
 
     m_splitter = new QSplitter(Qt::Horizontal, central);
     m_splitter->addWidget(m_threadView);
@@ -1645,6 +1648,21 @@ void MainWindow::onPlaceholderQueryRequested(const QString &query)
     // Through the query bar rather than straight to the worker, so the bar
     // shows what is being displayed and the user can edit it from there.
     m_queryEdit->setText(query);
+    runCurrentQuery();
+}
+
+void MainWindow::runSearchFromPane(const QString &query, bool extend)
+{
+    if (query.isEmpty())
+        return;
+
+    const QString next =
+        extend ? SearchTerm::extend(m_queryEdit->text(), query) : query;
+
+    // Through the query bar and the existing runner, so the account scope, the
+    // generation counter and the flat-mode reset all behave exactly as they do
+    // for a typed query. Nothing here builds a second query path.
+    m_queryEdit->setText(next);
     runCurrentQuery();
 }
 

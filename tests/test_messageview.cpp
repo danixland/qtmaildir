@@ -24,6 +24,7 @@
 #include <QtTest>
 
 #include "htmlbuilder.h"
+#include "messagedetailsdialog.h"
 #include "messageview.h"
 #include "mimeparser.h"
 
@@ -49,6 +50,11 @@ private slots:
     void detailsDialogIsOfferedForEveryThread();
     void placeholderRendersAndReportsItself();
     void aMessageBodyCannotRunAQuery();
+    void headerOffersSubjectDateAndSenderForOneMessage();
+    void headerOffersNoSenderForARealThread();
+    void headerOffersNothingForAnAbsentField();
+    void bodySelectionBecomesAQuotedSearch();
+    void aSearchFromTheDetailsDialogClosesIt();
 
 private:
     QWebEngineView *webViewOf(MessageView *view) const
@@ -372,7 +378,7 @@ static ThreadRenderItem oneMessage()
     message.to = QStringLiteral("Recipient <recipient@example.org>");
     message.cc = QStringLiteral("Copied <copied@example.org>");
     message.subject = QStringLiteral("Quarterly report");
-    message.date = QStringLiteral("Mon, 4 Aug 2026 09:00:00 +0200");
+    message.date = QStringLiteral("Tue, 4 Aug 2026 09:00:00 +0200");
     message.plainBody = QStringLiteral("body");
 
     ThreadRenderItem item;
@@ -564,6 +570,184 @@ void TestMessageView::aMessageBodyCannotRunAQuery()
     QVERIFY(!view.showingPlaceholder());
 
     QVERIFY(queries.isEmpty());
+}
+
+void TestMessageView::headerOffersSubjectDateAndSenderForOneMessage()
+{
+    MessageView view;
+    view.showThread({ oneMessage() });
+
+    const QList<SearchOffer> offers = view.headerSearchOffers();
+
+    QStringList queries;
+    for (const SearchOffer &offer : offers)
+        queries << offer.query;
+    const QString shown = queries.join(QStringLiteral(" | "));
+
+    QVERIFY2(queries.contains(QStringLiteral("subject:\"Quarterly report\"")),
+             qPrintable(shown));
+    QVERIFY2(queries.contains(
+                 QStringLiteral("from:\"Sender <sender@example.org>\"")),
+             qPrintable(shown));
+    QVERIFY2(queries.contains(
+                 QStringLiteral("to:\"Recipient <recipient@example.org>\"")),
+             qPrintable(shown));
+    QVERIFY2(queries.contains(
+                 QStringLiteral("cc:\"Copied <copied@example.org>\"")),
+             qPrintable(shown));
+
+    // The date is offered as a one-day range. Qt::RFC2822Date checks the
+    // weekday against the date, so a fixture with the wrong day silently
+    // produces no offer at all: 2026-08-04 is a Tuesday.
+    QVERIFY2(queries.contains(QStringLiteral("date:2026-08-04..2026-08-04")),
+             qPrintable(shown));
+
+    // Every offer carries a label the menu shows, naming the value so the user
+    // can see what they are about to search for.
+    for (const SearchOffer &offer : offers) {
+        QVERIFY(!offer.label.isEmpty());
+        QVERIFY(!offer.query.isEmpty());
+    }
+}
+
+void TestMessageView::headerOffersNoSenderForARealThread()
+{
+    // The header shows From/To/Cc only for a single-message thread, because a
+    // thread's recipient differs message to message. The menu shares that
+    // condition: it must never offer a value the header is not stating.
+    ThreadRenderItem first = oneMessage();
+    ThreadRenderItem second = oneMessage();
+    second.message.from = QStringLiteral("Recipient <recipient@example.org>");
+    second.message.to = QStringLiteral("Sender <sender@example.org>");
+
+    MessageView view;
+    view.showThread({ first, second });
+
+    QStringList queries;
+    for (const SearchOffer &offer : view.headerSearchOffers())
+        queries << offer.query;
+
+    // THE GUARD. A test asserting only that something is absent passes against
+    // no implementation whatever. Subject and date must still be offered,
+    // which proves the list was built before the absences below mean anything.
+    QVERIFY2(!queries.isEmpty(), "no offers at all: the list was never built");
+    QVERIFY(queries.contains(QStringLiteral("subject:\"Quarterly report\"")));
+    QVERIFY(queries.contains(QStringLiteral("date:2026-08-04..2026-08-04")));
+
+    for (const QString &query : queries) {
+        QVERIFY2(!query.startsWith(QStringLiteral("from:")),
+                 qPrintable(QStringLiteral("thread offered %1").arg(query)));
+        QVERIFY2(!query.startsWith(QStringLiteral("to:")),
+                 qPrintable(QStringLiteral("thread offered %1").arg(query)));
+        QVERIFY2(!query.startsWith(QStringLiteral("cc:")),
+                 qPrintable(QStringLiteral("thread offered %1").arg(query)));
+    }
+}
+
+void TestMessageView::headerOffersNothingForAnAbsentField()
+{
+    // cc:"" parses cleanly and matches nothing, so an entry built from an
+    // empty header would look enabled and silently do nothing.
+    ThreadRenderItem item = oneMessage();
+    item.message.cc.clear();
+
+    MessageView view;
+    view.showThread({ item });
+
+    QStringList queries;
+    for (const SearchOffer &offer : view.headerSearchOffers())
+        queries << offer.query;
+
+    // Guard first, then the absence.
+    QVERIFY2(!queries.isEmpty(), "no offers at all: the list was never built");
+    QVERIFY(queries.contains(QStringLiteral("subject:\"Quarterly report\"")));
+
+    for (const QString &query : queries)
+        QVERIFY(!query.startsWith(QStringLiteral("cc:")));
+}
+
+void TestMessageView::bodySelectionBecomesAQuotedSearch()
+{
+    // The selection reaches the query as ONE quoted term. Asserted on the
+    // constructed string: a query that lost its quoting is not an error to
+    // notmuch, it simply matches nothing, so nothing downstream would report
+    // this being wrong.
+    //
+    // Takes the text as an argument rather than reading the page, so the
+    // quoting is testable without a live web engine and a rendered document.
+    MessageView view;
+
+    QCOMPARE(view.selectionSearchOffer(QStringLiteral("invoice 4471")).query,
+             QStringLiteral("\"invoice 4471\""));
+
+    // A selection spanning paragraphs arrives full of newlines.
+    QCOMPARE(view.selectionSearchOffer(
+                 QStringLiteral("first line\n\nsecond line")).query,
+             QStringLiteral("\"first line second line\""));
+
+    // Query syntax in the selection is data, not syntax: it is quoted, not
+    // interpreted, so a selection reading "a or b" searches for that phrase.
+    QCOMPARE(view.selectionSearchOffer(QStringLiteral("tag:inbox or x")).query,
+             QStringLiteral("\"tag:inbox or x\""));
+
+    // Nothing selected means no entry, rather than an entry searching for "".
+    QVERIFY(view.selectionSearchOffer(QString()).query.isEmpty());
+    QVERIFY(view.selectionSearchOffer(QStringLiteral("  \n ")).query.isEmpty());
+
+    // A usable offer always carries a label for the menu to show.
+    QVERIFY(!view.selectionSearchOffer(QStringLiteral("invoice 4471"))
+                 .label.isEmpty());
+}
+
+void TestMessageView::aSearchFromTheDetailsDialogClosesIt()
+{
+    // The dialog is modal. Without closing it, the query runs and the thread
+    // list repaints BEHIND a window the user still has to dismiss, so the
+    // search looks like it did nothing. The dialog also describes m_items,
+    // which the new query is about to replace.
+    MessageView view;
+    view.showThread({ oneMessage() });
+
+    QSignalSpy spy(&view, &MessageView::searchRequested);
+    QVERIFY(spy.isValid());
+
+    // showDetailsDialog() blocks in exec(), so the dialog has to be driven
+    // from a timer once it is up.
+    bool foundTheDialog = false;
+    QTimer::singleShot(0, &view, [&view, &foundTheDialog]() {
+        auto *dialog = view.findChild<MessageDetailsDialog *>();
+        if (!dialog) {
+            // Never leave exec() spinning: a missing dialog must fail the test,
+            // not hang the suite.
+            QApplication::exit(1);
+            return;
+        }
+        foundTheDialog = true;
+
+        const QList<HeaderRow> rows = dialog->rows();
+        const auto from = std::find_if(
+            rows.cbegin(), rows.cend(), [](const HeaderRow &row) {
+                return row.field == QStringLiteral("from");
+            });
+        if (from == rows.cend()) {
+            dialog->reject();
+            return;
+        }
+
+        dialog->requestSearch(*from, false);
+    });
+
+    view.showDetailsDialog();
+
+    QVERIFY2(foundTheDialog, "the details dialog never appeared");
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(0).toString(),
+             QStringLiteral("from:\"Sender <sender@example.org>\""));
+
+    // exec() returned, which is the assertion: the dialog closed on its own
+    // rather than waiting for the user to dismiss it.
+    QVERIFY(!view.findChild<MessageDetailsDialog *>()
+            || !view.findChild<MessageDetailsDialog *>()->isVisible());
 }
 
 QTEST_MAIN(TestMessageView)

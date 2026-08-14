@@ -18,10 +18,12 @@
 
 #pragma once
 
+#include <QRect>
 #include <QStringList>
 #include <QWidget>
 
 class TagColors;
+class QContextMenuEvent;
 
 /// One row of tag chips under the message pane.
 ///
@@ -48,9 +50,30 @@ public:
     QStringList visibleTags() const { return m_visible; }
     QStringList hiddenTags() const { return m_hidden; }
 
+    /// The rect of the visible chip at `index`, empty when out of range.
+    ///
+    /// The SAME function paintEvent lays out from, so what is drawn and what
+    /// is clickable cannot drift. `CardDelegate::expanderRectFor` exists for
+    /// this reason and this follows it.
+    QRect chipRectAt(int index) const;
+
+    /// The tag under `point`, empty when the point is on no chip.
+    ///
+    /// The trailing "+N" chip yields an empty string: it stands for a list of
+    /// tags rather than for one, so there is nothing a search could name.
+    QString chipAt(const QPoint &point) const;
+
+signals:
+    /// A visible chip was right-clicked. `globalPos` is where to pop a menu.
+    ///
+    /// The strip does not build the menu itself: what a tag can do belongs to
+    /// the window, which owns the query bar and the actions.
+    void tagContextMenuRequested(const QString &tag, const QPoint &globalPos);
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
     /// Recomputes the visible/hidden split for the current width.

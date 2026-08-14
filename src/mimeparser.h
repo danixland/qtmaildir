@@ -19,6 +19,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QHash>
 #include <QList>
 #include <QString>
@@ -143,4 +144,14 @@ public:
     MimeParser();
 
     ParsedMessage parse(const QString &filePath) const;
+
+    /// Parses an RFC 2822 `Date:` header, returning an invalid QDateTime when
+    /// nothing usable is there.
+    ///
+    /// **Strips comments before parsing**, because `Qt::RFC2822Date` rejects
+    /// the entire string when a trailing timezone comment is present, and
+    /// `... +0200 (CEST)` is legal per RFC 5322 and common in the wild
+    /// (verified on Qt 6.11). A parser without this silently loses the date on
+    /// a large share of real mail.
+    static QDateTime parseDate(const QString &rfc822Date);
 };

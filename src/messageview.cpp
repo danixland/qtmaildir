@@ -22,14 +22,13 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QFontDatabase>
-#include <QPlainTextEdit>
 #include <QDir>
 #include <QBuffer>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QStandardPaths>
@@ -49,7 +48,9 @@
 
 #include "cidschemehandler.h"
 #include "htmlbuilder.h"
+#include "messagedetailsdialog.h"
 #include "requestinterceptor.h"
+#include "searchterm.h"
 #include "tagstrip.h"
 #include "threadcidmap.h"
 #include "version.h"
@@ -151,6 +152,12 @@ MessageView::MessageView(QWidget *parent)
     settings->setAttribute(QWebEngineSettings::PluginsEnabled, false);
     settings->setAttribute(QWebEngineSettings::FullScreenSupportEnabled, false);
 
+    // Item 85: a selection in the body is searchable. CustomContextMenu so the
+    // page's standard entries survive and the search is added to them.
+    m_view->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_view, &QWidget::customContextMenuRequested,
+            this, &MessageView::showBodyContextMenu);
+
     // Ctrl+wheel zoom. The filter goes on the application rather than on
     // m_view: the wheel event is delivered to an internal QQuickWidget the
     // view creates lazily, so there is no child to filter at this point and a
@@ -162,6 +169,12 @@ MessageView::MessageView(QWidget *parent)
     m_headerLabel->setTextFormat(Qt::RichText);
     m_headerLabel->setWordWrap(true);
     m_headerLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    // Item 85: the header's values are searchable. CustomContextMenu rather
+    // than an action list, since the entries depend on what is displayed.
+    m_headerLabel->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_headerLabel, &QWidget::customContextMenuRequested,
+            this, &MessageView::showHeaderContextMenu);
 
     // To the right of the header, per the user's decision: the summary answers
     // "who is this from", this answers "what actually happened to it". A button
@@ -238,6 +251,20 @@ MessageView::MessageView(QWidget *parent)
     // spelling them out cost most of the list's width.
     m_tagStrip = new TagStrip(this);
     m_tagStrip->hide();
+
+    // Item 85: a tag chip is searchable. The strip reports which chip was hit
+    // and where; what a tag can do is decided here, beside the other menus, so
+    // all three surfaces offer the same pair of operations.
+    connect(m_tagStrip, &TagStrip::tagContextMenuRequested, this,
+            [this](const QString &tag, const QPoint &globalPos) {
+                const QString query = SearchTerm::tag(tag);
+                if (query.isEmpty())
+                    return;
+
+                QMenu menu(this);
+                addSearchEntries(&menu, { { tr("tag %1").arg(tag), query } });
+                menu.exec(globalPos);
+            });
 
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(headerRow);
@@ -428,6 +455,11 @@ QString MessageView::headerMark(Marks::Mark mark) const
 
 void MessageView::updateHeader()
 {
+    // A stale offer list must not survive either exit: the early return below
+    // leaves nothing on screen to search, and the normal path rebuilds it from
+    // scratch a few lines down.
+    m_headerOffers.clear();
+
     if (m_items.isEmpty()) {
         m_headerLabel->clear();
         m_detailsButton->hide();
@@ -439,6 +471,30 @@ void MessageView::updateHeader()
     // The thread's subject comes from its first message; later replies carry
     // Re: prefixes that add nothing.
     const QString subject = m_items.first().message.subject;
+
+    // Collected by the pass that renders the label, from the same values, so
+    // nothing has to parse the rendered markup back into structure.
+    auto elided = [](const QString &value) {
+        constexpr int kMaxLabel = 40;
+        return value.size() > kMaxLabel
+                   ? value.left(kMaxLabel) + QStringLiteral("...")
+                   : value;
+    };
+
+    auto offer = [this](const QString &label, const QString &query) {
+        if (query.isEmpty())
+            return;
+        m_headerOffers.append({ label, query });
+    };
+
+    offer(tr("subject \"%1\"").arg(elided(subject)),
+          SearchTerm::field(QStringLiteral("subject"), subject));
+
+    const QDateTime sent = MimeParser::parseDate(m_items.first().message.date);
+    if (sent.isValid()) {
+        offer(tr("mail from %1").arg(sent.date().toString(Qt::ISODate)),
+              SearchTerm::onDate(sent.date()));
+    }
 
     // Item 70's marks, beside the subject and OUTSIDE the message area. The
     // user asked for these two only: whether the thread is flagged and whether
@@ -489,6 +545,16 @@ void MessageView::updateHeader()
         row(tr("From:"), message.from);
         row(tr("To:"), message.to);
         row(tr("Cc:"), message.cc);
+
+        // Only here, sharing the condition with the header's own display: for
+        // a real thread these differ message to message, and the details
+        // dialog is where they are unambiguous.
+        offer(tr("sender %1").arg(elided(message.from)),
+              SearchTerm::field(QStringLiteral("from"), message.from));
+        offer(tr("recipient %1").arg(elided(message.to)),
+              SearchTerm::field(QStringLiteral("to"), message.to));
+        offer(tr("copied to %1").arg(elided(message.cc)),
+              SearchTerm::field(QStringLiteral("cc"), message.cc));
     } else {
         text += QStringLiteral("<br><small>%1</small>")
                     .arg(tr("%n message(s) in thread", "", m_items.size()));
@@ -497,58 +563,93 @@ void MessageView::updateHeader()
     m_headerLabel->setText(text);
 }
 
+void MessageView::addSearchEntries(QMenu *menu, const QList<SearchOffer> &offers)
+{
+    for (const SearchOffer &entry : offers) {
+        auto *sub = menu->addMenu(tr("Search for %1").arg(entry.label));
+
+        auto *replace = sub->addAction(tr("Search for this"));
+        connect(replace, &QAction::triggered, this,
+                [this, entry]() { emit searchRequested(entry.query, false); });
+
+        auto *narrow = sub->addAction(tr("Add to search"));
+        connect(narrow, &QAction::triggered, this,
+                [this, entry]() { emit searchRequested(entry.query, true); });
+    }
+}
+
+void MessageView::showHeaderContextMenu(const QPoint &pos)
+{
+    if (m_headerOffers.isEmpty())
+        return;
+
+    QMenu menu(this);
+    addSearchEntries(&menu, m_headerOffers);
+    menu.exec(m_headerLabel->mapToGlobal(pos));
+}
+
+SearchOffer MessageView::selectionSearchOffer(const QString &selectedText) const
+{
+    const QString query = SearchTerm::quote(selectedText);
+    if (query.isEmpty())
+        return {};
+
+    constexpr int kMaxLabel = 40;
+    const QString shown = selectedText.simplified();
+    return { shown.size() > kMaxLabel
+                 ? shown.left(kMaxLabel) + QStringLiteral("...")
+                 : shown,
+             query };
+}
+
+void MessageView::showBodyContextMenu(const QPoint &pos)
+{
+    // The page's own menu first: copy, select all and the rest stay exactly as
+    // they were. This adds to that menu rather than replacing it.
+    QMenu *menu = m_view->createStandardContextMenu();
+    if (!menu)
+        menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+
+    // selectedText() reads the selection out of the render process with no
+    // script injection. JavaScript is disabled in this profile and stays so.
+    const SearchOffer offer = selectionSearchOffer(m_view->page()->selectedText());
+    if (!offer.query.isEmpty()) {
+        menu->addSeparator();
+        addSearchEntries(menu, { offer });
+    }
+
+    // popup() rather than exec(): the menu owns itself via WA_DeleteOnClose and
+    // must not block this handler.
+    menu->popup(m_view->mapToGlobal(pos));
+}
+
 void MessageView::showDetailsDialog()
 {
     if (m_items.isEmpty())
         return;
 
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Message details"));
+    MessageDetailsDialog dialog(m_items, this);
 
-    auto *layout = new QVBoxLayout(&dialog);
+    // The dialog's searches are the pane's searches: one signal reaches the
+    // window whichever surface the user used.
+    //
+    // It CLOSES on the way out, and that is not tidiness. The dialog is modal,
+    // so without this the query runs and the thread list repaints behind a
+    // window the user still has to dismiss, making the search look like it did
+    // nothing.
+    //
+    // accept() BEFORE the emit, not after. The connection is direct, so the
+    // emit runs the query synchronously: the model clears and this pane blanks
+    // while the modal dialog is still up, holding the m_items it was built
+    // from. Closing first leaves no window in which the dialog describes a
+    // thread the pane has already dropped.
+    connect(&dialog, &MessageDetailsDialog::searchRequested, this,
+            [this, &dialog](const QString &query, bool extend) {
+                dialog.accept();
+                emit searchRequested(query, extend);
+            });
 
-    auto *details = new QPlainTextEdit(&dialog);
-    details->setReadOnly(true);
-    // A monospaced font keeps a long Received chain readable as the wrapped
-    // record it is.
-    details->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    details->setLineWrapMode(QPlainTextEdit::NoWrap);
-
-    // setPlainText, and a QPlainTextEdit rather than a label: this dialog shows
-    // header values verbatim, and those come from strangers. Plain text cannot
-    // interpret markup, so there is nothing here to escape and nothing that
-    // could render.
-    QString text;
-    for (int i = 0; i < m_items.size(); ++i) {
-        const ParsedMessage &message = m_items.at(i).message;
-
-        if (i > 0)
-            text += QLatin1Char('\n');
-        if (m_items.size() > 1)
-            text += tr("--- Message %1 of %2 ---")
-                        .arg(i + 1).arg(m_items.size()) + QLatin1Char('\n');
-
-        auto line = [&text](const QString &label, const QString &value) {
-            if (!value.isEmpty())
-                text += label + QLatin1Char(' ') + value + QLatin1Char('\n');
-        };
-
-        line(tr("Subject:"), message.subject);
-        line(tr("From:"), message.from);
-        line(tr("To:"), message.to);
-        line(tr("Cc:"), message.cc);
-        line(tr("Date:"), message.date);
-        line(tr("Message-Id:"), message.messageId);
-    }
-    details->setPlainText(text);
-
-    layout->addWidget(details);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    layout->addWidget(buttons);
-
-    dialog.resize(700, 400);
     dialog.exec();
 }
 

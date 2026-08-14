@@ -272,20 +272,25 @@ QString recipientSummary(const QString &rawTo, int maxNames)
     return summary;
 }
 
-QString attachmentFolderName(const QString &rfc822Date, const QString &subject)
+QDateTime MimeParser::parseDate(const QString &rfc822Date)
 {
-    // The date prefix sorts chronologically in a file manager. A Date: header
-    // that does not parse is simply dropped rather than guessed at.
     // A trailing timezone comment, "... +0200 (CEST)", is legal per RFC 5322
     // and common in the wild, but Qt::RFC2822Date rejects the whole string
     // when one is present (verified on Qt 6.11). Strip comments before
-    // parsing, or every such message silently loses its date prefix.
+    // parsing, or every such message silently loses its date.
     QString cleaned = rfc822Date;
     cleaned.remove(QRegularExpression(QStringLiteral("\\s*\\([^)]*\\)")));
     cleaned = cleaned.trimmed();
 
+    return QDateTime::fromString(cleaned, Qt::RFC2822Date);
+}
+
+QString attachmentFolderName(const QString &rfc822Date, const QString &subject)
+{
+    // The date prefix sorts chronologically in a file manager. A Date: header
+    // that does not parse is simply dropped rather than guessed at.
     QString prefix;
-    const QDateTime parsed = QDateTime::fromString(cleaned, Qt::RFC2822Date);
+    const QDateTime parsed = MimeParser::parseDate(rfc822Date);
     if (parsed.isValid())
         prefix = parsed.toString(QStringLiteral("yyyy-MM-dd"));
 

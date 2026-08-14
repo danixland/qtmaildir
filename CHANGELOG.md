@@ -23,12 +23,36 @@ point at which they are stable.
   nothing to exclude from and running it would mean the whole Maildir minus
   one value.
 
+### Removed
+
+- **The conversation view.** Selecting a thread used to render the whole
+  conversation in the message pane, earlier messages as unexpandable stubs with
+  the last two opened. Selecting any row, a thread root or a reply, now renders
+  exactly one message.
+
+  It was also inconsistent: a thread root rendered the conversation only until
+  the thread had been expanded once, after which the identical click rendered a
+  single message. Read a thread by expanding it and walking the reply rows.
+
 ### Changed
 
 - The dialog reporting configuration problems at startup now appears over the
   main window instead of before it. Which problems interrupt startup is
   unchanged: a keybinding that is being ignored does, a notice such as "no sync
   command configured" does not.
+
+### Upgrading
+
+Reading a thread now means expanding it and clicking down its replies. Nothing
+in your config changes, and no habit built on the reply rows is affected, but
+the pane will show one message where it used to show a conversation.
+
+Automatic mark-read still applies to the **whole thread**, so opening a thread
+root marks its replies read as well, including ones you have not displayed.
+That was consistent while a root rendered the conversation and is not any more.
+Set `mark_read_delay_ms` to a negative value under `[general]` to turn the
+behaviour off entirely if that matters to you; narrowing it to one message is
+open work.
 
 ## [0.20.0] - 2026-08-14
 

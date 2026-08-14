@@ -398,6 +398,26 @@ standalone program containing none of this project's code. A size assertion
 there passes against both, and a mutation putting the bug back leaves the suite
 green. Assert on the stored value, and leave the frame to a hand test.
 
+**`ThreadListModel::threadAt(int)` takes a ROW and is wrong for any index that
+might be a reply.** A tree numbers rows per parent, so a reply's `row()` indexes
+its siblings and `threadAt(current.row())` on the first reply of any thread
+returns the FIRST THREAD IN THE LIST. This shipped in `markCurrentThreadRead`,
+was mostly masked while the write it guarded was thread-wide, and became "a
+random message was marked read" the moment a fix scoped that write to one
+message (items 87 and 88). Reach the thread through the INDEX, never through a
+row number, unless you have already established the index is a thread row.
+
+The general rule is in the item 20 note further down, "anything keyed on a row
+NUMBER did not survive the port to a tree". This is a surviving instance, found
+by corrupting real mail rather than by reading, so treat every remaining
+`.row()` in `mainwindow.cpp` as suspect until checked.
+
+**A test for a mutation on a data-writing path must exercise the REPLY case,
+not only the root.** The reverted fix above was mutation-checked and green: it
+asserted on a root selection, which is the one case where `current.row()` is
+correct. A green mutation check proves the test can fail, not that it covers the
+case that matters.
+
 **`test_mainwindow` can now drive a real worker, and three things about it will
 waste a session each.** `WorkerBackedWindow` builds a throwaway notmuch
 database and writes a `qtmaildir.conf` pointing at it; `wireWorker()` reads
@@ -487,10 +507,13 @@ loosen any of these without an explicit decision.
   scheme-wide allow would let a hostile body reference `qtmaildir://anything` and be trusted.
   Consequence: `MessageView` **must** call `setDocumentUrl()` with the same URL it gives
   `setHtml()`, or nothing renders.
-- A whole thread is one HTML document in one web view (a `QWebEngineView` per message would
-  spawn a Chromium render process each). That makes `cid:` ids collide across messages, so
-  every reference is rewritten to `cid:<prefix>!<id>`. **A `cidPrefix` must never contain
-  `!`** — it is the namespace separator.
+- The pane renders a LIST of messages into one HTML document in one web view (a
+  `QWebEngineView` per message would spawn a Chromium render process each). That makes `cid:`
+  ids collide across messages, so every reference is rewritten to `cid:<prefix>!<id>`.
+  **A `cidPrefix` must never contain `!`** — it is the namespace separator.
+  Since item 66 removed the conversation view every caller passes exactly ONE message, so the
+  collision cannot currently arise; the prefixing stays because the list-rendering path does,
+  and a security property must not rest on every caller happening to pass one item.
 - Remote content grants are per-render and never sticky.
 - **Attachment filenames are untrusted input.** Reduce to basename, strip separators, resolve
   against the chosen directory, and refuse anything escaping it. Compare resolved paths as

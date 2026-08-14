@@ -204,6 +204,7 @@ private slots:
     void aRenamedSentEntryKeepsWorking();
     void aGeneratedQueryWithNothingToShowIsSkipped();
     void aSavedQueryButtonOffersEditUnpinAndDelete();
+    void onlyAStoredQueryOffersToBecomeATaggingRule();
     void unpinningMovesAQueryToTheMenu();
     void deletingRemovesTheQueryFromTheFile();
     void anEditedQueryKeepsItsUnknownFields();
@@ -5825,6 +5826,69 @@ void TestMainWindow::aSavedQueryButtonOffersEditUnpinAndDelete()
     QVERIFY(contextActionNamed(window, button, QStringLiteral("editQuery")));
     QVERIFY(contextActionNamed(window, button, QStringLiteral("pinQuery")));
     QVERIFY(contextActionNamed(window, button, QStringLiteral("deleteQuery")));
+}
+
+void TestMainWindow::onlyAStoredQueryOffersToBecomeATaggingRule()
+{
+    // A generated entry composes its query from the accounts, so a rule made
+    // from one freezes a snapshot that goes stale when an account is added.
+    //
+    // Both halves are asserted together on purpose: a test that only checks a
+    // menu item is ABSENT passes just as well against a feature that was never
+    // built, which item 82 recorded the hard way.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    // The account is not decoration. A generated entry that resolves to an
+    // empty query is skipped entirely (src/mainwindow.cpp:1692), so without a
+    // configured sent folder the Sent button is never built and the half of
+    // this test that matters would pass by finding nothing.
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Inbox", "query": "tag:inbox", "pinned": true },
+            { "name": "Sent", "generated": "sent", "pinned": true }
+        ]
+    })"),
+                    QStringLiteral(
+                        "[account.work]\n"
+                        "name=Test User\n"
+                        "address=user@example.org\n"
+                        "maildir=work-mail\n"
+                        "sent=work-mail/Sent\n"));
+
+    MainWindow window(config);
+    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
+    QVERIFY(row);
+
+    // By object name, which rebuildSavedQueryRow assigns precisely so a test
+    // need not depend on a label the user can rename.
+    auto *generated = row->findChild<QPushButton *>(
+        QStringLiteral("sentButton"));
+
+    QPushButton *stored = nullptr;
+    const QList<QPushButton *> buttons = row->findChildren<QPushButton *>();
+    for (QPushButton *button : buttons) {
+        if (button->text().contains(QStringLiteral("Inbox"))) {
+            stored = button;
+            break;
+        }
+    }
+
+    QVERIFY2(stored, "no button was built for the stored query");
+    QVERIFY2(generated, "no button was built for the generated query");
+
+    QVERIFY2(contextActionNamed(window, stored, QStringLiteral("queryToRule")),
+             "a stored query must offer Create tagging rule");
+    QVERIFY2(!contextActionNamed(window, generated,
+                                 QStringLiteral("queryToRule")),
+             "a generated query must not: its query is a snapshot");
+
+    // The guard proving the generated button HAS a menu, so the assertion
+    // above is about this one action and not about a button with no actions.
+    QVERIFY2(contextActionNamed(window, generated,
+                                QStringLiteral("deleteQuery")),
+             "the generated button must still carry its other actions");
 }
 
 void TestMainWindow::unpinningMovesAQueryToTheMenu()

@@ -11,6 +11,27 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- Anything on screen in the message pane can be searched for by right-clicking
+  it. The subject and the date in the header, the sender and recipients when
+  the thread holds one message, a tag chip, a phrase selected in the message
+  body, and every header of every message in the details dialog. Each offers
+  **Search for this**, which replaces the query, and **Add to search**, which
+  narrows what is already there.
+
+  Narrowing is the half worth knowing about: a query returning a thousand
+  threads can be cut down by adding a sender or a date to it, without retyping
+  the query you started from.
+
+  A search is only ever a search. Turning what you find into a tagging rule is
+  still the existing road: save the query, then create a rule from it.
+
+### Changed
+
+- The message details dialog shows labelled rows rather than one block of
+  text, so each value can be searched for on its own.
+
 ## [0.19.0] - 2026-08-14
 
 A saved query can become a tagging rule without retyping it, and a rule can no

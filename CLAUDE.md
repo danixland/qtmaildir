@@ -65,6 +65,7 @@ MainWindow                         NotmuchWorker
  └ MessageView (header QLabel, QWebEngineView, attachment bar, TagStrip)
 
 CardLayout (pure geometry, no painting)
+SearchTerm (pure query strings, no widget)
 Config (INI)   KeyMap   MailSync (QProcess)   MimeParser (GMime)
 SyncMonitor (/proc/locks)   TagColors   QueryCompleter   ThreadCidMap
 ```
@@ -74,9 +75,19 @@ The query row and the message-pane header are **built inline in `MainWindow` and
 listed `QueryBar`, `SavedQueryBar`, `HeaderWidget` and `AttachmentBar`; none of
 those types have ever existed, and looking for them wastes a search. The widget
 classes that do exist are `MessageView`, `ThreadListView`, `TagStrip`,
-`TagDialog`, `RowStyleDelegate` and `CardDelegate`; `TagChip` is a namespace of
-painting helpers, not a widget, and `ThreadCidMap` and `CardLayout` are structs.
-`SubjectDelegate` existed until item 53 and is gone.
+`TagDialog`, `MessageDetailsDialog`, `RowStyleDelegate` and `CardDelegate`;
+`TagChip` is a namespace of painting helpers, not a widget, `SearchTerm` is a
+namespace of query builders, and `ThreadCidMap`, `CardLayout`, `SearchOffer`
+and `HeaderRow` are structs. `SubjectDelegate` existed until item 53 and is
+gone.
+
+**`MessageDetailsDialog` was a `QPlainTextEdit` inside `MessageView` until item
+85.** It is rows now so each value can carry its own context menu, and its
+plain-textness was a SECURITY property rather than a style: header values come
+from strangers and plain text cannot interpret markup. Every value label states
+`Qt::PlainText` explicitly, because a `QLabel` guesses under `Qt::AutoText`.
+Escaping into a rich-text label is the same protection one mistake away from
+failing, so do not "simplify" it back.
 
 **`ThreadListView` survives only for the expander hit-test.** `CardDelegate`
 draws the reply count, and a delegate gets no click of its own without an
@@ -254,6 +265,17 @@ a failure or a `-1` count fails against correct code. This was recorded in
 building the rules. Assert on the positional contract, never on a provoked
 failure.
 
+**Every query this application builds goes through `SearchTerm`
+(`src/searchterm.h`), and that is what stops five surfaces growing five quoting
+rules.** It holds no widget, so the grammar is tested without a painter or a web
+engine. Two of its rules are load-bearing rather than cosmetic. `quote()`
+escapes backslashes BEFORE quotes, since the other order escapes the
+backslashes it just added; it truncates before escaping, so a cut cannot land
+mid-escape. And `extend()` parenthesises BOTH sides, because the query bar can
+hold a hand-written disjunction and `a or b AND c` binds as `a or (b AND c)`,
+which widens a search the user asked to narrow, reporting nothing. This is the
+same trap the `post-new` hook handles when it scopes a rule with `tag:new`.
+
 **A writer that does not validate what its reader requires loses data
 silently.** `TagRules::save()` wrote any id and `load()` required
 `^[a-z0-9][a-z0-9-]*$`, so a rule named `justeat orders` in a field labelled
@@ -340,6 +362,22 @@ one route out of three. Assert every route. Underneath sits a second trap:
 `close()` on a widget that was never shown returns early WITHOUT reaching
 `done()`, so a test for the closed path has to `show()` the dialog first or it
 asserts nothing at all.
+
+**A modal dialog must close BEFORE the action it asked for runs, not after.**
+A signal from a dialog to its parent is a DIRECT connection, so the emit runs
+the handler synchronously while `exec()` is still on the stack: the details
+dialog's search ran the query, cleared the model and blanked the message pane
+while the dialog was still up, holding the `m_items` it was built from. Call
+`accept()` first, then emit. The mutation check for this HANGS rather than
+failing, since without the `accept()` nothing ever leaves `exec()`, and a hung
+test binary is item 84's second trap waiting to mislead the next run.
+
+**`Qt::RFC2822Date` validates the weekday against the date.** `Thu, 14 Aug
+2026` parses as INVALID because that day is a Friday, and an invalid parse here
+is indistinguishable from the trailing-comment trap `MimeParser::parseDate`
+exists to handle. Two fixtures carried a wrong weekday, one of them
+pre-existing and unnoticed until something finally parsed it. Write a date
+fixture with `date -d <yyyy-mm-dd> +%A`, never from memory.
 
 **Under a tiling compositor a window's size is not the application's to
 restore, and the user's desktop is Hyprland.** `saveGeometry` stores

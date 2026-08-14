@@ -40,6 +40,22 @@ namespace SearchTerm {
 /// able to read.
 inline constexpr int kMaxValueLength = 200;
 
+/// Which of the three search operations a menu entry asked for.
+///
+/// Replaces the `bool extend` that carried two operations and had no room for
+/// a third. A plain enum class, deliberately NOT registered as a metatype:
+/// every connection carrying it is direct, within the UI thread. The `Q_ENUM`
+/// trap recorded in CLAUDE.md belongs to the queued signals into
+/// NotmuchWorker and does not apply here.
+enum class SearchMode {
+    /// Replace the query bar outright.
+    Replace,
+    /// Narrow what is already there, via extend().
+    Narrow,
+    /// Narrow by everything that is not this value, via exclude().
+    Exclude,
+};
+
 /// Quotes an arbitrary value for use as a notmuch term.
 ///
 /// Whitespace and newlines collapse to single spaces, embedded quotes are

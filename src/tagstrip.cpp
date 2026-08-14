@@ -163,17 +163,20 @@ void TagStrip::paintEvent(QPaintEvent *)
     const QFontMetrics metrics(font());
     const int top = (height() - (metrics.height() + TagChip::kPaddingY * 2)) / 2;
 
-    int x = 0;
     for (int i = 0; i < m_visible.size(); ++i) {
         const QString &tag = m_visible.at(i);
-        const QRect rect = chipRectAt(i);
         const QColor colour = m_tagColors ? m_tagColors->colourFor(tag)
                                           : TagColors().colourFor(tag);
-        TagChip::paint(&painter, rect, tag, colour);
-        x = rect.right() + 1 + TagChip::kSpacing;
+        TagChip::paint(&painter, chipRectAt(i), tag, colour);
     }
 
     if (!m_hidden.isEmpty()) {
+        // After the last visible chip. right() is inclusive, so +1 makes it an
+        // exclusive edge before the gap is added. The overflow chip is not in
+        // m_visible and so has no chipRectAt() of its own.
+        const QRect last = chipRectAt(m_visible.size() - 1);
+        const int x = last.right() + 1 + TagChip::kSpacing;
+
         const QString text = overflowText(m_hidden.size());
         const QSize size = TagChip::sizeFor(metrics, text);
         TagChip::paint(&painter, QRect(QPoint(x, top), size), text,

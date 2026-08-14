@@ -22,8 +22,6 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QFontDatabase>
-#include <QPlainTextEdit>
 #include <QDir>
 #include <QBuffer>
 #include <QFileDialog>
@@ -50,6 +48,7 @@
 
 #include "cidschemehandler.h"
 #include "htmlbuilder.h"
+#include "messagedetailsdialog.h"
 #include "requestinterceptor.h"
 #include "searchterm.h"
 #include "tagstrip.h"
@@ -616,53 +615,11 @@ void MessageView::showDetailsDialog()
     if (m_items.isEmpty())
         return;
 
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Message details"));
-
-    auto *layout = new QVBoxLayout(&dialog);
-
-    auto *details = new QPlainTextEdit(&dialog);
-    details->setReadOnly(true);
-    // A monospaced font keeps a long Received chain readable as the wrapped
-    // record it is.
-    details->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    details->setLineWrapMode(QPlainTextEdit::NoWrap);
-
-    // setPlainText, and a QPlainTextEdit rather than a label: this dialog shows
-    // header values verbatim, and those come from strangers. Plain text cannot
-    // interpret markup, so there is nothing here to escape and nothing that
-    // could render.
-    QString text;
-    for (int i = 0; i < m_items.size(); ++i) {
-        const ParsedMessage &message = m_items.at(i).message;
-
-        if (i > 0)
-            text += QLatin1Char('\n');
-        if (m_items.size() > 1)
-            text += tr("--- Message %1 of %2 ---")
-                        .arg(i + 1).arg(m_items.size()) + QLatin1Char('\n');
-
-        auto line = [&text](const QString &label, const QString &value) {
-            if (!value.isEmpty())
-                text += label + QLatin1Char(' ') + value + QLatin1Char('\n');
-        };
-
-        line(tr("Subject:"), message.subject);
-        line(tr("From:"), message.from);
-        line(tr("To:"), message.to);
-        line(tr("Cc:"), message.cc);
-        line(tr("Date:"), message.date);
-        line(tr("Message-Id:"), message.messageId);
-    }
-    details->setPlainText(text);
-
-    layout->addWidget(details);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    layout->addWidget(buttons);
-
-    dialog.resize(700, 400);
+    MessageDetailsDialog dialog(m_items, this);
+    // The dialog's searches are the pane's searches: one signal reaches the
+    // window whichever surface the user used.
+    connect(&dialog, &MessageDetailsDialog::searchRequested,
+            this, &MessageView::searchRequested);
     dialog.exec();
 }
 

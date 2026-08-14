@@ -11,6 +11,18 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- A third right-click search action, **Exclude from search**, wherever the
+  other two are already offered: the message pane's header and body, a tag
+  chip, and every row of the details dialog. It narrows the current query by
+  everything that is *not* the value under the cursor, so a sender, a subject
+  or a phrase can be dropped from a result list without retyping the query.
+
+  The entry is greyed out when the query bar is empty, since there would be
+  nothing to exclude from and running it would mean the whole Maildir minus
+  one value.
+
 ## [0.20.0] - 2026-08-14
 
 Anything on screen in the message pane can now be searched for by right-clicking

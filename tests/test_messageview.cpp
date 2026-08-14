@@ -52,6 +52,7 @@ private slots:
     void headerOffersSubjectDateAndSenderForOneMessage();
     void headerOffersNoSenderForARealThread();
     void headerOffersNothingForAnAbsentField();
+    void bodySelectionBecomesAQuotedSearch();
 
 private:
     QWebEngineView *webViewOf(MessageView *view) const
@@ -661,6 +662,39 @@ void TestMessageView::headerOffersNothingForAnAbsentField()
 
     for (const QString &query : queries)
         QVERIFY(!query.startsWith(QStringLiteral("cc:")));
+}
+
+void TestMessageView::bodySelectionBecomesAQuotedSearch()
+{
+    // The selection reaches the query as ONE quoted term. Asserted on the
+    // constructed string: a query that lost its quoting is not an error to
+    // notmuch, it simply matches nothing, so nothing downstream would report
+    // this being wrong.
+    //
+    // Takes the text as an argument rather than reading the page, so the
+    // quoting is testable without a live web engine and a rendered document.
+    MessageView view;
+
+    QCOMPARE(view.selectionSearchOffer(QStringLiteral("invoice 4471")).query,
+             QStringLiteral("\"invoice 4471\""));
+
+    // A selection spanning paragraphs arrives full of newlines.
+    QCOMPARE(view.selectionSearchOffer(
+                 QStringLiteral("first line\n\nsecond line")).query,
+             QStringLiteral("\"first line second line\""));
+
+    // Query syntax in the selection is data, not syntax: it is quoted, not
+    // interpreted, so a selection reading "a or b" searches for that phrase.
+    QCOMPARE(view.selectionSearchOffer(QStringLiteral("tag:inbox or x")).query,
+             QStringLiteral("\"tag:inbox or x\""));
+
+    // Nothing selected means no entry, rather than an entry searching for "".
+    QVERIFY(view.selectionSearchOffer(QString()).query.isEmpty());
+    QVERIFY(view.selectionSearchOffer(QStringLiteral("  \n ")).query.isEmpty());
+
+    // A usable offer always carries a label for the menu to show.
+    QVERIFY(!view.selectionSearchOffer(QStringLiteral("invoice 4471"))
+                 .label.isEmpty());
 }
 
 QTEST_MAIN(TestMessageView)

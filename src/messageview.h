@@ -140,6 +140,15 @@ public:
     /// parsing it back: rich text does not survive a second parse.
     QList<SearchOffer> headerSearchOffers() const { return m_headerOffers; }
 
+    /// The offer for a body selection, its query empty when there is nothing
+    /// usable selected.
+    ///
+    /// Takes the text rather than reading the page, so the quoting is testable
+    /// without a live web engine and a rendered document. A selection is
+    /// arbitrary prose and can carry quotes, newlines and query syntax, none
+    /// of which notmuch reports as an error.
+    SearchOffer selectionSearchOffer(const QString &selectedText) const;
+
 public slots:
     void toggleHtml();
     void loadRemoteContent();
@@ -234,6 +243,9 @@ private:
 
     /// Builds and pops the header's menu at `pos`, in the label's coordinates.
     void showHeaderContextMenu(const QPoint &pos);
+
+    /// Builds and pops the web view's menu, keeping its standard entries.
+    void showBodyContextMenu(const QPoint &pos);
 
     /// Appends a "Search for ..." submenu per offer, each holding the replace
     /// and the narrow operation.

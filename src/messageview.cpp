@@ -153,6 +153,12 @@ MessageView::MessageView(QWidget *parent)
     settings->setAttribute(QWebEngineSettings::PluginsEnabled, false);
     settings->setAttribute(QWebEngineSettings::FullScreenSupportEnabled, false);
 
+    // Item 85: a selection in the body is searchable. CustomContextMenu so the
+    // page's standard entries survive and the search is added to them.
+    m_view->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_view, &QWidget::customContextMenuRequested,
+            this, &MessageView::showBodyContextMenu);
+
     // Ctrl+wheel zoom. The filter goes on the application rather than on
     // m_view: the wheel event is delivered to an internal QQuickWidget the
     // view creates lazily, so there is no child to filter at this point and a
@@ -567,6 +573,42 @@ void MessageView::showHeaderContextMenu(const QPoint &pos)
     QMenu menu(this);
     addSearchEntries(&menu, m_headerOffers);
     menu.exec(m_headerLabel->mapToGlobal(pos));
+}
+
+SearchOffer MessageView::selectionSearchOffer(const QString &selectedText) const
+{
+    const QString query = SearchTerm::quote(selectedText);
+    if (query.isEmpty())
+        return {};
+
+    constexpr int kMaxLabel = 40;
+    const QString shown = selectedText.simplified();
+    return { shown.size() > kMaxLabel
+                 ? shown.left(kMaxLabel) + QStringLiteral("...")
+                 : shown,
+             query };
+}
+
+void MessageView::showBodyContextMenu(const QPoint &pos)
+{
+    // The page's own menu first: copy, select all and the rest stay exactly as
+    // they were. This adds to that menu rather than replacing it.
+    QMenu *menu = m_view->createStandardContextMenu();
+    if (!menu)
+        menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+
+    // selectedText() reads the selection out of the render process with no
+    // script injection. JavaScript is disabled in this profile and stays so.
+    const SearchOffer offer = selectionSearchOffer(m_view->page()->selectedText());
+    if (!offer.query.isEmpty()) {
+        menu->addSeparator();
+        addSearchEntries(menu, { offer });
+    }
+
+    // popup() rather than exec(): the menu owns itself via WA_DeleteOnClose and
+    // must not block this handler.
+    menu->popup(m_view->mapToGlobal(pos));
 }
 
 void MessageView::showDetailsDialog()

@@ -30,8 +30,8 @@
 #include "searchterm.h"
 
 MessageDetailsDialog::MessageDetailsDialog(const QList<ThreadRenderItem> &items,
-                                           QWidget *parent)
-    : QDialog(parent)
+                                           bool hasQuery, QWidget *parent)
+    : QDialog(parent), m_hasQuery(hasQuery)
 {
     setWindowTitle(tr("Message details"));
     setObjectName(QStringLiteral("messageDetailsDialog"));

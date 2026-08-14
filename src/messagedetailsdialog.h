@@ -64,7 +64,12 @@ class MessageDetailsDialog : public QDialog
 {
     Q_OBJECT
 public:
+    /// `hasQuery` says whether the query bar holds anything, which decides
+    /// whether "Exclude from search" is offered: there must be something to
+    /// exclude FROM. Taken at construction rather than set later, since the
+    /// dialog is built fresh per invocation and so cannot go stale.
     explicit MessageDetailsDialog(const QList<ThreadRenderItem> &items,
+                                  bool hasQuery = false,
                                   QWidget *parent = nullptr);
 
     /// The rows on display, in order. Exposed for testing without rendering.
@@ -86,4 +91,5 @@ private:
     void buildRows(const QList<ThreadRenderItem> &items);
 
     QList<HeaderRow> m_rows;
+    bool m_hasQuery = false;
 };

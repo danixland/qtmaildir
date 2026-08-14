@@ -367,11 +367,16 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
         // action keeps both for the menu it lives in.
         m_saveQueryButton->setText(tr("Save"));
 
-        auto updateSaveState = [this, save]() {
-            save->setEnabled(!m_queryEdit->text().trimmed().isEmpty());
+        auto updateQueryState = [this, save]() {
+            const bool hasQuery = !m_queryEdit->text().trimmed().isEmpty();
+            save->setEnabled(hasQuery);
+            // The message pane greys "Exclude from search" without it: there
+            // would be nothing to exclude FROM. Both widgets exist by now,
+            // buildUi() having run before registerActions().
+            m_messageView->setHasQuery(hasQuery);
         };
-        connect(m_queryEdit, &QLineEdit::textChanged, this, updateSaveState);
-        updateSaveState();
+        connect(m_queryEdit, &QLineEdit::textChanged, this, updateQueryState);
+        updateQueryState();
     }
 
     buildMenus();

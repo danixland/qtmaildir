@@ -631,7 +631,7 @@ void MessageView::showDetailsDialog()
     if (m_items.isEmpty())
         return;
 
-    MessageDetailsDialog dialog(m_items, this);
+    MessageDetailsDialog dialog(m_items, m_hasQuery, this);
 
     // The dialog's searches are the pane's searches: one signal reaches the
     // window whichever surface the user used.

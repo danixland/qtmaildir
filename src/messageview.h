@@ -149,6 +149,15 @@ public:
     /// of which notmuch reports as an error.
     SearchOffer selectionSearchOffer(const QString &selectedText) const;
 
+    /// Tells the pane whether the query bar currently holds anything.
+    ///
+    /// The menus need it to grey out "Exclude from search": excluding from an
+    /// empty query would mean the whole Maildir minus one value. The pane
+    /// cannot read the query bar and must not, so the window pushes the fact
+    /// down as it changes. Passed on to the details dialog at construction,
+    /// which is built fresh per invocation and so cannot go stale.
+    void setHasQuery(bool hasQuery) { m_hasQuery = hasQuery; }
+
 public slots:
     void toggleHtml();
     void loadRemoteContent();
@@ -282,4 +291,7 @@ private:
 
     /// Populated by updateHeader(), consumed by the header's context menu.
     QList<SearchOffer> m_headerOffers;
+
+    /// Whether the query bar holds anything. See setHasQuery().
+    bool m_hasQuery = false;
 };

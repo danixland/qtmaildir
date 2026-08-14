@@ -47,6 +47,7 @@ private slots:
     void recipientSummarySurvivesUnusableInput();
     void folderNameSurvivesATimezoneComment();
     void savingABatchNeverOverwrites();
+    void parsesADateWithATimezoneComment();
 
 private:
     QString fixture(const QString &name) const
@@ -483,6 +484,28 @@ void TestMimeParser::recipientSummarySurvivesUnusableInput()
     // Garbage parses to something or to nothing, but never to a crash.
     recipientSummary(QStringLiteral("<<<>>>"));
     recipientSummary(QStringLiteral("\"unterminated <a@example.org>"));
+}
+
+void TestMimeParser::parsesADateWithATimezoneComment()
+{
+    // Qt::RFC2822Date rejects the WHOLE string when a trailing comment is
+    // present (verified on Qt 6.11), and "+0200 (CEST)" is both legal and
+    // common. Without the comment stripped, every such message loses its date
+    // silently: the attachment folder loses its prefix, and a date search
+    // offers nothing with no indication why.
+    const QDateTime withComment = MimeParser::parseDate(
+        QStringLiteral("Fri, 14 Aug 2026 09:30:00 +0200 (CEST)"));
+    QVERIFY(withComment.isValid());
+    QCOMPARE(withComment.date(), QDate(2026, 8, 14));
+
+    const QDateTime plain = MimeParser::parseDate(
+        QStringLiteral("Fri, 14 Aug 2026 09:30:00 +0200"));
+    QVERIFY(plain.isValid());
+    QCOMPARE(plain.date(), QDate(2026, 8, 14));
+
+    // Nothing usable is an invalid QDateTime, never a guess.
+    QVERIFY(!MimeParser::parseDate(QStringLiteral("last Tuesday")).isValid());
+    QVERIFY(!MimeParser::parseDate(QString()).isValid());
 }
 
 QTEST_MAIN(TestMimeParser)

@@ -47,6 +47,7 @@ private slots:
     void aDismissedWarningComesBackWhenThereIsSomethingNewToSay();
     void aSeededDialogOpensOnTheNewRuleWithoutWritingIt();
     void aSeededIdThatCollidesDoesNotReplaceTheRuleItMatches();
+    void seedingTwiceAddsTwoRulesRatherThanReplacingOne();
     void aNameTypedWithSpacesIsSanitisedInTheField();
     void aRuleAddedAndNamedInTheDialogSurvivesAReopen();
     void unknownFieldsSurviveASave();
@@ -1009,6 +1010,49 @@ void TestTagRules::aSeededIdThatCollidesDoesNotReplaceTheRuleItMatches()
     QCOMPARE(dialog.nameLineForTest(), QStringLiteral("vendor"));
     QCOMPARE(dialog.queryLineForTest(),
              QStringLiteral("from:vendor.example.org"));
+}
+
+void TestTagRules::seedingTwiceAddsTwoRulesRatherThanReplacingOne()
+{
+    // The dialog is non-modal and single-instance, so a second Create tagging
+    // rule arrives at a dialog that is already up. It must append, not replace
+    // the first seed and not be dropped.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRule first;
+    first.id = QStringLiteral("first-seed");
+    first.query = QStringLiteral("from:one.example.org");
+
+    TagRulesDialog dialog(first);
+    QCOMPARE(dialog.ruleCountForTest(), 2);
+
+    TagRule second;
+    second.id = QStringLiteral("second-seed");
+    second.query = QStringLiteral("from:two.example.org");
+    dialog.seedRule(second);
+
+    QCOMPARE(dialog.ruleCountForTest(), 3);
+    QCOMPARE(dialog.nameLineForTest(), QStringLiteral("second-seed"));
+
+    // The first seed survived rather than being overwritten.
+    dialog.selectRuleForTest(1);
+    QCOMPARE(dialog.nameLineForTest(), QStringLiteral("first-seed"));
 }
 
 void TestTagRules::aFolderRowUsesTheDropdownAndKeepsItsSuffix()

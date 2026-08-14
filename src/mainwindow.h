@@ -34,6 +34,9 @@
 // Included rather than forward-declared: SyncPhaseTracker is held by value, so
 // its size must be known here. MailSync itself stays a forward declaration.
 #include "mailsync.h"
+// Complete type, not a forward declaration: showTagRulesDialog() defaults its
+// seed to TagRule().
+#include "tagrules.h"
 #include "syncmonitor.h"
 #include "tagcolors.h"
 #include "types.h"
@@ -376,7 +379,9 @@ private slots:
     void onRulePreviewRequested(const QString &query);
 
     /// Opens the auto-tagging rules editor, or raises the one already open.
-    void showTagRulesDialog();
+    /// `seed` is an optional rule to open on, used by Create tagging rule on a
+    /// saved query. A default-constructed TagRule (empty query) means none.
+    void showTagRulesDialog(const TagRule &seed = TagRule());
 
     /// Message counts for the rules dialog's queries, in the order it asked
     /// for them. Does nothing if the dialog has since closed, or if a newer

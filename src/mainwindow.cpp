@@ -1322,18 +1322,23 @@ void MainWindow::onDatabaseStatsReady(const DatabaseStats &stats,
                  number(stats.tags)));
 }
 
-void MainWindow::showTagRulesDialog()
+void MainWindow::showTagRulesDialog(const TagRule &seed)
 {
     // One dialog. A second would edit a stale copy and the last Save would
     // silently win, which is the lost-edit case the atomic write cannot help
     // with because both writers are this process.
     if (m_tagRulesDialog) {
+        // Seeded into the dialog already up rather than dropped: the menu item
+        // must do something visible, and a second dialog would edit a stale
+        // copy whose Save would silently win.
+        if (!seed.query.isEmpty())
+            m_tagRulesDialog->seedRule(seed);
         m_tagRulesDialog->raise();
         m_tagRulesDialog->activateWindow();
         return;
     }
 
-    auto *dialog = new TagRulesDialog(this);
+    auto *dialog = new TagRulesDialog(seed, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
 
     m_tagRulesDialog = dialog;

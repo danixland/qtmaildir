@@ -186,6 +186,7 @@ private slots:
     void anUnexpandedRootRendersOneMessageNotTheConversation();
     void aFirstClickIntoAnUnfocusedListStillRenders();
     void autoMarkReadTouchesOnlyTheMessageOnScreen();
+    void autoMarkReadClearsUnreadOnTheCardImmediately();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
     void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
@@ -6553,6 +6554,63 @@ void TestMainWindow::autoMarkReadTouchesOnlyTheMessageOnScreen()
              "maildir.synchronize_flags carries that to the server");
     QCOMPARE(window.pendingMessageIdsForTesting(),
              QStringList{ QStringLiteral("root@example.org") });
+}
+
+void TestMainWindow::autoMarkReadClearsUnreadOnTheCardImmediately()
+{
+    // Reported by the user against the message-scoped mark-read: the write
+    // went out, the status bar counted an unsynced edit, and the card stayed
+    // bold with `unread` still on it. sendMessageTagChange deliberately makes
+    // no optimistic model update, because applyTagChange is keyed by THREAD
+    // and repainting a whole row for a one-message edit would be a lie.
+    //
+    // For an explicit tag edit that trade is fine. For auto mark-read it is
+    // not: the visible change IS the feature, and the 2s delay exists to give
+    // the user that feedback.
+    //
+    // One message in the thread, so the thread's own unread state and the
+    // message's are the same fact and the card must stop reading as unread.
+    WorkerBackedWindow backed;
+    backed.setGeneralKey(QStringLiteral("mark_read_delay_ms"),
+                         QStringLiteral("0"));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("only@example.org"),
+        QStringLiteral("A single message"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("The only message."), /*unread=*/true));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+
+    QLineEdit *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY2(queryEdit, "no query bar");
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY2(view, "no thread list view");
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY2(model, "no thread list model");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QModelIndex root = model->index(0, 0, QModelIndex());
+    QVERIFY(root.isValid());
+
+    // Unread to begin with, or the assertion below proves nothing.
+    QVERIFY2(model->data(root, ThreadListModel::TagsRole)
+                 .toStringList()
+                 .contains(QStringLiteral("unread")),
+             "the thread was not unread to begin with");
+
+    view->setCurrentIndex(root);
+
+    // The card must stop reading as unread without waiting for a new query.
+    QTRY_VERIFY_WITH_TIMEOUT(!model->data(root, ThreadListModel::TagsRole)
+                                  .toStringList()
+                                  .contains(QStringLiteral("unread")),
+                             15000);
 }
 
 #include "test_mainwindow.moc"

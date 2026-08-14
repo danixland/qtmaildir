@@ -3482,10 +3482,17 @@ void MainWindow::sendMessageTagChange(const QStringList &messageIds,
     if (messageIds.isEmpty())
         return;
 
-    // No optimistic model update. applyTagChange is keyed by THREAD and would
-    // repaint the whole row as though every message in it had changed, which
-    // for a one-message edit is a lie the user would see and then watch
-    // silently correct itself on the next query.
+    // Optimistic, but scoped to the message. applyTagChange() is keyed by
+    // THREAD and would repaint the whole row as though every message in it had
+    // changed, which for a one-message edit is a lie; applyMessageTagChange()
+    // updates that message and lets the thread's own tags follow only when the
+    // answer is unambiguous.
+    //
+    // Not optional for auto mark-read: without it the write goes out, the
+    // status bar counts an unsynced edit, and the card stays bold with
+    // `unread` on it until the next query. The user reported exactly that.
+    for (const QString &messageId : messageIds)
+        m_model->applyMessageTagChange(messageId, add, remove);
 
     // The accounts this touches, resolved through the containing threads: the
     // account is a property of the thread, and the sync needs the channel

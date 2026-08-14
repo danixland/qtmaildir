@@ -273,6 +273,23 @@ public:
     void applyTagChange(const QString &threadId, const QStringList &added,
                         const QStringList &removed);
 
+    /// The same, scoped to ONE message.
+    ///
+    /// Updates that message's own tags wherever it is held: as a child row if
+    /// the thread is expanded, and as `first` when it is the thread's opening
+    /// message. The thread's summary tags follow only when the change is
+    /// unambiguous for the whole thread, which for `unread` means no other
+    /// message still carries it, since a thread reads as unread while any of
+    /// its messages does.
+    ///
+    /// Exists because auto mark-read touches one message and the card still
+    /// has to stop looking unread. applyTagChange() above cannot serve that:
+    /// it rewrites the thread's tags directly, which for a multi-message
+    /// thread would claim every reply had been read.
+    void applyMessageTagChange(const QString &messageId,
+                               const QStringList &added,
+                               const QStringList &removed);
+
 private:
     /// One thread root and the message rows expanded under it.
     ///

@@ -888,3 +888,84 @@ void ThreadListModel::applyTagChange(const QString &threadId,
         return;
     }
 }
+
+void ThreadListModel::applyMessageTagChange(const QString &messageId,
+                                            const QStringList &added,
+                                            const QStringList &removed)
+{
+    const auto retag = [&added, &removed](QStringList *tags) {
+        for (const QString &tag : removed)
+            tags->removeAll(tag);
+        for (const QString &tag : added) {
+            if (!tags->contains(tag))
+                tags->append(tag);
+        }
+    };
+
+    for (int row = 0; row < m_threads.size(); ++row) {
+        ThreadNode &node = m_threads[row];
+        bool touched = false;
+
+        // `first` is a copy of the opening message rather than an alias into
+        // children, so both have to be updated when they name the same one.
+        if (node.first.messageId == messageId) {
+            retag(&node.first.tags);
+            touched = true;
+        }
+
+        for (int child = 0; child < node.children.size(); ++child) {
+            if (node.children.at(child).messageId != messageId)
+                continue;
+            retag(&node.children[child].tags);
+            touched = true;
+            const QModelIndex childIndex = index(child, 0, index(row, 0));
+            emit dataChanged(childIndex, childIndex);
+        }
+
+        // The thread has not been expanded and does not open with this
+        // message, so nothing here holds it. The summary may still need to
+        // follow, which the totalCount check below decides.
+        if (!touched && node.summary.firstMessageId != messageId
+            && node.summary.totalCount > 1) {
+            continue;
+        }
+
+        // The thread's own tags follow only when the answer is unambiguous.
+        //
+        // A thread carries `unread` while ANY of its messages does, so a
+        // one-message change can only clear it from the thread when there is
+        // nothing else left to carry it. With one message in the thread that
+        // is certain. With more, the honest answer needs every message's tags,
+        // which are only loaded once the thread has been expanded; until then
+        // the summary is left alone rather than guessed at, and the next query
+        // corrects it.
+        const bool wholeThread =
+            node.summary.totalCount <= 1
+            || (!node.children.isEmpty()
+                && node.children.size() >= node.summary.totalCount);
+        if (!wholeThread) {
+            if (touched)
+                emit dataChanged(index(row, 0), index(row, 0));
+            continue;
+        }
+
+        for (const QString &tag : removed) {
+            bool stillHeld = false;
+            for (const MessageNode &child : node.children) {
+                if (child.messageId != messageId && child.tags.contains(tag)) {
+                    stillHeld = true;
+                    break;
+                }
+            }
+            if (!stillHeld)
+                node.summary.tags.removeAll(tag);
+        }
+        for (const QString &tag : added) {
+            if (!node.summary.tags.contains(tag))
+                node.summary.tags.append(tag);
+        }
+
+        emit dataChanged(index(row, 0), index(row, 0));
+        return;
+    }
+}

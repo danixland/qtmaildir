@@ -11,6 +11,31 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- A saved query can be turned into a tagging rule: right-click a stored query
+  and choose **Create tagging rule...**. The rules dialog opens on a new rule
+  carrying that query, with the tags left for you to fill in. Generated
+  entries such as Sent are excluded, since their query is composed from your
+  accounts and a rule would freeze a stale copy of it.
+
+### Fixed
+
+- A tagging rule whose name contained a space, a capital or punctuation was
+  written to `rules.json` and then dropped by everything that read it back: it
+  was invisible in the dialog, never applied by the `post-new` hook, and would
+  have been deleted outright by the next save. Names are now cleaned into a
+  valid id as you type them, saving is refused with a reason when a rule could
+  not be read back, and a rule already in the file with a bad name is loaded
+  for repair rather than discarded.
+
+### Changed
+
+- The tagging rules dialog reports problems in a red banner beside Save,
+  rather than as a line of ordinary text under the heading where it read as
+  more explanation. It can be dismissed, and comes back when there is
+  something new to say.
+
 ## [0.18.0] - 2026-08-13
 
 A query you have just written and are looking at the results of can now be

@@ -24,6 +24,7 @@
 #include <QtTest>
 
 #include "htmlbuilder.h"
+#include "messagedetailsdialog.h"
 #include "messageview.h"
 #include "mimeparser.h"
 
@@ -53,6 +54,7 @@ private slots:
     void headerOffersNoSenderForARealThread();
     void headerOffersNothingForAnAbsentField();
     void bodySelectionBecomesAQuotedSearch();
+    void aSearchFromTheDetailsDialogClosesIt();
 
 private:
     QWebEngineView *webViewOf(MessageView *view) const
@@ -695,6 +697,57 @@ void TestMessageView::bodySelectionBecomesAQuotedSearch()
     // A usable offer always carries a label for the menu to show.
     QVERIFY(!view.selectionSearchOffer(QStringLiteral("invoice 4471"))
                  .label.isEmpty());
+}
+
+void TestMessageView::aSearchFromTheDetailsDialogClosesIt()
+{
+    // The dialog is modal. Without closing it, the query runs and the thread
+    // list repaints BEHIND a window the user still has to dismiss, so the
+    // search looks like it did nothing. The dialog also describes m_items,
+    // which the new query is about to replace.
+    MessageView view;
+    view.showThread({ oneMessage() });
+
+    QSignalSpy spy(&view, &MessageView::searchRequested);
+    QVERIFY(spy.isValid());
+
+    // showDetailsDialog() blocks in exec(), so the dialog has to be driven
+    // from a timer once it is up.
+    bool foundTheDialog = false;
+    QTimer::singleShot(0, &view, [&view, &foundTheDialog]() {
+        auto *dialog = view.findChild<MessageDetailsDialog *>();
+        if (!dialog) {
+            // Never leave exec() spinning: a missing dialog must fail the test,
+            // not hang the suite.
+            QApplication::exit(1);
+            return;
+        }
+        foundTheDialog = true;
+
+        const QList<HeaderRow> rows = dialog->rows();
+        const auto from = std::find_if(
+            rows.cbegin(), rows.cend(), [](const HeaderRow &row) {
+                return row.field == QStringLiteral("from");
+            });
+        if (from == rows.cend()) {
+            dialog->reject();
+            return;
+        }
+
+        dialog->requestSearch(*from, false);
+    });
+
+    view.showDetailsDialog();
+
+    QVERIFY2(foundTheDialog, "the details dialog never appeared");
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(0).toString(),
+             QStringLiteral("from:\"Sender <sender@example.org>\""));
+
+    // exec() returned, which is the assertion: the dialog closed on its own
+    // rather than waiting for the user to dismiss it.
+    QVERIFY(!view.findChild<MessageDetailsDialog *>()
+            || !view.findChild<MessageDetailsDialog *>()->isVisible());
 }
 
 QTEST_MAIN(TestMessageView)

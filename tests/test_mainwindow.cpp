@@ -88,6 +88,9 @@ private slots:
     void markReadTimerIsNotArmedForAReadThread();
     void aConfirmedEditArmsTheAutoSync();
     void autoSyncDebouncesABurstOfEdits();
+    void aSearchFromThePaneReplacesTheQuery();
+    void aSearchFromThePaneCanNarrowTheQuery();
+    void narrowingAnEmptyQueryBarIsAPlainSearch();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
     void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
@@ -3723,6 +3726,66 @@ void TestMainWindow::autoSyncDebouncesABurstOfEdits()
              "syncs on the schedule of the FIRST one");
     QCOMPARE(window.findChildren<QTimer *>(QStringLiteral("autoSyncTimer")).size(),
              1);
+}
+
+void TestMainWindow::aSearchFromThePaneReplacesTheQuery()
+{
+    const Config config;
+    MainWindow window(config);
+
+    QLineEdit *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY2(queryEdit, "no query bar: the window was never built");
+
+    MessageView *view = window.findChild<MessageView *>();
+    QVERIFY2(view, "no message view");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    emit view->searchRequested(QStringLiteral("from:\"foo@example.org\""), false);
+
+    QCOMPARE(queryEdit->text(), QStringLiteral("from:\"foo@example.org\""));
+}
+
+void TestMainWindow::aSearchFromThePaneCanNarrowTheQuery()
+{
+    // The case the feature exists for: a query returning a thousand threads is
+    // narrowed by adding a condition. BOTH sides are parenthesised, because
+    // 'a or b AND c' binds as 'a or (b AND c)', which WIDENS a search the user
+    // asked to narrow, and notmuch reports no error for it.
+    const Config config;
+    MainWindow window(config);
+
+    QLineEdit *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY2(queryEdit, "no query bar: the window was never built");
+
+    MessageView *view = window.findChild<MessageView *>();
+    QVERIFY2(view, "no message view");
+
+    queryEdit->setText(QStringLiteral("tag:inbox or tag:flagged"));
+    emit view->searchRequested(QStringLiteral("from:\"foo@example.org\""), true);
+
+    QCOMPARE(queryEdit->text(),
+             QStringLiteral("(tag:inbox or tag:flagged) AND (from:\"foo@example.org\")"));
+}
+
+void TestMainWindow::narrowingAnEmptyQueryBarIsAPlainSearch()
+{
+    // Rather than "() AND (x)", which matches nothing.
+    const Config config;
+    MainWindow window(config);
+
+    QLineEdit *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY2(queryEdit, "no query bar: the window was never built");
+
+    MessageView *view = window.findChild<MessageView *>();
+    QVERIFY2(view, "no message view");
+
+    queryEdit->clear();
+    emit view->searchRequested(QStringLiteral("tag:inbox"), true);
+
+    QCOMPARE(queryEdit->text(), QStringLiteral("tag:inbox"));
 }
 
 void TestMainWindow::autoSyncIsNotArmedWhenDisabledOrWithNothingPending()

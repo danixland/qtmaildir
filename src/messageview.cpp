@@ -252,6 +252,20 @@ MessageView::MessageView(QWidget *parent)
     m_tagStrip = new TagStrip(this);
     m_tagStrip->hide();
 
+    // Item 85: a tag chip is searchable. The strip reports which chip was hit
+    // and where; what a tag can do is decided here, beside the other menus, so
+    // all three surfaces offer the same pair of operations.
+    connect(m_tagStrip, &TagStrip::tagContextMenuRequested, this,
+            [this](const QString &tag, const QPoint &globalPos) {
+                const QString query = SearchTerm::tag(tag);
+                if (query.isEmpty())
+                    return;
+
+                QMenu menu(this);
+                addSearchEntries(&menu, { { tr("tag %1").arg(tag), query } });
+                menu.exec(globalPos);
+            });
+
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(headerRow);
     layout->addLayout(blockedRow);
@@ -616,10 +630,22 @@ void MessageView::showDetailsDialog()
         return;
 
     MessageDetailsDialog dialog(m_items, this);
+
     // The dialog's searches are the pane's searches: one signal reaches the
     // window whichever surface the user used.
-    connect(&dialog, &MessageDetailsDialog::searchRequested,
-            this, &MessageView::searchRequested);
+    //
+    // It CLOSES on the way out, and that is not tidiness. The dialog is modal,
+    // so without this the query runs and the thread list repaints behind a
+    // window the user still has to dismiss, making the search look like it did
+    // nothing. The dialog is also built from m_items, which the new query is
+    // about to replace, so what it displays would describe a thread the pane
+    // has already stopped showing.
+    connect(&dialog, &MessageDetailsDialog::searchRequested, this,
+            [this, &dialog](const QString &query, bool extend) {
+                emit searchRequested(query, extend);
+                dialog.accept();
+            });
+
     dialog.exec();
 }
 

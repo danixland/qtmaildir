@@ -1775,6 +1775,27 @@ void MainWindow::addSavedQueryActions(QWidget *target, const SavedQuery &saved)
     connect(remove, &QAction::triggered, this,
             [this, saved]() { deleteSavedQuery(saved); });
     target->addAction(remove);
+
+    // Stored queries only. A generated entry composes its query from the
+    // accounts at run time, so a rule made from one would freeze a snapshot
+    // that goes stale the day an account is added, in a file the post-new hook
+    // reads unattended.
+    if (saved.isGenerated())
+        return;
+
+    auto *ruleSeparator = new QAction(target);
+    ruleSeparator->setSeparator(true);
+    target->addAction(ruleSeparator);
+
+    auto *toRule = new QAction(tr("Create tagging rule..."), target);
+    toRule->setObjectName(QStringLiteral("queryToRule"));
+    connect(toRule, &QAction::triggered, this, [this, saved]() {
+        TagRule seed;
+        seed.id = TagRules::sanitiseId(saved.name);
+        seed.query = saved.query;
+        showTagRulesDialog(seed);
+    });
+    target->addAction(toRule);
 }
 
 void MainWindow::editSavedQuery(const SavedQuery &saved)

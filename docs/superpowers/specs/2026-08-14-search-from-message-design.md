@@ -120,6 +120,20 @@ are arbitrary user-chosen prose and can contain quotes, colons, parentheses,
 
 Assert on the constructed string, never on a provoked parser failure.
 
+## The date needs a parser that already exists
+
+`ParsedMessage::date` is the raw `Date:` header text, so a date search has to
+parse it. The parse is already written, inside the file-local
+`attachmentFolderName()` in `mimeparser.cpp`, and it carries a fix this feature
+would otherwise walk straight into: **`Qt::RFC2822Date` rejects the entire
+string when a trailing timezone comment is present**, and `... +0200 (CEST)` is
+legal per RFC 5322 and common in the wild (verified on Qt 6.11). A second parser
+written without that fix loses the date silently on a large share of real mail,
+and the symptom is a menu entry that never appears.
+
+It is therefore extracted as `MimeParser::parseDate()` and called from both
+places, rather than reimplemented.
+
 ## Wiring
 
 `MessageView` already has the right signal:
@@ -133,15 +147,26 @@ security gate: a message body is attacker-controlled HTML and can hold a
 `qtmaildir-query:` link, so the signal is emitted only when the placeholder is
 what is displayed (`messageview.h:140-149`).
 
-**Reuse it rather than adding a parallel signal.** The menus are application
-chrome built by our own code from values we extracted, not links in a rendered
-document, so they do not weaken that gate. The gate stays exactly as it is for
-links; these are a separate emitter of the same signal.
+**It is the right precedent but the wrong signature.** These actions carry a
+second value, whether the query replaces the bar or narrows it, and widening
+`queryRequested` would change what the placeholder's links mean. `MessageView`
+therefore gains
 
-`TagStrip` and the details dialog emit their own equivalent. Every one of them
-carries a finished query string and nothing else; the panes never touch the
-query bar. `MainWindow` receives, sets `m_queryEdit`, and calls the existing
-runner, which keeps the account scope and the generation counter working.
+```cpp
+void searchRequested(const QString &query, bool extend);
+```
+
+beside it, and `queryRequested` keeps its gate and its meaning untouched. The
+two coexist deliberately: a link in a rendered document is attacker-reachable
+and stays gated, while these menus are application chrome built by our own code
+from values we extracted, so they need no gate.
+
+`TagStrip` emits a tag and a position, and the details dialog emits the same
+`searchRequested` pair; `MessageView` forwards the dialog's straight through, so
+one signal reaches the window whichever surface the user used. Every one of them
+carries a finished query string; the panes never touch the query bar.
+`MainWindow` receives, sets `m_queryEdit`, and calls the existing runner, which
+keeps the account scope and the generation counter working.
 
 **Extend needs the bar's current text**, which only `MainWindow` has. The signal
 therefore carries the term plus which operation was chosen, and `MainWindow`

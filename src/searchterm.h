@@ -76,6 +76,24 @@ QString tag(const QString &name);
 /// matches nothing; an empty `addition` leaves `existing` untouched.
 QString extend(const QString &existing, const QString &addition);
 
+/// Narrows `existing` by everything that is NOT `addition`, as
+/// `(existing) AND NOT (addition)`.
+///
+/// **Both sides are parenthesised, for the same load-bearing reason as
+/// extend().** The query bar may hold a hand-written disjunction, and
+/// `a or b AND NOT c` binds as `a or (b AND NOT c)`: the exclusion would cover
+/// only the second term, leaving on screen exactly the mail the user asked to
+/// be rid of, with no error reported anywhere.
+///
+/// **An empty `existing` yields an EMPTY STRING, unlike extend().** Excluding
+/// from nothing would mean the entire Maildir minus one value: a legitimate
+/// query, and an implausible thing to have meant by right-clicking a value in
+/// a fresh window. The menus grey the entry out when the query bar is empty;
+/// this is the second layer, against a caller that forgets the guard.
+///
+/// An empty `addition` leaves `existing` untouched.
+QString exclude(const QString &existing, const QString &addition);
+
 }  // namespace SearchTerm
 
 /// One entry a context menu can offer: a finished query and the text naming it.

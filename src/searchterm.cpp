@@ -90,4 +90,19 @@ QString extend(const QString &existing, const QString &addition)
     return QStringLiteral("(%1) AND (%2)").arg(left, right);
 }
 
+QString exclude(const QString &existing, const QString &addition)
+{
+    const QString left = existing.trimmed();
+    const QString right = addition.trimmed();
+
+    if (right.isEmpty())
+        return left;
+    // NOT a replace, unlike extend(): see the header. An empty left would make
+    // this "everything except", which no right-click asked for.
+    if (left.isEmpty())
+        return QString();
+
+    return QStringLiteral("(%1) AND NOT (%2)").arg(left, right);
+}
+
 }  // namespace SearchTerm

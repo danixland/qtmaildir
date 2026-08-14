@@ -41,6 +41,9 @@ private slots:
     void tagIsNotQuoted();
     void extendParenthesisesBothSides();
     void extendOntoAnEmptyQueryIsAReplace();
+    void excludeParenthesisesBothSides();
+    void excludeFromAnEmptyQueryIsEmpty();
+    void excludeWithNothingToExcludeLeavesTheQuery();
 };
 
 void TestSearchTerm::quotesAPlainValue()
@@ -140,6 +143,42 @@ void TestSearchTerm::extendOntoAnEmptyQueryIsAReplace()
     // And an empty new term leaves the existing query alone.
     QCOMPARE(SearchTerm::extend(QStringLiteral("tag:inbox"), QString()),
              QStringLiteral("tag:inbox"));
+}
+
+void TestSearchTerm::excludeParenthesisesBothSides()
+{
+    // The same trap as extendParenthesisesBothSides, and worse in this
+    // direction. Unparenthesised, `a or b AND NOT c` binds as
+    // `a or (b AND NOT c)`: the exclusion covers only the second term, so
+    // every message matching `a` stays on screen INCLUDING the ones the user
+    // asked to be rid of. notmuch reports no error for either form, so this
+    // assertion is the only thing that fails.
+    QCOMPARE(SearchTerm::exclude(QStringLiteral("tag:inbox or tag:flagged"),
+                                 QStringLiteral("from:foo@example.org")),
+             QStringLiteral(
+                 "(tag:inbox or tag:flagged) AND NOT (from:foo@example.org)"));
+}
+
+void TestSearchTerm::excludeFromAnEmptyQueryIsEmpty()
+{
+    // Deliberately NOT extend()'s behaviour. extend() returns the addition
+    // alone, because narrowing nothing by x sensibly means x. Excluding from
+    // nothing would mean the whole Maildir minus one value: a legitimate
+    // query, and an implausible thing to have meant by right-clicking a value
+    // in a fresh window. The menus grey the entry out; this is the second
+    // layer, against a caller that forgets the guard.
+    QVERIFY(SearchTerm::exclude(QString(), QStringLiteral("tag:inbox"))
+                .isEmpty());
+    QVERIFY(SearchTerm::exclude(QStringLiteral("   "),
+                                QStringLiteral("tag:inbox"))
+                .isEmpty());
+}
+
+void TestSearchTerm::excludeWithNothingToExcludeLeavesTheQuery()
+{
+    QCOMPARE(SearchTerm::exclude(QStringLiteral("tag:inbox"), QString()),
+             QStringLiteral("tag:inbox"));
+    QVERIFY(SearchTerm::exclude(QString(), QString()).isEmpty());
 }
 
 QTEST_MAIN(TestSearchTerm)

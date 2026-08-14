@@ -63,6 +63,7 @@ private slots:
     void loadMessageReturnsOnlyThatMessage();
     void loadMessageOnAnUnknownIdReturnsNothing();
     void aQueryCarriesEachThreadsFirstMessageId();
+    void aSentQueryCarriesTheMatchedMessageNotTheThreadsFirst();
     void loadThreadTreeReportsReplyDepth();
     void loadThreadTreeCarriesTheFactsARowNeeds();
 
@@ -271,6 +272,42 @@ void TestNotmuchWorker::aQueryCarriesEachThreadsFirstMessageId()
         }
     }
     QVERIFY2(sawTheThread, "the two-message thread was not in the results");
+}
+
+void TestNotmuchWorker::aSentQueryCarriesTheMatchedMessageNotTheThreadsFirst()
+{
+    // THE case the Sent branch exists for, and the one hardest to get right.
+    // In a Sent view a row stands for what the USER sent, which is normally a
+    // reply. Taking the thread's opening message there would show whoever
+    // started the conversation instead, under a heading that says Sent.
+    //
+    // "Release notes" is a1 (the root) plus a2 (its reply). A query matching
+    // only the reply stands in for a Sent query: withRecipients is what the
+    // Sent view sets, and it is what selects the matched-message branch.
+    const QVector<ThreadSummary> asSent =
+        runQuery(QStringLiteral("id:a2@example.org"),
+                 NotmuchWorker::NewestFirst, /*withRecipients=*/true);
+
+    bool sawIt = false;
+    for (const ThreadSummary &t : asSent) {
+        if (t.subject != QStringLiteral("Release notes"))
+            continue;
+        // The REPLY, because that is what matched. Not a1, the thread's first.
+        QCOMPARE(t.firstMessageId, QStringLiteral("a2@example.org"));
+        sawIt = true;
+    }
+    QVERIFY2(sawIt, "the thread was not in the results at all");
+
+    // And the same thread under an ordinary query still reports its opening
+    // message, so the branch is a Sent special case and not a change of
+    // meaning for everything else.
+    const QVector<ThreadSummary> asInbox =
+        runQuery(QStringLiteral("id:a2@example.org"),
+                 NotmuchWorker::NewestFirst, /*withRecipients=*/false);
+    for (const ThreadSummary &t : asInbox) {
+        if (t.subject == QStringLiteral("Release notes"))
+            QCOMPARE(t.firstMessageId, QStringLiteral("a1@example.org"));
+    }
 }
 
 void TestNotmuchWorker::loadThreadTreeReportsReplyDepth()

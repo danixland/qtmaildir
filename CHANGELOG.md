@@ -23,6 +23,13 @@ point at which they are stable.
   nothing to exclude from and running it would mean the whole Maildir minus
   one value.
 
+### Changed
+
+- The dialog reporting configuration problems at startup now appears over the
+  main window instead of before it. Which problems interrupt startup is
+  unchanged: a keybinding that is being ignored does, a notice such as "no sync
+  command configured" does not.
+
 ## [0.20.0] - 2026-08-14
 
 Anything on screen in the message pane can now be searched for by right-clicking

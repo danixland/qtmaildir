@@ -1431,8 +1431,11 @@ void TestMainWindow::anActionOnAMessageRowTagsThatMessageNotTheThread()
 
 void TestMainWindow::selectingAMessageRowTargetsThatMessageNotItsThread()
 {
-    // test_mainwindow has no worker (backlog item 36), so this cannot assert on
-    // what the pane renders. What it CAN assert is the decision the UI makes:
+    // This case builds a bare window, so it has no worker and cannot assert on
+    // what the pane renders. A case that needs one opts into
+    // WorkerBackedWindow; that is deliberately not done here, since the
+    // decision under test is made before any load. What it CAN assert is that
+    // decision:
     // a message row must stop tracking a current thread, or a reply arriving
     // for either kind of selection cannot tell which one it belongs to.
     //

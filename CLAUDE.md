@@ -398,13 +398,36 @@ standalone program containing none of this project's code. A size assertion
 there passes against both, and a mutation putting the bug back leaves the suite
 green. Assert on the stored value, and leave the frame to a hand test.
 
+**`test_mainwindow` can now drive a real worker, and three things about it will
+waste a session each.** `WorkerBackedWindow` builds a throwaway notmuch
+database and writes a `qtmaildir.conf` pointing at it; `wireWorker()` reads
+`notmuch_config` like any other key, so no production hook exists or is needed.
+It is opt-in per test because the fifty-odd bare-window cases must not pay for a
+`notmuch new`. The three traps, all found by a probe that reported success while
+measuring nothing:
+
+- **The worker is unreachable by `findChild`.** It is created parentless and
+  moved to its own thread, so it is not in the window's hierarchy. Wait on
+  observable state with `QTRY_VERIFY_WITH_TIMEOUT`, never on worker signals and
+  never on a fixed `qWait(n)`, which passes when the result never arrives.
+- **`rowCount()` on a thread row is 0 until the thread is expanded**, since
+  children are populated by the expansion. `hasChildren()` is the pre-expansion
+  question and falls back to `summary.totalCount > 1`. An assertion on
+  `rowCount` fails against correct code.
+- **`currentThreadId()` reports INTENT, not content.** It is assigned
+  synchronously in the selection handler before any worker round-trip, so a test
+  asserting on it passes with `onThreadLoaded()` disabled entirely, measured.
+  `MessageView::showingPlaceholder()` is what the user sees; assert the pane is
+  blank BEFORE the gesture so the check after it means something.
+
 **A queued load can outlive the state that started it.** `loadThread` crosses to the worker
 on a queued connection, so its reply lands after whatever the UI did in the meantime. The
 generation counter covers a superseded *query*, not a superseded *selection*: blanking the
 pane and then receiving an in-flight thread repaints it. `onThreadLoaded` therefore drops a
-reply that arrives while more than one row is selected. This class of bug cannot be
-reproduced in `test_mainwindow`, which has no worker and never fires `threadLoaded`; it
-needs the notmuch fixture or a hand test.
+reply that arrives while more than one row is selected. This class of bug USED to be
+unreproducible in `test_mainwindow`, which had no worker and never fired `threadLoaded`.
+Item 36 changed that: `WorkerBackedWindow` (above) gives a test a real worker, and the
+`onThreadLoaded` guard is covered by one.
 
 **Do not conclude a key binding is dead from `QTest::keyClick()`.** Whether a symbol needs
 Shift is a layout property, not a Qt one. `Ctrl++` is the shipped `zoom_in` default and is

@@ -3355,16 +3355,36 @@ void MainWindow::markCurrentThreadRead()
     }
 
     const ThreadSummary thread = m_model->threadAt(current.row());
-    if (thread.threadId != m_markReadThreadId
-        || !thread.tags.contains(QStringLiteral("unread"))) {
+    if (thread.threadId != m_markReadThreadId) {
         m_markReadThreadId.clear();
         return;
     }
 
-    const QStringList threadIds = { m_markReadThreadId };
+    // No thread-level `unread` check here any more. It would ask the wrong
+    // question now that one message is marked rather than the thread: a thread
+    // carries `unread` while ANY message in it is unread, so a read root under
+    // unread replies would pass this and a write would be sent for a message
+    // that is already read. The scheduling side still checks it, which stops a
+    // fully-read thread from arming a timer at all; what survives to here is
+    // decided per message below.
+
     m_markReadThreadId.clear();
 
-    // sendThreadTagChange, NOT tagSelected: this deliberately does not go on
+    // The MESSAGE on screen, not the thread it belongs to.
+    //
+    // This marked the whole thread until item 66, and that was coherent while
+    // a root click rendered the whole conversation: everything marked read had
+    // been displayed. Once a root began rendering a single message, the same
+    // code cleared `unread` from replies the user had never seen. Not a
+    // cosmetic slip: maildir.synchronize_flags is on, so removing `unread`
+    // rewrites Maildir filenames and the next sync carries it to the server.
+    //
+    // m_currentMessageId is what the pane actually rendered, set beside the
+    // loadMessage that produced it.
+    if (m_currentMessageId.isEmpty())
+        return;
+
+    // sendMessageTagChange, NOT tagSelected: this deliberately does not go on
     // the undo stack. The user never took this action, so hijacking Ctrl+Z to
     // reverse it would undo something they did not do, and toggle_unread
     // already gives them a direct way to put it back. Decided 2026-08-03.
@@ -3372,8 +3392,8 @@ void MainWindow::markCurrentThreadRead()
     // It still funnels through the one applyTags path, per CLAUDE.md; what
     // differs is only whether the inverse is pushed, which is a window-level
     // decision above the worker.
-    sendThreadTagChange(threadIds, {}, { QStringLiteral("unread") },
-                        tr("Mark read"));
+    sendMessageTagChange({ m_currentMessageId }, {},
+                         { QStringLiteral("unread") }, tr("Mark read"));
 }
 
 void MainWindow::editTagsOnSelection()

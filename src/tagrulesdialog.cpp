@@ -76,6 +76,11 @@ const FieldEntry kFields[] = {
 } // namespace
 
 TagRulesDialog::TagRulesDialog(QWidget *parent)
+    : TagRulesDialog(TagRule(), parent)
+{
+}
+
+TagRulesDialog::TagRulesDialog(const TagRule &seed, QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Tagging rules"));
@@ -347,6 +352,11 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     // Last, and after reloadList(): a header state cannot be applied before
     // the columns it describes exist, and reloadList is what fills them.
     restoreUiState();
+
+    // After restoreUiState, so the seeded rule's selection is not overwritten
+    // by anything the restore does to the list.
+    if (!seed.query.isEmpty())
+        seedRule(seed);
 }
 
 /// Reads the window size and the rule list's header layout back.
@@ -662,6 +672,35 @@ void TagRulesDialog::onAddRule()
     m_list->setCurrentItem(m_list->topLevelItem(m_working.size() - 1));
 }
 
+void TagRulesDialog::seedRule(const TagRule &seed)
+{
+    // Flushed first, as onAddRule does: reloadList() repaints every row from
+    // m_working, so an edit still sitting in the form would be lost.
+    applyEditsToCurrentRule();
+
+    TagRule rule = seed;
+
+    // enabled and stage are TagRule's own defaults (true, 50), matching what
+    // Add rule produces. An inconsistent default between two ways of making
+    // the same thing is worse than either default.
+
+    // Against the ids already present, not only against the file: the working
+    // list may hold unsaved rules whose ids would collide just as hard.
+    QStringList taken;
+    for (const TagRule &existing : m_working)
+        taken.append(existing.id);
+    rule.id = TagRules::uniqueId(rule.id, taken);
+
+    m_working.append(rule);
+    reloadList();
+    m_list->setCurrentItem(m_list->topLevelItem(m_working.size() - 1));
+
+    // The one field the user must supply. A rule that tags nothing fails
+    // validate(), so Save refuses it rather than writing a rule the hook
+    // would ignore.
+    m_add->setFocus();
+}
+
 void TagRulesDialog::onCopyRule()
 {
     applyEditsToCurrentRule();
@@ -812,6 +851,11 @@ bool TagRulesDialog::warningIsBelowTheRuleListForTest() const
 int TagRulesDialog::ruleCountForTest() const
 {
     return m_working.size();
+}
+
+bool TagRulesDialog::currentRuleEnabledForTest() const
+{
+    return m_enabled->isChecked();
 }
 
 void TagRulesDialog::setTagsForTest(const QString &tags)

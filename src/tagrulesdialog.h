@@ -52,6 +52,20 @@ class TagRulesDialog : public QDialog
 public:
     explicit TagRulesDialog(QWidget *parent = nullptr);
 
+    /// Opens with one new rule already in the working list, selected, and the
+    /// Add tags field focused. The rule is a pending edit like any other: it
+    /// reaches the file on Save and is discarded on Cancel.
+    ///
+    /// The seed is a whole TagRule rather than a query string because item 78
+    /// will seed from a sender and will want to set tags too.
+    explicit TagRulesDialog(const TagRule &seed, QWidget *parent = nullptr);
+
+    /// Appends `seed` to the working rules, selects it and focuses Add tags.
+    /// Public because the dialog is single-instance and non-modal: a second
+    /// Create tagging rule while it is open seeds the dialog already up
+    /// rather than being dropped.
+    void seedRule(const TagRule &seed);
+
     /// The queries whose message counts the dialog wants, in the order its
     /// rows appear. MainWindow hands these to the worker; the dialog never
     /// touches the database itself, because NotmuchWorker owns the only
@@ -108,6 +122,10 @@ public:
     /// Adding and filling a rule the way the buttons do, so a test can drive
     /// the whole journey the user takes rather than only its last step.
     int ruleCountForTest() const;
+
+    /// The selected rule's enabled flag, so the seeded default is asserted
+    /// rather than assumed from TagRule's initialiser.
+    bool currentRuleEnabledForTest() const;
     void addRuleForTest() { onAddRule(); }
     void setTagsForTest(const QString &tags);
 

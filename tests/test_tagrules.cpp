@@ -45,6 +45,7 @@ private slots:
     void aRepairedIdSurvivesASaveAndReload();
     void theWarningReadsAsAWarningAndSitsBesideSave();
     void aDismissedWarningComesBackWhenThereIsSomethingNewToSay();
+    void aSeededDialogOpensOnTheNewRuleWithoutWritingIt();
     void aNameTypedWithSpacesIsSanitisedInTheField();
     void aRuleAddedAndNamedInTheDialogSurvivesAReopen();
     void unknownFieldsSurviveASave();
@@ -922,6 +923,52 @@ void TestTagRules::aRuleAddedAndNamedInTheDialogSurvivesAReopen()
     QCOMPARE(added.add, (QStringList{ QStringLiteral("promo"),
                                       QStringLiteral("notify/justeat") }));
     QVERIFY(reloaded.warnings().isEmpty());
+}
+
+void TestTagRules::aSeededDialogOpensOnTheNewRuleWithoutWritingIt()
+{
+    // The seeded rule is a pending edit, exactly like one made with Add rule:
+    // in the working list, selected, and NOT on disk until Save. Asserting the
+    // file is unchanged is the half that matters, since a dialog that wrote on
+    // open would tag real mail from a menu click.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRule seed;
+    seed.id = QStringLiteral("weekly-digest");
+    seed.query = QStringLiteral("from:digest.example.org");
+
+    TagRulesDialog dialog(seed);
+
+    // Appended after the rules already in the file, and current.
+    QCOMPARE(dialog.ruleCountForTest(), 2);
+    QCOMPARE(dialog.nameLineForTest(), QStringLiteral("weekly-digest"));
+    QCOMPARE(dialog.queryLineForTest(),
+             QStringLiteral("from:digest.example.org"));
+
+    // Enabled, like a rule made with Add rule. A rule created disabled and
+    // then forgotten is its own silent failure.
+    QVERIFY(dialog.currentRuleEnabledForTest());
+
+    // Nothing written. Reread from disk rather than trusting the dialog.
+    TagRules onDisk;
+    onDisk.load(stored);
+    QCOMPARE(onDisk.rules().size(), 1);
 }
 
 void TestTagRules::aFolderRowUsesTheDropdownAndKeepsItsSuffix()

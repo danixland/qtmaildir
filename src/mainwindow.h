@@ -75,6 +75,18 @@ public:
     /// really registered.
     QStringList registeredActionNames() const;
 
+    /// Configuration problems worth interrupting startup for, empty when there
+    /// are none. A keybinding the user wrote and that is being ignored counts;
+    /// a notice such as "no sync command configured" does not.
+    ///
+    /// **Returned rather than shown, and that is the point.** This used to
+    /// raise a `QMessageBox` from the CONSTRUCTOR. A modal cannot be dismissed
+    /// under the offscreen platform, so `MainWindow` never finished
+    /// constructing and the whole suite hung with no output, which reads as an
+    /// infrastructure failure rather than a test one (item 84). The caller
+    /// raises the dialog after show(); a test asserts on the list.
+    QStringList configProblems() const;
+
     /// The thread currently shown in the message pane, empty when it is blank.
     ///
     /// Empty is what "the pane is blanked" means internally: a late-arriving
@@ -460,7 +472,9 @@ private:
 
     QList<HtmlBuilder::PlaceholderHelper> placeholderHelpers() const;
 
-    void showWarnings();
+    /// Puts the warning count in the status bar. Nothing modal: see
+    /// configProblems() for why the dialog is not raised here.
+    void applyWarnings();
     void showShortcutReference();
     void showAbout();
 

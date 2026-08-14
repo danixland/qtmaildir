@@ -91,6 +91,7 @@ private slots:
     void aSearchFromThePaneReplacesTheQuery();
     void aSearchFromThePaneCanNarrowTheQuery();
     void narrowingAnEmptyQueryBarIsAPlainSearch();
+    void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
     void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
@@ -6103,6 +6104,40 @@ void TestMainWindow::renamingReplacesRatherThanDuplicating()
     QCOMPARE(stored.at(0).toObject().value(QStringLiteral("name")).toString(),
              QStringLiteral("New"));
     QCOMPARE(savedQueryButtonLabels(window), QStringList{ QStringLiteral("New") });
+}
+
+void TestMainWindow::aMalformedAccountIsReportedWithoutBlockingTheConstructor()
+{
+    // The exact shape that hung the suite on 2026-08-14: an account section
+    // carrying `sent=` and no `maildir=`. Config::load handles it correctly,
+    // recording a problem and carrying on, but showWarnings() then raised a
+    // modal FROM THE CONSTRUCTOR, which nothing can dismiss under the
+    // offscreen platform, so MainWindow never finished constructing.
+    //
+    // Constructing the window at all is therefore half the assertion: if the
+    // modal comes back, this test does not fail, it HANGS.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&file);
+        out << "[account.one]\n"
+            << "sent=Sent\n";
+    }
+
+    Config config;
+    config.load(path);
+
+    MainWindow window(config);
+
+    // The problem is reported rather than swallowed, and it names the account.
+    const QStringList problems = window.configProblems();
+    QVERIFY2(!problems.isEmpty(),
+             "a malformed account produced no problem to report");
+    QVERIFY(problems.join(QLatin1Char('\n')).contains(QStringLiteral("one")));
 }
 
 #include "test_mainwindow.moc"

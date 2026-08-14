@@ -384,7 +384,10 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     // object name, so they must already exist or their position is dropped.
     restoreUiState();
     wireWorker();
-    showWarnings();
+    // Sets the status label only. The modal that used to live here is raised
+    // by the caller after show(), because a modal in a constructor cannot be
+    // dismissed under the offscreen platform and hung the whole suite.
+    applyWarnings();
 
     // No window-wide event filter: QAction shortcuts are dispatched before the
     // focused widget sees the key, so they beat QAbstractItemView's
@@ -1688,7 +1691,7 @@ void MainWindow::runSearchFromPane(const QString &query,
     runCurrentQuery();
 }
 
-void MainWindow::showWarnings()
+void MainWindow::applyWarnings()
 {
     const QStringList warnings = m_config.warnings() + m_keyMap.warnings();
     if (warnings.isEmpty())
@@ -1697,18 +1700,16 @@ void MainWindow::showWarnings()
     // Non-fatal: the app runs degraded rather than refusing to start.
     m_statusLabel->setText(
         tr("%n configuration warning(s)", "", warnings.size()));
+}
 
+QStringList MainWindow::configProblems() const
+{
     // Interrupt startup only for things that are actually wrong. Every KeyMap
     // warning qualifies (each one means a binding the user wrote is being
     // ignored), but a Config notice such as "no sync command configured" does
     // not: nothing is broken, the feature is simply off, and a modal on every
     // launch teaches the user to dismiss dialogs unread.
-    const QStringList problems = m_config.problems() + m_keyMap.warnings();
-    if (problems.isEmpty())
-        return;
-
-    QMessageBox::warning(this, tr("Configuration problems"),
-                         problems.join(QLatin1Char('\n')));
+    return m_config.problems() + m_keyMap.warnings();
 }
 
 void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)

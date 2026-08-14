@@ -97,5 +97,15 @@ int main(int argc, char *argv[])
     MainWindow window(config);
     window.show();
 
+    // After show(), and out here rather than inside the constructor. A modal
+    // raised from the constructor cannot be dismissed under the offscreen
+    // platform, so it hung the test suite with no output (item 84). Showing it
+    // here also gives the dialog a visible parent to sit on.
+    const QStringList problems = window.configProblems();
+    if (!problems.isEmpty()) {
+        QMessageBox::warning(&window, QObject::tr("Configuration problems"),
+                             problems.join(QLatin1Char('\n')));
+    }
+
     return app.exec();
 }

@@ -46,6 +46,7 @@ private slots:
     void theWarningReadsAsAWarningAndSitsBesideSave();
     void aDismissedWarningComesBackWhenThereIsSomethingNewToSay();
     void aSeededDialogOpensOnTheNewRuleWithoutWritingIt();
+    void aSeededIdThatCollidesDoesNotReplaceTheRuleItMatches();
     void aNameTypedWithSpacesIsSanitisedInTheField();
     void aRuleAddedAndNamedInTheDialogSurvivesAReopen();
     void unknownFieldsSurviveASave();
@@ -969,6 +970,45 @@ void TestTagRules::aSeededDialogOpensOnTheNewRuleWithoutWritingIt()
     TagRules onDisk;
     onDisk.load(stored);
     QCOMPARE(onDisk.rules().size(), 1);
+}
+
+void TestTagRules::aSeededIdThatCollidesDoesNotReplaceTheRuleItMatches()
+{
+    // A saved query named "Vendor" sanitises to "vendor", which is already a
+    // rule id here. Replacing that rule would silently retag mail against a
+    // query the user never associated with it.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRule seed;
+    seed.id = TagRules::sanitiseId(QStringLiteral("Vendor"));
+    seed.query = QStringLiteral("from:other.example.org");
+
+    TagRulesDialog dialog(seed);
+
+    QCOMPARE(dialog.ruleCountForTest(), 2);
+    QCOMPARE(dialog.nameLineForTest(), QStringLiteral("vendor-2"));
+
+    // And the rule it collided with is untouched.
+    dialog.selectRuleForTest(0);
+    QCOMPARE(dialog.nameLineForTest(), QStringLiteral("vendor"));
+    QCOMPARE(dialog.queryLineForTest(),
+             QStringLiteral("from:vendor.example.org"));
 }
 
 void TestTagRules::aFolderRowUsesTheDropdownAndKeepsItsSuffix()

@@ -637,13 +637,17 @@ void MessageView::showDetailsDialog()
     // It CLOSES on the way out, and that is not tidiness. The dialog is modal,
     // so without this the query runs and the thread list repaints behind a
     // window the user still has to dismiss, making the search look like it did
-    // nothing. The dialog is also built from m_items, which the new query is
-    // about to replace, so what it displays would describe a thread the pane
-    // has already stopped showing.
+    // nothing.
+    //
+    // accept() BEFORE the emit, not after. The connection is direct, so the
+    // emit runs the query synchronously: the model clears and this pane blanks
+    // while the modal dialog is still up, holding the m_items it was built
+    // from. Closing first leaves no window in which the dialog describes a
+    // thread the pane has already dropped.
     connect(&dialog, &MessageDetailsDialog::searchRequested, this,
             [this, &dialog](const QString &query, bool extend) {
-                emit searchRequested(query, extend);
                 dialog.accept();
+                emit searchRequested(query, extend);
             });
 
     dialog.exec();

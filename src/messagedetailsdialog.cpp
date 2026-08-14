@@ -98,6 +98,17 @@ MessageDetailsDialog::MessageDetailsDialog(const QList<ThreadRenderItem> &items,
                                     requestSearch(
                                         row, SearchTerm::SearchMode::Narrow);
                                 });
+                        auto *exclude =
+                            menu.addAction(tr("Exclude from search"));
+                        // Visible but greyed rather than hidden: someone
+                        // exploring a fresh window is exactly who should see
+                        // that the feature exists.
+                        exclude->setEnabled(m_hasQuery);
+                        connect(exclude, &QAction::triggered, this,
+                                [this, row]() {
+                                    requestSearch(
+                                        row, SearchTerm::SearchMode::Exclude);
+                                });
                         menu.exec(value->mapToGlobal(pos));
                     });
         }
@@ -155,6 +166,10 @@ void MessageDetailsDialog::requestSearch(const HeaderRow &row,
                                          SearchTerm::SearchMode mode)
 {
     if (row.query.isEmpty())
+        return;
+    // Nothing to exclude FROM: the entry is greyed, and this is the second
+    // layer in case it is reached another way.
+    if (mode == SearchTerm::SearchMode::Exclude && !m_hasQuery)
         return;
     emit searchRequested(row.query, mode);
 }

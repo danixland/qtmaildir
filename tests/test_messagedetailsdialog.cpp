@@ -36,6 +36,7 @@ private slots:
     void offersASearchForEachValue();
     void omitsAnEmptyHeader();
     void messageIdIsShownButNotSearchable();
+    void excludeIsOfferedOnlyWithAQueryToExcludeFrom();
 
 private:
     /// One message, with every header populated. The date's weekday matches
@@ -178,6 +179,44 @@ void TestMessageDetailsDialog::messageIdIsShownButNotSearchable()
     QSignalSpy spy(&dialog, &MessageDetailsDialog::searchRequested);
     dialog.requestSearch(*id, SearchTerm::SearchMode::Replace);
     QCOMPARE(spy.count(), 0);
+}
+
+void TestMessageDetailsDialog::excludeIsOfferedOnlyWithAQueryToExcludeFrom()
+{
+    // Excluding from an empty query bar would mean the whole Maildir minus one
+    // value: a legitimate query, and an implausible thing to have meant by
+    // right-clicking a value in a fresh window.
+    MessageDetailsDialog withQuery({ oneMessage() }, true);
+    MessageDetailsDialog withoutQuery({ oneMessage() }, false);
+
+    // The menu is built inside a customContextMenuRequested lambda and cannot
+    // be popped without a real context-menu event, so assert on the property
+    // its enabled state is derived from.
+    QVERIFY(withQuery.canExcludeFromSearch());
+    QVERIFY(!withoutQuery.canExcludeFromSearch());
+
+    const QList<HeaderRow> rows = withoutQuery.rows();
+    const auto from = std::find_if(
+        rows.cbegin(), rows.cend(), [](const HeaderRow &row) {
+            return row.field == QStringLiteral("from");
+        });
+    QVERIFY2(from != rows.cend(), "no From row to search from");
+
+    // The emit refuses too, so the guard does not rest on the menu alone.
+    QSignalSpy blocked(&withoutQuery,
+                       &MessageDetailsDialog::searchRequested);
+    QVERIFY(blocked.isValid());
+    withoutQuery.requestSearch(*from, SearchTerm::SearchMode::Exclude);
+    QCOMPARE(blocked.count(), 0);
+
+    // And with a query it goes through, so the guard is not simply refusing
+    // every exclude.
+    QSignalSpy allowed(&withQuery, &MessageDetailsDialog::searchRequested);
+    QVERIFY(allowed.isValid());
+    withQuery.requestSearch(*from, SearchTerm::SearchMode::Exclude);
+    QCOMPARE(allowed.count(), 1);
+    QCOMPARE(allowed.at(0).at(1).value<SearchTerm::SearchMode>(),
+             SearchTerm::SearchMode::Exclude);
 }
 
 QTEST_MAIN(TestMessageDetailsDialog)

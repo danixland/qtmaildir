@@ -75,6 +75,11 @@ public:
     /// The rows on display, in order. Exposed for testing without rendering.
     QList<HeaderRow> rows() const { return m_rows; }
 
+    /// Whether "Exclude from search" is offered. False with an empty query
+    /// bar: there would be nothing to exclude FROM. Exposed for testing
+    /// without popping a context menu.
+    bool canExcludeFromSearch() const { return m_hasQuery; }
+
     /// Emits searchRequested for `row`, or nothing when the row carries no
     /// searchable query. The menu entries call this; a test can too, without
     /// popping a menu.

@@ -577,6 +577,14 @@ void MessageView::addSearchEntries(QMenu *menu, const QList<SearchOffer> &offers
         connect(narrow, &QAction::triggered, this, [this, entry]() {
             emit searchRequested(entry.query, SearchTerm::SearchMode::Narrow);
         });
+
+        auto *exclude = sub->addAction(tr("Exclude from search"));
+        // Visible but greyed rather than hidden, as in the details dialog:
+        // there must be a query to exclude FROM.
+        exclude->setEnabled(m_hasQuery);
+        connect(exclude, &QAction::triggered, this, [this, entry]() {
+            emit searchRequested(entry.query, SearchTerm::SearchMode::Exclude);
+        });
     }
 }
 

@@ -75,6 +75,31 @@ public:
 
     QStringList warnings() const { return m_warnings; }
 
+    /// The one predicate. load() drops or repairs by it, the dialog refuses to
+    /// save against it, and mailrules.py enforces the same pattern in the
+    /// companion repo. Anything failing this is invisible to the post-new hook.
+    static bool isValidId(const QString &id);
+
+    /// A typed name reduced to a legal id: lowercased, every run of anything
+    /// else collapsed to one dash, dashes trimmed off both ends.
+    ///
+    /// Returns an EMPTY string when nothing legal survives ("!!!"), because an
+    /// empty id is not writable and the caller must decide the fallback rather
+    /// than have one invented here. Already-legal ids pass through untouched,
+    /// so loading a good file never rewrites it.
+    static QString sanitiseId(const QString &name);
+
+    /// sanitiseId plus a numeric suffix when the result is already taken.
+    /// Sanitising is many-to-one, so it manufactures duplicates that load()
+    /// would then drop; this is what stops the second rule becoming the first.
+    static QString uniqueId(const QString &name, const QStringList &taken);
+
+    /// Every reason these rules would not survive a reload, one string each,
+    /// empty when they all would. Written for the save path: the defect this
+    /// answers is that save() wrote anything and load() validated, so a rule
+    /// could reach the file and never come back.
+    static QStringList validate(const QList<TagRule> &rules);
+
     /// No file yet, as distinct from a file that would not load. A fresh
     /// install is not an error and must not be reported as one.
     bool missing() const { return m_missing; }

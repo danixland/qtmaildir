@@ -58,7 +58,95 @@ QStringList stringsOf(const QJsonValue &value)
     return out;
 }
 
+/// The id pattern, in one place. mailrules.py enforces the same one; see
+/// "Changing the shared rule format" in CLAUDE.md before touching it.
+const QRegularExpression &idPattern()
+{
+    static const QRegularExpression pattern(
+        QStringLiteral("^[a-z0-9][a-z0-9-]*$"));
+    return pattern;
+}
+
 } // namespace
+
+bool TagRules::isValidId(const QString &id)
+{
+    return idPattern().match(id).hasMatch();
+}
+
+QString TagRules::sanitiseId(const QString &name)
+{
+    // Untouched when already legal: sanitising every id on load would rewrite
+    // a good file and show mailctl a diff the user never made.
+    if (isValidId(name))
+        return name;
+
+    QString out;
+    out.reserve(name.size());
+    for (const QChar ch : name.toLower()) {
+        if ((ch >= QLatin1Char('a') && ch <= QLatin1Char('z'))
+            || (ch >= QLatin1Char('0') && ch <= QLatin1Char('9'))) {
+            out.append(ch);
+        } else if (!out.isEmpty() && !out.endsWith(QLatin1Char('-'))) {
+            // One dash per run of anything else, so "Notify: PayPal!" does not
+            // become "notify--paypal-".
+            out.append(QLatin1Char('-'));
+        }
+    }
+    while (out.endsWith(QLatin1Char('-')))
+        out.chop(1);
+
+    // Empty rather than a manufactured id. The caller knows what the rule is
+    // and can name it; this function inventing "rule-1" would hide the fact
+    // that nothing of the typed name survived.
+    return out;
+}
+
+QString TagRules::uniqueId(const QString &name, const QStringList &taken)
+{
+    QString base = sanitiseId(name);
+    if (base.isEmpty())
+        base = QStringLiteral("rule");
+    if (!taken.contains(base))
+        return base;
+
+    // Starts at 2: the unsuffixed id is the first, so "-2" reads as the second
+    // rule of that name rather than as an index.
+    for (int suffix = 2;; ++suffix) {
+        const QString candidate =
+            base + QLatin1Char('-') + QString::number(suffix);
+        if (!taken.contains(candidate))
+            return candidate;
+    }
+}
+
+QStringList TagRules::validate(const QList<TagRule> &rules)
+{
+    QStringList problems;
+    QStringList seen;
+    for (const TagRule &rule : rules) {
+        const QString where =
+            rule.id.isEmpty() ? QObject::tr("(unnamed)") : rule.id;
+
+        if (!isValidId(rule.id)) {
+            problems.append(
+                QObject::tr("'%1': the name must be lowercase letters, digits "
+                            "and dashes").arg(where));
+        } else if (seen.contains(rule.id)) {
+            problems.append(
+                QObject::tr("'%1': another rule already has this name")
+                    .arg(where));
+        }
+        seen.append(rule.id);
+
+        if (rule.query.trimmed().isEmpty())
+            problems.append(QObject::tr("'%1': no query").arg(where));
+        if (rule.add.isEmpty() && rule.remove.isEmpty())
+            problems.append(QObject::tr("'%1': adds and removes nothing")
+                                .arg(where));
+    }
+    return problems;
+}
 
 QString TagRules::defaultPath()
 {
@@ -121,9 +209,12 @@ void TagRules::load(const QString &path)
     }
 
     // An id is a handle: a UI selects on it and a diff tracks it.
-    static const QRegularExpression idPattern(
-        QStringLiteral("^[a-z0-9][a-z0-9-]*$"));
-
+    //
+    // A bad id is REPAIRED rather than dropped. Dropping it made the rule
+    // invisible in the dialog while it still occupied the file, so the next
+    // save deleted it outright: the user wrote a rule, saw it vanish, wrote it
+    // again, and lost it again. The warning still fires, because what is on
+    // disk is not what the hook runs until the file is saved back.
     QStringList seen;
     const QJsonArray array = root.value(QStringLiteral("rules")).toArray();
     for (int index = 0; index < array.size(); ++index) {
@@ -132,12 +223,13 @@ void TagRules::load(const QString &path)
 
         TagRule rule;
         rule.id = object.value(QStringLiteral("id")).toString();
-        if (!idPattern.match(rule.id).hasMatch()) {
+        if (!isValidId(rule.id)) {
+            const QString repaired = uniqueId(rule.id, seen);
             m_warnings.append(
-                QObject::tr("%1: id '%2' is missing or not lowercase letters, "
-                            "digits and dashes; dropped")
-                    .arg(where, rule.id));
-            continue;
+                QObject::tr("%1: name '%2' is not lowercase letters, digits "
+                            "and dashes; loaded as '%3'. Save to keep it.")
+                    .arg(where, rule.id, repaired));
+            rule.id = repaired;
         }
 
         if (seen.contains(rule.id)) {

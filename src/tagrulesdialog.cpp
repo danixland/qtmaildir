@@ -97,11 +97,6 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
-    m_warningLabel = new QLabel(this);
-    m_warningLabel->setWordWrap(true);
-    m_warningLabel->setVisible(false);
-    layout->addWidget(m_warningLabel);
-
     m_list = new QTreeWidget(this);
     m_list->setColumnCount(ColumnCount + 1);
     m_list->setHeaderLabels({ tr("On"), tr("Stage"), tr("Rule"), tr("Tags"),
@@ -241,6 +236,62 @@ TagRulesDialog::TagRulesDialog(QWidget *parent)
     buttons->addWidget(m_previewButton);
     buttons->addWidget(refreshButton);
     layout->addLayout(buttons);
+
+    // Beside Save, not under the intro. It sat below the header in the same
+    // font and colour as the prose around it, so it read as more explanatory
+    // text: the user missed "1 rule could not be read and was skipped" on
+    // every open of this dialog while hunting the rule it was telling them
+    // about. Down here it is next to the button whose outcome it reports, and
+    // it is the only red thing in the window.
+    //
+    // A palette role would be theme-correct and is not usable: the warning has
+    // to stand out against BOTH a light and a dark desktop, and no role means
+    // "alarming" in both. The colours are therefore literal, chosen to pass
+    // contrast either way, which is the same reasoning the tag chips use.
+    // The label and its dismiss button share a banner widget, so hiding the
+    // warning takes the button with it. Visibility is the banner's; the label
+    // itself stays visible inside it and setWarning() is still the one route.
+    m_warningBanner = new QWidget(this);
+    m_warningBanner->setVisible(false);
+    m_warningBanner->setStyleSheet(QStringLiteral(
+        "QWidget { background-color: #b3261e; border-radius: 4px; }"));
+
+    auto *warningRow = new QHBoxLayout(m_warningBanner);
+    warningRow->setContentsMargins(8, 6, 6, 6);
+
+    m_warningLabel = new QLabel(m_warningBanner);
+    m_warningLabel->setWordWrap(true);
+    // Plain text: these strings interpolate ids and queries read from the
+    // file, and a query holding '<' would otherwise be eaten as markup.
+    m_warningLabel->setTextFormat(Qt::PlainText);
+    m_warningLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #ffffff; font-weight: bold; background: transparent; }"));
+    warningRow->addWidget(m_warningLabel, 1);
+
+    m_warningClose = new QPushButton(QStringLiteral("✕"), m_warningBanner);
+    m_warningClose->setToolTip(tr("Dismiss"));
+    m_warningClose->setFlat(true);
+    m_warningClose->setCursor(Qt::ArrowCursor);
+    m_warningClose->setFixedSize(22, 22);
+    // Focus would put a highlight ring on the banner and let Space dismiss a
+    // warning the user is only tabbing past.
+    m_warningClose->setFocusPolicy(Qt::NoFocus);
+    m_warningClose->setStyleSheet(QStringLiteral(
+        "QPushButton { color: #ffffff; background: transparent; border: none;"
+        " font-weight: bold; }"
+        "QPushButton:hover { background-color: rgba(255, 255, 255, 60);"
+        " border-radius: 11px; }"));
+    warningRow->addWidget(m_warningClose, 0, Qt::AlignTop);
+
+    // Dismissed for THIS appearance only, never persistently. The message it
+    // most often carries is that the file on disk is not what the hook runs,
+    // and a stored "do not show again" would re-hide exactly the problem that
+    // went unnoticed for a whole session. The next warning shows it again,
+    // including on the next open with the file still unrepaired.
+    connect(m_warningClose, &QPushButton::clicked,
+            this, [this] { setWarning(QString()); });
+
+    layout->addWidget(m_warningBanner);
 
     auto *box = new QDialogButtonBox(QDialogButtonBox::Save
                                          | QDialogButtonBox::Cancel,
@@ -417,17 +468,35 @@ void TagRulesDialog::reloadListForTest()
     reloadList();
 }
 
+void TagRulesDialog::setWarning(const QString &text)
+{
+    if (text.isEmpty()) {
+        m_warningLabel->clear();
+        m_warningBanner->setVisible(false);
+        return;
+    }
+    // One route in, so the icon and the styling cannot drift apart between the
+    // load path and the save refusal. The glyph is part of the string rather
+    // than a second widget: it has to survive word wrap without leaving an
+    // icon stranded beside an empty line.
+    m_warningLabel->setText(QStringLiteral("⚠  ") + text);
+    m_warningBanner->setVisible(true);
+}
+
 void TagRulesDialog::showWarnings()
 {
     const QStringList warnings = m_rules.warnings();
     if (warnings.isEmpty()) {
-        m_warningLabel->setVisible(false);
+        setWarning(QString());
         return;
     }
-    m_warningLabel->setText(
-        tr("%n rule(s) could not be read and were skipped: %1", "",
-           warnings.size()).arg(warnings.join(QStringLiteral("; "))));
-    m_warningLabel->setVisible(true);
+    // Not "skipped" any more: a rule with a bad name is loaded repaired, and
+    // saying it was skipped would send the user looking for something that is
+    // in front of them. What is true of every warning here is that the file on
+    // disk is not yet what the hook will run.
+    setWarning(tr("%n rule(s) in the file need attention: %1. Save to write "
+                  "them back.", "", warnings.size())
+                   .arg(warnings.join(QStringLiteral("; "))));
 }
 
 void TagRulesDialog::fillItem(QTreeWidgetItem *item, const TagRule &rule) const
@@ -541,7 +610,24 @@ void TagRulesDialog::applyEditsToCurrentRule()
         return;
 
     TagRule &rule = m_working[index];
-    rule.id = m_id->text().trimmed();
+
+    // Sanitised as it is committed, not on save, so what the field shows is
+    // what reaches the file. The field is labelled "Name" and a person types
+    // "Justeat orders" into it; an id with a space is written happily and then
+    // dropped by every reader, which is the defect this answers.
+    QStringList taken;
+    for (int other = 0; other < m_working.size(); ++other) {
+        if (other != index)
+            taken.append(m_working.at(other).id);
+    }
+    const QString typed = m_id->text().trimmed();
+    rule.id = TagRules::isValidId(typed) ? typed
+                                         : TagRules::uniqueId(typed, taken);
+    if (rule.id != typed) {
+        const QSignalBlocker blocker(m_id);
+        m_id->setText(rule.id);
+    }
+
     rule.stage = m_stage->value();
     rule.enabled = m_enabled->isChecked();
     rule.add = splitTags(m_add->text());
@@ -629,6 +715,20 @@ void TagRulesDialog::onSave()
 {
     applyEditsToCurrentRule();
 
+    // Validated against the same predicate load() uses. Writing a rule that
+    // cannot be read back is what made a rule disappear: the file was correct,
+    // every reader dropped it, and nothing said so at the point of the write.
+    // Reported through the warning label rather than a modal, as the text-mode
+    // refusal already is: a QMessageBox inside onSave() would hang the suite,
+    // which drives this path directly through saveForTest().
+    const QStringList problems = TagRules::validate(m_working);
+    if (!problems.isEmpty()) {
+        setWarning(tr("%n rule(s) cannot be saved as they are: %1", "",
+                      problems.size())
+                       .arg(problems.join(QStringLiteral("; "))));
+        return;
+    }
+
     m_rules.setRules(m_working);
     if (!m_rules.save()) {
         QMessageBox::warning(this, tr("Tagging rules"),
@@ -667,6 +767,59 @@ void TagRulesDialog::setTextModeForTest(bool on)
     m_textMode->setChecked(on);
 }
 
+void TagRulesDialog::setNameForTest(const QString &name)
+{
+    m_id->setText(name);
+    // editingFinished is what leaving the field emits, and it is where the
+    // sanitiser hangs. setText() alone does not emit it.
+    emit m_id->editingFinished();
+}
+
+QString TagRulesDialog::nameLineForTest() const
+{
+    return m_id->text();
+}
+
+QString TagRulesDialog::warningStyleForTest() const
+{
+    // Both: the fill is the banner's and the text colour is the label's, so
+    // reading only one of them would miss half the styling.
+    return m_warningBanner->styleSheet() + m_warningLabel->styleSheet();
+}
+
+void TagRulesDialog::dismissWarningForTest()
+{
+    m_warningClose->click();
+}
+
+Qt::TextFormat TagRulesDialog::warningTextFormatForTest() const
+{
+    return m_warningLabel->textFormat();
+}
+
+bool TagRulesDialog::warningIsBelowTheRuleListForTest() const
+{
+    // By layout position rather than by coordinates: the offscreen platform
+    // does not lay a dialog out the way a real one is, so a y() comparison
+    // would assert about the platform. indexOf() on the shared parent layout
+    // is exact and true in both.
+    auto *parent = qobject_cast<QVBoxLayout *>(layout());
+    if (!parent)
+        return false;
+    return parent->indexOf(m_warningBanner) > parent->indexOf(m_splitter);
+}
+
+int TagRulesDialog::ruleCountForTest() const
+{
+    return m_working.size();
+}
+
+void TagRulesDialog::setTagsForTest(const QString &tags)
+{
+    m_add->setText(tags);
+    emit m_add->editingFinished();
+}
+
 bool TagRulesDialog::textModeToggleIsReachableForTest() const
 {
     // isVisibleTo rather than isVisible: nothing is isVisible() on a dialog
@@ -681,8 +834,10 @@ QString TagRulesDialog::warningTextForTest() const
     // so it would report no warning whatever the label held. isVisibleTo()
     // answers the question actually being asked: would this be on screen if
     // the dialog were.
-    return m_warningLabel->isVisibleTo(this) ? m_warningLabel->text()
-                                             : QString();
+    // The BANNER carries the visibility now: the label stays visible inside it
+    // and would report a dismissed warning as still showing.
+    return m_warningBanner->isVisibleTo(this) ? m_warningLabel->text()
+                                              : QString();
 }
 
 void TagRulesDialog::selectRuleForTest(int index)
@@ -922,10 +1077,9 @@ void TagRulesDialog::setTextMode(bool on)
     if (!parsed.parsed) {
         const QSignalBlocker block(m_textMode);
         m_textMode->setChecked(true);
-        m_warningLabel->setText(
+        setWarning(
             tr("This query is more than the builder can show, so it stays as "
                "text. It is still saved and applied normally."));
-        m_warningLabel->setVisible(true);
         return;
     }
 

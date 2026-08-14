@@ -38,6 +38,15 @@ private slots:
     void aRuleLoadsWithEveryField();
     void absentFieldsTakeTheirDefaults();
     void aMalformedRuleIsDroppedWithAWarning();
+    void aRuleWithABadIdLoadsForRepairRatherThanVanishing();
+    void aTypedNameIsSanitisedIntoAnId();
+    void aSanitisedNameThatCollidesGetsItsOwnId();
+    void savingIsRefusedWhenARuleWouldNotLoadBack();
+    void aRepairedIdSurvivesASaveAndReload();
+    void theWarningReadsAsAWarningAndSitsBesideSave();
+    void aDismissedWarningComesBackWhenThereIsSomethingNewToSay();
+    void aNameTypedWithSpacesIsSanitisedInTheField();
+    void aRuleAddedAndNamedInTheDialogSurvivesAReopen();
     void unknownFieldsSurviveASave();
     void stageOrderPutsAccountsFirst();
     void aQueryWithQuotesRoundTrips();
@@ -128,16 +137,19 @@ void TestTagRules::absentFieldsTakeTheirDefaults()
 
 void TestTagRules::aMalformedRuleIsDroppedWithAWarning()
 {
-    // One bad rule must not cost the others. Four separate defects, and the
-    // good rule sits first so a parser that stops at the first problem is
-    // caught by the count rather than by an empty list.
+    // One bad rule must not cost the others. The good rule sits first so a
+    // parser that stops at the first problem is caught by the count rather
+    // than by an empty list.
+    //
+    // A rule with nothing to run is still dropped: no query and no tags are
+    // both unrepairable without inventing the user's intent. A rule whose only
+    // fault is its ID is NOT dropped any more, see the next test.
     const QString path = writeRules(R"({
       "version": 1,
       "rules": [
         {"id": "good", "add": ["x"], "query": "from:a@example.com"},
         {"id": "no-query", "add": ["y"]},
-        {"id": "no-tags", "query": "from:b@example.com"},
-        {"id": "Bad Id", "add": ["z"], "query": "from:c@example.com"}
+        {"id": "no-tags", "query": "from:b@example.com"}
       ]
     })");
 
@@ -146,7 +158,164 @@ void TestTagRules::aMalformedRuleIsDroppedWithAWarning()
 
     QCOMPARE(rules.rules().size(), 1);
     QCOMPARE(rules.rules().first().id, QStringLiteral("good"));
-    QCOMPARE(rules.warnings().size(), 3);
+    QCOMPARE(rules.warnings().size(), 2);
+}
+
+void TestTagRules::aRuleWithABadIdLoadsForRepairRatherThanVanishing()
+{
+    // The defect this whole change exists for. A rule saved with a space in
+    // its id was written to the file correctly, dropped on every load, and so
+    // was invisible in the dialog while still occupying the file. The next
+    // save from the dialog would then have deleted it for good.
+    //
+    // It now loads, carrying its repaired id, so the dialog can show it and
+    // the user can fix it. The warning still fires: the file on disk is not
+    // what the hook will run until it is saved back.
+    const QString path = writeRules(R"({
+      "version": 1,
+      "rules": [
+        {"id": "justeat orders", "add": ["promo"],
+         "query": "from:no-reply@order.example.com"}
+      ]
+    })");
+
+    TagRules rules;
+    rules.load(path);
+
+    QCOMPARE(rules.rules().size(), 1);
+    QCOMPARE(rules.rules().first().id, QStringLiteral("justeat-orders"));
+    QCOMPARE(rules.rules().first().add, QStringList{ QStringLiteral("promo") });
+    QCOMPARE(rules.warnings().size(), 1);
+    QVERIFY(rules.warnings().first().contains(QStringLiteral("justeat orders")));
+}
+
+void TestTagRules::aTypedNameIsSanitisedIntoAnId()
+{
+    // Spaces, capitals and punctuation are what a person types into a field
+    // labelled "Name". Each case here is one the user is likely to produce,
+    // and every result has to satisfy ^[a-z0-9][a-z0-9-]*$ or the hook drops
+    // it.
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("justeat orders")),
+             QStringLiteral("justeat-orders"));
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("JustEat Orders")),
+             QStringLiteral("justeat-orders"));
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("Notify: PayPal!")),
+             QStringLiteral("notify-paypal"));
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("  spaced  out  ")),
+             QStringLiteral("spaced-out"));
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("-leading-dash")),
+             QStringLiteral("leading-dash"));
+
+    // A run of dashes is collapsed only when the name needed sanitising at
+    // all: "a---b" already satisfies the pattern and is left exactly as it is,
+    // because rewriting legal ids would churn the file mailctl also reads.
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("a---b")),
+             QStringLiteral("a---b"));
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("a - - b")),
+             QStringLiteral("a-b"));
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("mailing-list/SBo")),
+             QStringLiteral("mailing-list-sbo"));
+
+    // An id may not START with a dash or a digit-less symbol run, and a name
+    // made only of punctuation sanitises to nothing. Empty is not a legal id,
+    // so the caller has to supply a fallback rather than writing one out.
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("!!!")), QString());
+    QCOMPARE(TagRules::sanitiseId(QString()), QString());
+
+    // Already valid ids pass through untouched, or every load would rewrite
+    // the file and show mailctl a diff the user never made.
+    QCOMPARE(TagRules::sanitiseId(QStringLiteral("notify-github")),
+             QStringLiteral("notify-github"));
+}
+
+void TestTagRules::aSanitisedNameThatCollidesGetsItsOwnId()
+{
+    // Sanitising maps many names onto one id, so it can manufacture the exact
+    // duplicate that load() drops. "Justeat Orders" and "justeat orders" both
+    // reduce to justeat-orders; the second must not silently become the first.
+    const QStringList taken{ QStringLiteral("justeat-orders"),
+                             QStringLiteral("justeat-orders-2") };
+
+    QCOMPARE(TagRules::uniqueId(QStringLiteral("Justeat Orders"), taken),
+             QStringLiteral("justeat-orders-3"));
+
+    // No collision means no suffix.
+    QCOMPARE(TagRules::uniqueId(QStringLiteral("promo"), taken),
+             QStringLiteral("promo"));
+
+    // A name that sanitises to nothing still has to produce a legal id.
+    const QString fallback = TagRules::uniqueId(QStringLiteral("!!!"), taken);
+    QVERIFY(!fallback.isEmpty());
+    QVERIFY(TagRules::isValidId(fallback));
+}
+
+void TestTagRules::savingIsRefusedWhenARuleWouldNotLoadBack()
+{
+    // The asymmetry that caused the bug: save wrote anything, load validated.
+    // validate() is the one predicate both sides now use, so a rule that
+    // would not survive a reload is reported BEFORE it reaches the file.
+    TagRule good;
+    good.id = QStringLiteral("good");
+    good.query = QStringLiteral("from:a@example.com");
+    good.add = { QStringLiteral("x") };
+
+    TagRule noQuery;
+    noQuery.id = QStringLiteral("no-query");
+    noQuery.add = { QStringLiteral("y") };
+
+    TagRule noTags;
+    noTags.id = QStringLiteral("no-tags");
+    noTags.query = QStringLiteral("from:b@example.com");
+
+    TagRule badId;
+    badId.id = QStringLiteral("Bad Id");
+    badId.query = QStringLiteral("from:c@example.com");
+    badId.add = { QStringLiteral("z") };
+
+    QVERIFY(TagRules::validate({ good }).isEmpty());
+
+    const QStringList problems =
+        TagRules::validate({ good, noQuery, noTags, badId });
+    QCOMPARE(problems.size(), 3);
+    QVERIFY(problems.join(QChar(' ')).contains(QStringLiteral("no-query")));
+    QVERIFY(problems.join(QChar(' ')).contains(QStringLiteral("no-tags")));
+    QVERIFY(problems.join(QChar(' ')).contains(QStringLiteral("Bad Id")));
+
+    // A duplicate id survives a save and is then dropped on load, so it is a
+    // save-time problem too even though each rule is fine on its own.
+    TagRule twin = good;
+    QCOMPARE(TagRules::validate({ good, twin }).size(), 1);
+}
+
+void TestTagRules::aRepairedIdSurvivesASaveAndReload()
+{
+    // End to end, and the assertion that matters to the user: the rule they
+    // could not keep is still there after the round trip, with its tags, its
+    // query and its note intact.
+    const QString path = writeRules(R"({
+      "version": 1,
+      "rules": [
+        {"id": "justeat orders", "add": ["promo"], "stage": 50,
+         "note": "kept", "query": "from:no-reply@order.example.com"}
+      ]
+    })");
+
+    TagRules loaded;
+    loaded.load(path);
+    QCOMPARE(loaded.rules().size(), 1);
+    QVERIFY(loaded.save(path));
+
+    TagRules reread;
+    reread.load(path);
+    QCOMPARE(reread.rules().size(), 1);
+    QCOMPARE(reread.rules().first().id, QStringLiteral("justeat-orders"));
+    QCOMPARE(reread.rules().first().note, QStringLiteral("kept"));
+    QCOMPARE(reread.rules().first().query,
+             QStringLiteral("from:no-reply@order.example.com"));
+
+    // Repaired on the way in, so the second read has nothing left to complain
+    // about. A warning that never clears trains the user to ignore it.
+    QVERIFY(reread.warnings().isEmpty());
 }
 
 void TestTagRules::unknownFieldsSurviveASave()
@@ -558,6 +727,201 @@ void TestTagRules::leavingTextModeIsRefusedWhenTheQueryCannotBeShownAsRows()
     QCOMPARE(dialog.rowCountForTest(), 1);
     QVERIFY2(dialog.warningTextForTest().isEmpty(),
              "a stale refusal must not outlive the query that caused it");
+}
+
+void TestTagRules::theWarningReadsAsAWarningAndSitsBesideSave()
+{
+    // The label was correct and unread: same font and colour as the intro
+    // prose two lines above it, so it looked like more explanation. The user
+    // opened this dialog repeatedly, with the warning showing every time,
+    // while hunting the rule it was telling them about.
+    //
+    // Asserted on the widget's own properties, not on a render. CLAUDE.md
+    // records why a pixel probe cannot carry this: counting lit pixels cannot
+    // tell one colour from another reliably, and viewport()->render() returns
+    // blank often enough that a probe reporting "no red anywhere" says more
+    // about the probe than the code.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    // A rule that warns on load, so the label is populated by opening alone.
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "justeat orders", "query": "from:no-reply@order.example.com",
+         "add": ["promo"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+
+    // The guard. Everything below asserts about a warning that is showing, and
+    // all of it would pass vacuously against a label that never appears.
+    QVERIFY2(!dialog.warningTextForTest().isEmpty(),
+             "a repaired rule must warn, or this test proves nothing");
+
+    QVERIFY2(dialog.warningTextForTest().contains(QStringLiteral("justeat")),
+             "the warning must name the rule it is about");
+
+    const QString style = dialog.warningStyleForTest();
+    QVERIFY2(style.contains(QStringLiteral("background-color")),
+             "a warning that is not filled reads as ordinary prose");
+    QVERIFY2(style.contains(QStringLiteral("bold")), "and it must be bold");
+
+    // Below the rule list, next to the button whose outcome it reports. The
+    // intro sits at the top, so comparing against it pins the move: this
+    // assertion fails if the label drifts back under the header.
+    QVERIFY2(dialog.warningIsBelowTheRuleListForTest(),
+             "the warning belongs beside Save, not under the intro text");
+
+    // Plain text, because the strings interpolate ids and queries read from
+    // the file. A query holding '<' would otherwise be swallowed as markup.
+    QCOMPARE(dialog.warningTextFormatForTest(), Qt::PlainText);
+}
+
+void TestTagRules::aDismissedWarningComesBackWhenThereIsSomethingNewToSay()
+{
+    // Dismissal is per-appearance. The warning most often says the file is not
+    // yet what the hook runs, so a persistent "do not show again" would rehide
+    // the exact problem that went unnoticed for a session. Closing it clears
+    // this one; the next thing worth saying shows it again.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "justeat orders", "query": "from:no-reply@order.example.com",
+         "add": ["promo"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+    QVERIFY2(!dialog.warningTextForTest().isEmpty(),
+             "the repaired rule must warn, or the dismissal proves nothing");
+
+    dialog.dismissWarningForTest();
+    QVERIFY2(dialog.warningTextForTest().isEmpty(),
+             "the X must actually clear the warning");
+
+    // Something new to say: a rule that cannot be saved. The dismissal must
+    // not have latched the banner shut.
+    dialog.setNameForTest(QStringLiteral("second"));
+    dialog.addRuleForTest();
+    dialog.setTagsForTest(QString());
+    dialog.setTextModeForTest(true);
+    dialog.setQueryTextForTest(QString());
+    dialog.saveForTest();
+
+    QVERIFY2(!dialog.warningTextForTest().isEmpty(),
+             "a refusal after a dismissal must still be shown");
+}
+
+void TestTagRules::aNameTypedWithSpacesIsSanitisedInTheField()
+{
+    // The field is labelled "Name", so a person types prose into it. What the
+    // field SHOWS after the edit is committed is the assertion: sanitising
+    // silently on save would leave the user looking at a name that is not the
+    // one being written.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+    dialog.setNameForTest(QStringLiteral("Justeat orders"));
+    QCOMPARE(dialog.nameLineForTest(), QStringLiteral("justeat-orders"));
+
+    dialog.saveForTest();
+
+    TagRules reloaded;
+    reloaded.load(stored);
+    QCOMPARE(reloaded.rules().size(), 1);
+    QCOMPARE(reloaded.rules().first().id, QStringLiteral("justeat-orders"));
+    QVERIFY2(reloaded.warnings().isEmpty(),
+             "a rule saved from the dialog must load back without complaint");
+}
+
+void TestTagRules::aRuleAddedAndNamedInTheDialogSurvivesAReopen()
+{
+    // The user's session, end to end: add a rule, name it in prose, fill in
+    // the query and tags, save, reopen. Before the fix the rule was written to
+    // the file with a space in its id and dropped by every reader, so the
+    // dialog came back without it and the file kept a rule nothing would run.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    {
+        TagRulesDialog dialog;
+        QCOMPARE(dialog.ruleCountForTest(), 1);
+
+        dialog.addRuleForTest();
+        QCOMPARE(dialog.ruleCountForTest(), 2);
+
+        dialog.setNameForTest(QStringLiteral("Justeat orders"));
+        dialog.setTextModeForTest(true);
+        dialog.setQueryTextForTest(
+            QStringLiteral("from:no-reply@order.example.com"));
+        dialog.setTagsForTest(QStringLiteral("promo, notify/justeat"));
+        dialog.saveForTest();
+
+        QVERIFY2(dialog.warningTextForTest().isEmpty(),
+                 "a complete rule must not be refused");
+    }
+
+    TagRules reloaded;
+    reloaded.load(stored);
+    QCOMPARE(reloaded.rules().size(), 2);
+
+    const TagRule added = reloaded.rules().at(1);
+    QCOMPARE(added.id, QStringLiteral("justeat-orders"));
+    QCOMPARE(added.query,
+             QStringLiteral("from:no-reply@order.example.com"));
+    QCOMPARE(added.add, (QStringList{ QStringLiteral("promo"),
+                                      QStringLiteral("notify/justeat") }));
+    QVERIFY(reloaded.warnings().isEmpty());
 }
 
 void TestTagRules::aFolderRowUsesTheDropdownAndKeepsItsSuffix()

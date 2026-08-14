@@ -89,6 +89,28 @@ public:
     void setTextModeForTest(bool on);
     QString warningTextForTest() const;
 
+    /// The warning's appearance and place, asserted as widget properties. A
+    /// render probe cannot carry this: see "Rendering probes lie" in CLAUDE.md.
+    QString warningStyleForTest() const;
+    Qt::TextFormat warningTextFormatForTest() const;
+    bool warningIsBelowTheRuleListForTest() const;
+
+    /// Clicks the warning's dismiss button, so the test drives the same signal
+    /// the user's click does rather than calling setWarning() behind it.
+    void dismissWarningForTest();
+
+    /// Types a name and commits it the way leaving the field does. The commit
+    /// is the point: the sanitiser runs on editingFinished, so a test that
+    /// only calls setText() asserts against a field nothing has processed.
+    void setNameForTest(const QString &name);
+    QString nameLineForTest() const;
+
+    /// Adding and filling a rule the way the buttons do, so a test can drive
+    /// the whole journey the user takes rather than only its last step.
+    int ruleCountForTest() const;
+    void addRuleForTest() { onAddRule(); }
+    void setTagsForTest(const QString &tags);
+
     /// Whether the text-mode toggle would be on screen. A toggle that hides
     /// itself when switched on is a one-way trip, and asserting only on the
     /// checked STATE passes against that, since the state is still readable
@@ -169,6 +191,11 @@ private:
     void restoreUiState();
     void saveUiState();
     void showWarnings();
+
+    /// The only way the warning label is written. An empty string hides it.
+    /// One route in so the icon and the red styling cannot drift between the
+    /// load path, the save refusal and the text-mode notice.
+    void setWarning(const QString &text);
     int currentIndex() const;
 
     /// Writes one rule's summary onto its row. Shared by reloadList() and
@@ -232,6 +259,8 @@ private:
     bool m_countColumnSized = false;
 
     QTreeWidget *m_list = nullptr;
+    QWidget *m_warningBanner = nullptr;
+    QPushButton *m_warningClose = nullptr;
     QLineEdit *m_id = nullptr;
     QLineEdit *m_add = nullptr;
     QLineEdit *m_remove = nullptr;

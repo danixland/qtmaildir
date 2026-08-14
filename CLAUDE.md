@@ -254,6 +254,19 @@ a failure or a `-1` count fails against correct code. This was recorded in
 building the rules. Assert on the positional contract, never on a provoked
 failure.
 
+**A writer that does not validate what its reader requires loses data
+silently.** `TagRules::save()` wrote any id and `load()` required
+`^[a-z0-9][a-z0-9-]*$`, so a rule named `justeat orders` in a field labelled
+**Name** was written correctly, dropped on every read, invisible in the dialog,
+still occupying the file, and never applied by the hook. The next save from the
+dialog would have deleted it outright. `TagRules::validate()` is now the single
+predicate both sides use; a bad id loads REPAIRED rather than dropped, so the
+rule can be seen and fixed. Two lessons beyond the fix. The load warning already
+existed and was correct and useless, because the rule it named could not be
+reached, and a warning the user cannot act on teaches them to ignore warnings.
+And the repair belongs in the editor, not in `mailrules.py`: the hook tags real
+mail unattended, where a silent rename is worse than a drop.
+
 **Rule counts must count MESSAGES.** `requestCounts` counts threads, which is
 right for the placeholder pane because a click there produces thread rows. A
 rule tags messages, so a thread count understates every rule matching part of a

@@ -11,6 +11,13 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-08-14
+
+Anything on screen in the message pane can now be searched for by right-clicking
+it, either replacing the current query or narrowing it. The message details
+dialog became labelled rows on the way, so each value in it can be searched for
+on its own.
+
 ### Added
 
 - Anything on screen in the message pane can be searched for by right-clicking

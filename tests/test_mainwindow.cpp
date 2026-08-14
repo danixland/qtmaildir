@@ -170,6 +170,7 @@ private slots:
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
     void selectingAThreadRootShowsItInTheMessagePane();
+    void anUnexpandedRootRendersOneMessageNotTheConversation();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
     void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
@@ -6336,6 +6337,70 @@ void TestMainWindow::selectingAThreadRootShowsItInTheMessagePane()
     // failure here means the pane stayed blank for fifteen seconds, not that
     // the test looked too early.
     QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
+}
+
+void TestMainWindow::anUnexpandedRootRendersOneMessageNotTheConversation()
+{
+    // Item 66, the half that reproduced. Clicking a thread root that has never
+    // been expanded used to render the whole conversation, because the model
+    // learned the thread's first message only when the replies loaded. The
+    // identical click rendered ONE message afterwards. The user reported the
+    // inconsistency and asked for the single-message behaviour throughout.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("root@example.org"),
+        QStringLiteral("A conversation"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("The first message.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("reply@example.org"),
+        QStringLiteral("Re: A conversation"),
+        QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("The reply."), true,
+        QStringLiteral("root@example.org")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+
+    QLineEdit *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY2(queryEdit, "no query bar: the window was never built");
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY2(view, "no thread list view");
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY2(model, "no thread list model");
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY2(pane, "no message view");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QModelIndex root = model->index(0, 0, QModelIndex());
+    QVERIFY(root.isValid());
+    QVERIFY2(model->hasChildren(root), "the two messages did not thread");
+
+    // NEVER expanded. That is the whole point: this is the state in which the
+    // old code fell back to the conversation render.
+    QVERIFY2(!view->isExpanded(root), "the test expanded the thread itself");
+
+    // The root's message id is known anyway, because the query carries it now.
+    QVERIFY2(!model->data(root, ThreadListModel::MessageIdRole)
+                  .toString()
+                  .isEmpty(),
+             "an unexpanded root still has no message id: the query is not "
+             "carrying firstMessageId");
+
+    view->setCurrentIndex(root);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
+
+    // ONE message, not a conversation. headerSearchOffers() is populated only
+    // when the header states a single message's own From/To/Cc; for a thread
+    // the header says "N messages in thread" and carries no such offers, so an
+    // empty list here is exactly the conversation render this replaced.
+    QVERIFY2(!pane->headerSearchOffers().isEmpty(),
+             "the pane rendered a conversation, not a single message");
 }
 
 #include "test_mainwindow.moc"

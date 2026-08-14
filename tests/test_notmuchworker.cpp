@@ -62,6 +62,7 @@ private slots:
 
     void loadMessageReturnsOnlyThatMessage();
     void loadMessageOnAnUnknownIdReturnsNothing();
+    void aQueryCarriesEachThreadsFirstMessageId();
     void loadThreadTreeReportsReplyDepth();
     void loadThreadTreeCarriesTheFactsARowNeeds();
 
@@ -239,6 +240,37 @@ void TestNotmuchWorker::loadMessageOnAnUnknownIdReturnsNothing()
     QCOMPARE(loaded.count(), 1);
     QVERIFY(loaded.first().at(0).value<QVector<MessageRef>>().isEmpty());
     QCOMPARE(errors.count(), 0);
+}
+
+void TestNotmuchWorker::aQueryCarriesEachThreadsFirstMessageId()
+{
+    // The root card IS the thread's first message, so selecting it must be
+    // able to load that message. Before this the id was known only after the
+    // thread had been EXPANDED, so a first click on an unexpanded root fell
+    // back to rendering the whole conversation, and the same click behaved
+    // differently once the thread had been opened. That inconsistency is what
+    // the user reported as item 66.
+    //
+    // Free to collect: measured against a real 36,615-thread database, a walk
+    // with this and a walk without are indistinguishable, because
+    // notmuch_thread_get_toplevel_messages reads the index rather than the
+    // message files. Contrast ThreadSummary::recipients, which reads every
+    // file and is Sent-only for that reason.
+    const QVector<ThreadSummary> threads = runQuery(QStringLiteral("*"));
+    QVERIFY(!threads.isEmpty());
+
+    bool sawTheThread = false;
+    for (const ThreadSummary &t : threads) {
+        QVERIFY2(!t.firstMessageId.isEmpty(),
+                 qPrintable(QStringLiteral("thread %1 carries no first message")
+                                .arg(t.subject)));
+        if (t.subject == QStringLiteral("Release notes")) {
+            // a1 is the root, a2 its reply. The FIRST message, not the newest.
+            QCOMPARE(t.firstMessageId, QStringLiteral("a1@example.org"));
+            sawTheThread = true;
+        }
+    }
+    QVERIFY2(sawTheThread, "the two-message thread was not in the results");
 }
 
 void TestNotmuchWorker::loadThreadTreeReportsReplyDepth()

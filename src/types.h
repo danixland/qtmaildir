@@ -33,6 +33,21 @@ struct ThreadSummary
     int matchedCount = 0;
     QStringList tags;
 
+    /// The thread's FIRST message, which is the one the root card stands for.
+    ///
+    /// Carried by the query itself rather than learned when the thread is
+    /// expanded. That timing was item 66: until a thread had been opened the
+    /// model did not know this id, so clicking an unexpanded root fell through
+    /// to rendering the whole conversation, and the identical click behaved
+    /// differently afterwards.
+    ///
+    /// Unlike `recipients` below, this is free. It comes from
+    /// notmuch_thread_get_toplevel_messages, which reads the INDEX, not the
+    /// message files: measured indistinguishable from not collecting it at all
+    /// over a 36,615-thread database. Do not move it behind a flag by analogy
+    /// with recipients; the two have nothing in common but their position here.
+    QString firstMessageId;
+
     /// Who the thread's messages were sent TO, summarised for one line.
     ///
     /// Empty unless the query asked for it, and that is a performance

@@ -333,7 +333,8 @@ private slots:
     /// Pops up the thread-list context menu, preserving a multi-row selection
     /// the click lands inside.
     void showThreadContextMenu(const QPoint &pos);
-    void onThreadLoaded(const QVector<MessageRef> &messages, quint64 generation);
+    /// Paints `messages` into the message pane. Callers own the guards.
+    void renderMessages(const QVector<MessageRef> &messages);
 
     /// Asks the worker for a thread's reply tree when its row is expanded.
     void onThreadExpanded(const QModelIndex &index);

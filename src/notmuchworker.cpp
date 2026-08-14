@@ -277,6 +277,56 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
         if (withRecipients)
             summary.recipients = recipientsOf(thread.get());
 
+        // The message the row's card stands for. Raw pointers on purpose:
+        // messages reached through a thread are owned by the THREAD and freed
+        // with it (notmuch.h:1637), so an NmMessage wrapper here would destroy
+        // memory the thread frees again. Everything must be read while
+        // `thread` is alive, which it is for the rest of this iteration.
+        //
+        // Index-only, so it costs nothing measurable: see
+        // ThreadSummary::firstMessageId.
+        //
+        // Two different questions, and the Sent view asks the second one. A
+        // normal row stands for the thread's OPENING message. A Sent row
+        // stands for what the USER sent, usually a reply and often not the
+        // opening message at all, so it takes the first message the query
+        // MATCHED. withRecipients is exactly the Sent query, which is why it
+        // selects between them rather than carrying a second flag that could
+        // disagree with it.
+        //
+        // Note notmuch_thread_get_matched_messages returns a COUNT, not an
+        // iterator; there is no matched-messages list. The match state is a
+        // per-message flag, so the Sent branch walks in oldest-first order and
+        // stops at the first match. Measured at 0.146s against a 0.143s
+        // baseline over 4,515 threads: the walk stops early and reads the
+        // index, so it is as free as the toplevel call.
+        if (withRecipients) {
+            notmuch_messages_t *all = notmuch_thread_get_messages(thread.get());
+            for (; all && notmuch_messages_valid(all);
+                   notmuch_messages_move_to_next(all)) {
+                notmuch_message_t *message = notmuch_messages_get(all);
+                if (!message)
+                    continue;
+                notmuch_bool_t matched = FALSE;
+                notmuch_message_get_flag_st(message,
+                                            NOTMUCH_MESSAGE_FLAG_MATCH,
+                                            &matched);
+                if (matched) {
+                    summary.firstMessageId = QString::fromUtf8(
+                        notmuch_message_get_message_id(message));
+                    break;
+                }
+            }
+        } else if (notmuch_messages_t *top =
+                       notmuch_thread_get_toplevel_messages(thread.get())) {
+            if (notmuch_messages_valid(top)) {
+                if (notmuch_message_t *first = notmuch_messages_get(top)) {
+                    summary.firstMessageId = QString::fromUtf8(
+                        notmuch_message_get_message_id(first));
+                }
+            }
+        }
+
         batch.append(summary);
         ++total;
 

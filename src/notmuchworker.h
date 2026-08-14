@@ -71,6 +71,19 @@ public slots:
     /// Loads the messages of one thread, oldest first. matchQuery is the
     /// user's current query; messages matching it render expanded, the rest
     /// as stubs.
+    /// **No UI caller since item 66, and that is deliberate.** This was how a
+    /// thread root rendered the whole conversation, stubs plus the last few
+    /// messages expanded. The user asked for that view to go: selecting any
+    /// row, root or reply, now renders exactly one message via loadMessage,
+    /// and `ThreadSummary::firstMessageId` is what makes the root's own
+    /// message known without expanding the thread first.
+    ///
+    /// Kept as a worker capability rather than deleted. It is a tested way to
+    /// read every message of a thread with the match set resolved, which the
+    /// worker's own tests use as a helper and a future feature may want. If
+    /// you are adding a caller, be sure you are not rebuilding the
+    /// conversation pane that was removed on purpose.
+    ///
     /// `matchedOnly` drops the messages that did not match `matchQuery` rather
     /// than rendering them as stubs. For the Sent view, where the thread is not
     /// the unit the user is reading: a sent message pulls in the replies it

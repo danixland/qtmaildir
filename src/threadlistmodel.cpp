@@ -391,11 +391,22 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         return false;
 
     if (role == MessageIdRole) {
-        // The thread's FIRST message, once known, because the root card is
-        // that message: selecting it renders one message rather than the whole
-        // conversation. Empty before the replies are loaded, which is the
-        // caller's signal to load the thread instead of guessing at a message.
-        return m_threads.at(index.row()).first.messageId;
+        // The thread's FIRST message, because the root card IS that message:
+        // selecting it renders one message, never the whole conversation.
+        //
+        // The summary carries this from the query, so it is known before the
+        // thread has ever been expanded. It used to come only from `first`,
+        // populated when the replies loaded, which left this empty on a fresh
+        // row and sent the caller down a whole-thread render instead. The same
+        // click then behaved differently once the thread had been opened,
+        // which is what the user reported as item 66.
+        //
+        // `first` is still preferred when present: after an expansion it is
+        // the same message, read from the tree that is now authoritative for
+        // this thread's shape.
+        const ThreadNode &node = m_threads.at(index.row());
+        return node.first.messageId.isEmpty() ? node.summary.firstMessageId
+                                              : node.first.messageId;
     }
 
     if (role == MessageDepthRole)

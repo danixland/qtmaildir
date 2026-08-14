@@ -927,8 +927,8 @@ void MainWindow::registerActions()
         // undo stack are all left alone.
         //
         // m_currentThreadId is cleared with the pane, not merely alongside it.
-        // A threadLoaded still in flight for that id would otherwise paint the
-        // thread straight back, which is the queued-reply race documented in
+        // A messageLoaded still in flight for that row would otherwise paint
+        // it straight back, which is the queued-reply race documented in
         // CLAUDE.md.
         m_currentThreadId.clear();
         m_currentMessageId.clear();
@@ -950,8 +950,8 @@ void MainWindow::registerActions()
         // BLANKING. clearSelection() leaves currentIndex() VALID, and
         // onSelectionChanged() then takes its "one or fewer rows" branch, finds
         // a current row whose id differs from m_currentThreadId, and calls
-        // onThreadSelected for it: the thread is re-adopted and a loadThread
-        // sent for the row that was just being cleared.
+        // onThreadSelected for it: the thread is re-adopted and a load sent
+        // for the row that was just being cleared.
         //
         // Clearing the selection FIRST means that runs while m_currentThreadId
         // still names the displayed thread, so the ids match and nothing is
@@ -1451,8 +1451,6 @@ void MainWindow::wireWorker()
             this, &MainWindow::onThreadTreeLoaded);
     connect(m_worker, &NotmuchWorker::messageLoaded,
             this, &MainWindow::onMessageLoaded);
-    connect(m_worker, &NotmuchWorker::threadLoaded,
-            this, &MainWindow::onThreadLoaded);
     connect(m_worker, &NotmuchWorker::errorOccurred,
             this, &MainWindow::onWorkerError);
     connect(m_worker, &NotmuchWorker::allTagsReady,
@@ -2026,7 +2024,9 @@ void MainWindow::runQuery(FlatResult flat)
     if (query.isEmpty())
         return;
 
-    // Kept so loadThread() can work out which messages of a thread matched.
+    // Kept so an expansion (loadThreadTree) and a refresh can be scoped to the
+    // query the visible list was built from, rather than to whatever the bar
+    // holds by the time they run.
     m_lastQuery = query;
 
     // A query the user ran abandons any recovery still in flight. Recovery
@@ -2389,57 +2389,55 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     scheduleMarkRead(thread);
 
     // The root card IS the thread's first message, so selecting it renders
-    // that message rather than the whole conversation. Loading the thread here
-    // made the first message unreachable: the pane showed every message with
-    // only the last expanded, and no row in the list offered the first one,
-    // since the reply rows are messages two onward.
+    // that message. Never the whole conversation: that path is gone (item 66).
     //
-    // Known only once the replies have been loaded, which happens when the
-    // thread is expanded. Until then the thread is the honest answer: it
-    // contains the first message, where a guess might not.
+    // The id comes from the query now, so it is known on a fresh row and this
+    // does not depend on the thread having been expanded. It used to, which
+    // made a first click render the conversation and every later click render
+    // one message, from the identical gesture.
+    //
+    // In the Sent view a row stands for what the USER sent, which is not
+    // always the thread's opening message. Handled below rather than here,
+    // because the id that matters there comes from the query's match set and
+    // not from the thread's shape.
     const QString firstId =
         m_model->data(current, ThreadListModel::MessageIdRole).toString();
-    if (!firstId.isEmpty()) {
-        m_currentMessageId = firstId;
-        QMetaObject::invokeMethod(m_worker, "loadMessage",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(QString, firstId),
-                                  Q_ARG(quint64, m_generation));
+    if (firstId.isEmpty()) {
+        // No id at all: a thread with no toplevel message is not something
+        // notmuch produces, but blanking the pane is the honest answer if it
+        // ever happens, rather than rendering something the row does not name.
+        m_currentMessageId.clear();
+        m_currentMessageThreadId.clear();
+        m_messageView->clear();
         return;
     }
 
-    m_currentMessageId.clear();
-    m_currentMessageThreadId.clear();
-    // In the Sent view the pane shows only what matched, which is what the
-    // user sent. Without this the flat list is right and the pane still opens
-    // the whole conversation, replies included, under a heading that says
-    // Sent: the row was never expanded, so the model never learned the
-    // thread's first message and this is the only path a Sent row can take.
-    QMetaObject::invokeMethod(m_worker, "loadThread", Qt::QueuedConnection,
-                              Q_ARG(QString, m_currentThreadId),
-                              Q_ARG(QString, m_lastQuery),
-                              Q_ARG(quint64, m_generation),
-                              Q_ARG(bool, m_sentView));
+    m_currentMessageId = firstId;
+    QMetaObject::invokeMethod(m_worker, "loadMessage", Qt::QueuedConnection,
+                              Q_ARG(QString, firstId),
+                              Q_ARG(quint64, m_generation));
 }
 
 void MainWindow::onMessageLoaded(const QVector<MessageRef> &messages,
                                  quint64 generation)
 {
-    // The same two guards onThreadLoaded carries. A stale generation means the
-    // query moved on, and a reply landing after the selection grew past one row
-    // would paint a message back over a deliberately blanked pane.
+    // A stale generation means the query moved on. A reply landing after the
+    // selection grew past one row would paint a message back over a pane that
+    // was deliberately blanked: loadMessage crosses to the worker on a queued
+    // connection, so the answer arrives after onSelectionChanged() has already
+    // run. Without this the pane would only look right once a third row made
+    // the count stale-proof.
     if (generation != m_generation || messages.isEmpty())
         return;
     if (m_threadView->selectionModel()->selectedRows().size() > 1)
         return;
 
-    // A third guard this one needs and onThreadLoaded does not: a reply that
-    // lands after the selection moved to a THREAD row would render one message
-    // where the whole conversation belongs.
+    // Nothing is currently meant to be on screen: a reply that lands after the
+    // pane was cleared must not repaint it.
     if (m_currentMessageId.isEmpty())
         return;
 
-    onThreadLoaded(messages, generation);
+    renderMessages(messages);
 }
 
 void MainWindow::onThreadExpanded(const QModelIndex &index)
@@ -2478,20 +2476,14 @@ void MainWindow::onThreadTreeLoaded(const QVector<MessageNode> &nodes,
     applyPendingRecovery();
 }
 
-void MainWindow::onThreadLoaded(const QVector<MessageRef> &messages,
-                                quint64 generation)
+void MainWindow::renderMessages(const QVector<MessageRef> &messages)
 {
-    if (generation != m_generation || messages.isEmpty())
-        return;
-
-    // A load started while the selection was still a single row can land after
-    // it has grown: loadThread crosses to the worker on a queued connection, so
-    // the reply arrives after onSelectionChanged() has already blanked the
-    // pane. Without this it would paint a thread back over the blank, and the
-    // pane would only look right once a third row made the count stale-proof.
-    if (m_threadView->selectionModel()->selectedRows().size() > 1)
-        return;
-
+    // Guards live in the caller. This paints what it is given.
+    //
+    // Still takes a LIST, though every caller now passes exactly one message:
+    // MessageView renders a list of items, and collapsing that to a single
+    // message is a separate change to a class with its own tests. Item 66
+    // removed the whole-conversation render; it did not simplify the pane.
     MimeParser parser;
     QList<ThreadRenderItem> items;
     items.reserve(messages.size());

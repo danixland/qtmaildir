@@ -3355,36 +3355,16 @@ void MainWindow::markCurrentThreadRead()
     }
 
     const ThreadSummary thread = m_model->threadAt(current.row());
-    if (thread.threadId != m_markReadThreadId) {
+    if (thread.threadId != m_markReadThreadId
+        || !thread.tags.contains(QStringLiteral("unread"))) {
         m_markReadThreadId.clear();
         return;
     }
 
-    // No thread-level `unread` check here any more. It would ask the wrong
-    // question now that one message is marked rather than the thread: a thread
-    // carries `unread` while ANY message in it is unread, so a read root under
-    // unread replies would pass this and a write would be sent for a message
-    // that is already read. The scheduling side still checks it, which stops a
-    // fully-read thread from arming a timer at all; what survives to here is
-    // decided per message below.
-
+    const QStringList threadIds = { m_markReadThreadId };
     m_markReadThreadId.clear();
 
-    // The MESSAGE on screen, not the thread it belongs to.
-    //
-    // This marked the whole thread until item 66, and that was coherent while
-    // a root click rendered the whole conversation: everything marked read had
-    // been displayed. Once a root began rendering a single message, the same
-    // code cleared `unread` from replies the user had never seen. Not a
-    // cosmetic slip: maildir.synchronize_flags is on, so removing `unread`
-    // rewrites Maildir filenames and the next sync carries it to the server.
-    //
-    // m_currentMessageId is what the pane actually rendered, set beside the
-    // loadMessage that produced it.
-    if (m_currentMessageId.isEmpty())
-        return;
-
-    // sendMessageTagChange, NOT tagSelected: this deliberately does not go on
+    // sendThreadTagChange, NOT tagSelected: this deliberately does not go on
     // the undo stack. The user never took this action, so hijacking Ctrl+Z to
     // reverse it would undo something they did not do, and toggle_unread
     // already gives them a direct way to put it back. Decided 2026-08-03.
@@ -3392,8 +3372,8 @@ void MainWindow::markCurrentThreadRead()
     // It still funnels through the one applyTags path, per CLAUDE.md; what
     // differs is only whether the inverse is pushed, which is a window-level
     // decision above the worker.
-    sendMessageTagChange({ m_currentMessageId }, {},
-                         { QStringLiteral("unread") }, tr("Mark read"));
+    sendThreadTagChange(threadIds, {}, { QStringLiteral("unread") },
+                        tr("Mark read"));
 }
 
 void MainWindow::editTagsOnSelection()
@@ -3482,17 +3462,10 @@ void MainWindow::sendMessageTagChange(const QStringList &messageIds,
     if (messageIds.isEmpty())
         return;
 
-    // Optimistic, but scoped to the message. applyTagChange() is keyed by
-    // THREAD and would repaint the whole row as though every message in it had
-    // changed, which for a one-message edit is a lie; applyMessageTagChange()
-    // updates that message and lets the thread's own tags follow only when the
-    // answer is unambiguous.
-    //
-    // Not optional for auto mark-read: without it the write goes out, the
-    // status bar counts an unsynced edit, and the card stays bold with
-    // `unread` on it until the next query. The user reported exactly that.
-    for (const QString &messageId : messageIds)
-        m_model->applyMessageTagChange(messageId, add, remove);
+    // No optimistic model update. applyTagChange is keyed by THREAD and would
+    // repaint the whole row as though every message in it had changed, which
+    // for a one-message edit is a lie the user would see and then watch
+    // silently correct itself on the next query.
 
     // The accounts this touches, resolved through the containing threads: the
     // account is a property of the thread, and the sync needs the channel

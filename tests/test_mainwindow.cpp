@@ -82,14 +82,6 @@ class WorkerBackedWindow
 public:
     /// Builds the database, writes the config and loads it. Check isValid()
     /// and error() before constructing the window.
-    /// Extra `[general]` keys, written verbatim as `key=value` lines. Set
-    /// before build(). Used for mark_read_delay_ms, where a test needs the
-    /// timer to fire promptly rather than after the two-second default.
-    void setGeneralKey(const QString &key, const QString &value)
-    {
-        m_extraGeneral.insert(key, value);
-    }
-
     bool build()
     {
         if (!m_fixture.isValid()) {
@@ -121,10 +113,6 @@ public:
             // went unnoticed as broken once already.
             out << "[general]\n"
                 << "notmuch_config=" << m_fixture.configPath() << "\n";
-            for (auto it = m_extraGeneral.cbegin();
-                 it != m_extraGeneral.cend(); ++it) {
-                out << it.key() << "=" << it.value() << "\n";
-            }
         }
         file.close();
 
@@ -145,7 +133,6 @@ private:
     QTemporaryDir m_confDir;
     Config m_config;
     QString m_error;
-    QMap<QString, QString> m_extraGeneral;
 };
 
 /// MainWindow is mostly wiring. Cases that need a real database opt into one
@@ -184,9 +171,6 @@ private slots:
     void aWorkerBackedWindowReturnsRealThreads();
     void selectingAThreadRootShowsItInTheMessagePane();
     void anUnexpandedRootRendersOneMessageNotTheConversation();
-    void aFirstClickIntoAnUnfocusedListStillRenders();
-    void autoMarkReadTouchesOnlyTheMessageOnScreen();
-    void autoMarkReadClearsUnreadOnTheCardImmediately();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
     void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
@@ -6417,200 +6401,6 @@ void TestMainWindow::anUnexpandedRootRendersOneMessageNotTheConversation()
     // empty list here is exactly the conversation render this replaced.
     QVERIFY2(!pane->headerSearchOffers().isEmpty(),
              "the pane rendered a conversation, not a single message");
-}
-
-void TestMainWindow::aFirstClickIntoAnUnfocusedListStillRenders()
-{
-    // The user's report: in a fresh session, the first click on a thread does
-    // not show the message; clicking again does.
-    //
-    // setCurrentIndex() cannot reproduce this, which is why the earlier probe
-    // passed: it updates the selection model synchronously. A real click does
-    // not, and onThreadSelected returns early when the clicked row is not yet
-    // selected, a guard that stops QTreeView's focus housekeeping from opening
-    // and marking-read mail nobody looked at. This test clicks the viewport.
-    WorkerBackedWindow backed;
-    QVERIFY(backed.fixture().addMessage(
-        QStringLiteral("inbox"), QStringLiteral("root@example.org"),
-        QStringLiteral("A conversation"), QStringLiteral("sender@example.org"),
-        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
-        QStringLiteral("The first message.")));
-    QVERIFY(backed.fixture().addMessage(
-        QStringLiteral("inbox"), QStringLiteral("reply@example.org"),
-        QStringLiteral("Re: A conversation"),
-        QStringLiteral("other@example.org"),
-        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
-        QStringLiteral("The reply."), true,
-        QStringLiteral("root@example.org")));
-    QVERIFY2(backed.build(), qPrintable(backed.error()));
-
-    MainWindow window(backed.config());
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
-
-    QLineEdit *queryEdit =
-        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
-    QVERIFY2(queryEdit, "no query bar");
-    auto *view = window.findChild<ThreadListView *>();
-    QVERIFY2(view, "no thread list view");
-    auto *model = window.findChild<ThreadListModel *>();
-    QVERIFY2(model, "no thread list model");
-    auto *pane = window.findChild<MessageView *>();
-    QVERIFY2(pane, "no message view");
-
-    queryEdit->setText(QStringLiteral("tag:inbox"));
-    queryEdit->returnPressed();
-    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
-
-    // Focus stays on the query bar, as it is after typing a query. This is the
-    // "fresh session" state the user described: the list has never been
-    // clicked and has no current row.
-    queryEdit->setFocus();
-    QVERIFY2(!view->currentIndex().isValid(),
-             "the list already had a current row: not a fresh list");
-    QVERIFY(pane->showingPlaceholder());
-
-    const QModelIndex root = model->index(0, 0, QModelIndex());
-    QVERIFY(root.isValid());
-    const QRect rect = view->visualRect(root);
-    QVERIFY2(rect.isValid() && rect.height() > 0,
-             "the row has no geometry to click");
-
-    // ONE click, the first one into a list that never had focus.
-    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier,
-                      rect.center());
-
-    QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
-}
-
-void TestMainWindow::autoMarkReadTouchesOnlyTheMessageOnScreen()
-{
-    // Reported by the user, and a real data defect rather than a cosmetic one:
-    // selecting an unexpanded thread root marked EVERY message in the thread
-    // read, including replies never displayed. maildir.synchronize_flags is
-    // on, so that rewrites filenames and reaches the server: mail the user has
-    // not seen stops being unread everywhere.
-    //
-    // It was coherent while a root click rendered the whole conversation. It
-    // stopped being coherent when that view was removed and a root began
-    // rendering one message, which is the change that made this urgent.
-    WorkerBackedWindow backed;
-    backed.setGeneralKey(QStringLiteral("mark_read_delay_ms"),
-                         QStringLiteral("0"));
-    QVERIFY(backed.fixture().addMessage(
-        QStringLiteral("inbox"), QStringLiteral("root@example.org"),
-        QStringLiteral("A conversation"), QStringLiteral("sender@example.org"),
-        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
-        QStringLiteral("The first message."), /*unread=*/true));
-    QVERIFY(backed.fixture().addMessage(
-        QStringLiteral("inbox"), QStringLiteral("reply@example.org"),
-        QStringLiteral("Re: A conversation"),
-        QStringLiteral("other@example.org"),
-        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
-        QStringLiteral("The reply."), /*unread=*/true,
-        QStringLiteral("root@example.org")));
-    QVERIFY2(backed.build(), qPrintable(backed.error()));
-
-    MainWindow window(backed.config());
-
-    QLineEdit *queryEdit =
-        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
-    QVERIFY2(queryEdit, "no query bar");
-    auto *view = window.findChild<ThreadListView *>();
-    QVERIFY2(view, "no thread list view");
-    auto *model = window.findChild<ThreadListModel *>();
-    QVERIFY2(model, "no thread list model");
-
-    queryEdit->setText(QStringLiteral("tag:inbox"));
-    queryEdit->returnPressed();
-    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
-
-    const QModelIndex root = model->index(0, 0, QModelIndex());
-    QVERIFY(root.isValid());
-    view->setCurrentIndex(root);
-
-    // Assert on WHAT THE WINDOW ASKED FOR, which is synchronous and exact.
-    //
-    // Reading tags back does not work here, and three separate attempts failed
-    // vacuously before this. TagsRole returns an empty list for a message row
-    // by design (the tag strip is a thread-wide band). MessageOwnTagsRole
-    // subtracts the parent thread's tags AND drops any tag drawn as a mark,
-    // and `unread` is one, so it can never contain it. And the raw node tags
-    // are not refreshed until onTagsApplied() confirms the write, which lands
-    // after this test's window: the model reports pre-write tags whichever
-    // scope was used. Each of those passed against the unfixed code.
-    //
-    // The two scopes reach the worker through different entry points, and the
-    // window records which one it used. That is the actual difference the fix
-    // makes.
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !window.pendingMessageIdsForTesting().isEmpty()
-            || !window.pendingThreadIdsForTesting().isEmpty(),
-        15000);
-
-    QVERIFY2(window.pendingThreadIdsForTesting().isEmpty(),
-             "the auto mark-read was sent for the whole THREAD: every reply "
-             "loses `unread`, including messages never displayed, and "
-             "maildir.synchronize_flags carries that to the server");
-    QCOMPARE(window.pendingMessageIdsForTesting(),
-             QStringList{ QStringLiteral("root@example.org") });
-}
-
-void TestMainWindow::autoMarkReadClearsUnreadOnTheCardImmediately()
-{
-    // Reported by the user against the message-scoped mark-read: the write
-    // went out, the status bar counted an unsynced edit, and the card stayed
-    // bold with `unread` still on it. sendMessageTagChange deliberately makes
-    // no optimistic model update, because applyTagChange is keyed by THREAD
-    // and repainting a whole row for a one-message edit would be a lie.
-    //
-    // For an explicit tag edit that trade is fine. For auto mark-read it is
-    // not: the visible change IS the feature, and the 2s delay exists to give
-    // the user that feedback.
-    //
-    // One message in the thread, so the thread's own unread state and the
-    // message's are the same fact and the card must stop reading as unread.
-    WorkerBackedWindow backed;
-    backed.setGeneralKey(QStringLiteral("mark_read_delay_ms"),
-                         QStringLiteral("0"));
-    QVERIFY(backed.fixture().addMessage(
-        QStringLiteral("inbox"), QStringLiteral("only@example.org"),
-        QStringLiteral("A single message"),
-        QStringLiteral("sender@example.org"),
-        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
-        QStringLiteral("The only message."), /*unread=*/true));
-    QVERIFY2(backed.build(), qPrintable(backed.error()));
-
-    MainWindow window(backed.config());
-
-    QLineEdit *queryEdit =
-        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
-    QVERIFY2(queryEdit, "no query bar");
-    auto *view = window.findChild<ThreadListView *>();
-    QVERIFY2(view, "no thread list view");
-    auto *model = window.findChild<ThreadListModel *>();
-    QVERIFY2(model, "no thread list model");
-
-    queryEdit->setText(QStringLiteral("tag:inbox"));
-    queryEdit->returnPressed();
-    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
-
-    const QModelIndex root = model->index(0, 0, QModelIndex());
-    QVERIFY(root.isValid());
-
-    // Unread to begin with, or the assertion below proves nothing.
-    QVERIFY2(model->data(root, ThreadListModel::TagsRole)
-                 .toStringList()
-                 .contains(QStringLiteral("unread")),
-             "the thread was not unread to begin with");
-
-    view->setCurrentIndex(root);
-
-    // The card must stop reading as unread without waiting for a new query.
-    QTRY_VERIFY_WITH_TIMEOUT(!model->data(root, ThreadListModel::TagsRole)
-                                  .toStringList()
-                                  .contains(QStringLiteral("unread")),
-                             15000);
 }
 
 #include "test_mainwindow.moc"

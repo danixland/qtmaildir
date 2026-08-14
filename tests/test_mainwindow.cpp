@@ -59,11 +59,87 @@
 #include "tagchip.h"
 #include "threadlistmodel.h"
 #include "threadlistview.h"
+#include "notmuchfixture.h"
 
-/// MainWindow is mostly wiring, and the parts that need a real database are
-/// still verified manually. What is checked here is the action registry: the
-/// bindings a user configures reach the QActions the menus and the keyboard
-/// both read from, and no action is left unreachable.
+/// A MainWindow whose worker is pointed at a throwaway notmuch database.
+///
+/// **Opt-in, never a suite-wide initTestCase.** Roughly fifty cases here
+/// construct a bare MainWindow and must keep costing nothing; making every one
+/// of them run `notmuch new` would be minutes of wall clock for a database they
+/// never query. Shared mutable state between cases is also how the /proc/locks
+/// bug (item 61) reached the whole suite.
+///
+/// **No test-only hook in MainWindow, deliberately.** wireWorker() already
+/// builds the worker from m_config.notmuchConfig(), an ordinary config key, so
+/// pointing a written qtmaildir.conf at the fixture exercises the shipping code
+/// path rather than a parallel one built for the tests.
+///
+/// Owns the fixture, because the worker holds the database open on another
+/// thread and the fixture's QTemporaryDir deletes the tree in its destructor:
+/// it must outlive the window.
+class WorkerBackedWindow
+{
+public:
+    /// Builds the database, writes the config and loads it. Check isValid()
+    /// and error() before constructing the window.
+    bool build()
+    {
+        if (!m_fixture.isValid()) {
+            m_error = QStringLiteral("fixture directory invalid");
+            return false;
+        }
+        if (!m_fixture.index()) {
+            m_error = m_fixture.error();
+            return false;
+        }
+        if (!m_confDir.isValid()) {
+            m_error = QStringLiteral("config directory invalid");
+            return false;
+        }
+
+        const QString path =
+            m_confDir.filePath(QStringLiteral("qtmaildir.conf"));
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            m_error = QStringLiteral("cannot write qtmaildir.conf");
+            return false;
+        }
+        {
+            QTextStream out(&file);
+            // QSettings' INI backend treats a section literally named
+            // [general] as its own fallback section and strips the prefix, so
+            // this key is read as `notmuch_config` and NOT as
+            // `general/notmuch_config`. Getting that backwards is how the key
+            // went unnoticed as broken once already.
+            out << "[general]\n"
+                << "notmuch_config=" << m_fixture.configPath() << "\n";
+        }
+        file.close();
+
+        m_config.load(path);
+        if (m_config.notmuchConfig() != m_fixture.configPath()) {
+            m_error = QStringLiteral("config did not pick up notmuch_config");
+            return false;
+        }
+        return true;
+    }
+
+    NotmuchFixture &fixture() { return m_fixture; }
+    const Config &config() const { return m_config; }
+    QString error() const { return m_error; }
+
+private:
+    NotmuchFixture m_fixture;
+    QTemporaryDir m_confDir;
+    Config m_config;
+    QString m_error;
+};
+
+/// MainWindow is mostly wiring. Cases that need a real database opt into one
+/// through WorkerBackedWindow; the rest construct a bare window. What is
+/// checked here is the action registry: the bindings a user configures reach
+/// the QActions the menus and the keyboard both read from, and no action is
+/// left unreachable.
 class TestMainWindow : public QObject
 {
     Q_OBJECT
@@ -92,6 +168,8 @@ private slots:
     void aSearchFromThePaneCanNarrowTheQuery();
     void narrowingAnEmptyQueryBarIsAPlainSearch();
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
+    void aWorkerBackedWindowReturnsRealThreads();
+    void selectingAThreadRootShowsItInTheMessagePane();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
     void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
@@ -6138,6 +6216,123 @@ void TestMainWindow::aMalformedAccountIsReportedWithoutBlockingTheConstructor()
     QVERIFY2(!problems.isEmpty(),
              "a malformed account produced no problem to report");
     QVERIFY(problems.join(QLatin1Char('\n')).contains(QStringLiteral("one")));
+}
+
+void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
+{
+    // The guard test for every fixture-backed case after it. A probe that
+    // cannot find what it expects to find will report a miss forever, so this
+    // proves the database, the config and the worker are connected BEFORE
+    // anything relies on a signal not arriving.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("root@example.org"),
+        QStringLiteral("A subject"), QStringLiteral("sender@example.org"),
+        // Friday, verified with `date -d 2026-08-14 +%A`. Qt::RFC2822Date
+        // validates the weekday against the date and rejects a mismatch.
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+
+    QLineEdit *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY2(queryEdit, "no query bar: the window was never built");
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY2(model, "no thread list model");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+
+    // QTRY_VERIFY re-tests until the condition holds or the timeout expires,
+    // which is what makes this safe against a worker on another thread. Not a
+    // fixed qWait(n): a guessed sleep races under load and, worse, passes when
+    // the result never arrives at all because nothing re-checks.
+    //
+    // The worker itself is unreachable from here by construction, not by
+    // oversight: wireWorker() creates it parentless and moves it to its own
+    // thread, so findChild() cannot see it. Observing the window's own state
+    // is both the only route and the better assertion.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::selectingAThreadRootShowsItInTheMessagePane()
+{
+    // Item 66: "selecting a thread (click on main message), nothing appears in
+    // right pane, after expanding and selecting a reply, clicking on the main
+    // message correctly shows the email."
+    //
+    // EXPECTED TO FAIL until that defect is fixed. It is the reproduction the
+    // item has needed since 2026-08-04 and could not have while test_mainwindow
+    // had no worker to deliver threadLoaded.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("root@example.org"),
+        QStringLiteral("A conversation"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("The first message.")));
+    // A real In-Reply-To chain, which is the only way the fixture builds a
+    // thread: notmuch groups on the headers, not on the subject.
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("reply@example.org"),
+        QStringLiteral("Re: A conversation"),
+        QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("The reply."), true,
+        QStringLiteral("root@example.org")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+
+    QLineEdit *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY2(queryEdit, "no query bar: the window was never built");
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY2(view, "no thread list view");
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY2(model, "no thread list model");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+
+    // One thread carrying both messages, not two threads.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QModelIndex root = model->index(0, 0, QModelIndex());
+    QVERIFY(root.isValid());
+    // hasChildren, NOT rowCount. Children are populated only when a thread is
+    // expanded, so rowCount(root) is legitimately 0 here and asserting on it
+    // fails against correct code. Before expansion the summary's count is all
+    // there is, which is also what proves the two messages threaded rather
+    // than arriving as two separate rows.
+    QVERIFY2(model->hasChildren(root),
+             "the two messages did not form one thread: nothing to expand");
+
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY2(pane, "no message view");
+
+    // The pane starts on the placeholder, which is what "blank" means here.
+    // Asserting this BEFORE the click is what makes the assertion after it
+    // mean something: without it a pane that was never blank would pass.
+    QVERIFY2(pane->showingPlaceholder(),
+             "the pane was not blank to begin with");
+
+    // Select the ROOT, without expanding it first. That is the gesture the
+    // user reports as leaving the pane blank.
+    view->setCurrentIndex(root);
+
+    // NOT currentThreadId(): that is assigned synchronously in the selection
+    // handler, before any worker round-trip, so it reports the INTENT to show
+    // a thread rather than content arriving. A mutation disabling
+    // onThreadLoaded() entirely left it passing, which is how that was found.
+    //
+    // showingPlaceholder() is what the user sees. QTRY rather than a single
+    // check because the load crosses to the worker thread and back, so a
+    // failure here means the pane stayed blank for fifteen seconds, not that
+    // the test looked too early.
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
 }
 
 #include "test_mainwindow.moc"

@@ -734,7 +734,7 @@ void TestMessageView::aSearchFromTheDetailsDialogClosesIt()
             return;
         }
 
-        dialog->requestSearch(*from, false);
+        dialog->requestSearch(*from, SearchTerm::SearchMode::Replace);
     });
 
     view.showDetailsDialog();

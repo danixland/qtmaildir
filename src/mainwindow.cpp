@@ -1651,13 +1651,30 @@ void MainWindow::onPlaceholderQueryRequested(const QString &query)
     runCurrentQuery();
 }
 
-void MainWindow::runSearchFromPane(const QString &query, bool extend)
+void MainWindow::runSearchFromPane(const QString &query,
+                                   SearchTerm::SearchMode mode)
 {
     if (query.isEmpty())
         return;
 
-    const QString next =
-        extend ? SearchTerm::extend(m_queryEdit->text(), query) : query;
+    QString next;
+    switch (mode) {
+    case SearchTerm::SearchMode::Replace:
+        next = query;
+        break;
+    case SearchTerm::SearchMode::Narrow:
+        next = SearchTerm::extend(m_queryEdit->text(), query);
+        break;
+    case SearchTerm::SearchMode::Exclude:
+        next = SearchTerm::exclude(m_queryEdit->text(), query);
+        break;
+    }
+
+    // exclude() returns empty when there is nothing to exclude from, which the
+    // greyed menu entry should already have prevented. Running it would clear
+    // the query bar and show the whole Maildir, so refuse instead.
+    if (next.isEmpty())
+        return;
 
     // Through the query bar and the existing runner, so the account scope, the
     // generation counter and the flat-mode reset all behave exactly as they do

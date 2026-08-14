@@ -3741,7 +3741,8 @@ void TestMainWindow::aSearchFromThePaneReplacesTheQuery()
     QVERIFY2(view, "no message view");
 
     queryEdit->setText(QStringLiteral("tag:inbox"));
-    emit view->searchRequested(QStringLiteral("from:\"foo@example.org\""), false);
+    emit view->searchRequested(QStringLiteral("from:\"foo@example.org\""),
+                               SearchTerm::SearchMode::Replace);
 
     QCOMPARE(queryEdit->text(), QStringLiteral("from:\"foo@example.org\""));
 }
@@ -3763,7 +3764,8 @@ void TestMainWindow::aSearchFromThePaneCanNarrowTheQuery()
     QVERIFY2(view, "no message view");
 
     queryEdit->setText(QStringLiteral("tag:inbox or tag:flagged"));
-    emit view->searchRequested(QStringLiteral("from:\"foo@example.org\""), true);
+    emit view->searchRequested(QStringLiteral("from:\"foo@example.org\""),
+                               SearchTerm::SearchMode::Narrow);
 
     QCOMPARE(queryEdit->text(),
              QStringLiteral("(tag:inbox or tag:flagged) AND (from:\"foo@example.org\")"));
@@ -3783,7 +3785,8 @@ void TestMainWindow::narrowingAnEmptyQueryBarIsAPlainSearch()
     QVERIFY2(view, "no message view");
 
     queryEdit->clear();
-    emit view->searchRequested(QStringLiteral("tag:inbox"), true);
+    emit view->searchRequested(QStringLiteral("tag:inbox"),
+                               SearchTerm::SearchMode::Narrow);
 
     QCOMPARE(queryEdit->text(), QStringLiteral("tag:inbox"));
 }

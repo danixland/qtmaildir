@@ -23,6 +23,7 @@
 #include <QString>
 
 #include "htmlbuilder.h"
+#include "searchterm.h"
 
 /// One header of one message, as shown and as searched for.
 ///
@@ -72,12 +73,13 @@ public:
     /// Emits searchRequested for `row`, or nothing when the row carries no
     /// searchable query. The menu entries call this; a test can too, without
     /// popping a menu.
-    void requestSearch(const HeaderRow &row, bool extend);
+    void requestSearch(const HeaderRow &row, SearchTerm::SearchMode mode);
 
 signals:
-    /// The user chose a search from a row's menu. `extend` narrows the current
-    /// query rather than replacing it.
-    void searchRequested(const QString &query, bool extend);
+    /// The user chose a search from a row's menu. `mode` says whether to
+    /// replace the query, narrow it, or narrow it by everything that is not
+    /// this value.
+    void searchRequested(const QString &query, SearchTerm::SearchMode mode);
 
 private:
     /// Builds the rows from the thread, one group per message.

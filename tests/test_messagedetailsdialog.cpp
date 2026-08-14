@@ -131,13 +131,15 @@ void TestMessageDetailsDialog::offersASearchForEachValue()
     QVERIFY2(date != rows.cend(), "no Date row");
     QCOMPARE(date->query, QStringLiteral("date:2026-08-14..2026-08-14"));
 
-    // Replacing and narrowing are both offered, and the flag distinguishes them.
-    dialog.requestSearch(*from, false);
-    dialog.requestSearch(*from, true);
+    // Replacing and narrowing are both offered, and the mode distinguishes them.
+    dialog.requestSearch(*from, SearchTerm::SearchMode::Replace);
+    dialog.requestSearch(*from, SearchTerm::SearchMode::Narrow);
     QCOMPARE(spy.count(), 2);
     QCOMPARE(spy.at(0).at(0).toString(), from->query);
-    QCOMPARE(spy.at(0).at(1).toBool(), false);
-    QCOMPARE(spy.at(1).at(1).toBool(), true);
+    QCOMPARE(spy.at(0).at(1).value<SearchTerm::SearchMode>(),
+             SearchTerm::SearchMode::Replace);
+    QCOMPARE(spy.at(1).at(1).value<SearchTerm::SearchMode>(),
+             SearchTerm::SearchMode::Narrow);
 }
 
 void TestMessageDetailsDialog::omitsAnEmptyHeader()
@@ -174,7 +176,7 @@ void TestMessageDetailsDialog::messageIdIsShownButNotSearchable()
 
     // And asking to search it emits nothing rather than an empty query.
     QSignalSpy spy(&dialog, &MessageDetailsDialog::searchRequested);
-    dialog.requestSearch(*id, false);
+    dialog.requestSearch(*id, SearchTerm::SearchMode::Replace);
     QCOMPARE(spy.count(), 0);
 }
 

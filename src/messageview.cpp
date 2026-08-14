@@ -569,12 +569,14 @@ void MessageView::addSearchEntries(QMenu *menu, const QList<SearchOffer> &offers
         auto *sub = menu->addMenu(tr("Search for %1").arg(entry.label));
 
         auto *replace = sub->addAction(tr("Search for this"));
-        connect(replace, &QAction::triggered, this,
-                [this, entry]() { emit searchRequested(entry.query, false); });
+        connect(replace, &QAction::triggered, this, [this, entry]() {
+            emit searchRequested(entry.query, SearchTerm::SearchMode::Replace);
+        });
 
         auto *narrow = sub->addAction(tr("Add to search"));
-        connect(narrow, &QAction::triggered, this,
-                [this, entry]() { emit searchRequested(entry.query, true); });
+        connect(narrow, &QAction::triggered, this, [this, entry]() {
+            emit searchRequested(entry.query, SearchTerm::SearchMode::Narrow);
+        });
     }
 }
 
@@ -645,9 +647,9 @@ void MessageView::showDetailsDialog()
     // from. Closing first leaves no window in which the dialog describes a
     // thread the pane has already dropped.
     connect(&dialog, &MessageDetailsDialog::searchRequested, this,
-            [this, &dialog](const QString &query, bool extend) {
+            [this, &dialog](const QString &query, SearchTerm::SearchMode mode) {
                 dialog.accept();
-                emit searchRequested(query, extend);
+                emit searchRequested(query, mode);
             });
 
     dialog.exec();

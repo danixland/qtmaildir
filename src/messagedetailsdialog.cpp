@@ -88,10 +88,16 @@ MessageDetailsDialog::MessageDetailsDialog(const QList<ThreadRenderItem> &items,
                         QMenu menu(this);
                         auto *replace = menu.addAction(tr("Search for this"));
                         connect(replace, &QAction::triggered, this,
-                                [this, row]() { requestSearch(row, false); });
+                                [this, row]() {
+                                    requestSearch(
+                                        row, SearchTerm::SearchMode::Replace);
+                                });
                         auto *narrow = menu.addAction(tr("Add to search"));
                         connect(narrow, &QAction::triggered, this,
-                                [this, row]() { requestSearch(row, true); });
+                                [this, row]() {
+                                    requestSearch(
+                                        row, SearchTerm::SearchMode::Narrow);
+                                });
                         menu.exec(value->mapToGlobal(pos));
                     });
         }
@@ -145,9 +151,10 @@ void MessageDetailsDialog::buildRows(const QList<ThreadRenderItem> &items)
     }
 }
 
-void MessageDetailsDialog::requestSearch(const HeaderRow &row, bool extend)
+void MessageDetailsDialog::requestSearch(const HeaderRow &row,
+                                         SearchTerm::SearchMode mode)
 {
     if (row.query.isEmpty())
         return;
-    emit searchRequested(row.query, extend);
+    emit searchRequested(row.query, mode);
 }

@@ -182,15 +182,16 @@ signals:
 
     /// The user chose a search from one of the pane's context menus.
     ///
-    /// `extend` narrows the current query rather than replacing it. The view
-    /// does not know what the query bar holds and must not: the window owns
-    /// that field and does the combining.
+    /// `mode` says whether to replace the query bar, narrow it, or narrow it
+    /// by everything that is not this value. The view does not know what the
+    /// query bar holds and must not: the window owns that field and does the
+    /// combining.
     ///
     /// Separate from queryRequested(), which carries a gate against a link in
     /// a rendered document driving the thread list. These menus are chrome
     /// built by our own code from values we extracted, so they need no gate,
     /// and widening the existing signal would change what that gate protects.
-    void searchRequested(const QString &query, bool extend);
+    void searchRequested(const QString &query, SearchTerm::SearchMode mode);
 
 protected:
     /// Turns Ctrl+wheel over the body into zoom, and Ctrl+middle-click into a

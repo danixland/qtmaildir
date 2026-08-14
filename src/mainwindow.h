@@ -34,6 +34,7 @@
 // Included rather than forward-declared: SyncPhaseTracker is held by value, so
 // its size must be known here. MailSync itself stays a forward declaration.
 #include "mailsync.h"
+#include "searchterm.h"
 // Complete type, not a forward declaration: showTagRulesDialog() defaults its
 // seed to TagRule().
 #include "tagrules.h"
@@ -375,10 +376,11 @@ private slots:
 
     /// Runs a search asked for from the message pane.
     ///
-    /// `extend` narrows the current query rather than replacing it. The panes
-    /// carry a finished query and no knowledge of the bar; the combining
-    /// happens here, because only the window can see what the bar holds.
-    void runSearchFromPane(const QString &query, bool extend);
+    /// `mode` says whether to replace the query bar, narrow it, or narrow it
+    /// by everything that is not this value. The panes carry a finished query
+    /// and no knowledge of the bar; the combining happens here, because only
+    /// the window can see what the bar holds.
+    void runSearchFromPane(const QString &query, SearchTerm::SearchMode mode);
 
     /// Runs one tagging rule's query in the thread list, so the user can see
     /// which mail it collects. The rules dialog stays open; the point is to

@@ -30,6 +30,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QStandardPaths>
@@ -50,6 +51,7 @@
 #include "cidschemehandler.h"
 #include "htmlbuilder.h"
 #include "requestinterceptor.h"
+#include "searchterm.h"
 #include "tagstrip.h"
 #include "threadcidmap.h"
 #include "version.h"
@@ -162,6 +164,12 @@ MessageView::MessageView(QWidget *parent)
     m_headerLabel->setTextFormat(Qt::RichText);
     m_headerLabel->setWordWrap(true);
     m_headerLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    // Item 85: the header's values are searchable. CustomContextMenu rather
+    // than an action list, since the entries depend on what is displayed.
+    m_headerLabel->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_headerLabel, &QWidget::customContextMenuRequested,
+            this, &MessageView::showHeaderContextMenu);
 
     // To the right of the header, per the user's decision: the summary answers
     // "who is this from", this answers "what actually happened to it". A button
@@ -428,6 +436,11 @@ QString MessageView::headerMark(Marks::Mark mark) const
 
 void MessageView::updateHeader()
 {
+    // A stale offer list must not survive either exit: the early return below
+    // leaves nothing on screen to search, and the normal path rebuilds it from
+    // scratch a few lines down.
+    m_headerOffers.clear();
+
     if (m_items.isEmpty()) {
         m_headerLabel->clear();
         m_detailsButton->hide();
@@ -439,6 +452,30 @@ void MessageView::updateHeader()
     // The thread's subject comes from its first message; later replies carry
     // Re: prefixes that add nothing.
     const QString subject = m_items.first().message.subject;
+
+    // Collected by the pass that renders the label, from the same values, so
+    // nothing has to parse the rendered markup back into structure.
+    auto elided = [](const QString &value) {
+        constexpr int kMaxLabel = 40;
+        return value.size() > kMaxLabel
+                   ? value.left(kMaxLabel) + QStringLiteral("...")
+                   : value;
+    };
+
+    auto offer = [this](const QString &label, const QString &query) {
+        if (query.isEmpty())
+            return;
+        m_headerOffers.append({ label, query });
+    };
+
+    offer(tr("subject \"%1\"").arg(elided(subject)),
+          SearchTerm::field(QStringLiteral("subject"), subject));
+
+    const QDateTime sent = MimeParser::parseDate(m_items.first().message.date);
+    if (sent.isValid()) {
+        offer(tr("mail from %1").arg(sent.date().toString(Qt::ISODate)),
+              SearchTerm::onDate(sent.date()));
+    }
 
     // Item 70's marks, beside the subject and OUTSIDE the message area. The
     // user asked for these two only: whether the thread is flagged and whether
@@ -489,12 +526,47 @@ void MessageView::updateHeader()
         row(tr("From:"), message.from);
         row(tr("To:"), message.to);
         row(tr("Cc:"), message.cc);
+
+        // Only here, sharing the condition with the header's own display: for
+        // a real thread these differ message to message, and the details
+        // dialog is where they are unambiguous.
+        offer(tr("sender %1").arg(elided(message.from)),
+              SearchTerm::field(QStringLiteral("from"), message.from));
+        offer(tr("recipient %1").arg(elided(message.to)),
+              SearchTerm::field(QStringLiteral("to"), message.to));
+        offer(tr("copied to %1").arg(elided(message.cc)),
+              SearchTerm::field(QStringLiteral("cc"), message.cc));
     } else {
         text += QStringLiteral("<br><small>%1</small>")
                     .arg(tr("%n message(s) in thread", "", m_items.size()));
     }
 
     m_headerLabel->setText(text);
+}
+
+void MessageView::addSearchEntries(QMenu *menu, const QList<SearchOffer> &offers)
+{
+    for (const SearchOffer &entry : offers) {
+        auto *sub = menu->addMenu(tr("Search for %1").arg(entry.label));
+
+        auto *replace = sub->addAction(tr("Search for this"));
+        connect(replace, &QAction::triggered, this,
+                [this, entry]() { emit searchRequested(entry.query, false); });
+
+        auto *narrow = sub->addAction(tr("Add to search"));
+        connect(narrow, &QAction::triggered, this,
+                [this, entry]() { emit searchRequested(entry.query, true); });
+    }
+}
+
+void MessageView::showHeaderContextMenu(const QPoint &pos)
+{
+    if (m_headerOffers.isEmpty())
+        return;
+
+    QMenu menu(this);
+    addSearchEntries(&menu, m_headerOffers);
+    menu.exec(m_headerLabel->mapToGlobal(pos));
 }
 
 void MessageView::showDetailsDialog()

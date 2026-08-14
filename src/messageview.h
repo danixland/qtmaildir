@@ -25,8 +25,10 @@
 #include "htmlbuilder.h"
 #include "marks.h"
 #include "mimeparser.h"
+#include "searchterm.h"
 
 class QLabel;
+class QMenu;
 class QPushButton;
 class QWebEngineView;
 class QWebEngineProfile;
@@ -127,6 +129,17 @@ public:
     /// is rendered or the notice is hidden.
     QString staleMessageId() const { return m_staleMessageId; }
 
+    /// What the header can be searched for, given what it is currently showing.
+    ///
+    /// From, To and Cc appear only for a single-message thread, which is
+    /// exactly when the header displays them: for a real thread the recipient
+    /// differs message to message and the header says only the subject and the
+    /// count. The menu must never offer a value the header is not stating.
+    ///
+    /// The values come from the same pass that renders the label, never from
+    /// parsing it back: rich text does not survive a second parse.
+    QList<SearchOffer> headerSearchOffers() const { return m_headerOffers; }
+
 public slots:
     void toggleHtml();
     void loadRemoteContent();
@@ -157,6 +170,18 @@ signals:
     /// that.
     void staleThreadRecoveryRequested(const QString &threadId,
                                       const QString &messageId);
+
+    /// The user chose a search from one of the pane's context menus.
+    ///
+    /// `extend` narrows the current query rather than replacing it. The view
+    /// does not know what the query bar holds and must not: the window owns
+    /// that field and does the combining.
+    ///
+    /// Separate from queryRequested(), which carries a gate against a link in
+    /// a rendered document driving the thread list. These menus are chrome
+    /// built by our own code from values we extracted, so they need no gate,
+    /// and widening the existing signal would change what that gate protects.
+    void searchRequested(const QString &query, bool extend);
 
 protected:
     /// Turns Ctrl+wheel over the body into zoom, and Ctrl+middle-click into a
@@ -207,6 +232,15 @@ private:
     /// Every attachment in the thread, in the order the messages render.
     QList<Attachment> allAttachments() const;
 
+    /// Builds and pops the header's menu at `pos`, in the label's coordinates.
+    void showHeaderContextMenu(const QPoint &pos);
+
+    /// Appends a "Search for ..." submenu per offer, each holding the replace
+    /// and the narrow operation.
+    ///
+    /// Shared with the web view's menu in a later task so the two cannot grow
+    /// different wording or a different pair of operations.
+    void addSearchEntries(QMenu *menu, const QList<SearchOffer> &offers);
 
     QList<ThreadRenderItem> m_items;
     bool m_preferHtml = true;
@@ -232,4 +266,7 @@ private:
     QPushButton *m_detailsButton = nullptr;
     QWidget *m_attachmentBar = nullptr;
     TagStrip *m_tagStrip = nullptr;
+
+    /// Populated by updateHeader(), consumed by the header's context menu.
+    QList<SearchOffer> m_headerOffers;
 };

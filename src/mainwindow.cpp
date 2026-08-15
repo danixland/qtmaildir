@@ -1779,12 +1779,29 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
         auto *menu = new QMenu(menuButton);
         for (const SavedQuery &saved : unpinned) {
             QAction *action = menu->addAction(saved.name);
-            connect(action, &QAction::triggered, this,
-                    [this, saved]() { runSavedQuery(saved); });
+
             // A menu entry has no context menu of its own, so its own submenu
-            // carries the same three actions; an unpinned query would
-            // otherwise be the one thing that cannot be edited or deleted.
+            // carries the same actions; an unpinned query would otherwise be
+            // the one thing that cannot be edited or deleted.
             auto *entryMenu = new QMenu(menu);
+
+            // Running the query is an item INSIDE that submenu, and must be:
+            // Qt does not emit triggered for an action that owns a menu, so a
+            // connection on `action` itself never fires and clicking the entry
+            // only opens the submenu. That shipped, and went unnoticed while
+            // the menu was the rarely-used half and the user's queries were
+            // pinned buttons. Item 93 moved every query into the menu, and item
+            // 94 makes it their only home.
+            auto *run = new QAction(tr("Run"), entryMenu);
+            run->setObjectName(QStringLiteral("runQuery"));
+            connect(run, &QAction::triggered, this,
+                    [this, saved]() { runSavedQuery(saved); });
+            entryMenu->addAction(run);
+
+            auto *runSeparator = new QAction(entryMenu);
+            runSeparator->setSeparator(true);
+            entryMenu->addAction(runSeparator);
+
             addSavedQueryActions(entryMenu, saved);
             action->setMenu(entryMenu);
         }

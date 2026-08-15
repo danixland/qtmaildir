@@ -169,6 +169,7 @@ private slots:
     void narrowingAnEmptyQueryBarIsAPlainSearch();
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
+    void aQueryInTheMenuCanActuallyBeRun();
     void theFourBuiltinFiltersAreOnTheRowInOrder();
     void aFilterComposesWithTheSelectedAccount();
     void aFilterAcrossAllAccountsIsUnscoped();
@@ -6347,6 +6348,74 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
     // thread, so findChild() cannot see it. Observing the window's own state
     // is both the only route and the better assertion.
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::aQueryInTheMenuCanActuallyBeRun()
+{
+    // An unpinned query was UNRUNNABLE. Its action carried both a triggered
+    // connection and a submenu of edit actions, and Qt does not emit triggered
+    // for an action that owns a menu: clicking it opens the submenu and nothing
+    // else. The connection had never fired.
+    //
+    // It shipped unnoticed because the menu was the rarely-used half while the
+    // user's queries were pinned buttons. Item 93 moved every one of them into
+    // the menu, which is how it surfaced, and item 94 makes the menu their only
+    // home, so this is the path that has to work.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    loadWithQueries(config, dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Menued", "query": "tag:menued", "pinned": false }
+        ]
+    })"));
+
+    MainWindow window(config);
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    auto *menuButton =
+        window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
+    QVERIFY2(menuButton, "no overflow menu for an unpinned query");
+    QVERIFY(menuButton->menu());
+
+    QAction *entry = nullptr;
+    for (QAction *action : menuButton->menu()->actions()) {
+        if (action->text() == QStringLiteral("Menued"))
+            entry = action;
+    }
+    QVERIFY2(entry, "the unpinned query is not in the menu");
+
+    // The entry keeps its submenu, because an unpinned query must still be
+    // editable and deletable. What it cannot be is the ONLY thing there: Qt
+    // does not emit triggered for an action that owns a menu, so running the
+    // query needs an item of its own.
+    QVERIFY2(entry->menu(), "the per-query actions are gone");
+
+    QAction *run = nullptr;
+    for (QAction *action : entry->menu()->actions()) {
+        if (action->objectName() == QStringLiteral("runQuery"))
+            run = action;
+    }
+    QVERIFY2(run, "no way to run the query: its submenu offers only edit "
+                  "actions, and Qt never emits triggered for the parent");
+
+    // First, before the edit actions. Running is what the entry is for; editing
+    // is what one does to it occasionally.
+    QCOMPARE(entry->menu()->actions().constFirst(), run);
+
+    run->trigger();
+    QCOMPARE(queryEdit->text(), QStringLiteral("tag:menued"));
+
+    // The edit actions survived beside it.
+    QStringList names;
+    for (QAction *action : entry->menu()->actions())
+        names.append(action->objectName());
+    QVERIFY2(names.contains(QStringLiteral("editQuery")),
+             "the entry lost Edit");
+    QVERIFY2(names.contains(QStringLiteral("deleteQuery")),
+             "the entry lost Delete");
 }
 
 void TestMainWindow::theFourBuiltinFiltersAreOnTheRowInOrder()

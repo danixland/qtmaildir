@@ -19,6 +19,7 @@
 #pragma once
 
 #include <QColor>
+#include <QCoreApplication>
 #include <QJsonObject>
 #include <QList>
 #include <QString>
@@ -155,6 +156,11 @@ struct SavedQuery
 /// allow the GUI to index a different tree than the CLI.
 class Config
 {
+    // Not a QObject: this class is a value holder read from every thread. The
+    // macro gives it tr() for the built-in filters' NAMES, which are the labels
+    // on the query row's buttons and therefore user-facing.
+    Q_DECLARE_TR_FUNCTIONS(Config)
+
 public:
     /// Path used when load() is called with no argument.
     static QString defaultPath();
@@ -189,6 +195,46 @@ public:
     /// account. An account key naming nothing returns the bare query rather
     /// than a scope built from an empty maildir, which would be path:"/**".
     QString resolvedQuery(const SavedQuery &query) const;
+
+    /// The query as it should be run in one account's scope, or across all of
+    /// them when `accountKey` is empty.
+    ///
+    /// This is what makes a built-in filter COMPOSE with the account dropdown
+    /// rather than fight it (item 93). A generator is asked for the account's
+    /// own query, never handed its all-accounts query to wrap: wrapping gives
+    ///     path:"a/**" and (path:"a/Sent/**" or path:"b/Sent/**")
+    /// which returns the right rows only because path: is hierarchical, and
+    /// says something other than what is meant.
+    ///
+    /// An ordinary saved query ignores `accountKey` and keeps resolving through
+    /// its OWN stored account, which is the behaviour item 90 leaves alone: a
+    /// saved query is a destination and states its own scope.
+    QString resolvedQuery(const SavedQuery &query,
+                          const QString &accountKey) const;
+
+    /// The built-in filters, in the order they appear on the query row.
+    ///
+    /// Shipped rather than stored: these are not the user's saved queries and
+    /// are not in queries.json at all. The row used to be whatever the user had
+    /// pinned, which is how it drifted (item 93).
+    static QList<SavedQuery> builtinFilters();
+
+    /// One built-in filter by generator name, or a default-constructed
+    /// SavedQuery when the name is not one.
+    static SavedQuery builtinFilter(const QString &generator);
+
+    /// Whether `generator` is one this build knows how to resolve.
+    ///
+    /// A closed set, so a typo is reported on load rather than producing a
+    /// button that silently finds nothing.
+    static bool isKnownGenerator(const QString &generator);
+
+    /// A query that deliberately matches no message.
+    ///
+    /// Needed because an EMPTY query means "match everything" to notmuch, so a
+    /// generator with nothing to match cannot simply return one: Sent under an
+    /// account that configures no sent folder would show the entire Maildir.
+    static QString matchNothingQuery();
 
     /// Empty when unset; the caller disables the Sync button in that case.
     QString syncCommand() const { return m_syncCommand; }

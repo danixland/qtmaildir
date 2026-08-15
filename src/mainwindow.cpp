@@ -1717,12 +1717,31 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
     auto *box = new QHBoxLayout(row);
     box->setContentsMargins(0, 0, 0, 0);
 
-    // Sent is an ordinary row here, not a hardcoded button beside the others.
-    // It is still GENERATED, so its query is composed from the accounts' `sent`
-    // keys at click time and correcting a folder name stays a config edit and
-    // nothing else; what changed is that the entry can now be reordered,
-    // renamed, unpinned or removed like every other, instead of being the one
-    // control on the row the user did not own.
+    // The built-in filters come first, in their own fixed order, and they are
+    // not saved queries: they are shipped, they are not in queries.json, and
+    // the user cannot edit or delete them (item 93). They are what the row is
+    // FOR; the pinned saved queries below them are the transitional half that
+    // item 94 removes.
+    for (const SavedQuery &filter : Config::builtinFilters()) {
+        // Sent with no account configuring a sent folder finds nothing by
+        // construction. Hidden rather than present and empty, which is what the
+        // hardcoded Sent button did and is worth keeping: a control that always
+        // returns nothing reads as broken rather than as absent.
+        if (m_config.resolvedQuery(filter, QString())
+            == Config::matchNothingQuery())
+            continue;
+
+        auto *button = new QPushButton(filter.name, row);
+        // A stable object name per filter, so a test finds the button without
+        // depending on the label, which is translated.
+        button->setObjectName(filter.generated + QStringLiteral("Button"));
+        connect(button, &QPushButton::clicked, this,
+                [this, filter]() { runFilter(filter); });
+        box->addWidget(button);
+    }
+
+    // The user's own saved queries. A pinned one is still a button, beside the
+    // filters, until item 94 makes the menu their only home.
     QList<SavedQuery> unpinned;
     for (const SavedQuery &saved : m_config.savedQueries()) {
         // A generator whose accounts configure nothing produces a button that
@@ -1736,10 +1755,9 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
             continue;
         }
         auto *button = new QPushButton(saved.name, row);
-        // The generated entries keep a stable object name so a test can find
-        // the sent button without depending on what the user renamed it to.
-        if (saved.generated == QStringLiteral("sent"))
-            button->setObjectName(QStringLiteral("sentButton"));
+        // No object name here any more. "sentButton" now belongs to the BUILT-IN
+        // Sent filter, and a migrated Sent entry claiming it too would give two
+        // buttons one name, so findChild() would return whichever came first.
         connect(button, &QPushButton::clicked, this,
                 [this, saved]() { runSavedQuery(saved); });
         addSavedQueryActions(button, saved);
@@ -1761,12 +1779,29 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
         auto *menu = new QMenu(menuButton);
         for (const SavedQuery &saved : unpinned) {
             QAction *action = menu->addAction(saved.name);
-            connect(action, &QAction::triggered, this,
-                    [this, saved]() { runSavedQuery(saved); });
+
             // A menu entry has no context menu of its own, so its own submenu
-            // carries the same three actions; an unpinned query would
-            // otherwise be the one thing that cannot be edited or deleted.
+            // carries the same actions; an unpinned query would otherwise be
+            // the one thing that cannot be edited or deleted.
             auto *entryMenu = new QMenu(menu);
+
+            // Running the query is an item INSIDE that submenu, and must be:
+            // Qt does not emit triggered for an action that owns a menu, so a
+            // connection on `action` itself never fires and clicking the entry
+            // only opens the submenu. That shipped, and went unnoticed while
+            // the menu was the rarely-used half and the user's queries were
+            // pinned buttons. Item 93 moved every query into the menu, and item
+            // 94 makes it their only home.
+            auto *run = new QAction(tr("Run"), entryMenu);
+            run->setObjectName(QStringLiteral("runQuery"));
+            connect(run, &QAction::triggered, this,
+                    [this, saved]() { runSavedQuery(saved); });
+            entryMenu->addAction(run);
+
+            auto *runSeparator = new QAction(entryMenu);
+            runSeparator->setSeparator(true);
+            entryMenu->addAction(runSeparator);
+
             addSavedQueryActions(entryMenu, saved);
             action->setMenu(entryMenu);
         }
@@ -1928,6 +1963,22 @@ void MainWindow::runSavedQuery(const SavedQuery &saved)
     runQuery(saved.flat ? FlatResult::Yes : FlatResult::No);
 }
 
+void MainWindow::runFilter(const SavedQuery &filter)
+{
+    // The account box is READ and never written. That is the whole difference
+    // from runSavedQuery(), and it is item 90's defect: a filter narrows what
+    // the user is already looking at, so the dropdown is its input rather than
+    // something it resets on the way past.
+    const QString accountKey = m_accountBox->currentData().toString();
+
+    // Resolved here, in the account's scope, and put in the bar so what ran is
+    // visible and editable. runQuery() is told not to scope it again.
+    m_queryEdit->setText(m_config.resolvedQuery(filter, accountKey));
+
+    runQuery(filter.flat ? FlatResult::Yes : FlatResult::No,
+             AccountScope::AlreadyScoped);
+}
+
 void MainWindow::saveCurrentQuery()
 {
     const QString query = m_queryEdit->text().trimmed();
@@ -2007,7 +2058,7 @@ void MainWindow::rebuildSavedQueryRow()
     }
 }
 
-void MainWindow::runQuery(FlatResult flat)
+void MainWindow::runQuery(FlatResult flat, AccountScope scope)
 {
     // Set on EVERY run, not only when Yes. This is the line that stops flat
     // mode leaking: any query that is not the Sent button restores the tree,
@@ -2017,8 +2068,12 @@ void MainWindow::runQuery(FlatResult flat)
 
     QString query = m_queryEdit->text().trimmed();
 
+    // A built-in filter arrives already resolved in the selected account's
+    // scope, because a generator has to be asked for the account's own query
+    // rather than have its all-accounts query wrapped. Scoping again here would
+    // put path:"work/Sent/**" inside path:"work/**".
     const QString accountKey = m_accountBox->currentData().toString();
-    if (!accountKey.isEmpty())
+    if (scope == AccountScope::Apply && !accountKey.isEmpty())
         query = m_config.account(accountKey).scopedQuery(query);
 
     if (query.isEmpty())

@@ -95,6 +95,13 @@ private slots:
     void allSentQueryIsEmptyWhenNoAccountHasOne();
     void allSentQuerySkipsAccountsWithoutTheKey();
     void allSentQueryJoinsEveryConfiguredAccount();
+    void aStoredGeneratedQueryIsUnpinnedNotDropped();
+    void everyBuiltinFilterIsAKnownGenerator();
+    void aFilterAcrossAllAccountsIsTheUnscopedQuery();
+    void aTagFilterScopedToAnAccountCarriesThatAccountsPath();
+    void sentScopedToAnAccountIsThatAccountsSentFolderAlone();
+    void sentScopedToAnAccountWithNoSentFolderMatchesNothing();
+    void aFilterKeepsItsViewMode();
     void draftsQueryIsEmptyWithoutTheKey();
     void draftsQuerySurvivesABracketedPath();
     void allDraftsQuerySkipsAccountsWithoutTheKey();
@@ -1020,6 +1027,136 @@ void TestConfig::allSentQueryJoinsEveryConfiguredAccount()
     QCOMPARE(all.count(QStringLiteral(" or ")), 1);
 }
 
+/// Two accounts, one with a sent folder and one without. The second is the
+/// case that matters most: folderQuery() returns empty for an unset folder and
+/// an empty query means "match everything" to notmuch, so a filter that falls
+/// back to it silently shows the whole Maildir.
+static QString writeTwoAccounts(const QTemporaryDir &dir)
+{
+    return writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n"
+        "sent=Sent\n"
+        "\n"
+        "[account.personal]\n"
+        "maildir=personal\n"));
+}
+
+void TestConfig::everyBuiltinFilterIsAKnownGenerator()
+{
+    // The guard for every case below. A filter whose generator is not in the
+    // closed set loads with a reported problem and resolves to an empty query,
+    // which means "match everything": the assertions that follow would then be
+    // measuring a typo rather than the design.
+    Config config;
+    const QList<SavedQuery> filters = config.builtinFilters();
+
+    QCOMPARE(filters.size(), 4);
+
+    QStringList names;
+    for (const SavedQuery &filter : filters) {
+        QVERIFY2(filter.isGenerated(),
+                 qPrintable(QStringLiteral("filter '%1' stores a query instead "
+                                           "of naming a generator")
+                                .arg(filter.name)));
+        QVERIFY2(Config::isKnownGenerator(filter.generated),
+                 qPrintable(QStringLiteral("filter '%1' names the unknown "
+                                           "generator '%2'")
+                                .arg(filter.name, filter.generated)));
+        names.append(filter.name);
+    }
+
+    // The order is the row's order, left to right, and is fixed rather than
+    // configurable: item 94 removes the mixed row entirely, so a settings
+    // surface for this would be built and deleted inside two items.
+    QCOMPARE(names, (QStringList{ QStringLiteral("Unread"),
+                                  QStringLiteral("Inbox"),
+                                  QStringLiteral("Flagged"),
+                                  QStringLiteral("Sent") }));
+}
+
+void TestConfig::aFilterAcrossAllAccountsIsTheUnscopedQuery()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeTwoAccounts(dir));
+
+    // An empty account key is "All accounts", which is what the dropdown holds
+    // by default.
+    const SavedQuery unread = config.builtinFilter(QStringLiteral("unread"));
+    QCOMPARE(config.resolvedQuery(unread, QString()),
+             QStringLiteral("tag:unread"));
+}
+
+void TestConfig::aTagFilterScopedToAnAccountCarriesThatAccountsPath()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeTwoAccounts(dir));
+
+    // A tag filter has no path of its own, so scoping it is exactly what
+    // Account::scopedQuery() does and nothing more is needed.
+    const SavedQuery unread = config.builtinFilter(QStringLiteral("unread"));
+    QCOMPARE(config.resolvedQuery(unread, QStringLiteral("work")),
+             QStringLiteral("path:\"work/**\" and (tag:unread)"));
+}
+
+void TestConfig::sentScopedToAnAccountIsThatAccountsSentFolderAlone()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeTwoAccounts(dir));
+
+    const SavedQuery sent = config.builtinFilter(QStringLiteral("sent"));
+    const QString scoped = config.resolvedQuery(sent, QStringLiteral("work"));
+
+    // The whole point of a per-account generator. Wrapping the all-accounts
+    // query instead would give
+    //     path:"work/**" and (path:"work/Sent/**" or path:"personal/Sent/**")
+    // which returns the RIGHT ROWS, because path: is hierarchical and the
+    // personal half cannot match inside work. It is still wrong to build: it
+    // double-scopes and works by accident of the path syntax rather than by
+    // saying what is meant. A row-count assertion passes against it, which is
+    // why this asserts on the string.
+    QCOMPARE(scoped, QStringLiteral("path:\"work/Sent/**\""));
+    QVERIFY2(!scoped.contains(QStringLiteral("personal")),
+             "another account's sent folder leaked into a scoped Sent filter");
+    QCOMPARE(scoped.count(QStringLiteral("path:")), 1);
+}
+
+void TestConfig::sentScopedToAnAccountWithNoSentFolderMatchesNothing()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeTwoAccounts(dir));
+
+    // `personal` configures no sent folder, so folderQuery() gives an empty
+    // string. Returned as-is that is "match everything" to notmuch, so Sent
+    // under this account would show the entire Maildir: the worst possible
+    // answer for a button labelled Sent.
+    const SavedQuery sent = config.builtinFilter(QStringLiteral("sent"));
+    const QString scoped =
+        config.resolvedQuery(sent, QStringLiteral("personal"));
+
+    QVERIFY2(!scoped.isEmpty(),
+             "an account with no sent folder resolved to an empty query, "
+             "which notmuch reads as 'match everything'");
+    QCOMPARE(scoped, Config::matchNothingQuery());
+}
+
+void TestConfig::aFilterKeepsItsViewMode()
+{
+    Config config;
+
+    // Sent lists MESSAGES, the other three list threads. Not a detail to
+    // unify: a thread would fold the user's sent message back into the
+    // conversation it belongs to, which is item 63's finding.
+    QVERIFY(config.builtinFilter(QStringLiteral("sent")).flat);
+    QVERIFY(!config.builtinFilter(QStringLiteral("unread")).flat);
+    QVERIFY(!config.builtinFilter(QStringLiteral("inbox")).flat);
+    QVERIFY(!config.builtinFilter(QStringLiteral("flagged")).flat);
+}
+
 void TestConfig::draftsQueryIsEmptyWithoutTheKey()
 {
     // Optional for the same reason `sent` is, and more often absent: an
@@ -1327,6 +1464,55 @@ void TestConfig::jsonWinsOnceItExists()
     QCOMPARE(queries.at(0).name, QStringLiteral("FromTheJson"));
 }
 
+void TestConfig::aStoredGeneratedQueryIsUnpinnedNotDropped()
+{
+    // An existing install carries a Sent entry in queries.json: 0.19.0 migrated
+    // the hardcoded button into one. Item 93 ships Sent as a built-in filter,
+    // so that stored entry is now a DUPLICATE and would put two Sent buttons on
+    // the row, one editable and one not.
+    //
+    // Unpinned rather than deleted. This file's whole design is that a reader
+    // preserves what it does not own, and the user's instruction for their own
+    // redundant queries was the same: fold them into the menu, do not drop
+    // them. An unpin is reversible from the UI; a delete is not.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n"
+        "sent=Sent\n"));
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [
+            { "name": "Sent", "generated": "sent", "pinned": true },
+            { "name": "Mine", "query": "tag:todo", "pinned": true }
+        ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    const QList<SavedQuery> queries = config.savedQueries();
+    QCOMPARE(queries.size(), 2);
+
+    bool sawSent = false;
+    for (const SavedQuery &query : queries) {
+        if (query.generated != QStringLiteral("sent"))
+            continue;
+        sawSent = true;
+        QVERIFY2(!query.pinned,
+                 "the stored Sent entry is still a button beside the built-in "
+                 "filter of the same name");
+    }
+    QVERIFY2(sawSent, "the stored Sent entry was DROPPED rather than unpinned");
+
+    // The user's own query is untouched: only the entry duplicating a built-in
+    // filter is unpinned.
+    for (const SavedQuery &query : queries) {
+        if (query.name == QStringLiteral("Mine"))
+            QVERIFY2(query.pinned, "an unrelated pinned query was unpinned");
+    }
+}
+
 void TestConfig::malformedQueriesFileIsAProblemNotACrash()
 {
     QTemporaryDir dir;
@@ -1540,13 +1726,24 @@ void TestConfig::migrationAddsSentWhenAnAccountHasOne()
     Config config;
     config.load(path);
 
+    // The migration used to invent a generated Sent entry here, so the
+    // hardcoded button could be reordered, renamed or removed like any other
+    // row. Item 93 ships Sent as one of four BUILT-IN filters instead, so
+    // migrating one as well would put two Sent buttons on the row: one the
+    // user's to edit and one not.
+    //
+    // Nothing is lost. The built-in resolves through the same generator, so it
+    // still follows the accounts, and it now composes with the account dropdown
+    // rather than resetting it.
     const QList<SavedQuery> queries = config.savedQueries();
-    QCOMPARE(queries.size(), 2);
-    // Last, where the button already sat: after the saved queries.
-    QCOMPARE(queries.at(1).name, QStringLiteral("Sent"));
-    QVERIFY(queries.at(1).isGenerated());
-    QVERIFY(queries.at(1).pinned);
-    QVERIFY(queries.at(1).flat);
+    QCOMPARE(queries.size(), 1);
+    QCOMPARE(queries.at(0).name, QStringLiteral("Inbox"));
+
+    for (const SavedQuery &query : queries) {
+        QVERIFY2(!query.isGenerated(),
+                 "the migration invented a generated entry that now duplicates "
+                 "a built-in filter");
+    }
 }
 
 /// Today the button is hidden entirely when no account configures a sent

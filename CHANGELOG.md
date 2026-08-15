@@ -13,6 +13,20 @@ point at which they are stable.
 
 ### Added
 
+- **Four built-in filters on the query row: Unread, Inbox, Flagged and Sent.**
+  They are part of the application rather than saved queries you happened to
+  pin, and they **compose with the account dropdown**: select an account, hit
+  Unread, and you get that account's unread mail instead of everyone's. With
+  "All accounts" selected they span every account, as before.
+
+  Changing the account still runs nothing on its own. The dropdown chooses the
+  scope and the button is what queries, so you can pick an account and then
+  decide what to look at.
+
+  Your own saved queries are unchanged and keep the behaviour they had: one
+  that names no account still clears the selection, because a saved query says
+  exactly what it shows.
+
 - A third right-click search action, **Exclude from search**, wherever the
   other two are already offered: the message pane's header and body, a tag
   chip, and every row of the details dialog. It narrows the current query by
@@ -34,6 +48,15 @@ point at which they are stable.
   the thread had been expanded once, after which the identical click rendered a
   single message. Read a thread by expanding it and walking the reply rows.
 
+### Fixed
+
+- **A saved query in the "More queries" menu could not be run.** Clicking one
+  only opened its submenu of Edit and Delete actions. The entry now offers
+  **Run** at the top of that submenu, above the editing actions.
+
+  This was not new, but it was easy to miss while most queries lived on the row
+  as buttons rather than in the menu.
+
 ### Changed
 
 - The status bar counts threads as they arrive instead of saying "Searching..."
@@ -49,6 +72,25 @@ point at which they are stable.
   command configured" does not.
 
 ### Upgrading
+
+**The query row now starts with four buttons the application ships**, so your
+own pinned queries sit after them. If you had saved queries named Unread,
+Inbox, Flagged or Sent, you will see two buttons with the same name: yours and
+the built-in one. Right-click yours and choose **Move to menu** to keep the row
+readable.
+
+Your **Sent** button is a special case and is moved for you. Version 0.19.0
+turned the old hardcoded Sent button into a saved query in
+`~/.config/qtmaildir/queries.json`; that entry now duplicates the built-in
+filter, so it is unpinned automatically on first launch. It keeps its name, it
+keeps working, and it is in the **More queries** menu. Nothing is deleted, and
+pinning it again restores it if you prefer it there.
+
+The difference worth knowing: the built-in filters **use** the account
+dropdown, while a saved query **sets** it. Selecting an account and clicking
+Unread shows that account's unread mail; selecting an account and clicking a
+saved query that names no account clears the selection first, as it always
+has.
 
 Reading a thread now means expanding it and clicking down its replies. Nothing
 in your config changes, and no habit built on the reply rows is affected, but

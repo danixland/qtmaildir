@@ -709,6 +709,9 @@ void MainWindow::buildUi()
             &QItemSelectionModel::selectionChanged,
             this, &MainWindow::onSelectionChanged);
 
+    connect(m_threadView, &QAbstractItemView::doubleClicked,
+            this, &MainWindow::onRowDoubleClicked);
+
     m_messageView = new MessageView(central);
     m_messageView->setTagColors(&m_tagColors);
     connect(m_messageView, &MessageView::statusMessage,
@@ -3102,6 +3105,57 @@ void MainWindow::recoverStaleThread(const QString &threadId,
     // message row exists to select.
     m_recoverThreadId = threadId;
     m_recoverMessageId = messageId;
+}
+
+void MainWindow::onRowDoubleClicked(const QModelIndex &index)
+{
+    if (!index.isValid())
+        return;
+
+    // The whole thread in every case, and the double-clicked row's own message
+    // in the pane. A reply therefore drills to its THREAD with itself selected,
+    // never to itself alone: "double click on a reply in a thread should still
+    // load the whole thread expanded in a view by itself, with the reply I
+    // clicked on visible in the right pane" (item 91). An id: query on the
+    // reply is the obvious reading of "open it by itself" and is the wrong one.
+    //
+    // Reached through the INDEX rather than through index.row(): a tree numbers
+    // rows per parent, so a reply's row indexes its siblings and threadAt() on
+    // one answers about an unrelated thread.
+    QString threadId;
+    QString messageId;
+    if (m_model->isMessageRow(index)) {
+        const MessageNode node = m_model->messageAt(index);
+        threadId = node.threadId;
+        messageId = node.messageId;
+    } else {
+        threadId = m_model->data(index, ThreadListModel::ThreadIdRole).toString();
+        // The thread's first message, so the pane opens on it rather than on
+        // nothing. Empty is fine and means the same thing to the recovery: land
+        // on the root, which IS that message.
+        messageId = m_model->data(index, ThreadListModel::MessageIdRole).toString();
+    }
+
+    if (threadId.isEmpty())
+        return;
+
+    // The first click of the double-click already selected this row and armed
+    // the mark-read timer. The user is passing through on their way into the
+    // thread, and a gesture that navigates must not mutate mail, so the timer
+    // goes the same way it does for a multi-row selection.
+    //
+    // Not a correction of the single click's behaviour: the thread is about to
+    // be opened and its message read, which arms the timer again for the row
+    // the recovery selects. What is cancelled is the arming for a row the user
+    // is leaving.
+    m_markReadTimer->stop();
+    m_markReadThreadId.clear();
+
+    // Reuses the stale-thread recovery outright, which already runs thread:<id>,
+    // expands the thread when the row arrives, selects the target message once
+    // the replies land, and falls back to the root when the message has gone.
+    // Every one of item 91's three cases is one of those paths.
+    recoverStaleThread(threadId, messageId);
 }
 
 void MainWindow::applyPendingRecovery()

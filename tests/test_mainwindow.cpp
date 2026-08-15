@@ -233,6 +233,9 @@ private slots:
     void recoveringAStaleThreadQueriesTheWholeThread();
     void recoveryReselectsTheMessageThatWasBeingRead();
     void recoveryOnTheFirstMessageSelectsTheThreadRow();
+    void doubleClickingAThreadOpensThatThreadAlone();
+    void doubleClickingAReplyOpensItsThreadNotTheReplyAlone();
+    void doubleClickingDoesNotLeaveTheMarkReadTimerArmed();
     void aUserQueryAbandonsAPendingRecovery();
     void blankingThePaneAlsoDropsTheStaleNotice();
     void aNewQueryDropsTheStaleNotice();
@@ -3161,6 +3164,145 @@ void TestMainWindow::recoveryOnTheFirstMessageSelectsTheThreadRow()
     QVERIFY2(!model->isMessageRow(current),
              "the thread's first message is the ROOT row, not a child");
     QCOMPARE(model->threadAt(current.row()).threadId, QStringLiteral("T1"));
+}
+
+void TestMainWindow::doubleClickingAThreadOpensThatThreadAlone()
+{
+    // Item 91, the thread case: "double click on a thread loads the whole
+    // thread expanded in a view by itself and load the first message in the
+    // right pane."
+    //
+    // The view becomes thread:<id>. Asserted on the query text because that is
+    // what makes it a view "by itself"; a gesture that only expanded the row in
+    // place would leave every other thread on screen and pass any assertion
+    // about the expansion alone.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    ThreadSummary first = makeThread(QStringLiteral("T1"), {});
+    first.totalCount = 3;
+    model->appendBatch({ first, makeThread(QStringLiteral("T2"), {}) });
+    QCOMPARE(model->rowCount(QModelIndex()), 2);
+
+    const QModelIndex thread = model->index(0, 0, QModelIndex());
+    QVERIFY(thread.isValid());
+
+    emit view->doubleClicked(thread);
+
+    QCOMPARE(queryEdit->text(), QStringLiteral("thread:T1"));
+
+    // The recovery target is what carries the expansion and the selection
+    // across the two round-trips this takes. Without it the query would run and
+    // land on a collapsed card with a blank pane.
+    QVERIFY2(window.hasPendingRecoveryForTesting(),
+             "the double-click ran a query but asked for nothing to be "
+             "expanded or selected in the result");
+}
+
+void TestMainWindow::doubleClickingAReplyOpensItsThreadNotTheReplyAlone()
+{
+    // Item 91, the case most likely to be built wrong: "double click on a reply
+    // in a thread should still load the whole thread expanded in a view by
+    // itself, with the reply I clicked on visible in the right pane."
+    //
+    // So NOT id:<reply>. The obvious reading of "open it by itself" is a query
+    // for that one message, and it is not what was asked for: the view is the
+    // thread, the pane is the reply.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    ThreadSummary summary = makeThread(QStringLiteral("T1"), {});
+    summary.totalCount = 3;
+    model->appendBatch({ summary });
+
+    const QModelIndex thread = model->index(0, 0, QModelIndex());
+    QVERIFY(thread.isValid());
+
+    // Replies exist only once the tree has loaded, which is what gives this
+    // test a child row to double-click at all.
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("T1");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("T1"), { root, reply });
+
+    const QModelIndex replyRow = model->index(0, 0, thread);
+    QVERIFY2(replyRow.isValid(), "the fixture built no reply row");
+    QVERIFY2(model->isMessageRow(replyRow), "that row is not a message row");
+
+    emit view->doubleClicked(replyRow);
+
+    // The THREAD, not the reply. A query of id:m1@example.org here would be the
+    // defect this test exists for.
+    QCOMPARE(queryEdit->text(), QStringLiteral("thread:T1"));
+    QVERIFY2(window.hasPendingRecoveryForTesting(),
+             "nothing was remembered to select the reply once it comes back");
+}
+
+void TestMainWindow::doubleClickingDoesNotLeaveTheMarkReadTimerArmed()
+{
+    // A double-click delivers a single click FIRST, which selects the row and
+    // arms the mark-read timer. The user is passing through on their way to
+    // opening the thread, so the message must not be marked read behind the
+    // drill-down: the timer that the first click armed has to be cancelled.
+    //
+    // This is the same reasoning the multi-row branch of onThreadSelected()
+    // uses, where a selection gesture must not mutate mail.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+
+    model->appendBatch({ makeThread(QStringLiteral("T1"),
+                                    { QStringLiteral("unread") }) });
+    const QModelIndex thread = model->index(0, 0, QModelIndex());
+    QVERIFY(thread.isValid());
+
+    // The single click a real double-click delivers first. Asserted, so this
+    // test cannot pass by the timer never having been armed at all.
+    selectThreadRow(view, 0);
+    QVERIFY2(timer->isActive(),
+             "the selection did not arm the timer, so this proves nothing");
+
+    emit view->doubleClicked(thread);
+
+    QVERIFY2(!timer->isActive(),
+             "the drill-down left a mark-read armed for a message the user "
+             "only passed through");
 }
 
 void TestMainWindow::aUserQueryAbandonsAPendingRecovery()

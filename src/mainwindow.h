@@ -384,6 +384,10 @@ private slots:
     /// point the button uses.
     void recoverStaleThread(const QString &threadId, const QString &messageId);
 
+    /// Drills into the double-clicked row: the whole thread, expanded, alone in
+    /// the view, with that row's own message in the pane.
+    void onRowDoubleClicked(const QModelIndex &index);
+
     /// Selects the remembered message once its thread's rows have loaded.
     void applyPendingRecovery();
     void onThreadsReady(const QVector<ThreadSummary> &threads, quint64 generation);

@@ -11,6 +11,21 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-15
+
+Double-clicking a row now opens its thread on its own, expanded, with the row
+you clicked showing in the message pane. The rest of the release is three
+defects found by using the application: a card that would not open, an edit that
+came back undone after a sync, and an automatic sync that gave up instead of
+retrying.
+
+### Added
+
+- Double-clicking a row opens that thread alone in the list, expanded, with the
+  double-clicked row's own message in the pane. Double-clicking a reply opens
+  its whole thread with that reply showing, rather than the reply by itself.
+  There is no Back action: the filter buttons are how you leave the view.
+
 ### Fixed
 
 - A query whose result contains the thread already open left the message pane

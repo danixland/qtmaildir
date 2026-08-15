@@ -11,13 +11,34 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-08-15
+
+qtmaildir speaks Italian. Nothing loaded a translation before this release, so
+the interface was English whatever the locale said; all 355 strings are now
+translated, the language follows your environment, and a new `language` key
+overrides it either way. The audit that made this possible found eight labels
+in the tagging-rules dialog that could never have been translated into any
+language, in code that looked correct. The filter row also shows which of its
+four views you are in.
+
+### Upgrading
+
+Nothing to do. The interface stays English unless your environment asks for
+Italian, and `language = en_US` pins it there permanently if you prefer.
+
+If you run an Italian desktop and have `startup_query` naming a built-in filter,
+you may keep it in English (`Inbox`): filter names are resolved by identity as
+well as by label, so the English spelling works in every language. The
+translated name works too.
+
 ### Added
 
 - **An Italian translation, and the machinery to load one.** Nothing read a
   translation before this: there was no `QTranslator`, no `.ts` file and no
   build rule, so every string was English whatever the locale said. The
-  language comes from the environment, `LANG=it_IT.UTF-8`, and any other
-  locale runs in English as before. All 355 strings are translated.
+  language follows the environment by default, `LANG=it_IT.UTF-8`, and any
+  locale without a translation runs in English as before. All 355 strings are
+  translated.
 - `ctest -R translations` guards the translation against the two ways it rots:
   a new string added without one, and a string `lupdate` cannot see at all.
 - **`language` under `[general]`**, choosing the interface language regardless

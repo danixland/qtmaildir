@@ -2798,6 +2798,9 @@ void MainWindow::flushHeldEdits()
     const QVector<HeldEdit> edits = m_heldEdits;
     m_heldEdits.clear();
 
+    // Stamped for the ordering test. See flushGenerationForTesting().
+    m_flushGeneration = m_generation;
+
     for (const HeldEdit &edit : edits) {
         // Take the optimistic update back before sending, because
         // sendThreadTagChange() applies it again. applyTagChange() is
@@ -3248,6 +3251,25 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
         m_statusLabel->setText(m_defaultStatus);
     }
 
+    // BEFORE the refresh below, and the order is the whole of a defect. An edit
+    // made during a sync is held, because the worker's read-write open blocks
+    // on notmuch's exclusive lock. Refreshing first meant reading a database
+    // that still carried the old tag and reconciling that into the model, which
+    // overwrote the optimistic update; the flush then wrote the tag correctly,
+    // leaving the database right and the list wrong with nothing scheduled to
+    // re-read it. Reported by hand as a message going back to unread at the end
+    // of the sync it was read during.
+    //
+    // Flushing first also costs nothing when there is nothing held: the
+    // function returns immediately on an empty queue.
+    //
+    // OUTSIDE the Idle branch, deliberately, and this predates the reordering.
+    // Unknown clears the busy flag above, so writes resume from here on;
+    // leaving the flush inside Idle would let a new edit go straight out while
+    // the ones already held sat waiting for an Idle that a broken /proc/locks
+    // will never report.
+    flushHeldEdits();
+
     if (state == SyncMonitor::State::Idle) {
         refreshCurrentQuery();
 
@@ -3279,13 +3301,6 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
         }
     }
 
-    // OUTSIDE the Idle branch, deliberately. Unknown clears the busy flag above,
-    // so writes resume from here on; leaving the flush inside Idle would let a
-    // new edit go straight out while the ones already held sat waiting for an
-    // Idle that a broken /proc/locks will never report. After the status
-    // message, which flushHeldEdits() overwrites with its own when it sent
-    // something.
-    flushHeldEdits();
 }
 
 void MainWindow::showTransientStatus(const QString &text)

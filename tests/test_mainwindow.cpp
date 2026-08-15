@@ -202,6 +202,7 @@ private slots:
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
     void aSkippedAutoSyncRearmsRatherThanGivingUp();
+    void aHeldEditIsSentBeforeTheSyncEndRefreshReadsTheDatabase();
     void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
     void markReadCanBeDisabled();
     void pendingEditCountSurvivesAQuery();
@@ -4104,6 +4105,100 @@ void TestMainWindow::aSkippedAutoSyncRearmsRatherThanGivingUp()
     QVERIFY(label);
     QVERIFY2(!label->isHidden(),
              "the re-armed sync cleared the pending indicator");
+}
+
+void TestMainWindow::aHeldEditIsSentBeforeTheSyncEndRefreshReadsTheDatabase()
+{
+    // Reported by hand, 2026-08-15: read a message while a cron sync is
+    // running, watch the unread tag go and the status bar say the change will
+    // be applied when the sync finishes, and when it does the message is unread
+    // again.
+    //
+    // The edit is held during a sync because the worker's read-write open
+    // BLOCKS on notmuch's exclusive lock. At sync end the handler refreshed the
+    // list FIRST and flushed the held edits afterwards, so the refresh read a
+    // database that still carried `unread`, reconciled it into the model, and
+    // overwrote the optimistic update. The flush then wrote the tag correctly.
+    // The database ended up right and the list ended up wrong, with nothing
+    // scheduled to re-read it, which is why it looked like the edit was lost.
+    //
+    // Asserted on the ORDER, not on the tag: this window has no worker to
+    // answer either the refresh or the write, so the rows cannot show the
+    // outcome. What decides the bug is whether the edit had been sent by the
+    // time the refresh was issued.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString locks = dir.filePath(QStringLiteral("locks"));
+    {
+        QFile f(locks);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        // A held lock, so the edit below is held rather than sent.
+        f.write("1: FLOCK  ADVISORY  WRITE 1 00:00:0 0\n");
+    }
+    MainWindow::setLocksPathForTesting(locks);
+
+    Config config;
+    config.load(writeSyncConfig(dir));
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    model->appendBatch({ makeThread(QStringLiteral("T1"),
+                                    { QStringLiteral("unread") }) });
+    selectThreadRow(view, 0);
+
+    // The sync is observed as running, which is what makes the edit held.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+
+    auto *toggleUnread =
+        window.findChild<QAction *>(QStringLiteral("toggle_unread"));
+    QVERIFY(toggleUnread);
+    toggleUnread->trigger();
+
+    QVERIFY2(window.hasEditAwaitingSend(),
+             "the edit was not held, so this test proves nothing about the "
+             "order the sync-end handler does things in");
+
+    const quint64 before = window.currentGenerationForTesting();
+
+    // The sync ends. Both the refresh and the flush happen in this one call.
+    {
+        QFile f(locks);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    }
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+
+    QVERIFY2(!window.hasEditAwaitingSend(),
+             "the sync ended without ever flushing the held edit");
+
+    // The write went out. Nothing else in this handler sends one, so its
+    // presence is what proves the flush ran, and the refresh below is what it
+    // has to have run BEFORE.
+    QVERIFY2(!window.pendingThreadIdsForTesting().isEmpty(),
+             "the held edit was dropped rather than sent");
+
+    const quint64 after = window.currentGenerationForTesting();
+    QVERIFY2(after > before, "the sync end did not refresh the list at all");
+
+    // THE ASSERTION THIS TEST EXISTS FOR. Both orders leave identical end
+    // state, so everything above passes against the defect; only the
+    // generation stamped at flush time separates them.
+    //
+    // Flushing first means the stamp is the generation from BEFORE the refresh
+    // bumped it. Refreshing first means the flush sees the bumped one, and the
+    // refresh has already read a database that still carries the old tag.
+    QCOMPARE(window.flushGenerationForTesting(), before);
 }
 
 void TestMainWindow::aSuccessfulSyncRefreshesRatherThanRerunningTheQuery()

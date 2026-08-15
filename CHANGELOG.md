@@ -24,6 +24,11 @@ point at which they are stable.
   pending until a manual sync or the next cron run. It now re-arms at the
   configured delay. Skipping a concurrent run is unchanged: two mbsync runs
   cannot share the lock.
+- A tag change made while a sync was running reappeared undone in the thread
+  list when that sync finished. The change was held until the sync released
+  notmuch's write lock, but the list was refreshed from the database before the
+  held change was written to it, so the refresh painted the old tag back. The
+  change itself was never lost, only the list was wrong.
 
 ## [0.23.0] - 2026-08-15
 

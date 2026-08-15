@@ -207,6 +207,15 @@ public:
         return m_refreshGeneration;
     }
 
+    /// The query generation as it stood when the held edits were last flushed,
+    /// or 0 if they never have been.
+    ///
+    /// Recorded because the ORDER of the flush and the sync-end refresh is the
+    /// whole of one defect and both leave identical end states: a test that
+    /// looks afterwards passes whichever ran first. Compared against the
+    /// generation the refresh bumps, this says which came first.
+    quint64 flushGenerationForTesting() const { return m_flushGeneration; }
+
     /// The generation a database-stats reply must carry to be accepted.
     ///
     /// A test seam, for the same reason as the one above: onDatabaseStatsReady
@@ -700,6 +709,7 @@ private:
     /// it. Order matters: two edits touching one thread must reach the database
     /// in the order they were made, or the later one does not win.
     QVector<HeldEdit> m_heldEdits;
+    quint64 m_flushGeneration = 0;
 
     friend class ThreadTagCommand;
     friend class MessageTagCommand;

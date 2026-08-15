@@ -186,6 +186,19 @@ public:
     /// stale, so a test standing in for the worker has to know the current one.
     quint64 currentGenerationForTesting() const { return m_generation; }
 
+    /// Puts the window into the state refreshCurrentQuery() leaves it in, and
+    /// returns the generation the refresh's replies must carry.
+    ///
+    /// A test seam, because refreshCurrentQuery() returns early without a
+    /// worker and a bare window has none. It sets only what decides whether a
+    /// batch is a refresh's, not what the real function asks the worker to do.
+    quint64 beginRefreshForTesting()
+    {
+        m_refreshGeneration = ++m_generation;
+        m_refreshThreads.clear();
+        return m_refreshGeneration;
+    }
+
     /// The generation a database-stats reply must carry to be accepted.
     ///
     /// A test seam, for the same reason as the one above: onDatabaseStatsReady

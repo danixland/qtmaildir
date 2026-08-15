@@ -2086,6 +2086,18 @@ void MainWindow::onThreadsReady(const QVector<ThreadSummary> &threads,
     }
 
     m_model->appendBatch(threads);
+
+    // Item 74. "Searching..." was set once in runQuery() and cleared only on
+    // queryFinished, so it went on claiming the query was running for the whole
+    // walk while rows were visibly arriving behind it. Measured cold against a
+    // 1.1 GB index: first rows at 642 ms, done at 5714 ms, five seconds of a
+    // slow query reading as a frozen one.
+    //
+    // The count comes from the model rather than from a running total, since
+    // that is the number of rows the user can actually see. Nothing about the
+    // timing changes; this only stops the bar from lying.
+    m_statusLabel->setText(tr("Searching... %n thread(s)", "",
+                              m_model->rowCount(QModelIndex())));
 }
 
 void MainWindow::onQueryFinished(int total, quint64 generation)

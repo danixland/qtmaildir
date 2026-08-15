@@ -36,6 +36,13 @@ point at which they are stable.
 
 ### Changed
 
+- The status bar counts threads as they arrive instead of saying "Searching..."
+  until the query is done. On a large query after a reboot, when the notmuch
+  index is still being read from disk, the first rows appear seconds before the
+  walk finishes; the bar used to go on claiming the query was running for all of
+  that time, which made a slow query look like a frozen one. Nothing about the
+  timing changes.
+
 - The dialog reporting configuration problems at startup now appears over the
   main window instead of before it. Which problems interrupt startup is
   unchanged: a keybinding that is being ignored does, a notice such as "no sync

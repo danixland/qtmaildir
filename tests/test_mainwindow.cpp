@@ -169,6 +169,8 @@ private slots:
     void narrowingAnEmptyQueryBarIsAPlainSearch();
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
+    void arrivingBatchesUpdateTheStatusBarWithTheCountSoFar();
+    void aRefreshsBatchesLeaveTheStatusBarAlone();
     void selectingAThreadRootShowsItInTheMessagePane();
     void anUnexpandedRootRendersOneMessageNotTheConversation();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
@@ -6260,6 +6262,103 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
     // thread, so findChild() cannot see it. Observing the window's own state
     // is both the only route and the better assertion.
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::arrivingBatchesUpdateTheStatusBarWithTheCountSoFar()
+{
+    // Item 74: "Searching..." was set once by runQuery and cleared only on
+    // queryFinished, so it kept claiming the query was running for the whole
+    // cold-cache walk, measured at 5.7 s against a 1.1 GB index, while rows
+    // were visibly arriving behind it from 642 ms. A slow query read as a
+    // frozen one.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status =
+        window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY2(status, "no status label");
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+
+    window.findChild<QLineEdit *>()->setText(QStringLiteral("tag:inbox"));
+    QMetaObject::invokeMethod(&window, "runCurrentQuery");
+
+    // The guard: before any batch, the bar says what it has always said. If
+    // this ever stops holding, the assertions below are measuring the wrong
+    // thing and would pass against a bar that never changes at all.
+    QCOMPARE(status->text(), QStringLiteral("Searching..."));
+
+    const quint64 generation = window.currentGenerationForTesting();
+    const QVector<ThreadSummary> first = {
+        makeThread(QStringLiteral("t1"), {}),
+        makeThread(QStringLiteral("t2"), {})
+    };
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "onThreadsReady",
+        Q_ARG(QVector<ThreadSummary>, first), Q_ARG(quint64, generation)));
+
+    const QString afterFirst = status->text();
+    QVERIFY2(afterFirst != QStringLiteral("Searching..."),
+             "the bar still claimed the query was running after rows arrived");
+    QVERIFY2(afterFirst.contains(QStringLiteral("2")),
+             qPrintable(QStringLiteral("no count so far in: ") + afterFirst));
+
+    // A second batch, because the count has to keep moving. A bar that says
+    // "2" forever is the same lie in a shorter sentence.
+    const QVector<ThreadSummary> second = {
+        makeThread(QStringLiteral("t3"), {})
+    };
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "onThreadsReady",
+        Q_ARG(QVector<ThreadSummary>, second), Q_ARG(quint64, generation)));
+    QVERIFY2(status->text().contains(QStringLiteral("3")),
+             qPrintable(QStringLiteral("count did not advance: ")
+                        + status->text()));
+
+    // And the finished text still wins, so the running message cannot outlive
+    // the query that armed it.
+    // The literal "(s)" is what an untranslated %n plural renders as with no
+    // translator loaded, which is the case in the suite. Asserting the plural
+    // form Qt would pick under a translation would fail against correct code.
+    QMetaObject::invokeMethod(&window, "onQueryFinished", Q_ARG(int, 3),
+                              Q_ARG(quint64, generation));
+    QCOMPARE(status->text(), QStringLiteral("3 thread(s)"));
+}
+
+void TestMainWindow::aRefreshsBatchesLeaveTheStatusBarAlone()
+{
+    // A refresh after a sync is meant to be silent: onQueryFinished updates
+    // the FALLBACK text without stamping over the bar, and its batches must
+    // not do what its completion deliberately does not. Without this, a cron
+    // sync would overwrite whatever the bar was telling the user with a
+    // running count they never asked for.
+    const Config config;
+    MainWindow window(config);
+
+    auto *status =
+        window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    window.findChild<QLineEdit *>()->setText(QStringLiteral("tag:inbox"));
+    QMetaObject::invokeMethod(&window, "runCurrentQuery");
+    const quint64 generation = window.currentGenerationForTesting();
+    QMetaObject::invokeMethod(&window, "onQueryFinished", Q_ARG(int, 1),
+                              Q_ARG(quint64, generation));
+
+    // Something the user is being told, which the refresh must not erase.
+    status->setText(QStringLiteral("Sync complete."));
+
+    // A refresh's own generation. refreshCurrentQuery() needs a worker to set
+    // one, and a bare window has none, so the generation is advanced the same
+    // way the refresh does and declared to the window through the seam.
+    const quint64 refreshGeneration =
+        window.beginRefreshForTesting();
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "onThreadsReady",
+        Q_ARG(QVector<ThreadSummary>, { makeThread(QStringLiteral("t1"), {}) }),
+        Q_ARG(quint64, refreshGeneration)));
+
+    QCOMPARE(status->text(), QStringLiteral("Sync complete."));
 }
 
 void TestMainWindow::selectingAThreadRootShowsItInTheMessagePane()

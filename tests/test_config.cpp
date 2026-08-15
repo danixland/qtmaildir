@@ -96,6 +96,7 @@ private slots:
     void allSentQuerySkipsAccountsWithoutTheKey();
     void allSentQueryJoinsEveryConfiguredAccount();
     void aStoredGeneratedQueryIsUnpinnedNotDropped();
+    void theFlaggedFilterIsCalledImportant();
     void everyBuiltinFilterIsAKnownGenerator();
     void aFilterAcrossAllAccountsIsTheUnscopedQuery();
     void aTagFilterScopedToAnAccountCarriesThatAccountsPath();
@@ -1042,6 +1043,23 @@ static QString writeTwoAccounts(const QTemporaryDir &dir)
         "maildir=personal\n"));
 }
 
+void TestConfig::theFlaggedFilterIsCalledImportant()
+{
+    // Item 57 decided this and item 93 contradicted it. The `flag` ACTION has
+    // read "&Important" since 0.14.0, chosen over "Starred" partly because &I
+    // was free where &S collided with Mark spam, and the filter shipped as
+    // "Flagged" beside it: the same tag under two names in one window.
+    //
+    // The generator keeps its own name, `flagged`. That string is stored in
+    // queries.json and matched against a closed set, so it is wire format and
+    // must not follow the label.
+    const SavedQuery filter =
+        Config::builtinFilter(QStringLiteral("flagged"));
+
+    QCOMPARE(filter.name, QStringLiteral("Important"));
+    QCOMPARE(filter.generated, QStringLiteral("flagged"));
+}
+
 void TestConfig::everyBuiltinFilterIsAKnownGenerator()
 {
     // The guard for every case below. A filter whose generator is not in the
@@ -1071,7 +1089,7 @@ void TestConfig::everyBuiltinFilterIsAKnownGenerator()
     // surface for this would be built and deleted inside two items.
     QCOMPARE(names, (QStringList{ QStringLiteral("Unread"),
                                   QStringLiteral("Inbox"),
-                                  QStringLiteral("Flagged"),
+                                  QStringLiteral("Important"),
                                   QStringLiteral("Sent") }));
 }
 

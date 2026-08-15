@@ -169,6 +169,7 @@ private slots:
     void narrowingAnEmptyQueryBarIsAPlainSearch();
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
+    void everyBuiltinFilterButtonCarriesAnIconAndItsText();
     void aQueryInTheMenuCanActuallyBeRun();
     void theFourBuiltinFiltersAreOnTheRowInOrder();
     void aFilterComposesWithTheSelectedAccount();
@@ -5098,7 +5099,7 @@ void TestMainWindow::thereIsNoSentButtonWithoutASentKey()
     QVERIFY(config.allSentQuery().isEmpty());
 
     MainWindow window(config);
-    QVERIFY(!window.findChild<QPushButton *>(QStringLiteral("sentButton")));
+    QVERIFY(!window.findChild<QAbstractButton *>(QStringLiteral("sentButton")));
 }
 
 void TestMainWindow::theSentButtonRunsEveryConfiguredAccount()
@@ -5116,7 +5117,7 @@ void TestMainWindow::theSentButtonRunsEveryConfiguredAccount()
     }));
 
     MainWindow window(config);
-    auto *button = window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+    auto *button = window.findChild<QAbstractButton *>(QStringLiteral("sentButton"));
     QVERIFY(button);
 
     auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
@@ -5149,7 +5150,7 @@ void TestMainWindow::theSentButtonSurvivesABracketedPath()
     }));
 
     MainWindow window(config);
-    auto *button = window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+    auto *button = window.findChild<QAbstractButton *>(QStringLiteral("sentButton"));
     QVERIFY(button);
     auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
     QVERIFY(queryEdit);
@@ -5370,7 +5371,7 @@ void TestMainWindow::flatModeDoesNotSurviveTheNextQuery()
     MainWindow window(config);
     auto *model = window.findChild<ThreadListModel *>();
     QVERIFY(model);
-    auto *button = window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+    auto *button = window.findChild<QAbstractButton *>(QStringLiteral("sentButton"));
     QVERIFY(button);
     auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
     QVERIFY(queryEdit);
@@ -5495,7 +5496,7 @@ static void loadWithQueries(Config &config, QTemporaryDir &dir,
 ///
 /// By object name, not by label: the labels are translated, and a user may name
 /// their own query "Unread" too.
-static bool isBuiltinFilterButton(QPushButton *button)
+static bool isBuiltinFilterButton(QAbstractButton *button)
 {
     for (const SavedQuery &filter : Config::builtinFilters()) {
         if (button->objectName() == filter.generated + QStringLiteral("Button"))
@@ -5510,9 +5511,14 @@ static QStringList savedQueryButtonLabels(MainWindow &window)
     auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
     if (!row)
         return labels;
-    const QList<QPushButton *> buttons =
-        row->findChildren<QPushButton *>(QString(), Qt::FindDirectChildrenOnly);
-    for (QPushButton *button : buttons) {
+    // QAbstractButton, not QPushButton: the built-in filters are QToolButtons
+    // so they can carry an icon beside their text, and findChildren on the
+    // narrower type would silently skip them, leaving the filter below with
+    // nothing to filter.
+    const QList<QAbstractButton *> buttons =
+        row->findChildren<QAbstractButton *>(QString(),
+                                             Qt::FindDirectChildrenOnly);
+    for (QAbstractButton *button : buttons) {
         // The menu button is not a saved query and must not be counted as one.
         if (button->objectName() == QStringLiteral("savedQueryMenuButton"))
             continue;
@@ -5920,7 +5926,7 @@ void TestMainWindow::aStoredGeneratedQueryRunsFlatAndComposed()
 
     MainWindow window(config);
     auto *button =
-        window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+        window.findChild<QAbstractButton *>(QStringLiteral("sentButton"));
     QVERIFY(button);
 
     auto *queryEdit =
@@ -5979,7 +5985,7 @@ void TestMainWindow::aRenamedSentEntryKeepsWorking()
     // The built-in Sent still resolves the same query, so nothing the user
     // could reach before became unreachable.
     auto *button =
-        window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+        window.findChild<QAbstractButton *>(QStringLiteral("sentButton"));
     QVERIFY(button);
     auto *queryEdit =
         window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
@@ -6014,7 +6020,7 @@ void TestMainWindow::aGeneratedQueryWithNothingToShowIsSkipped()
     // missing Sent means it was skipped rather than that nothing was built.
     QCOMPARE(savedQueryButtonLabels(window),
              QStringList{ QStringLiteral("Inbox") });
-    QVERIFY2(!window.findChild<QPushButton *>(QStringLiteral("sentButton")),
+    QVERIFY2(!window.findChild<QAbstractButton *>(QStringLiteral("sentButton")),
              "a generated query with nothing to show must not get a button");
 }
 
@@ -6100,7 +6106,7 @@ void TestMainWindow::onlyAStoredQueryOffersToBecomeATaggingRule()
 
     // By object name, which rebuildSavedQueryRow assigns precisely so a test
     // need not depend on a label the user can rename.
-    auto *generated = row->findChild<QPushButton *>(
+    auto *generated = row->findChild<QAbstractButton *>(
         QStringLiteral("sentButton"));
 
     // savedQueryButton(), not a scan for the label: item 93 puts a BUILT-IN
@@ -6145,7 +6151,7 @@ void TestMainWindow::unpinningMovesAQueryToTheMenu()
     auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
     QVERIFY(row);
     QCOMPARE(savedQueryButtonLabels(window).size(), 2);
-    QVERIFY(!window.findChild<QPushButton *>(
+    QVERIFY(!window.findChild<QAbstractButton *>(
         QStringLiteral("savedQueryMenuButton")));
 
     auto *button = savedQueryButton(window, QStringLiteral("Inbox"));
@@ -6350,6 +6356,45 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
 }
 
+void TestMainWindow::everyBuiltinFilterButtonCarriesAnIconAndItsText()
+{
+    // The filters are part of the application now, so they carry icons like the
+    // Save button beside them rather than reading as bare text among the user's
+    // own queries.
+    //
+    // Text BESIDE the icon, not instead of it. The toolbar follows the
+    // desktop's own button style, but this row is a row of text buttons: an
+    // icon on its own here reads as a different kind of control than it is,
+    // which is the same argument the Save button records.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSentConfig(dir, {
+        {QStringLiteral("work"), QStringLiteral("Sent")},
+    }));
+
+    MainWindow window(config);
+
+    for (const SavedQuery &filter : Config::builtinFilters()) {
+        auto *button = window.findChild<QToolButton *>(
+            filter.generated + QStringLiteral("Button"));
+        QVERIFY2(button, qPrintable(QStringLiteral("no button for filter '%1'")
+                                        .arg(filter.generated)));
+
+        QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonTextBesideIcon);
+        QCOMPARE(button->text(), filter.name);
+
+        // Whether the icon RESOLVES depends on the running icon theme, which a
+        // test cannot assume: QIcon::fromTheme returns a null icon under a
+        // platform with no theme installed, so asserting on isNull() would fail
+        // for a reason that has nothing to do with this code. What is asserted
+        // is that a name was asked for, which is the part that lives here.
+        QVERIFY2(!button->icon().name().isEmpty(),
+                 qPrintable(QStringLiteral("filter '%1' was given no themed "
+                                           "icon name").arg(filter.generated)));
+    }
+}
+
 void TestMainWindow::aQueryInTheMenuCanActuallyBeRun()
 {
     // An unpinned query was UNRUNNABLE. Its action carried both a triggered
@@ -6434,8 +6479,10 @@ void TestMainWindow::theFourBuiltinFiltersAreOnTheRowInOrder()
     auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
     QVERIFY(row);
 
+    // QAbstractButton: the filters are QToolButtons, so they carry an icon
+    // beside their text like the Save button at the other end of the row.
     QStringList labels;
-    for (QPushButton *button : row->findChildren<QPushButton *>()) {
+    for (QAbstractButton *button : row->findChildren<QAbstractButton *>()) {
         // The overflow menu is a control over the set, not a member of it.
         if (button->objectName() == QStringLiteral("savedQueryMenuButton"))
             continue;
@@ -6444,7 +6491,7 @@ void TestMainWindow::theFourBuiltinFiltersAreOnTheRowInOrder()
 
     QCOMPARE(labels, (QStringList{ QStringLiteral("Unread"),
                                    QStringLiteral("Inbox"),
-                                   QStringLiteral("Flagged"),
+                                   QStringLiteral("Important"),
                                    QStringLiteral("Sent") }));
 }
 
@@ -6468,7 +6515,7 @@ void TestMainWindow::aFilterComposesWithTheSelectedAccount()
     QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
 
     auto *unread =
-        window.findChild<QPushButton *>(QStringLiteral("unreadButton"));
+        window.findChild<QAbstractButton *>(QStringLiteral("unreadButton"));
     QVERIFY2(unread, "no built-in Unread button");
     unread->click();
 
@@ -6478,7 +6525,7 @@ void TestMainWindow::aFilterComposesWithTheSelectedAccount()
     // Sent under the same account is the account's OWN folder, not the union
     // wrapped in a scope. See the Config test of the same name for why a row
     // count cannot tell the two apart.
-    auto *sent = window.findChild<QPushButton *>(QStringLiteral("sentButton"));
+    auto *sent = window.findChild<QAbstractButton *>(QStringLiteral("sentButton"));
     QVERIFY(sent);
     sent->click();
     QCOMPARE(queryEdit->text(), QStringLiteral("path:\"work/Sent/**\""));
@@ -6503,7 +6550,7 @@ void TestMainWindow::aFilterAcrossAllAccountsIsUnscoped()
     QVERIFY(window.selectedAccountForTesting().isEmpty());
 
     auto *unread =
-        window.findChild<QPushButton *>(QStringLiteral("unreadButton"));
+        window.findChild<QAbstractButton *>(QStringLiteral("unreadButton"));
     QVERIFY(unread);
     unread->click();
 
@@ -6526,7 +6573,7 @@ void TestMainWindow::aFilterDoesNotClearTheAccountSelection()
     window.selectAccountForTesting(QStringLiteral("work"));
 
     auto *unread =
-        window.findChild<QPushButton *>(QStringLiteral("unreadButton"));
+        window.findChild<QAbstractButton *>(QStringLiteral("unreadButton"));
     QVERIFY(unread);
     unread->click();
 
@@ -6588,7 +6635,7 @@ void TestMainWindow::aFilterOffersNoEditOrDeleteActions()
 
     MainWindow window(config);
     auto *unread =
-        window.findChild<QPushButton *>(QStringLiteral("unreadButton"));
+        window.findChild<QAbstractButton *>(QStringLiteral("unreadButton"));
     QVERIFY(unread);
 
     for (QAction *action : unread->actions()) {

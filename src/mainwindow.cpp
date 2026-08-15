@@ -1731,11 +1731,38 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
             == Config::matchNothingQuery())
             continue;
 
-        auto *button = new QPushButton(filter.name, row);
+        // A QToolButton, like the Save button at the other end of the row, so
+        // the two shipped controls carry icons the same way. The user's own
+        // queries stay plain QPushButtons: they have no icon to carry and
+        // nothing to say about which is which.
+        auto *button = new QToolButton(row);
+        button->setText(filter.name);
         // A stable object name per filter, so a test finds the button without
         // depending on the label, which is translated.
         button->setObjectName(filter.generated + QStringLiteral("Button"));
-        connect(button, &QPushButton::clicked, this,
+
+        // Theme icons, not the shipped SVGs in Marks: item 70's split is that
+        // the panes are ours and the chrome is the system's, and the query row
+        // is chrome. A name the running theme lacks degrades to text on its
+        // own, which is why nothing here checks whether it resolved.
+        //
+        // mail-mark-important matches the `flag` action's own icon, since both
+        // reach the same tag: the filter finds what the action marks.
+        static const QHash<QString, QString> filterIcons = {
+            { QStringLiteral("unread"),  QStringLiteral("mail-mark-unread") },
+            { QStringLiteral("inbox"),   QStringLiteral("mail-inbox") },
+            { QStringLiteral("flagged"), QStringLiteral("mail-mark-important") },
+            { QStringLiteral("sent"),    QStringLiteral("mail-sent") },
+        };
+        button->setIcon(
+            QIcon::fromTheme(filterIcons.value(filter.generated)));
+
+        // Icon AND text, for the reason the Save button records: this row is a
+        // row of text buttons, so an icon on its own reads as a different kind
+        // of control than it is.
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+
+        connect(button, &QToolButton::clicked, this,
                 [this, filter]() { runFilter(filter); });
         box->addWidget(button);
     }

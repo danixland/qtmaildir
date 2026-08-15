@@ -11,6 +11,17 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Changed
+
+- The built-in filters carry icons, like the Save button at the other end of
+  the query row, with their text beside them.
+
+### Fixed
+
+- The flagged filter is labelled **Important**, matching the action of the same
+  name. It shipped in 0.21.0 as "Flagged", which put the same tag under two
+  names in one window.
+
 ## [0.21.0] - 2026-08-15
 
 The query row gains four filters the application ships: Unread, Inbox, Flagged

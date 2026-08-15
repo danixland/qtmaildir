@@ -719,7 +719,12 @@ SavedQuery Config::builtinFilter(const QString &generator)
     } else if (generator == QStringLiteral("inbox")) {
         filter.name = tr("Inbox");
     } else if (generator == QStringLiteral("flagged")) {
-        filter.name = tr("Flagged");
+        // "Important", matching the `flag` action, which item 57 renamed from
+        // "Flag" for exactly this reason. Shipping the filter as "Flagged"
+        // beside it put the same tag under two names in one window. The
+        // GENERATOR stays `flagged`: that string is stored in queries.json and
+        // matched against a closed set, so it is wire format, not a label.
+        filter.name = tr("Important");
     } else if (generator == QStringLiteral("sent")) {
         filter.name = tr("Sent");
         // Messages rather than threads, and the only filter that sets this. A

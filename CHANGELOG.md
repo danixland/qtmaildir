@@ -11,6 +11,14 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-15
+
+The query row gains four filters the application ships: Unread, Inbox, Flagged
+and Sent. Unlike the buttons before them they cooperate with the account
+dropdown, so selecting an account and clicking Unread shows that account's
+unread mail rather than everyone's. Your own saved queries keep the behaviour
+they had and move below them.
+
 ### Added
 
 - **Four built-in filters on the query row: Unread, Inbox, Flagged and Sent.**

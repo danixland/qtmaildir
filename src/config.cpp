@@ -57,7 +57,24 @@ constexpr int kQueriesFormatVersion = 1;
 /// button that silently finds nothing. Adding one here needs no format bump:
 /// an older build keeps the row and reports it, which is why an unknown
 /// generator is a problem rather than a reason to drop the entry.
-const QStringList kQueryGenerators = { QStringLiteral("sent") };
+const QStringList kQueryGenerators = { QStringLiteral("unread"),
+                                       QStringLiteral("inbox"),
+                                       QStringLiteral("flagged"),
+                                       QStringLiteral("sent") };
+
+/// The tag a generator matches, for the three filters that are a plain tag
+/// query. Empty for "sent", which composes from each account's folder instead
+/// and is handled separately.
+QString generatorTag(const QString &generator)
+{
+    if (generator == QStringLiteral("unread"))
+        return QStringLiteral("unread");
+    if (generator == QStringLiteral("inbox"))
+        return QStringLiteral("inbox");
+    if (generator == QStringLiteral("flagged"))
+        return QStringLiteral("flagged");
+    return QString();
+}
 
 } // namespace
 
@@ -650,6 +667,108 @@ QString Config::resolvedQuery(const SavedQuery &query) const
         return query.query;
 
     return scope.scopedQuery(query.query);
+}
+
+bool Config::isKnownGenerator(const QString &generator)
+{
+    return kQueryGenerators.contains(generator);
+}
+
+QString Config::matchNothingQuery()
+{
+    // notmuch reads an EMPTY query as "match everything", so a generator with
+    // nothing to match must say so explicitly. `tag:` and its negation cannot
+    // both hold, and the tag name is irrelevant: what matters is that this
+    // parses and matches nothing. A malformed string would not do, since
+    // notmuch accepts almost anything and matches nothing quietly, which is the
+    // same result reached by luck rather than by contract.
+    return QStringLiteral("tag:unread and not tag:unread");
+}
+
+QList<SavedQuery> Config::builtinFilters()
+{
+    // Left to right on the query row. Fixed rather than configurable: item 94
+    // removes the mixed row entirely once these are confirmed, so a settings
+    // surface for the order would be built and deleted inside two items.
+    QList<SavedQuery> filters;
+    for (const QString &generator : kQueryGenerators)
+        filters.append(builtinFilter(generator));
+    return filters;
+}
+
+SavedQuery Config::builtinFilter(const QString &generator)
+{
+    if (!isKnownGenerator(generator))
+        return {};
+
+    SavedQuery filter;
+    filter.generated = generator;
+
+    // Translated, because these are the labels on the buttons. The GENERATOR
+    // name is not: it is stored in queries.json and matched against a closed
+    // set, so translating it would make a file written in one locale unreadable
+    // in another.
+    if (generator == QStringLiteral("unread")) {
+        filter.name = tr("Unread");
+    } else if (generator == QStringLiteral("inbox")) {
+        filter.name = tr("Inbox");
+    } else if (generator == QStringLiteral("flagged")) {
+        filter.name = tr("Flagged");
+    } else if (generator == QStringLiteral("sent")) {
+        filter.name = tr("Sent");
+        // Messages rather than threads, and the only filter that sets this. A
+        // thread would fold the user's sent message back into the conversation
+        // it belongs to, which is item 63's finding.
+        filter.flat = true;
+    }
+
+    return filter;
+}
+
+QString Config::resolvedQuery(const SavedQuery &query,
+                              const QString &accountKey) const
+{
+    // An ordinary saved query is a DESTINATION: it states its own scope and
+    // ignores the dropdown, which is the behaviour item 90 leaves alone. Only a
+    // generated filter composes.
+    if (!query.isGenerated())
+        return resolvedQuery(query);
+
+    if (!isKnownGenerator(query.generated))
+        return QString();
+
+    if (accountKey.isEmpty()) {
+        // Across every account, which for the tag filters is the bare query and
+        // for Sent is the union of the accounts' folders.
+        if (query.generated == QStringLiteral("sent")) {
+            const QString all = allSentQuery();
+            return all.isEmpty() ? matchNothingQuery() : all;
+        }
+        return QStringLiteral("tag:%1").arg(generatorTag(query.generated));
+    }
+
+    const Account scope = account(accountKey);
+    if (!scope.isValid())
+        return resolvedQuery(query, QString());
+
+    if (query.generated == QStringLiteral("sent")) {
+        // The account's OWN sent query, never the all-accounts one wrapped in
+        // this account's path. Wrapping gives
+        //     path:"a/**" and (path:"a/Sent/**" or path:"b/Sent/**")
+        // which returns the right rows because path: is hierarchical, and is
+        // still wrong: it double-scopes and works by accident of the syntax.
+        const QString sent = scope.sentQuery();
+        // Empty when the account configures no sent folder, which is a real
+        // case and not a misconfiguration. Returned as-is it would mean "match
+        // everything", so a button labelled Sent would show the whole Maildir.
+        return sent.isEmpty() ? matchNothingQuery() : sent;
+    }
+
+    // A tag filter carries no path of its own, so scoping is exactly what
+    // scopedQuery() does. Its parentheses are load-bearing: `path:... and a or
+    // b` binds as `(path:... and a) or b`.
+    return scope.scopedQuery(
+        QStringLiteral("tag:%1").arg(generatorTag(query.generated)));
 }
 
 SavedQuery Config::startupSavedQuery() const

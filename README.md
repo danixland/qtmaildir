@@ -69,15 +69,29 @@ cmake -S . -B build -DQTMAILDIR_BUILD_TESTS=OFF
 
 ### Translations
 
-qtmaildir ships an Italian translation. The language is taken from the
-environment, so there is no configuration key of its own:
+qtmaildir ships an Italian translation. By default the language comes from the
+environment:
 
 ```bash
 LANG=it_IT.UTF-8 qtmaildir
 ```
 
-Any other locale runs the application in English, which is also what happens
-when the compiled translation is missing.
+The `language` key under `[general]` overrides that, in both directions: it
+selects Italian on an English desktop, and forces English on an Italian one.
+A short code or a full locale name both work.
+
+```ini
+[general]
+language = it        ; or it_IT
+; language = en_US   ; force English whatever $LANG says
+; language = system  ; follow the environment (the default)
+```
+
+Any language with no translation runs the application in English, which is also
+what happens when the compiled translation is missing. A value that is not a
+locale name at all is reported as a configuration problem rather than silently
+falling back, since `language = itallian` and `language = en_US` would
+otherwise look identical from the outside.
 
 `translations/qtmaildir_it_IT.ts` is tracked in git; the `.qm` it compiles to
 is generated at build time and is not. Building needs Qt6's `LinguistTools`,
@@ -146,6 +160,11 @@ identity.
 ; starts in "work - Inbox". It only sets the STARTING scope: clicking a saved
 ; query that names no account still clears the selection, as it always does.
 ; startup_account = work
+; Optional. Interface language, overriding the one your environment asks for.
+; A locale name, short or full: "it" and "it_IT" both select Italian. The
+; default is "system", which follows $LANG. Set it to a language qtmaildir
+; does not ship, or to English, and the interface stays in English.
+; language = system
 ; Optional. Toolbar icon size in pixels, 16 to 64. Defaults to 24. The
 ; toolbar follows your desktop's toolbar button style, so if that is set to
 ; "icon only" this is the whole size of the control; 16 matches what most
@@ -299,6 +318,12 @@ drop your comments and reorder your keys.
 One behaviour changes with the move. Buttons used to appear in alphabetical
 order, because the INI backend returns keys sorted and preserving file order
 would have meant hand-rolling a parser. They now follow the file.
+
+The built-in filter whose query is currently in the bar is drawn as a pressed
+button, so the row shows which view you are in. It follows the query rather
+than the last button you clicked: editing the query by hand clears the
+highlight, and typing a filter's own query lights it. Changing the account
+recomputes it, since a filter composes with the dropdown.
 
 `startup_query` looks at your saved queries first and then at the built-in
 filters, so it can name either; yours wins if both carry the same name. A name

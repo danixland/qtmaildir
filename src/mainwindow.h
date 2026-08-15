@@ -327,6 +327,16 @@ private:
     /// path: being hierarchical. See Config::resolvedQuery(query, accountKey).
     void runFilter(const SavedQuery &filter);
 
+    /// Checks the filter button whose query is what the bar currently holds,
+    /// and unchecks the rest.
+    ///
+    /// Derived from the query TEXT rather than from the last button pressed, so
+    /// editing the query by hand clears the highlight and typing a filter's
+    /// query lights it. Resolved against the account box, which is why changing
+    /// the account keeps the highlight: the same filter resolves to a different
+    /// query and both are still "Inbox".
+    void updateFilterButtons();
+
     /// Names the current query and stores it in queries.json.
     void saveCurrentQuery();
 
@@ -736,6 +746,10 @@ private:
     QLineEdit *m_queryEdit = nullptr;
     /// Save query, beside the field. Driven by the save_query action.
     QToolButton *m_saveQueryButton = nullptr;
+    /// The built-in filter buttons, by generator, so the one matching the
+    /// current view can be shown as checked. Kept because the buttons are built
+    /// in a loop and are otherwise unreachable without findChild() on a name.
+    QHash<QString, QToolButton *> m_filterButtons;
     /// Whether deleting a saved query asks first. Always true outside tests.
     bool m_confirmDelete = true;
     QueryCompleter *m_queryCompleter = nullptr;

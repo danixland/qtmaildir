@@ -178,6 +178,9 @@ private slots:
     void aFilterComposesWithTheSelectedAccount();
     void aFilterAcrossAllAccountsIsUnscoped();
     void aFilterDoesNotClearTheAccountSelection();
+    void theActiveFilterButtonIsChecked();
+    void aHandEditedQueryChecksNoFilterButton();
+    void theCheckedFilterFollowsTheAccount();
     void aSavedQueryStillClearsTheAccountSelection();
     void aFilterOffersNoEditOrDeleteActions();
     void changingTheAccountRunsNothing();
@@ -6694,6 +6697,132 @@ void TestMainWindow::aFilterAcrossAllAccountsIsUnscoped()
     unread->click();
 
     QCOMPARE(queryEdit->text(), QStringLiteral("tag:unread"));
+}
+
+void TestMainWindow::theActiveFilterButtonIsChecked()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSentConfig(dir, {
+        {QStringLiteral("work"), QStringLiteral("Sent")},
+    }));
+
+    MainWindow window(config);
+    auto *inbox =
+        window.findChild<QAbstractButton *>(QStringLiteral("inboxButton"));
+    auto *unread =
+        window.findChild<QAbstractButton *>(QStringLiteral("unreadButton"));
+    QVERIFY(inbox);
+    QVERIFY(unread);
+
+    // Checkable is what lets the style draw the active look at all. A test that
+    // only asserted isChecked() would pass against a button that can hold the
+    // state and never shows it.
+    QVERIFY2(inbox->isCheckable(), "the filter button cannot show a checked state");
+
+    // Unread is checked before anything is clicked, and that is correct rather
+    // than incidental: startup_query defaults to Unread, so the window opens
+    // showing it and the highlight describes the view from the first frame. The
+    // window having opened on a filter is asserted here so the Inbox
+    // assertions below are known to be a CHANGE of state rather than a button
+    // that happened to start unchecked.
+    QVERIFY2(unread->isChecked(),
+             "the default startup view is Unread, so its button should open "
+             "highlighted");
+    QVERIFY(!inbox->isChecked());
+
+    inbox->click();
+    QVERIFY2(inbox->isChecked(), "the filter that ran is not highlighted");
+    QVERIFY2(!unread->isChecked(), "a filter that did not run is highlighted");
+
+    // And the highlight MOVES rather than accumulating. Exactly one button can
+    // describe the current view.
+    unread->click();
+    QVERIFY(unread->isChecked());
+    QVERIFY2(!inbox->isChecked(), "the previous filter stayed highlighted");
+}
+
+void TestMainWindow::aHandEditedQueryChecksNoFilterButton()
+{
+    // The behaviour the user chose over "remember the last click": the
+    // highlight describes what is on screen, so editing the query away from a
+    // filter's own query clears it rather than leaving a button lit over a view
+    // it no longer describes.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSentConfig(dir, {
+        {QStringLiteral("work"), QStringLiteral("Sent")},
+    }));
+
+    MainWindow window(config);
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *inbox =
+        window.findChild<QAbstractButton *>(QStringLiteral("inboxButton"));
+    QVERIFY(queryEdit);
+    QVERIFY(inbox);
+
+    inbox->click();
+    QVERIFY(inbox->isChecked());
+
+    queryEdit->setText(QStringLiteral("from:someone@example.org"));
+    QVERIFY2(!inbox->isChecked(),
+             "a hand-edited query left the Inbox button highlighted");
+
+    // And typing a filter's query by hand lights it, since the highlight is a
+    // property of the query rather than a record of which button was pressed.
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    QVERIFY2(inbox->isChecked(),
+             "a query equal to the Inbox filter did not highlight it");
+
+    // An empty bar is not "every filter matches nothing", which a naive
+    // comparison against an unresolvable query would make it.
+    queryEdit->clear();
+    QVERIFY(!inbox->isChecked());
+}
+
+void TestMainWindow::theCheckedFilterFollowsTheAccount()
+{
+    // Changing the account re-resolves the filter to a different query string,
+    // and both are still "Inbox". The highlight is recomputed rather than
+    // dropped, or switching account would silently un-highlight the view the
+    // user is still looking at.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSentConfig(dir, {
+        {QStringLiteral("work"), QStringLiteral("Sent")},
+        {QStringLiteral("personal"), QStringLiteral("Sent")},
+    }));
+
+    MainWindow window(config);
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *inbox =
+        window.findChild<QAbstractButton *>(QStringLiteral("inboxButton"));
+    QVERIFY(queryEdit);
+    QVERIFY(inbox);
+
+    window.selectAccountForTesting(QStringLiteral("work"));
+    inbox->click();
+    QCOMPARE(queryEdit->text(),
+             QStringLiteral("path:\"work/**\" and (tag:inbox)"));
+    QVERIFY(inbox->isChecked());
+
+    // The query bar still holds work's inbox query, which is NOT personal's, so
+    // the button correctly stops describing the view. The state after an
+    // account change is asserted rather than assumed: this is the case where a
+    // highlight keyed on the last click would go on lying.
+    window.selectAccountForTesting(QStringLiteral("personal"));
+    QVERIFY2(!inbox->isChecked(),
+             "the highlight survived an account change that left a query "
+             "belonging to the other account in the bar");
+
+    // Running it again under the new account lights it once more.
+    inbox->click();
+    QCOMPARE(queryEdit->text(),
+             QStringLiteral("path:\"personal/**\" and (tag:inbox)"));
+    QVERIFY(inbox->isChecked());
 }
 
 void TestMainWindow::aFilterDoesNotClearTheAccountSelection()

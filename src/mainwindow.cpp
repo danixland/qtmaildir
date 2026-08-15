@@ -1753,6 +1753,12 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
     auto *box = new QHBoxLayout(row);
     box->setContentsMargins(0, 0, 0, 0);
 
+    // Cleared first: the row is rebuilt wholesale on every saved-query edit, so
+    // the buttons this hash points at are deleted and re-created. Keeping the
+    // old entries would leave dangling pointers that findChild() cannot save us
+    // from, since nothing looks them up by name.
+    m_filterButtons.clear();
+
     // The built-in filters come first, in their own fixed order, and they are
     // not saved queries: they are shipped, they are not in queries.json, and
     // the user cannot edit or delete them (item 93). They are what the row is
@@ -1804,8 +1810,22 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
         // of control than it is.
         button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 
+        // Checkable so the style draws its own "this is the current view" look,
+        // which is why no colour is chosen here: a hand-picked highlight would
+        // have to be picked twice, once per theme, and would still be wrong
+        // under a third.
+        //
+        // Not auto-exclusive and never toggled by the click itself. The check
+        // state is derived from the query bar in updateFilterButtons(), so a
+        // button that runs a filter and then has its query edited away does not
+        // stay lit. Letting the click set it would make the highlight a record
+        // of what was pressed rather than of what is shown.
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);
+
         connect(button, &QToolButton::clicked, this,
                 [this, filter]() { runFilter(filter); });
+        m_filterButtons.insert(filter.generated, button);
         box->addWidget(button);
     }
 
@@ -1886,6 +1906,22 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
     // query with no pinned ones still needs the row for its menu.
     if (contentCount == 0 && unpinned.isEmpty())
         row->hide();
+
+    // Connected HERE rather than beside the query bar's other handlers, which
+    // run in registerActions() before this row exists. Both connections are
+    // owned by `row`, so a rebuild disconnects them with the widgets they
+    // update and cannot leave a second copy behind firing at deleted buttons.
+    //
+    // textChanged rather than editingFinished: the highlight has to clear while
+    // the user types, not once they leave the field.
+    connect(m_queryEdit, &QLineEdit::textChanged, row,
+            [this]() { updateFilterButtons(); });
+    // The account is the other half of a filter's resolved query, so switching
+    // account re-resolves it and the highlight has to be recomputed against the
+    // new scope rather than assumed to survive.
+    connect(m_accountBox, &QComboBox::currentIndexChanged, row,
+            [this]() { updateFilterButtons(); });
+    updateFilterButtons();
 }
 
 void MainWindow::addSavedQueryActions(QWidget *target, const SavedQuery &saved)
@@ -2046,6 +2082,33 @@ void MainWindow::runFilter(const SavedQuery &filter)
 
     runQuery(filter.flat ? FlatResult::Yes : FlatResult::No,
              AccountScope::AlreadyScoped);
+}
+
+void MainWindow::updateFilterButtons()
+{
+    const QString current = m_queryEdit->text().trimmed();
+    const QString accountKey = m_accountBox->currentData().toString();
+
+    for (auto it = m_filterButtons.constBegin();
+         it != m_filterButtons.constEnd(); ++it) {
+        const SavedQuery filter = Config::builtinFilter(it.key());
+        const QString resolved = m_config.resolvedQuery(filter, accountKey);
+
+        // An unresolvable filter must never match, or every filter would light
+        // up on an empty query bar. matchNothingQuery() is a real query string
+        // and would compare equal to itself.
+        const bool matches = !current.isEmpty()
+                             && resolved != Config::matchNothingQuery()
+                             && resolved == current;
+
+        // Blocked, because setChecked() on a checkable QToolButton emits
+        // toggled() and this runs from the query bar's own textChanged: a
+        // handler that ran runFilter() would re-enter the query path on every
+        // keystroke. Nothing connects toggled() today, so this is a guard
+        // against the obvious next edit rather than a fix for a live bug.
+        const QSignalBlocker blocker(it.value());
+        it.value()->setChecked(matches);
+    }
 }
 
 void MainWindow::saveCurrentQuery()

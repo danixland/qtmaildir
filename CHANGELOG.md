@@ -20,6 +20,16 @@ point at which they are stable.
   locale runs in English as before. All 355 strings are translated.
 - `ctest -R translations` guards the translation against the two ways it rots:
   a new string added without one, and a string `lupdate` cannot see at all.
+- **`language` under `[general]`**, choosing the interface language regardless
+  of what the environment asks for. A short code or a full locale name both
+  work (`it`, `it_IT`), `system` is the default and follows `$LANG`, and
+  `en_US` forces English on a non-English desktop. A value that is not a locale
+  name is reported rather than silently ignored, since `itallian` and `en_US`
+  both load no translation and would otherwise look the same.
+- **The built-in filter matching the current view is drawn as a pressed
+  button**, so the row shows where you are. It tracks the query rather than the
+  last click, so editing the query clears the highlight and typing a filter's
+  query lights it; changing the account recomputes it.
 
 ### Fixed
 

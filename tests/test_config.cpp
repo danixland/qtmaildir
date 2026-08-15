@@ -97,6 +97,7 @@ private slots:
     void allSentQueryJoinsEveryConfiguredAccount();
     void aStoredGeneratedQueryIsUnpinnedNotDropped();
     void theStartupAccountIsReadAndValidated();
+    void theStartupAccountTakesTheKeyNotTheSyncChannel();
     void theStartupQueryCanNameABuiltinFilter();
     void theStartupQueryPrefersASavedQueryOverAFilterOfTheSameName();
     void anUnmatchedStartupQueryFallsBackToAFilterNotAStrayQuery();
@@ -1100,6 +1101,53 @@ void TestConfig::theStartupAccountIsReadAndValidated()
              "an unknown startup account was passed through rather than "
              "falling back to All accounts");
     QCOMPARE(wrong.problems().size(), 1);
+}
+
+void TestConfig::theStartupAccountTakesTheKeyNotTheSyncChannel()
+{
+    // Two names exist for one account and they genuinely differ in a real
+    // setup: a section key may carry dots that the mbsync channel does not.
+    // startup_account is the KEY, matched against the [account.<key>] suffix.
+    //
+    // The dot is the part worth pinning. QSettings treats "/" as a group
+    // separator, which is why account sections use a dot in the first place; a
+    // dot INSIDE the key is a different case, and a silent mismatch here would
+    // report "not a configured account" and quietly start on All accounts.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_account=provider-work.mailbox\n"
+        "\n"
+        "[account.provider-work.mailbox]\n"
+        "maildir=provider-work.mailbox\n"
+        "channel=provider-workmailbox\n")));
+
+    QCOMPARE(config.accounts().size(), 1);
+    QCOMPARE(config.accounts().constFirst().key,
+             QStringLiteral("provider-work.mailbox"));
+    QCOMPARE(config.accounts().constFirst().syncChannel(),
+             QStringLiteral("provider-workmailbox"));
+
+    QCOMPARE(config.startupAccount(),
+             QStringLiteral("provider-work.mailbox"));
+    QVERIFY(config.problems().isEmpty());
+
+    // And the channel is NOT accepted, or the two names would be
+    // interchangeable in one direction only, which is worse than either rule.
+    QTemporaryDir other;
+    Config byChannel;
+    byChannel.load(writeIni(other, QStringLiteral(
+        "[general]\n"
+        "startup_account=provider-workmailbox\n"
+        "\n"
+        "[account.provider-work.mailbox]\n"
+        "maildir=provider-work.mailbox\n"
+        "channel=provider-workmailbox\n")));
+
+    QVERIFY2(byChannel.startupAccount().isEmpty(),
+             "the sync channel was accepted as an account key");
+    QCOMPARE(byChannel.problems().size(), 1);
 }
 
 void TestConfig::theStartupQueryCanNameABuiltinFilter()

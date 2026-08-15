@@ -292,6 +292,17 @@ public:
     /// the same fixed string on every card rather than failing visibly.
     QString dateFormat() const { return m_dateFormat; }
 
+    /// Interface language, or empty to follow the environment.
+    ///
+    /// A locale name, short ("it") or full ("it_IT"); Qt resolves the short
+    /// form to a country. `system` reads as empty, so a user can write the
+    /// default down rather than having to delete the key to get it back.
+    ///
+    /// Validated at load, because an unrecognised name does NOT fail: QLocale
+    /// degrades it to C, which then loads no translation and is indistinguishable
+    /// from asking for English on purpose. A typo would otherwise be silent.
+    QString language() const { return m_language; }
+
     /// The saved query to open at startup, by name. Falls back to "Unread"
     /// when unset, and to the first saved query when no query by that name
     /// exists: [queries] is read through childKeys(), which sorts
@@ -404,6 +415,7 @@ private:
     int m_toolbarIconSize = 24;
     QString m_notmuchConfig;
     QString m_dateFormat;
+    QString m_language;
     qreal m_messageZoom = 1.0;
     bool m_completionOnFocus = false;
     int m_markReadDelayMs = 2000;

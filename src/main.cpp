@@ -89,14 +89,27 @@ int main(int argc, char *argv[])
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/qtmaildir.svg")));
     app.setDesktopFileName(QStringLiteral("qtmaildir"));
 
+    Config config;
+    config.load(Config::defaultPath());
+
     // On main's stack deliberately: a QTranslator must outlive exec(), and one
     // scoped to a helper function unloads on return, silently reverting every
-    // string to English. Installed before Config is loaded, because config
-    // warnings are generated at load time and are themselves translated.
+    // string to English.
     //
-    // QLocale() reads the system locale, so LANG=it_IT.UTF-8 selects the file
-    // with no config key of our own. A missing .qm returns false and the app
-    // runs in English, which is the correct failure rather than a fatal one.
+    // Loaded AFTER Config, because [general] language overrides the
+    // environment. The cost is that config warnings are generated before the
+    // translator exists, so they are built in English; retranslating them would
+    // mean re-running load(), and a warning about the config file is the one
+    // string a user can still act on in either language.
+    //
+    // An empty language() means follow the environment, which is what QLocale()
+    // default-constructs to. A missing .qm returns false and the app runs in
+    // English: that is the correct outcome both for an unsupported language and
+    // for `language = en_US`, since English is the source and ships no .qm.
+    const QLocale locale = config.language().isEmpty()
+                               ? QLocale()
+                               : QLocale(config.language());
+
     QTranslator translator;
     QStringList translationDirs;
     // Beside the binary first, so a build tree works without installing.
@@ -108,7 +121,7 @@ int main(int argc, char *argv[])
         translationDirs << dir + QStringLiteral("/translations");
 
     for (const QString &dir : std::as_const(translationDirs)) {
-        if (translator.load(QLocale(), QStringLiteral("qtmaildir"),
+        if (translator.load(locale, QStringLiteral("qtmaildir"),
                             QStringLiteral("_"), dir)) {
             app.installTranslator(&translator);
             break;
@@ -121,9 +134,6 @@ int main(int argc, char *argv[])
             QObject::tr("libnotmuch 5 or newer is required."));
         return 1;
     }
-
-    Config config;
-    config.load(Config::defaultPath());
 
     MainWindow window(config);
     window.show();

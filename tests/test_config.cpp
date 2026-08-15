@@ -101,6 +101,8 @@ private slots:
     void theStartupAccountTakesTheKeyNotTheSyncChannel();
     void theStartupQueryCanNameABuiltinFilter();
     void theStartupQuerySurvivesATranslatedFilterName();
+    void theLanguageKeyOverridesTheEnvironment();
+    void theLanguageKeyRejectsWhatIsNotALocale();
     void theStartupQueryPrefersASavedQueryOverAFilterOfTheSameName();
     void anUnmatchedStartupQueryFallsBackToAFilterNotAStrayQuery();
     void theFlaggedFilterIsCalledImportant();
@@ -1260,6 +1262,85 @@ void TestConfig::theStartupQuerySurvivesATranslatedFilterName()
     QVERIFY(byLabel.problems().isEmpty());
 
     qApp->removeTranslator(&translator);
+}
+
+void TestConfig::theLanguageKeyOverridesTheEnvironment()
+{
+    // A directory PER CASE. writeIni() always writes qtmaildir.conf and
+    // QSettings caches by path, so five loads from one QTemporaryDir all see
+    // whichever file was written first: this test failed reporting "it_IT"
+    // where it had just written en_US.
+    QTemporaryDir dir, systemDir, shortDir, fullDir, englishDir;
+
+    // Unset means follow the environment, which is what an empty value tells
+    // main.cpp to do by default-constructing a QLocale.
+    Config unset;
+    unset.load(writeIni(dir, QStringLiteral("[general]\n")));
+    QVERIFY(unset.language().isEmpty());
+    QVERIFY(unset.problems().isEmpty());
+
+    // "system" is the default written down. It must read as unset rather than
+    // being passed to QLocale, which would resolve it to C and force English.
+    Config system;
+    system.load(writeIni(systemDir, QStringLiteral(
+        "[general]\n"
+        "language = system\n")));
+    QVERIFY2(system.language().isEmpty(),
+             "'system' must read as unset, not as a locale name");
+    QVERIFY(system.problems().isEmpty());
+
+    // A short code is accepted as written. Qt resolves "it" to it_IT when the
+    // QLocale is built, and QTranslator::load falls back from qtmaildir_it_IT
+    // to qtmaildir_it, so the short form needs no expansion here.
+    Config shortCode;
+    shortCode.load(writeIni(shortDir, QStringLiteral(
+        "[general]\n"
+        "language = it\n")));
+    QCOMPARE(shortCode.language(), QStringLiteral("it"));
+    QVERIFY(shortCode.problems().isEmpty());
+    QCOMPARE(QLocale(shortCode.language()).name(), QStringLiteral("it_IT"));
+
+    Config full;
+    full.load(writeIni(fullDir, QStringLiteral(
+        "[general]\n"
+        "language = it_IT\n")));
+    QCOMPARE(full.language(), QStringLiteral("it_IT"));
+    QVERIFY(full.problems().isEmpty());
+
+    // Forcing English is legitimate and must NOT be reported as a problem, even
+    // though it loads no .qm: English is the source language and ships none.
+    // This is the case that separates "no translation" from "bad value".
+    Config english;
+    english.load(writeIni(englishDir, QStringLiteral(
+        "[general]\n"
+        "language = en_US\n")));
+    QCOMPARE(english.language(), QStringLiteral("en_US"));
+    QVERIFY2(english.problems().isEmpty(),
+             "forcing English is a valid choice, not a configuration error");
+}
+
+void TestConfig::theLanguageKeyRejectsWhatIsNotALocale()
+{
+    // The trap this guards. QLocale accepts any string and degrades an
+    // unrecognised one to C rather than failing, so `language = itallian`
+    // would load no translation and be indistinguishable from asking for
+    // English on purpose: the user's typo would be silent forever. Verified
+    // against QLocale directly first, so the test rests on measured behaviour
+    // rather than on the assumption that a bad name is rejected somewhere.
+    QCOMPARE(QLocale(QStringLiteral("itallian")).language(), QLocale::C);
+
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "language = itallian\n")));
+
+    QCOMPARE(config.problems().size(), 1);
+    QVERIFY2(config.problems().first().contains(QStringLiteral("itallian")),
+             "the warning must name the value the user wrote");
+    // Cleared, so the caller falls back to the environment rather than being
+    // handed a name that resolves to C and forces English.
+    QVERIFY(config.language().isEmpty());
 }
 
 void TestConfig::theFlaggedFilterIsCalledImportant()

@@ -196,6 +196,30 @@ void Config::load(const QString &path)
     m_startupAccount =
         settings.value(QStringLiteral("startup_account")).toString().trimmed();
 
+    // Interface language. "system" is spelled out so the default can be written
+    // down rather than only expressed by deleting the key.
+    //
+    // Validated here rather than left to whether a translation loads, because
+    // those are different questions and only one of them is an error. QLocale
+    // accepts anything and degrades an unrecognised name to C, so `language =
+    // itallian` would load no translation and look exactly like asking for
+    // English. Meanwhile `language = en_US` legitimately loads nothing, since
+    // English is the source language and ships no .qm. Checking the NAME
+    // separates the typo from the deliberate choice.
+    const QString language =
+        settings.value(QStringLiteral("language")).toString().trimmed();
+    if (!language.isEmpty()
+        && language.compare(QStringLiteral("system"), Qt::CaseInsensitive) != 0) {
+        if (QLocale(language).language() == QLocale::C) {
+            addProblem(tr("Language '%1' is not a locale name; using the "
+                          "system language. Expected something like 'it' or "
+                          "'it_IT'.")
+                           .arg(language));
+        } else {
+            m_language = language;
+        }
+    }
+
     const QVariant zoom = settings.value(QStringLiteral("message_zoom"));
     if (zoom.isValid()) {
         bool ok = false;

@@ -404,9 +404,18 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     // Not savedQueries().first(): [queries] is read through childKeys(), which
     // sorts alphabetically, so "first" means whatever happens to sort first
     // rather than anything the user chose. Config resolves the name.
+    // resolvedQuery(), not startup.query: a generated entry stores no query at
+    // all, since its text is composed from the accounts at run time. Reading
+    // the field directly meant a startup_query naming a built-in filter opened
+    // an empty bar and ran nothing.
+    //
+    // No account scope here. The dropdown starts on "All accounts", which is
+    // the empty key, so this is the unscoped form either way; passing the
+    // selection would be reading a widget the user has not touched yet.
     const SavedQuery startup = m_config.startupSavedQuery();
-    if (!startup.query.isEmpty()) {
-        m_queryEdit->setText(startup.query);
+    const QString startupQuery = m_config.resolvedQuery(startup, QString());
+    if (!startupQuery.isEmpty()) {
+        m_queryEdit->setText(startupQuery);
         runCurrentQuery();
     }
 }
@@ -1746,13 +1755,19 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
         // is chrome. A name the running theme lacks degrades to text on its
         // own, which is why nothing here checks whether it resolved.
         //
-        // mail-mark-important matches the `flag` action's own icon, since both
-        // reach the same tag: the filter finds what the action marks.
+        // A STAR for Important, not mail-mark-important, which the `flag`
+        // action uses. Item 57 recorded the user asking for a star when the
+        // action was renamed, and on the query row the icon is read as a
+        // category rather than as "do this to the selection", so the two can
+        // differ. Chosen by the user on sight, 2026-08-15.
+        //
+        // mail-folder-sent, not mail-sent: the former is the folder shape every
+        // theme ships, the latter is the envelope-in-flight some do not.
         static const QHash<QString, QString> filterIcons = {
             { QStringLiteral("unread"),  QStringLiteral("mail-mark-unread") },
             { QStringLiteral("inbox"),   QStringLiteral("mail-inbox") },
-            { QStringLiteral("flagged"), QStringLiteral("mail-mark-important") },
-            { QStringLiteral("sent"),    QStringLiteral("mail-sent") },
+            { QStringLiteral("flagged"), QStringLiteral("starred") },
+            { QStringLiteral("sent"),    QStringLiteral("mail-folder-sent") },
         };
         button->setIcon(
             QIcon::fromTheme(filterIcons.value(filter.generated)));

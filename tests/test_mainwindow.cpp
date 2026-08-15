@@ -169,6 +169,7 @@ private slots:
     void narrowingAnEmptyQueryBarIsAPlainSearch();
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
+    void aGeneratedStartupQueryActuallyRuns();
     void everyBuiltinFilterButtonCarriesAnIconAndItsText();
     void aQueryInTheMenuCanActuallyBeRun();
     void theFourBuiltinFiltersAreOnTheRowInOrder();
@@ -206,7 +207,7 @@ private slots:
     void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
     void aCronSyncRefreshesTheListWithoutAQuery();
     void aCronSyncRefreshesOverASelectionWithoutClearingIt();
-    void aCronSyncDoesNotRefreshBeforeAnyQueryHasRun();
+    void aCronSyncRefreshesTheLastRunQueryNotTheQueryBar();
     void aRefreshAddsNewMailAndDropsWhatStoppedMatching();
     void theOpenThreadLeavingTheListRaisesTheStaleNotice();
     void aThreadStillMatchingRaisesNoStaleNotice();
@@ -2776,25 +2777,43 @@ void TestMainWindow::aCronSyncRefreshesOverASelectionWithoutClearingIt()
              "one unusable on a cron timer");
 }
 
-void TestMainWindow::aCronSyncDoesNotRefreshBeforeAnyQueryHasRun()
+void TestMainWindow::aCronSyncRefreshesTheLastRunQueryNotTheQueryBar()
 {
     // The query bar holds text the user has typed but not run, and a refresh
     // must not execute it: that is a search they never asked for. The refresh
     // re-runs the LAST RUN query, so with none there is nothing to do.
+    //
+    // Since item 93 a default Config DOES run a query at startup: the default
+    // startup name resolves to the built-in Unread filter, where before it
+    // named nothing and a fresh window had no last-run query at all.
+    //
+    // The property under test survives that, and is the one that matters on a
+    // cron timer: the refresh re-runs the LAST RUN query, never the text
+    // sitting in the bar. So the bar is given something the user has typed and
+    // not run, and the assertion is that what the refresh runs is still the
+    // startup query.
     const Config config;
     MainWindow window(config);
 
     auto *queryEdit = window.findChild<QLineEdit *>();
     QVERIFY(queryEdit);
-    queryEdit->setText(QStringLiteral("tag:draft-i-was-typing"));
 
-    const quint64 before = window.currentGenerationForTesting();
+    const QString ranAtStartup = window.lastRunQueryForTesting();
+    QVERIFY2(!ranAtStartup.isEmpty(),
+             "no startup query ran, so a refresh has nothing to re-run and "
+             "this test cannot distinguish the two sources");
+
+    queryEdit->setText(QStringLiteral("tag:draft-i-was-typing"));
 
     QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
                               Q_ARG(SyncMonitor::State,
                                     SyncMonitor::State::Idle));
 
-    QCOMPARE(window.currentGenerationForTesting(), before);
+    QCOMPARE(window.lastRunQueryForTesting(), ranAtStartup);
+    QVERIFY2(!window.lastRunQueryForTesting().contains(
+                 QStringLiteral("draft-i-was-typing")),
+             "the refresh executed the text in the query bar, which is a "
+             "search the user never asked for");
 }
 
 void TestMainWindow::aRefreshAddsNewMailAndDropsWhatStoppedMatching()
@@ -5070,10 +5089,17 @@ namespace {
 /// A config whose accounts carry the given maildir/sent pairs. An empty `sent`
 /// writes no key at all, which is the account-without-a-sent-folder case.
 QString writeSentConfig(const QTemporaryDir &dir,
-                        const QList<QPair<QString, QString>> &accounts)
+                        const QList<QPair<QString, QString>> &accounts,
+                        const QString &startupQuery = QString())
 {
     const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
     QSettings s(path, QSettings::IniFormat);
+    // [general] keys are read WITHOUT the prefix: QSettings' INI backend treats
+    // a section literally named [general] as its own fallback section and
+    // strips it, so setValue("general/startup_query") would write a key nothing
+    // reads.
+    if (!startupQuery.isEmpty())
+        s.setValue(QStringLiteral("startup_query"), startupQuery);
     for (const auto &account : accounts) {
         s.beginGroup(QStringLiteral("account.") + account.first);
         s.setValue(QStringLiteral("maildir"), account.first);
@@ -6354,6 +6380,30 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
     // thread, so findChild() cannot see it. Observing the window's own state
     // is both the only route and the better assertion.
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::aGeneratedStartupQueryActuallyRuns()
+{
+    // The second half of the startup defect. The constructor read
+    // startup.query directly, and a generated entry stores no query: its text
+    // is composed from the accounts at run time. So even once
+    // startupSavedQuery() could return a built-in filter, the window opened on
+    // an empty bar and ran nothing.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Config config;
+    config.load(writeSentConfig(dir, {
+        {QStringLiteral("work"), QStringLiteral("Sent")},
+    }, QStringLiteral("Sent")));
+
+    MainWindow window(config);
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    // Sent, because it is the filter whose query is composed rather than
+    // constant: a tag filter would pass against code that only handled the
+    // easy half.
+    QCOMPARE(queryEdit->text(), config.allSentQuery());
 }
 
 void TestMainWindow::everyBuiltinFilterButtonCarriesAnIconAndItsText()

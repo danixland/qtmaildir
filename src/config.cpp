@@ -784,18 +784,31 @@ QString Config::resolvedQuery(const SavedQuery &query,
 
 SavedQuery Config::startupSavedQuery() const
 {
-    if (m_savedQueries.isEmpty())
-        return {};
-
+    // The user's own queries first, so a saved query wins a name collision with
+    // a built-in filter: they named theirs deliberately, where the filter's
+    // name is one this application chose for them.
     for (const SavedQuery &query : m_savedQueries) {
         if (query.name.compare(m_startupQuery, Qt::CaseInsensitive) == 0)
             return query;
     }
 
-    // Named a query that does not exist. Not worth a warning: the default is
-    // a name the user never wrote, so an install with no [queries] Unread
-    // entry would warn on every launch about a key it never set.
-    return m_savedQueries.first();
+    // Then the built-in filters. Without this, a startup_query of "Inbox"
+    // matched nothing once item 93 shipped Inbox as a filter and the duplicated
+    // saved query was removed, and the app started on whatever query happened
+    // to be first in the file.
+    for (const SavedQuery &filter : builtinFilters()) {
+        if (filter.name.compare(m_startupQuery, Qt::CaseInsensitive) == 0)
+            return filter;
+    }
+
+    // Named nothing that exists. Falling back to m_savedQueries.first() is what
+    // this used to do and it is worse than it looks: after the duplicated
+    // entries were removed it could be any leftover query, so a startup view
+    // became a search for one sender, and an empty queries.json started nothing
+    // at all. A filter is always present, so the fallback can be one.
+    //
+    // Still not worth a warning: the default is a name the user never wrote.
+    return builtinFilter(QStringLiteral("unread"));
 }
 
 Account Config::account(const QString &key) const

@@ -14,9 +14,22 @@ point at which they are stable.
 ### Changed
 
 - The built-in filters carry icons, like the Save button at the other end of
-  the query row, with their text beside them.
+  the query row, with their text beside them. Important is a star, and Sent
+  uses the folder icon rather than the envelope-in-flight some themes lack.
 
 ### Fixed
+
+- **`startup_query` can name a built-in filter**, and looks at both those and
+  your saved queries. In 0.21.0 it searched saved queries only, so a
+  `startup_query = Inbox` stopped matching once the duplicated Inbox entry was
+  removed from `queries.json`, and the application opened on whichever query
+  happened to be first in that file. A name matching nothing now falls back to
+  the Unread filter rather than to an arbitrary saved query, and a saved query
+  still wins a name collision with a filter.
+
+  A `startup_query` naming a filter also **runs**. A filter composes its query
+  from your accounts rather than storing one, and the startup path read the
+  stored field directly, so it would have opened on an empty query bar.
 
 - The flagged filter is labelled **Important**, matching the action of the same
   name. It shipped in 0.21.0 as "Flagged", which put the same tag under two

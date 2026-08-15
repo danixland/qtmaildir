@@ -60,7 +60,7 @@ private slots:
     void jsonWinsOnceItExists();
     void malformedQueriesFileIsAProblemNotACrash();
     void futureVersionIsRefusedAndReported();
-    void startupQueryFallsBackToDocumentOrder();
+    void startupQueryFallsBackToABuiltinFilter();
     void scopedSavedQueryParenthesisesADisjunction();
     void aGeneratedQueryResolvesFromTheAccounts();
     void aGeneratedQueryTracksAConfigChange();
@@ -96,6 +96,9 @@ private slots:
     void allSentQuerySkipsAccountsWithoutTheKey();
     void allSentQueryJoinsEveryConfiguredAccount();
     void aStoredGeneratedQueryIsUnpinnedNotDropped();
+    void theStartupQueryCanNameABuiltinFilter();
+    void theStartupQueryPrefersASavedQueryOverAFilterOfTheSameName();
+    void anUnmatchedStartupQueryFallsBackToAFilterNotAStrayQuery();
     void theFlaggedFilterIsCalledImportant();
     void everyBuiltinFilterIsAKnownGenerator();
     void aFilterAcrossAllAccountsIsTheUnscopedQuery();
@@ -532,7 +535,12 @@ void TestConfig::unknownStartupQueryFallsBackAndReports()
         "[queries]\n"
         "Inbox=tag:inbox\n")));
 
-    QCOMPARE(config.startupSavedQuery().name, QStringLiteral("Inbox"));
+    // The fallback is a BUILT-IN filter, not the first saved query. The old
+    // behaviour looked reasonable while every install carried an Inbox entry
+    // and became "startup opens a search for one sender" once the duplicated
+    // entries were removed.
+    QCOMPARE(config.startupSavedQuery().name, QStringLiteral("Unread"));
+    QVERIFY(config.startupSavedQuery().isGenerated());
     QCOMPARE(config.problems().size(), 1);
 
     // The built-in default naming a query the user never created is NOT a
@@ -543,7 +551,13 @@ void TestConfig::unknownStartupQueryFallsBackAndReports()
         "[queries]\n"
         "Inbox=tag:inbox\n")));
 
-    QCOMPARE(silent.startupSavedQuery().name, QStringLiteral("Inbox"));
+    // And it now RESOLVES rather than falling through. The default has always
+    // been "Unread"; before item 93 that named nothing unless the user happened
+    // to have such an entry, so an install without one silently opened on
+    // whatever came first in the file. The built-in filter of that name is
+    // always there.
+    QCOMPARE(silent.startupSavedQuery().name, QStringLiteral("Unread"));
+    QVERIFY(silent.startupSavedQuery().isGenerated());
     QVERIFY(silent.problems().isEmpty());
 }
 
@@ -1043,6 +1057,31 @@ static QString writeTwoAccounts(const QTemporaryDir &dir)
         "maildir=personal\n"));
 }
 
+void TestConfig::theStartupQueryCanNameABuiltinFilter()
+{
+    // The defect: startup_query searched the SAVED queries only. A user whose
+    // startup view was "Inbox" had that name in queries.json until item 93
+    // shipped Inbox as a built-in filter and the duplicate was removed; the
+    // name then matched nothing and the app started on whatever query happened
+    // to be first in the file.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_query=Inbox\n"
+        "\n"
+        "[account.work]\n"
+        "maildir=work\n"
+        "sent=Sent\n")));
+
+    const SavedQuery startup = config.startupSavedQuery();
+    QCOMPARE(startup.name, QStringLiteral("Inbox"));
+    QVERIFY2(startup.isGenerated(),
+             "the startup query matched something other than the built-in");
+    QCOMPARE(config.resolvedQuery(startup, QString()),
+             QStringLiteral("tag:inbox"));
+}
+
 void TestConfig::theFlaggedFilterIsCalledImportant()
 {
     // Item 57 decided this and item 93 contradicted it. The `flag` ACTION has
@@ -1531,6 +1570,60 @@ void TestConfig::aStoredGeneratedQueryIsUnpinnedNotDropped()
     }
 }
 
+void TestConfig::theStartupQueryPrefersASavedQueryOverAFilterOfTheSameName()
+{
+    // The user's own entry wins a name collision. They named it deliberately;
+    // the filter's name is one this application chose for them.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_query=Inbox\n"
+        "\n"
+        "[account.work]\n"
+        "maildir=work\n"));
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [ { "name": "Inbox", "query": "tag:inbox and not tag:muted" } ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    const SavedQuery startup = config.startupSavedQuery();
+    QCOMPARE(startup.name, QStringLiteral("Inbox"));
+    QVERIFY2(!startup.isGenerated(),
+             "the built-in filter shadowed the user's own query of that name");
+    QCOMPARE(startup.query, QStringLiteral("tag:inbox and not tag:muted"));
+}
+
+void TestConfig::anUnmatchedStartupQueryFallsBackToAFilterNotAStrayQuery()
+{
+    // The old fallback was m_savedQueries.first(), which after item 93 removed
+    // the duplicated entries could be any leftover query: the user's startup
+    // view became a search for one sender, and an empty queries.json started
+    // nothing at all. A built-in filter is always present, so the fallback can
+    // be one.
+    QTemporaryDir dir;
+    const QString path = writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_query=NoSuchThing\n"
+        "\n"
+        "[account.work]\n"
+        "maildir=work\n"));
+    writeQueries(dir, QStringLiteral(R"({
+        "version": 1,
+        "queries": [ { "name": "from bu", "query": "from:someone" } ]
+    })"));
+
+    Config config;
+    config.load(path);
+
+    const SavedQuery startup = config.startupSavedQuery();
+    QVERIFY2(startup.isGenerated(),
+             "an unmatched startup query fell back to a stray saved query");
+    QCOMPARE(startup.name, QStringLiteral("Unread"));
+}
+
 void TestConfig::malformedQueriesFileIsAProblemNotACrash()
 {
     QTemporaryDir dir;
@@ -1567,7 +1660,11 @@ void TestConfig::futureVersionIsRefusedAndReported()
 /// The fallback stops meaning "alphabetically first" and starts meaning "first
 /// in the user's own order". "Zebra" first proves it: alphabetical would pick
 /// "Apple".
-void TestConfig::startupQueryFallsBackToDocumentOrder()
+/// Was startupQueryFallsBackToDocumentOrder, asserting the first query in the
+/// file. That WAS the defect: the first entry is an arbitrary thing to open on,
+/// and once item 93's duplicated entries were removed it became a leftover
+/// search for one sender.
+void TestConfig::startupQueryFallsBackToABuiltinFilter()
 {
     QTemporaryDir dir;
     const QString path = writeIni(dir, QStringLiteral(
@@ -1585,7 +1682,10 @@ void TestConfig::startupQueryFallsBackToDocumentOrder()
     Config config;
     config.load(path);
 
-    QCOMPARE(config.startupSavedQuery().name, QStringLiteral("Zebra"));
+    const SavedQuery startup = config.startupSavedQuery();
+    QVERIFY2(startup.isGenerated(),
+             "the fallback picked a saved query out of the file");
+    QCOMPARE(startup.name, QStringLiteral("Unread"));
 }
 
 /// The parentheses are load-bearing. Without them `path:... and a or b` binds

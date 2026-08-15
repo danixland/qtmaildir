@@ -186,6 +186,14 @@ public:
     /// stale, so a test standing in for the worker has to know the current one.
     quint64 currentGenerationForTesting() const { return m_generation; }
 
+    /// The query the visible list was actually built from.
+    ///
+    /// A test seam: a refresh re-runs THIS, never the text in the query bar,
+    /// and the difference is only observable through the value itself. The
+    /// generation counter cannot stand in for it, since a legitimate refresh
+    /// bumps the generation too.
+    QString lastRunQueryForTesting() const { return m_lastQuery; }
+
     /// Puts the window into the state refreshCurrentQuery() leaves it in, and
     /// returns the generation the refresh's replies must carry.
     ///

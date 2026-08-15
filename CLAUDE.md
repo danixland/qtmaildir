@@ -265,6 +265,28 @@ a failure or a `-1` count fails against correct code. This was recorded in
 building the rules. Assert on the positional contract, never on a provoked
 failure.
 
+**Qt emits no `triggered` for a `QAction` that owns a menu.** Setting a submenu
+on an action makes clicking it open that submenu and nothing else, so any
+`connect(action, &QAction::triggered, ...)` on the same action is dead code that
+compiles, links and never runs. The saved-query overflow menu shipped this way:
+every entry carried both a run connection and a submenu of edit actions, and no
+entry in that menu had ever been runnable. It went unnoticed because the menu was
+the rarely-used half while the user's queries were pinned buttons, and surfaced
+only when item 93 moved every query into it. An action that must both run
+something and offer actions needs the run as an item INSIDE its submenu.
+
+**A generator must be asked for one account's query, never handed its
+all-accounts query to wrap.** `Config::resolvedQuery(query, accountKey)` exists
+for this. Wrapping produces `path:"a/**" and (path:"a/Sent/**" or
+path:"b/Sent/**")`, which returns exactly the right rows, because `path:` is
+hierarchical and the other account's half cannot match inside `a`. That is why
+it is dangerous: a row-count assertion passes against it, so the tests assert on
+the generated STRING. The mutation putting the wrap back fails two of them.
+Related: an EMPTY query means "match everything" to notmuch, so a generator with
+nothing to match returns `Config::matchNothingQuery()` rather than an empty
+string. An account that configures no sent folder would otherwise give a button
+labelled Sent that shows the whole Maildir.
+
 **Every query this application builds goes through `SearchTerm`
 (`src/searchterm.h`), and that is what stops five surfaces growing five quoting
 rules.** It holds no widget, so the grammar is tested without a painter or a web
@@ -468,6 +490,12 @@ a defect that did not exist because of these; each was believed until it was con
   columns, and sometimes with no discernible cause. A probe that reports "no ink anywhere"
   is far more likely broken than the code it is testing. Check that it finds the thing it
   expects to find *before* trusting it to report the thing it expects to miss.
+- **A row scrolled out of the viewport reports a `visualRect` with a real height**, so a
+  guard asserting `rect.height() > 0` passes while the pixel loop below it walks zero
+  rows and reports "0 pixels, the row was painted over". Item 93 hit this by adding four
+  buttons to the query row: the thread list shrank, and a test sizing its window to 300px
+  started failing with a message naming a defect that did not exist. Assert the rect is
+  INSIDE the viewport, not merely non-empty.
 - **A "saturated pixel" threshold catches antialiased edges of the selection highlight**,
   hundreds of distinct near-background colours, and will pass whatever the code does. Match
   the exact colours the model supplies instead. Two versions of one test passed under

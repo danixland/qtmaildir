@@ -11,6 +11,15 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Fixed
+
+- A query whose result contains the thread already open left the message pane
+  on the placeholder: the card selected, the status bar reporting one thread,
+  and nothing rendered. Running a query blanked the pane but kept the ids
+  naming what it had been showing, so selecting that thread again was read as
+  "already displayed" and never loaded it. This is why an `id:` query copied
+  out of a message's own details dialog produced a card that would not open.
+
 ## [0.23.0] - 2026-08-15
 
 qtmaildir speaks Italian. Nothing loaded a translation before this release, so

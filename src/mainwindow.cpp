@@ -2230,6 +2230,21 @@ void MainWindow::runQuery(FlatResult flat, AccountScope scope)
     m_messageView->clear();
     showPlaceholderPane();
 
+    // Cleared WITH the pane, not merely alongside it. These three name what the
+    // pane is showing, and both selection handlers use them to decide whether a
+    // newly selected row is already displayed. Left set across a query they
+    // describe a pane that was just blanked, so a result containing that same
+    // thread is recognised as "already showing" and never loaded.
+    //
+    // That is not a corner case, it is the ordinary way an `id:` query is run:
+    // the id is copied out of the details dialog of the message being read, so
+    // the thread is current at the moment the query replaces the view, and its
+    // one card opens onto the placeholder. A query returning any OTHER thread
+    // hides it, which is why it took a screenshot to find.
+    m_currentThreadId.clear();
+    m_currentMessageId.clear();
+    m_currentMessageThreadId.clear();
+
     // Undo entries refer to rows that are about to be discarded. The model
     // update they invert would be a no-op against the new result set, leaving
     // undo half-applied: the database would change and the list would not.

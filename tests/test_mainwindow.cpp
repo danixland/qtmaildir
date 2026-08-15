@@ -82,7 +82,11 @@ class WorkerBackedWindow
 public:
     /// Builds the database, writes the config and loads it. Check isValid()
     /// and error() before constructing the window.
-    bool build()
+    /// `accountKey` and `accountMaildir` add one [account.<key>] section, which
+    /// is what makes runQuery() scope the bar's text with scopedQuery(). A test
+    /// that never selects an account can leave them empty.
+    bool build(const QString &accountKey = QString(),
+               const QString &accountMaildir = QString())
     {
         if (!m_fixture.isValid()) {
             m_error = QStringLiteral("fixture directory invalid");
@@ -113,6 +117,12 @@ public:
             // went unnoticed as broken once already.
             out << "[general]\n"
                 << "notmuch_config=" << m_fixture.configPath() << "\n";
+            if (!accountKey.isEmpty()) {
+                // QSettings reads `/` in a section name as a group separator,
+                // so the section is [account.key], never [account/key].
+                out << "\n[account." << accountKey << "]\n"
+                    << "maildir=" << accountMaildir << "\n";
+            }
         }
         file.close();
 
@@ -188,6 +198,7 @@ private slots:
     void aRefreshsBatchesLeaveTheStatusBarAlone();
     void selectingAThreadRootShowsItInTheMessagePane();
     void anUnexpandedRootRendersOneMessageNotTheConversation();
+    void aSingleMessageIdQuerysCardOpensInTheMessagePane();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
     void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
@@ -7182,6 +7193,98 @@ void TestMainWindow::anUnexpandedRootRendersOneMessageNotTheConversation()
     // empty list here is exactly the conversation render this replaced.
     QVERIFY2(!pane->headerSearchOffers().isEmpty(),
              "the pane rendered a conversation, not a single message");
+}
+
+void TestMainWindow::aSingleMessageIdQuerysCardOpensInTheMessagePane()
+{
+    // Item 66's unverified half, reported again against 0.23.0 with a
+    // screenshot: an `id:` query in the bar produces exactly one card, the
+    // status bar reports "1 thread selected (1 message)", and the pane stays
+    // on the placeholder.
+    //
+    // The id is shaped like the real one that fails: dots, digits and an @.
+    //
+    // An ACCOUNT is configured and selected, because that is the state the
+    // report was made from and it is the only thing that changes the query:
+    // runQuery() wraps the bar's text in path:"<maildir>/**" and (...).
+    WorkerBackedWindow backed;
+    const QString wanted =
+        QStringLiteral("1786718040388.1f6b48f1-64d1@mail.example.org");
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Inbox"), wanted,
+        QStringLiteral("A single message"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("The only message.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+
+    QLineEdit *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY2(queryEdit, "no query bar: the window was never built");
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY2(view, "no thread list view");
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY2(model, "no thread list model");
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY2(pane, "no message view");
+
+    auto *accountBox =
+        window.findChild<QComboBox *>(QStringLiteral("accountBox"));
+    QVERIFY2(accountBox, "no account dropdown");
+    const int account = accountBox->findData(QStringLiteral("acct"));
+    QVERIFY2(account >= 0, "the configured account is not in the dropdown");
+    accountBox->setCurrentIndex(account);
+
+    // THE SAME MESSAGE IS READ FIRST, and that is the whole defect. The id is
+    // copied out of the details dialog of a message being read, so the `id:`
+    // query is always typed while that very thread is the current one.
+    // runQuery() blanks the pane but leaves m_currentThreadId naming it, so
+    // when the row comes back onSelectionChanged() compares the two, finds them
+    // equal, and never calls onThreadSelected: nothing is ever loaded.
+    //
+    // A first query returning a DIFFERENT thread passes against the bug, which
+    // is why the earlier version of this test was green.
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
+    const QString firstThreadId = window.currentThreadId();
+    QVERIFY2(!firstThreadId.isEmpty(), "the first view never opened a thread");
+
+    // Exactly what the user types, `id:` and the bare id, unquoted.
+    queryEdit->setText(QStringLiteral("id:%1").arg(wanted));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QModelIndex root = model->index(0, 0, QModelIndex());
+    QVERIFY(root.isValid());
+
+    // The row must name the message before the click can be blamed for
+    // anything: an empty MessageIdRole is a different defect and would make
+    // the assertion below true for the wrong reason.
+    QCOMPARE(model->data(root, ThreadListModel::MessageIdRole).toString(),
+             wanted);
+
+    QVERIFY2(pane->showingPlaceholder(),
+             "the pane was not blank to begin with");
+    // The row IS the thread that was showing when the query ran. Asserted so a
+    // fixture change that made them different threads could not quietly turn
+    // this back into the passing test it was before the cause was found.
+    QCOMPARE(model->data(root, ThreadListModel::ThreadIdRole).toString(),
+             firstThreadId);
+
+    // The pane was blanked, so nothing is on display and the window must not
+    // still claim otherwise. This is the fix's own contract: leave it set and
+    // the selection below is read as "already showing" and never loads.
+    QVERIFY2(window.currentThreadId().isEmpty(),
+             "runQuery blanked the pane but still names a current thread");
+
+    view->setCurrentIndex(root);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
 }
 
 #include "test_mainwindow.moc"

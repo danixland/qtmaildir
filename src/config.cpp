@@ -208,14 +208,14 @@ void Config::load(const QString &path)
             // first. What was missing is the report. The value parses, so
             // nothing ever said the 500 in the file is not what is on screen.
             if (value < MessageView::kMinZoom || value > MessageView::kMaxZoom) {
-                addProblem(QStringLiteral("Message zoom %1 is outside %2 to %3; "
+                addProblem(tr("Message zoom %1 is outside %2 to %3; "
                                           "using the nearest allowed value.")
                                .arg(value)
                                .arg(MessageView::kMinZoom)
                                .arg(MessageView::kMaxZoom));
             }
         } else {
-            addProblem(QStringLiteral("Message zoom '%1' is not a number; "
+            addProblem(tr("Message zoom '%1' is not a number; "
                                       "using the default.")
                            .arg(zoom.toString()));
         }
@@ -235,14 +235,14 @@ void Config::load(const QString &path)
         bool ok = false;
         const int value = iconSize.toString().trimmed().toInt(&ok);
         if (!ok) {
-            addProblem(QStringLiteral("Toolbar icon size '%1' is not a number; "
+            addProblem(tr("Toolbar icon size '%1' is not a number; "
                                       "using %2.")
                            .arg(iconSize.toString())
                            .arg(m_toolbarIconSize));
         } else if (value < kMinToolbarIconSize || value > kMaxToolbarIconSize) {
             m_toolbarIconSize =
                 qBound(kMinToolbarIconSize, value, kMaxToolbarIconSize);
-            addProblem(QStringLiteral("Toolbar icon size %1 is outside %2 to "
+            addProblem(tr("Toolbar icon size %1 is outside %2 to "
                                       "%3; using %4.")
                            .arg(value)
                            .arg(kMinToolbarIconSize)
@@ -268,7 +268,7 @@ void Config::load(const QString &path)
         const QDateTime b(QDate(2019, 1, 3), QTime(4, 5));
         const QLocale locale = QLocale::system();
         if (locale.toString(a, dateFormat) == locale.toString(b, dateFormat)) {
-            addProblem(QStringLiteral("Date format '%1' contains no date or "
+            addProblem(tr("Date format '%1' contains no date or "
                                       "time field; using the system format.")
                            .arg(dateFormat));
         } else {
@@ -297,7 +297,7 @@ void Config::load(const QString &path)
     } else {
         // Naming the accepted values, since a typo here silently changes what
         // happens to unsynced work at exit.
-        addProblem(QStringLiteral("Unknown sync_on_exit '%1'; expected ask, "
+        addProblem(tr("Unknown sync_on_exit '%1'; expected ask, "
                                   "always or never. Using ask.")
                        .arg(syncExit));
     }
@@ -309,7 +309,7 @@ void Config::load(const QString &path)
         if (ok) {
             m_markReadDelayMs = value;
         } else {
-            addProblem(QStringLiteral("Mark-read delay '%1' is not a number; "
+            addProblem(tr("Mark-read delay '%1' is not a number; "
                                       "using the default.")
                            .arg(markRead.toString()));
         }
@@ -326,7 +326,7 @@ void Config::load(const QString &path)
         if (ok) {
             m_autoSyncDelayMs = value;
         } else {
-            addProblem(QStringLiteral("Auto-sync delay '%1' is not a number; "
+            addProblem(tr("Auto-sync delay '%1' is not a number; "
                                       "using the default.")
                            .arg(autoSync.toString()));
         }
@@ -352,7 +352,7 @@ void Config::load(const QString &path)
         // Skip only the bad entry: one typo must not cost the user the rest
         // of the list, and the built-ins are appended to regardless.
         if (value.isEmpty()) {
-            addProblem(QStringLiteral("[completion] extra_mimetypes: entry '%1' "
+            addProblem(tr("[completion] extra_mimetypes: entry '%1' "
                                       "has no mimetype; ignoring it.")
                            .arg(entry));
             continue;
@@ -453,18 +453,29 @@ void Config::load(const QString &path)
     // entry for an account that does not exist and would sit on "All accounts"
     // without saying why.
     if (!m_startupAccount.isEmpty() && !account(m_startupAccount).isValid()) {
-        addProblem(QStringLiteral("Startup account '%1' is not a configured "
+        addProblem(tr("Startup account '%1' is not a configured "
                                   "account; starting on all accounts.")
                        .arg(m_startupAccount));
         m_startupAccount.clear();
     }
 
-    if (m_startupQueryWasSet && !m_savedQueries.isEmpty()
-        && startupSavedQuery().name.compare(m_startupQuery,
-                                            Qt::CaseInsensitive) != 0) {
-        addProblem(QStringLiteral("Startup query '%1' is not a saved query; "
-                                  "opening '%2' instead.")
-                       .arg(m_startupQuery, startupSavedQuery().name));
+    // Asks whether the resolved query matched on EITHER a name or a generator,
+    // rather than comparing the name alone. Comparing names warned about a
+    // config that was working: `startup_query = Inbox` resolves through the
+    // generator under a translated UI, where the filter's name is "In arrivo",
+    // so the app opened the right view and reported it as wrong.
+    if (m_startupQueryWasSet && !m_savedQueries.isEmpty()) {
+        const SavedQuery resolved = startupSavedQuery();
+        const bool matched =
+            resolved.name.compare(m_startupQuery, Qt::CaseInsensitive) == 0
+            || (!resolved.generated.isEmpty()
+                && resolved.generated.compare(m_startupQuery,
+                                              Qt::CaseInsensitive) == 0);
+        if (!matched) {
+            addProblem(tr("Startup query '%1' is not a saved query; "
+                                      "opening '%2' instead.")
+                           .arg(m_startupQuery, resolved.name));
+        }
     }
 }
 
@@ -513,14 +524,14 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
         // Order is alphabetical here because childKeys() is genuinely all the
         // INI knows. The user reorders once and it sticks from then on.
         if (!m_savedQueries.isEmpty() && !saveSavedQueries()) {
-            addProblem(QStringLiteral("Could not write saved queries to %1.")
+            addProblem(tr("Could not write saved queries to %1.")
                            .arg(m_queriesPath));
         }
         return;
     }
 
     if (!file.open(QIODevice::ReadOnly)) {
-        addProblem(QStringLiteral("Could not read %1: %2.")
+        addProblem(tr("Could not read %1: %2.")
                        .arg(m_queriesPath, file.errorString()));
         m_queriesRefused = true;
         return;
@@ -532,7 +543,7 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
     file.close();
 
     if (error.error != QJsonParseError::NoError || !document.isObject()) {
-        addProblem(QStringLiteral("%1 is not valid JSON: %2.")
+        addProblem(tr("%1 is not valid JSON: %2.")
                        .arg(m_queriesPath, error.errorString()));
         m_queriesRefused = true;
         return;
@@ -545,7 +556,7 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
         // Refused rather than guessed at, and the refusal blocks the save:
         // rewriting a newer document with this build's reading of it would
         // destroy whatever the newer build stored.
-        addProblem(QStringLiteral("%1 has format version %2; this build "
+        addProblem(tr("%1 has format version %2; this build "
                                   "understands %3. Saved queries were not "
                                   "loaded.")
                        .arg(m_queriesPath)
@@ -585,13 +596,13 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
             // dropping the row here would delete it from the file on the next
             // save, which is the same data loss the unknown-field handling
             // exists to prevent.
-            addProblem(QStringLiteral("Saved query '%1' uses an unknown "
+            addProblem(tr("Saved query '%1' uses an unknown "
                                       "generator '%2' and will find nothing.")
                            .arg(query.name, query.generated));
         }
 
         if (query.name.isEmpty()) {
-            addProblem(QStringLiteral("A saved query in %1 has no name and was "
+            addProblem(tr("A saved query in %1 has no name and was "
                                       "skipped.").arg(m_queriesPath));
             continue;
         }
@@ -813,8 +824,23 @@ SavedQuery Config::startupSavedQuery() const
     // matched nothing once item 93 shipped Inbox as a filter and the duplicated
     // saved query was removed, and the app started on whatever query happened
     // to be first in the file.
-    for (const SavedQuery &filter : builtinFilters()) {
+    //
+    // Matched on the GENERATOR as well as the name, and the generator is what
+    // makes this survive translation. A filter's name is a translated label, so
+    // under LANG=it_IT the Inbox filter is called "In arrivo" and a config
+    // reading `startup_query = Inbox` matched nothing, warned, and fell back to
+    // another filter: the user's startup view changed because the UI language
+    // did. The generator is stored in queries.json and matched against a closed
+    // set, so it is wire format and identical in every locale. Names are still
+    // tried first, so a translated name a user copied out of their own UI keeps
+    // working.
+    const QList<SavedQuery> filters = builtinFilters();
+    for (const SavedQuery &filter : filters) {
         if (filter.name.compare(m_startupQuery, Qt::CaseInsensitive) == 0)
+            return filter;
+    }
+    for (const SavedQuery &filter : filters) {
+        if (filter.generated.compare(m_startupQuery, Qt::CaseInsensitive) == 0)
             return filter;
     }
 

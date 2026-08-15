@@ -17,6 +17,11 @@ if(QTMAILDIR_BUILD_TESTS)
 endif()
 find_package(Qt6 6.5 REQUIRED COMPONENTS ${QTMAILDIR_QT_COMPONENTS})
 
+# Optional, and host tooling rather than a link dependency: lrelease compiles
+# the tracked .ts into a .qm. A build without it is English-only rather than
+# broken, which is the same outcome as a missing .qm at runtime.
+find_package(Qt6 6.5 QUIET COMPONENTS LinguistTools)
+
 # notmuch ships no pkg-config file; locate it by hand.
 find_path(NOTMUCH_INCLUDE_DIR notmuch.h)
 find_library(NOTMUCH_LIBRARY NAMES notmuch)

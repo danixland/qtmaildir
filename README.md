@@ -67,6 +67,33 @@ to produce nothing that ships:
 cmake -S . -B build -DQTMAILDIR_BUILD_TESTS=OFF
 ```
 
+### Translations
+
+qtmaildir ships an Italian translation. The language is taken from the
+environment, so there is no configuration key of its own:
+
+```bash
+LANG=it_IT.UTF-8 qtmaildir
+```
+
+Any other locale runs the application in English, which is also what happens
+when the compiled translation is missing.
+
+`translations/qtmaildir_it_IT.ts` is tracked in git; the `.qm` it compiles to
+is generated at build time and is not. Building needs Qt6's `LinguistTools`,
+and a build without them is English-only rather than broken.
+
+Adding a language means copying the `.ts`, translating it, and adding it to
+`src/CMakeLists.txt` beside the Italian one. After changing any user-facing
+string, refresh the `.ts` so the new string is there to translate:
+
+```bash
+lupdate-qt6 src/ -ts translations/qtmaildir_it_IT.ts -no-obsolete -locations none
+```
+
+`ctest -R translations` fails on a string that is missing a translation, and on
+one that `lupdate` cannot extract at all.
+
 ### Slackware package
 
 `assets/slackbuild/` holds a SlackBuild. It follows SBo conventions, with two
@@ -276,6 +303,11 @@ would have meant hand-rolling a parser. They now follow the file.
 `startup_query` looks at your saved queries first and then at the built-in
 filters, so it can name either; yours wins if both carry the same name. A name
 matching neither falls back to the **Unread** filter.
+
+A built-in filter can be named either by its English name (`Inbox`) or by the
+name shown in your own language (`In arrivo`). The English one is the safer
+choice: it is the filter's identity rather than its label, so a config written
+that way keeps working whatever `LANG` is set to.
 
 ### Sent mail
 

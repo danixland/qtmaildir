@@ -11,6 +11,36 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- **An Italian translation, and the machinery to load one.** Nothing read a
+  translation before this: there was no `QTranslator`, no `.ts` file and no
+  build rule, so every string was English whatever the locale said. The
+  language comes from the environment, `LANG=it_IT.UTF-8`, and any other
+  locale runs in English as before. All 355 strings are translated.
+- `ctest -R translations` guards the translation against the two ways it rots:
+  a new string added without one, and a string `lupdate` cannot see at all.
+
+### Fixed
+
+- **Eight labels in the tagging-rules dialog could never be translated**, in
+  any language. From, To, Cc, Subject, Tag, Folder, Attachment and Date were
+  declared with `QT_TR_NOOP` inside an anonymous namespace, where `lupdate`
+  extracts nothing while the dialog's own `tr()` reads them at runtime, so no
+  translation file ever contained them. The source looked correct and only
+  `lupdate` revealed it.
+- Twenty configuration and keybinding warnings were not translatable. They are
+  user-facing: they appear in the status bar and the "Configuration problems"
+  dialog.
+- **`startup_query` naming a built-in filter stopped working under a translated
+  interface**, found in hand testing the Italian build. A filter's name is a
+  translated label, so `startup_query = Inbox` matched nothing where the filter
+  is shown as "In arrivo": the application opened a different view and reported
+  the user's own working configuration as invalid. It now resolves on the
+  generator as well, which is the same in every language, so a config written
+  in English keeps working whatever `LANG` says. The translated name is still
+  accepted.
+
 ## [0.22.0] - 2026-08-15
 
 Follows 0.21.0's built-in filters with the parts that shipped wrong or missing.

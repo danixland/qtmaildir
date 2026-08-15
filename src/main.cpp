@@ -17,8 +17,13 @@
  */
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QDir>
 #include <QIcon>
+#include <QLocale>
 #include <QMessageBox>
+#include <QStandardPaths>
+#include <QTranslator>
 #include <QWebEngineUrlScheme>
 
 #include <notmuch.h>
@@ -83,6 +88,32 @@ int main(int argc, char *argv[])
     // taskbar icon really comes from there.
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/qtmaildir.svg")));
     app.setDesktopFileName(QStringLiteral("qtmaildir"));
+
+    // On main's stack deliberately: a QTranslator must outlive exec(), and one
+    // scoped to a helper function unloads on return, silently reverting every
+    // string to English. Installed before Config is loaded, because config
+    // warnings are generated at load time and are themselves translated.
+    //
+    // QLocale() reads the system locale, so LANG=it_IT.UTF-8 selects the file
+    // with no config key of our own. A missing .qm returns false and the app
+    // runs in English, which is the correct failure rather than a fatal one.
+    QTranslator translator;
+    QStringList translationDirs;
+    // Beside the binary first, so a build tree works without installing.
+    translationDirs << QCoreApplication::applicationDirPath()
+                           + QStringLiteral("/translations");
+    const QStringList dataDirs =
+        QStandardPaths::standardLocations(QStandardPaths::AppDataLocation);
+    for (const QString &dir : dataDirs)
+        translationDirs << dir + QStringLiteral("/translations");
+
+    for (const QString &dir : std::as_const(translationDirs)) {
+        if (translator.load(QLocale(), QStringLiteral("qtmaildir"),
+                            QStringLiteral("_"), dir)) {
+            app.installTranslator(&translator);
+            break;
+        }
+    }
 
     // Fail loudly on an ABI mismatch rather than crashing later.
     if (LIBNOTMUCH_MAJOR_VERSION < 5) {

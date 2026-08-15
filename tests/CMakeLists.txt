@@ -34,6 +34,16 @@ endfunction()
 
 add_qtmaildir_test(keymap)
 add_qtmaildir_test(config)
+# One test installs the real Italian translation, to prove startup_query still
+# resolves when a filter's displayed name is not its English one. It needs the
+# compiled .qm, so it depends on the target that builds it.
+if(Qt6LinguistTools_FOUND)
+    target_compile_definitions(test_config PRIVATE
+        TRANSLATIONS_QM="${CMAKE_BINARY_DIR}/src/translations/qtmaildir_it_IT.qm")
+    add_dependencies(test_config qtmaildir_translations)
+else()
+    target_compile_definitions(test_config PRIVATE TRANSLATIONS_QM="")
+endif()
 add_qtmaildir_test(mimeparser)
 target_compile_definitions(test_mimeparser PRIVATE
     FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
@@ -57,3 +67,9 @@ add_qtmaildir_test(rulequery)
 add_qtmaildir_test(searchterm)
 add_qtmaildir_test(tagstrip)
 add_qtmaildir_test(messagedetailsdialog)
+add_qtmaildir_test(translations)
+# Asserts on the tracked .ts rather than the generated .qm: an untranslated
+# string is dropped by lrelease, so it is invisible in the .qm and shows up
+# only as English in a running Italian UI.
+target_compile_definitions(test_translations PRIVATE
+    TRANSLATIONS_DIR="${CMAKE_SOURCE_DIR}/translations")

@@ -46,6 +46,31 @@ target_link_libraries(qtmaildir PRIVATE qtmaildir_lib)
 
 install(TARGETS qtmaildir RUNTIME DESTINATION bin)
 
+# The .ts is tracked; the .qm is generated and is not. Built beside the binary
+# so a build tree runs translated without installing, and installed to the
+# AppDataLocation main.cpp searches. Building the .qm without installing it
+# reproduces exactly the state item 22 exists to fix, so the install rule is
+# part of this and not a follow-up.
+if(Qt6LinguistTools_FOUND)
+    set(QTMAILDIR_TS ${CMAKE_SOURCE_DIR}/translations/qtmaildir_it_IT.ts)
+    set(QTMAILDIR_QM ${CMAKE_CURRENT_BINARY_DIR}/translations/qtmaildir_it_IT.qm)
+    add_custom_command(
+        OUTPUT ${QTMAILDIR_QM}
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                ${CMAKE_CURRENT_BINARY_DIR}/translations
+        COMMAND Qt6::lrelease ${QTMAILDIR_TS} -qm ${QTMAILDIR_QM}
+        DEPENDS ${QTMAILDIR_TS}
+        COMMENT "Compiling Italian translation"
+        VERBATIM)
+    add_custom_target(qtmaildir_translations ALL DEPENDS ${QTMAILDIR_QM})
+    add_dependencies(qtmaildir qtmaildir_translations)
+    install(FILES ${QTMAILDIR_QM}
+            DESTINATION share/qtmaildir/translations)
+else()
+    message(STATUS
+        "Qt6 LinguistTools not found; building without translations")
+endif()
+
 # The icon goes into the hicolor theme under its scalable directory, which is
 # where a desktop environment looks for the Icon= name in the .desktop entry.
 install(FILES ${CMAKE_SOURCE_DIR}/assets/icons/qtmaildir.svg

@@ -18,6 +18,7 @@
 
 #include <QtTest>
 #include <QTemporaryDir>
+#include <QTranslator>
 #include <QSettings>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -99,6 +100,7 @@ private slots:
     void theStartupAccountIsReadAndValidated();
     void theStartupAccountTakesTheKeyNotTheSyncChannel();
     void theStartupQueryCanNameABuiltinFilter();
+    void theStartupQuerySurvivesATranslatedFilterName();
     void theStartupQueryPrefersASavedQueryOverAFilterOfTheSameName();
     void anUnmatchedStartupQueryFallsBackToAFilterNotAStrayQuery();
     void theFlaggedFilterIsCalledImportant();
@@ -1173,6 +1175,91 @@ void TestConfig::theStartupQueryCanNameABuiltinFilter()
              "the startup query matched something other than the built-in");
     QCOMPARE(config.resolvedQuery(startup, QString()),
              QStringLiteral("tag:inbox"));
+}
+
+void TestConfig::theStartupQuerySurvivesATranslatedFilterName()
+{
+    // Reported by the user running the 0.23.0 Italian translation: the app
+    // started on the wrong view and said
+    //
+    //   La ricerca iniziale 'Inbox' non è una ricerca salvata; verrà aperta
+    //   'Non letti'.
+    //
+    // A filter's NAME is a translated label, so `startup_query = Inbox` matched
+    // nothing once the Inbox filter was called "In arrivo": a config file that
+    // had always worked broke because the UI language changed, and the warning
+    // named the user's own correct config as the fault.
+    //
+    // The fix matches the GENERATOR too, which is stored in queries.json and
+    // identical in every locale. Uses a real QTranslator rather than a stub,
+    // because the bug lives in the gap between the stored string and the
+    // displayed one, and only an actual translation opens that gap.
+    QTranslator translator;
+    const QString qm = QStringLiteral(TRANSLATIONS_QM);
+    QVERIFY2(QFile::exists(qm),
+             qPrintable(QStringLiteral("no compiled translation at %1").arg(qm)));
+    QVERIFY2(translator.load(qm), "the Italian translation failed to load");
+    QVERIFY(qApp->installTranslator(&translator));
+
+    // Proves the translator is actually in effect. Without this the test passes
+    // when the translation silently fails to load, asserting nothing: the names
+    // stay English and every comparison below succeeds for the wrong reason.
+    const SavedQuery inbox = Config::builtinFilter(QStringLiteral("inbox"));
+    QCOMPARE(inbox.name, QStringLiteral("In arrivo"));
+
+    QTemporaryDir dir;
+    // A saved query has to exist for the warning to be reachable at all: the
+    // check is guarded by !m_savedQueries.isEmpty(). Without this file the
+    // branch never runs, and an assertion that no problem was reported passes
+    // against a broken check by never reaching it. Measured: with no
+    // queries.json, reverting the fix left this test green.
+    {
+        QFile queries(dir.filePath(QStringLiteral("queries.json")));
+        QVERIFY(queries.open(QIODevice::WriteOnly));
+        queries.write(QStringLiteral(R"({
+            "version": 1,
+            "queries": [ { "name": "Mine", "query": "tag:mine" } ]
+        })").toUtf8());
+    }
+
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_query=Inbox\n"
+        "\n"
+        "[account.work]\n"
+        "maildir=work\n"
+        "sent=Sent\n")));
+    QVERIFY2(!config.savedQueries().isEmpty(),
+             "queries.json did not load, so the warning path is unreachable");
+
+    const SavedQuery startup = config.startupSavedQuery();
+    QCOMPARE(startup.generated, QStringLiteral("inbox"));
+    QCOMPARE(config.resolvedQuery(startup, QString()),
+             QStringLiteral("tag:inbox"));
+
+    // And it must not warn about a config that is working. The user saw the
+    // warning as well as the wrong view, and a warning they cannot act on is
+    // its own defect.
+    QVERIFY2(config.problems().isEmpty(),
+             qPrintable(QStringLiteral("unexpected problem: %1")
+                            .arg(config.problems().join(QLatin1Char(' ')))));
+
+    // The translated name still works, since that is what a user reading their
+    // own Italian UI would naturally write.
+    Config byLabel;
+    byLabel.load(writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_query=In arrivo\n"
+        "\n"
+        "[account.work]\n"
+        "maildir=work\n"
+        "sent=Sent\n")));
+    QVERIFY(!byLabel.savedQueries().isEmpty());
+    QCOMPARE(byLabel.startupSavedQuery().generated, QStringLiteral("inbox"));
+    QVERIFY(byLabel.problems().isEmpty());
+
+    qApp->removeTranslator(&translator);
 }
 
 void TestConfig::theFlaggedFilterIsCalledImportant()

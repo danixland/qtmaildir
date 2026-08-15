@@ -241,7 +241,54 @@ and quit on a sync that never happened.
 that are only ever shown in passing: status bar messages, tooltips, dialog prose,
 completion descriptions. Query syntax itself is not user-facing text — notmuch keywords
 like `tag:` and `date:` are wire format and must never be translated, only the prose
-describing them. Pre-existing code has not been audited against this rule.
+describing them. The tree was audited against this rule by item 22 on
+2026-08-15, and an Italian translation ships, so a new string that misses
+`tr()` is now a regression rather than pre-existing debt.
+
+**`tr()` alone does not make a string translatable, and the source cannot tell
+you which.** A literal in an ARRAY or any other place with no enclosing class
+needs the context named on the literal itself:
+`QT_TRANSLATE_NOOP("TheClass", "Text")`. `QT_TR_NOOP` there compiles, reads
+correctly, and extracts NOTHING — `lupdate` prints "tr() cannot be called
+without context" and skips it, while the use site's `tr()` looks it up at
+runtime under a context no `.ts` file contains. That shipped for the eight
+rule-builder field labels in `tagrulesdialog.cpp` and made every one of them
+permanently untranslatable in any language.
+
+`Q_DECLARE_TR_FUNCTIONS` is NOT the fix for that case, though it is the fix for
+a free FUNCTION calling `tr()` (which is what `querycompleter.cpp` uses it
+for). Measured: a class carrying the macro beside the array still extracts 0.
+The context must be on the literal.
+
+**`lupdate` output is the evidence, never reading**, and `ctest -R
+translations` encodes it: it fails on a string with no translation and on one
+`lupdate` cannot see. Refresh with `lupdate-qt6 src/ -ts
+translations/qtmaildir_it_IT.ts -no-obsolete -locations none` after changing
+any user-facing string; a clean run reports zero context warnings, and
+`lrelease` must report 0 unfinished, since it silently DROPS an unfinished
+string and ships it as English inside an otherwise Italian UI.
+
+A `QTranslator` must live on `main`'s stack: one scoped to a helper function
+unloads on return and every string reverts to English with nothing to see.
+
+**Translating a string that something MATCHES on breaks config in a language
+the author never runs.** The built-in filters' names are labels and are
+translated; `startup_query` resolved by comparing the config's text against
+those names, so `startup_query = Inbox` matched nothing under `LANG=it_IT`
+where the filter is called "In arrivo". The application opened the wrong view
+AND warned that the user's own working config was invalid. It resolves on the
+GENERATOR as well now, which is stored in queries.json and identical in every
+locale. Before wrapping a string in `tr()`, ask whether anything compares
+against it; if so, match on the wire-format identifier and treat the
+translated name as an additional convenience, never as the identity. The
+regression test installs a real `QTranslator` rather than a stub, because the
+bug lives in the gap between the stored string and the displayed one and only
+a real translation opens it.
+
+A second trap sits under that test and cost a wrong green: the warning it
+asserts on is guarded by `!m_savedQueries.isEmpty()`, so a test with no
+`queries.json` never reaches the branch and passes against a broken check. It
+writes one, and asserts the file loaded before asserting on what it produced.
 
 **This application has a sibling, and one file couples them.** `mailctl`
 (`../mailctl`) is a narrow, agent-safe CLI over the same notmuch index. The two

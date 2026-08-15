@@ -62,15 +62,24 @@ QStringList splitTags(const QString &text)
 
 struct FieldEntry { RuleTerm::Field field; const char *label; };
 
+// QT_TRANSLATE_NOOP, naming the context explicitly, rather than QT_TR_NOOP.
+// These literals sit in an anonymous namespace, where lupdate reports "tr()
+// cannot be called without context" and extracts NOTHING, while the use site
+// below calls TagRulesDialog::tr() on them. The result compiles, reads
+// correctly, and leaves all eight labels untranslatable: no .ts file ever
+// contained them. Q_DECLARE_TR_FUNCTIONS on a neighbouring class does not fix
+// it either (measured: still 0 extracted) because lupdate needs the context on
+// the literal itself. The context named here must stay TagRulesDialog to match
+// the tr() that reads it.
 const FieldEntry kFields[] = {
-    {RuleTerm::From,       QT_TR_NOOP("From")},
-    {RuleTerm::To,         QT_TR_NOOP("To")},
-    {RuleTerm::Cc,         QT_TR_NOOP("Cc")},
-    {RuleTerm::Subject,    QT_TR_NOOP("Subject")},
-    {RuleTerm::Tag,        QT_TR_NOOP("Tag")},
-    {RuleTerm::Folder,     QT_TR_NOOP("Folder")},
-    {RuleTerm::Attachment, QT_TR_NOOP("Attachment")},
-    {RuleTerm::Date,       QT_TR_NOOP("Date")},
+    {RuleTerm::From,       QT_TRANSLATE_NOOP("TagRulesDialog", "From")},
+    {RuleTerm::To,         QT_TRANSLATE_NOOP("TagRulesDialog", "To")},
+    {RuleTerm::Cc,         QT_TRANSLATE_NOOP("TagRulesDialog", "Cc")},
+    {RuleTerm::Subject,    QT_TRANSLATE_NOOP("TagRulesDialog", "Subject")},
+    {RuleTerm::Tag,        QT_TRANSLATE_NOOP("TagRulesDialog", "Tag")},
+    {RuleTerm::Folder,     QT_TRANSLATE_NOOP("TagRulesDialog", "Folder")},
+    {RuleTerm::Attachment, QT_TRANSLATE_NOOP("TagRulesDialog", "Attachment")},
+    {RuleTerm::Date,       QT_TRANSLATE_NOOP("TagRulesDialog", "Date")},
 };
 
 } // namespace

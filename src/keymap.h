@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QCoreApplication>
 #include <QHash>
 #include <QKeySequence>
 #include <QList>
@@ -30,6 +31,11 @@ class QSettings;
 /// class has no dependency on the widgets that implement the actions.
 class KeyMap
 {
+    // Not a QObject, so tr() comes from here. Its warnings are user-facing:
+    // MainWindow joins them with Config's into the status label and the
+    // "Configuration problems" modal.
+    Q_DECLARE_TR_FUNCTIONS(KeyMap)
+
 public:
     /// Every action name the application understands. loadOverrides() rejects
     /// anything not in this set, so a typo in the config cannot bind silently.

@@ -266,13 +266,13 @@ void KeyMap::loadOverrides(QSettings &settings)
         const QKeySequence sequence = normalizeSequence(key);
         if (sequence.isEmpty()) {
             m_warnings.append(
-                QStringLiteral("Unparseable key sequence '%1' in [keys]").arg(key));
+                tr("Unparseable key sequence '%1' in [keys]").arg(key));
             continue;
         }
 
         if (!known.contains(action)) {
             m_warnings.append(
-                QStringLiteral("Unknown action '%1' bound to '%2' in [keys]")
+                tr("Unknown action '%1' bound to '%2' in [keys]")
                     .arg(action, key));
             continue;
         }
@@ -280,7 +280,7 @@ void KeyMap::loadOverrides(QSettings &settings)
         const auto previous = seenThisPass.constFind(sequence);
         if (previous != seenThisPass.constEnd()) {
             m_warnings.append(
-                QStringLiteral("Key sequence '%1' bound to both '%2' and '%3' "
+                tr("Key sequence '%1' bound to both '%2' and '%3' "
                                 "in [keys]; keeping '%2'")
                     .arg(key, previous.value(), action));
             continue;

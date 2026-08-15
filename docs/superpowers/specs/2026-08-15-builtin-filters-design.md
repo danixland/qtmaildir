@@ -143,6 +143,22 @@ class of complaint item 89 is about. And the account combo is a plain
 `QComboBox`, so a keyboard user arrowing through it would fire a query per
 account passed on the way to the one they wanted.
 
+## Ordering, and why it is temporary
+
+The four filters and the user's remaining pinned queries share one row, so
+something has to order them. **Filters first, in the fixed order Unread, Inbox,
+Flagged, Sent; the user's pinned queries after them, keeping their own order.**
+
+Do not build anything configurable for this. The arrangement is transitional:
+item 94 removes `pinned` entirely once the user has confirmed the four buttons
+cover what they use, after which the row is filters only and there is nothing
+left to order. A settings surface for a mixed row would be built and deleted
+inside two items.
+
+`pinned` itself is untouched by this item and stays exactly as it is. The user's
+own queries are unpinned as a migration step, which is a change to their data,
+not to the mechanism.
+
 ## Constraints
 
 - **One rule across all three surfaces.** Buttons, the "more queries" menu and

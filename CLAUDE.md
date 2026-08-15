@@ -717,9 +717,14 @@ changed label, a changed default, or anything in an `### Upgrading` section is a
 minor bump, not a patch: 0.12.0 renamed an action and changed the toolbar's
 button style, and both are things a user notices without reading the changelog.
 
-`assets/slackbuild/` carries its own version in three files and is **not** part
-of this procedure. It has been stale since 0.7.0 and the user is considering
-removing it; do not bump it as a side effect of a release.
+**The SlackBuild is no longer in this repository.** It moved on 2026-08-15 to
+the `my-slackbuilds` repo, under `qtmaildir/`, SBo compliant and building from
+the GitHub release tarball. It is **not** part of this procedure and never
+was: bumping it is a task in that repo, which has its own workflow in its
+`AGENTS.md` (edit the version in the `.SlackBuild` and the `.info`, two-pass
+`sbodl` for the checksum, `sbolint`, then wait to be told to commit). It also
+tracks upstream through an nvchecker stanza there, so a release here is picked
+up by that repo's own sweep.
 
 ## Changing the shared rule format
 

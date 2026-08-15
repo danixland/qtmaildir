@@ -110,14 +110,13 @@ one that `lupdate` cannot extract at all.
 
 ### Slackware package
 
-`assets/slackbuild/` holds a SlackBuild. It follows SBo conventions, with two
-deliberate departures: the tag is `_danix` rather than `_SBo`, and the package
-type is `txz` rather than `tgz`, since this is not an SBo submission. `sbolint`
-reports exactly those two as errors and nothing else.
+The SlackBuild is not in this repository. It lives in
+[my-slackbuilds](https://github.com/danixland/my-slackbuilds) under
+`qtmaildir/`, follows SlackBuilds.org conventions, and builds from the release
+tarball named in its `.info`:
 
 ```bash
-cd assets/slackbuild
-# fetch the source tarball named in qtmaildir.info next to the script
+# from the qtmaildir/ directory of that repo, with the tarball beside the script
 sudo ./qtmaildir.SlackBuild
 ```
 

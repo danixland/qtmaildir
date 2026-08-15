@@ -11,6 +11,18 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- **`startup_account` under `[general]`**, naming the account the dropdown
+  starts on by its `[account.<key>]` suffix. With a `startup_query` naming a
+  built-in filter, the application opens on that account's view of it:
+  `startup_account = work` with `startup_query = Inbox` starts in
+  "work - Inbox" rather than "All accounts - Inbox".
+
+  It sets the starting scope, not a sticky one. Clicking a saved query that
+  names no account still clears the selection, as it always has. A key naming
+  no configured account is reported at startup and ignored.
+
 ### Changed
 
 - The built-in filters carry icons, like the Save button at the other end of

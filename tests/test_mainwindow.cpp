@@ -169,6 +169,8 @@ private slots:
     void narrowingAnEmptyQueryBarIsAPlainSearch();
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
+    void aStartupAccountScopesTheStartupQuery();
+    void aStartupAccountAlsoScopesASavedStartupQuery();
     void aGeneratedStartupQueryActuallyRuns();
     void everyBuiltinFilterButtonCarriesAnIconAndItsText();
     void aQueryInTheMenuCanActuallyBeRun();
@@ -6380,6 +6382,93 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
     // thread, so findChild() cannot see it. Observing the window's own state
     // is both the only route and the better assertion.
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::aStartupAccountScopesTheStartupQuery()
+{
+    // "Start me in Work - Inbox rather than All accounts - Inbox." The account
+    // dropdown is set before the startup query runs, and because a built-in
+    // filter COMPOSES with the dropdown, the query it runs is scoped to that
+    // account without the filter knowing anything about startup.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QSettings s(path, QSettings::IniFormat);
+        // [general] keys are read WITHOUT the prefix, see writeSentConfig.
+        s.setValue(QStringLiteral("startup_query"), QStringLiteral("Inbox"));
+        s.setValue(QStringLiteral("startup_account"), QStringLiteral("work"));
+        s.beginGroup(QStringLiteral("account.work"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("work"));
+        s.endGroup();
+        s.beginGroup(QStringLiteral("account.personal"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("personal"));
+        s.endGroup();
+        s.sync();
+    }
+    Config config;
+    config.load(path);
+
+    MainWindow window(config);
+
+    QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
+
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+    QCOMPARE(queryEdit->text(),
+             QStringLiteral("path:\"work/**\" and (tag:inbox)"));
+
+    // And the query that actually RAN carries the scope, not merely the text in
+    // the bar. runQuery() is told the filter is already scoped, so a mistake
+    // here would drop the scope rather than double it, and the bar would still
+    // look right.
+    // The exact string, not contains(): the double-scoped
+    //     path:"work/**" and (path:"work/**" and (tag:inbox))
+    // contains the scope too, returns exactly the right rows, and passed a
+    // contains() assertion while being the very thing item 93 exists to avoid.
+    QCOMPARE(window.lastRunQueryForTesting(),
+             QStringLiteral("path:\"work/**\" and (tag:inbox)"));
+}
+
+void TestMainWindow::aStartupAccountAlsoScopesASavedStartupQuery()
+{
+    // The other half, and the one the scoping shortcut can silently drop.
+    // resolvedQuery(query, accountKey) ignores the account key for a SAVED
+    // query, because a saved query states its own scope. So the startup path
+    // gets back an unscoped string, and telling runQuery() the query is
+    // "already scoped" would leave it unscoped for good, with the dropdown
+    // sitting on Work and the list showing everything.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QSettings s(path, QSettings::IniFormat);
+        s.setValue(QStringLiteral("startup_query"), QStringLiteral("Mine"));
+        s.setValue(QStringLiteral("startup_account"), QStringLiteral("work"));
+        s.beginGroup(QStringLiteral("account.work"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("work"));
+        s.endGroup();
+        s.sync();
+    }
+    QFile queries(dir.filePath(QStringLiteral("queries.json")));
+    QVERIFY(queries.open(QIODevice::WriteOnly | QIODevice::Text));
+    queries.write(QStringLiteral(R"({
+        "version": 1,
+        "queries": [ { "name": "Mine", "query": "tag:todo" } ]
+    })").toUtf8());
+    queries.close();
+
+    Config config;
+    config.load(path);
+
+    MainWindow window(config);
+
+    QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
+    QVERIFY2(window.lastRunQueryForTesting()
+                 == QStringLiteral("path:\"work/**\" and (tag:todo)"),
+             qPrintable(QStringLiteral("the dropdown says Work and the query "
+                                       "that ran was: ")
+                            + window.lastRunQueryForTesting()));
 }
 
 void TestMainWindow::aGeneratedStartupQueryActuallyRuns()

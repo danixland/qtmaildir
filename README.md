@@ -106,10 +106,19 @@ identity.
 ; point: once you zoom with Ctrl+wheel or Ctrl+/Ctrl-, that is remembered
 ; separately and this value no longer applies.
 ; message_zoom = 1.0
-; Optional. Which saved query to open at startup, by name. Defaults to
-; Unread. Falls back to the first saved query if no query by this name
-; exists, and warns if you named one explicitly.
+; Optional. Which query to open at startup, by name. Defaults to Unread.
+; Matches your own saved queries first, then the built-in filters (Unread,
+; Inbox, Important, Sent), so either can be named here. Falls back to the
+; Unread filter if no query by this name exists, and warns if you named one
+; explicitly.
 ; startup_query = Unread
+; Optional. Which account the dropdown starts on, by key: the suffix of an
+; [account.<key>] section. Unset means All accounts. Combined with a
+; startup_query naming a built-in filter, this opens the application on that
+; account's view of it, so startup_account = work with startup_query = Inbox
+; starts in "work - Inbox". It only sets the STARTING scope: clicking a saved
+; query that names no account still clears the selection, as it always does.
+; startup_account = work
 ; Optional. Toolbar icon size in pixels, 16 to 64. Defaults to 24. The
 ; toolbar follows your desktop's toolbar button style, so if that is set to
 ; "icon only" this is the whole size of the control; 16 matches what most
@@ -262,9 +271,11 @@ drop your comments and reorder your keys.
 
 One behaviour changes with the move. Buttons used to appear in alphabetical
 order, because the INI backend returns keys sorted and preserving file order
-would have meant hand-rolling a parser. They now follow the file. If
-`startup_query` names a query that does not exist, the fallback is likewise the
-first query in the file rather than the alphabetically first one.
+would have meant hand-rolling a parser. They now follow the file.
+
+`startup_query` looks at your saved queries first and then at the built-in
+filters, so it can name either; yours wins if both carry the same name. A name
+matching neither falls back to the **Unread** filter.
 
 ### Sent mail
 

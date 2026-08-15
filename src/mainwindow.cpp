@@ -404,19 +404,46 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     // Not savedQueries().first(): [queries] is read through childKeys(), which
     // sorts alphabetically, so "first" means whatever happens to sort first
     // rather than anything the user chose. Config resolves the name.
+    // BEFORE the startup query runs, so the query below is composed in this
+    // scope. That is the whole of `startup_account`: a built-in filter composes
+    // with the dropdown, so setting the dropdown is all that is needed and the
+    // key never reaches a query builder.
+    //
+    // Config has already checked the key names a real account and cleared it if
+    // not, so findData either matches or this is "All accounts" anyway.
+    const QString startupAccount = m_config.startupAccount();
+    if (!startupAccount.isEmpty()) {
+        const int index = m_accountBox->findData(startupAccount);
+        if (index >= 0)
+            m_accountBox->setCurrentIndex(index);
+    }
+
     // resolvedQuery(), not startup.query: a generated entry stores no query at
     // all, since its text is composed from the accounts at run time. Reading
     // the field directly meant a startup_query naming a built-in filter opened
     // an empty bar and ran nothing.
-    //
-    // No account scope here. The dropdown starts on "All accounts", which is
-    // the empty key, so this is the unscoped form either way; passing the
-    // selection would be reading a widget the user has not touched yet.
     const SavedQuery startup = m_config.startupSavedQuery();
-    const QString startupQuery = m_config.resolvedQuery(startup, QString());
+    const QString startupQuery =
+        m_config.resolvedQuery(startup, startupAccount);
     if (!startupQuery.isEmpty()) {
         m_queryEdit->setText(startupQuery);
-        runCurrentQuery();
+
+        // Which of the two applies the scope depends on what the startup entry
+        // IS, and getting this wrong is silent in both directions.
+        //
+        // A generated filter came back from resolvedQuery() already scoped to
+        // the startup account, so applying the dropdown again gives
+        //     path:"work/**" and (path:"work/**" and (tag:inbox))
+        // which returns exactly the right rows while being the double scope
+        // this item exists to avoid.
+        //
+        // A saved query did NOT: resolvedQuery() ignores the account key for
+        // one, because a saved query states its own scope. Claiming it was
+        // already scoped leaves it unscoped for good, with the dropdown sitting
+        // on Work and the list showing every account.
+        runQuery(FlatResult::No,
+                 startup.isGenerated() ? AccountScope::AlreadyScoped
+                                       : AccountScope::Apply);
     }
 }
 

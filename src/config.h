@@ -299,6 +299,17 @@ public:
     /// sort first rather than anything the user chose.
     QString startupQuery() const { return m_startupQuery; }
 
+    /// Account key the dropdown starts on, or empty for "All accounts".
+    ///
+    /// Scoping happens because the built-in filters COMPOSE with the dropdown,
+    /// so setting it before the startup query runs is the whole mechanism: this
+    /// key does not need to reach the query builders at all.
+    ///
+    /// Validated on load. A name matching no account is reported and left
+    /// empty, rather than passed on to a dropdown that has no such entry and
+    /// would silently stay on "All accounts".
+    QString startupAccount() const { return m_startupAccount; }
+
     /// The saved query startupQuery() names, or the first one when it names
     /// nothing that exists. A default-constructed SavedQuery when there are
     /// none at all.
@@ -400,6 +411,10 @@ private:
     SyncOnExit m_syncOnExit = SyncOnExit::Ask;
     QList<CompletionEntry> m_extraMimetypes;
     QString m_startupQuery = QStringLiteral("Unread");
+
+    /// Empty means "All accounts", which is the same convention every other
+    /// account key here follows.
+    QString m_startupAccount;
 
     /// Whether startup_query came from the config rather than being the
     /// built-in default. Only a name the user wrote is worth reporting when

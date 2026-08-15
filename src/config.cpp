@@ -191,6 +191,11 @@ void Config::load(const QString &path)
         m_startupQueryWasSet = true;
     }
 
+    // Stored raw here and validated once the accounts are parsed, below: the
+    // account sections have not been read yet at this point.
+    m_startupAccount =
+        settings.value(QStringLiteral("startup_account")).toString().trimmed();
+
     const QVariant zoom = settings.value(QStringLiteral("message_zoom"));
     if (zoom.isValid()) {
         bool ok = false;
@@ -442,6 +447,18 @@ void Config::load(const QString &path)
     // are not parsed until now. Only a name the user actually wrote is worth a
     // problem; the built-in default naming a query they never created is not
     // something they got wrong.
+    // Same shape as the startup_query check below: a name the user wrote that
+    // matches nothing is a problem, because they asked for something and are
+    // not getting it. Cleared rather than passed on, since the dropdown has no
+    // entry for an account that does not exist and would sit on "All accounts"
+    // without saying why.
+    if (!m_startupAccount.isEmpty() && !account(m_startupAccount).isValid()) {
+        addProblem(QStringLiteral("Startup account '%1' is not a configured "
+                                  "account; starting on all accounts.")
+                       .arg(m_startupAccount));
+        m_startupAccount.clear();
+    }
+
     if (m_startupQueryWasSet && !m_savedQueries.isEmpty()
         && startupSavedQuery().name.compare(m_startupQuery,
                                             Qt::CaseInsensitive) != 0) {

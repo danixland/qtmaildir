@@ -96,6 +96,7 @@ private slots:
     void allSentQuerySkipsAccountsWithoutTheKey();
     void allSentQueryJoinsEveryConfiguredAccount();
     void aStoredGeneratedQueryIsUnpinnedNotDropped();
+    void theStartupAccountIsReadAndValidated();
     void theStartupQueryCanNameABuiltinFilter();
     void theStartupQueryPrefersASavedQueryOverAFilterOfTheSameName();
     void anUnmatchedStartupQueryFallsBackToAFilterNotAStrayQuery();
@@ -1055,6 +1056,50 @@ static QString writeTwoAccounts(const QTemporaryDir &dir)
         "\n"
         "[account.personal]\n"
         "maildir=personal\n"));
+}
+
+void TestConfig::theStartupAccountIsReadAndValidated()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[general]\n"
+        "startup_account=work\n"
+        "\n"
+        "[account.work]\n"
+        "maildir=work\n"
+        "\n"
+        "[account.personal]\n"
+        "maildir=personal\n")));
+
+    QCOMPARE(config.startupAccount(), QStringLiteral("work"));
+    QVERIFY(config.problems().isEmpty());
+
+    // Unset is "All accounts", which is what an empty key means everywhere the
+    // account is carried, so no separate sentinel.
+    QTemporaryDir plain;
+    Config unset;
+    unset.load(writeIni(plain, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n")));
+    QVERIFY(unset.startupAccount().isEmpty());
+
+    // A name that matches no account is a problem: the user asked for
+    // something and is not getting it, exactly as for startup_query. Reported
+    // and IGNORED rather than passed on, since setting the dropdown to a key
+    // that is not in it would silently leave it on All accounts anyway.
+    QTemporaryDir bad;
+    Config wrong;
+    wrong.load(writeIni(bad, QStringLiteral(
+        "[general]\n"
+        "startup_account=nosuchaccount\n"
+        "\n"
+        "[account.work]\n"
+        "maildir=work\n")));
+    QVERIFY2(wrong.startupAccount().isEmpty(),
+             "an unknown startup account was passed through rather than "
+             "falling back to All accounts");
+    QCOMPARE(wrong.problems().size(), 1);
 }
 
 void TestConfig::theStartupQueryCanNameABuiltinFilter()

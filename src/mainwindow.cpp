@@ -3441,8 +3441,21 @@ void MainWindow::runAutoSync()
     // m_externalSyncBusy covers the cron job SyncMonitor can see. A lock taken
     // between that poll and now is not visible here, and does not need to be:
     // MailSync::start() fails on a second run and startSync() reports it.
-    if (m_externalSyncBusy || (m_sync && m_sync->isRunning()))
+    //
+    // Re-armed rather than abandoned. Skipping is right; giving up is not. The
+    // running sync is only VERY LIKELY to carry the edit, since an edit made
+    // after mbsync has already passed that account's mailbox is not carried by
+    // it, and before this the timer had fired, nothing re-armed it, and the
+    // count sat non-zero until a manual sync or the next cron run.
+    //
+    // scheduleAutoSync() re-checks the delay, the sync command and the pending
+    // count on the way in, so this cannot arm a sync for nothing. Against a
+    // long external sync it re-arms once per debounce interval until the lock
+    // clears, which is the user's own interval and a timer, not a sync.
+    if (m_externalSyncBusy || (m_sync && m_sync->isRunning())) {
+        scheduleAutoSync();
         return;
+    }
 
     startSync();
 }

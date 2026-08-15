@@ -19,6 +19,11 @@ point at which they are stable.
   naming what it had been showing, so selecting that thread again was read as
   "already displayed" and never loaded it. This is why an `id:` query copied
   out of a message's own details dialog produced a card that would not open.
+- An automatic sync skipped because another sync was already running gave up
+  instead of trying again, so an edit the running sync had already passed sat
+  pending until a manual sync or the next cron run. It now re-arms at the
+  configured delay. Skipping a concurrent run is unchanged: two mbsync runs
+  cannot share the lock.
 
 ## [0.23.0] - 2026-08-15
 

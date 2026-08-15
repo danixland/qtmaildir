@@ -201,6 +201,7 @@ private slots:
     void aSingleMessageIdQuerysCardOpensInTheMessagePane();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
+    void aSkippedAutoSyncRearmsRatherThanGivingUp();
     void aSuccessfulSyncRefreshesRatherThanRerunningTheQuery();
     void markReadCanBeDisabled();
     void pendingEditCountSurvivesAQuery();
@@ -4042,6 +4043,67 @@ void TestMainWindow::autoSyncSkipsWhileABackgroundSyncIsRunning()
 
     // No restore to "/proc/locks": init() points every test at its own
     // table, and handing the real one back would re-expose the next test.
+}
+
+void TestMainWindow::aSkippedAutoSyncRearmsRatherThanGivingUp()
+{
+    // Item 89, the concrete half. Skipping is correct and must stay, but the
+    // skip used to be the END of the attempt: the timer had fired, nothing
+    // re-armed it, and the edit waited for a manual sync or the next cron run.
+    //
+    // The comment defending it said the running sync was "very likely" to carry
+    // the edit, since it reached the mail store at edit time. Very likely is not
+    // always: an edit made after mbsync has already passed that account's
+    // mailbox is not carried by it, and the pending count then sits non-zero
+    // with nothing scheduled to clear it.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString locks = dir.filePath(QStringLiteral("locks"));
+    {
+        QFile f(locks);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+    }
+    MainWindow::setLocksPathForTesting(locks);
+
+    Config config;
+    config.load(writeSyncConfig(dir));
+
+    MainWindow window(config);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("autoSyncTimer"));
+    QVERIFY(timer);
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+
+    TagChange change;
+    change.messageIds = { QStringLiteral("m1") };
+    change.added = { QStringLiteral("flagged") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+    QVERIFY2(timer->isActive(), "the edit did not arm the debounce at all");
+
+    // Fire it by hand rather than waiting out the delay. A QTimer that has
+    // fired is no longer active, so this is also what makes the assertion
+    // below mean something: without the re-arm it is inactive here.
+    timer->stop();
+    QVERIFY(QMetaObject::invokeMethod(&window, "runAutoSync"));
+
+    QVERIFY2(timer->isActive(),
+             "a skipped automatic sync left nothing armed to carry the edit");
+
+    // Re-armed at the configured debounce, not at some shorter interval that
+    // would spin against a long external sync. SyncMonitor polls /proc/locks,
+    // so an m_externalSyncBusy that never clears re-arms at this interval
+    // indefinitely, which is cheap only because the interval is the user's own.
+    QCOMPARE(timer->interval(), config.autoSyncDelayMs());
+
+    // The edit is still pending throughout: a retry must not look like a
+    // completed sync to the indicator.
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+    QVERIFY2(!label->isHidden(),
+             "the re-armed sync cleared the pending indicator");
 }
 
 void TestMainWindow::aSuccessfulSyncRefreshesRatherThanRerunningTheQuery()

@@ -482,22 +482,16 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
         }
         settings.endGroup();
 
-        // Sent was a hardcoded button beside the saved queries and becomes an
-        // ordinary row here, so it can be reordered, renamed, unpinned or
-        // removed like any other. It stays GENERATED, so it still follows the
-        // accounts. Appended last, where the button already sat.
+        // Sent is NOT migrated into queries.json any more. It used to become an
+        // ordinary saved query here, so the hardcoded button could be
+        // reordered, renamed or removed; item 93 makes it one of four built-in
+        // filters instead, which are shipped rather than stored. Migrating it
+        // as well would put two Sent buttons on the row, one of them the user's
+        // to edit and one not.
         //
-        // Only when an account actually configures a sent folder: the button
-        // was hidden entirely otherwise, and migrating a row that always finds
-        // nothing would be worse than what it replaces.
-        if (!allSentQuery().isEmpty()) {
-            SavedQuery sent;
-            sent.name = QStringLiteral("Sent");
-            sent.generated = QStringLiteral("sent");
-            sent.pinned = true;
-            sent.flat = true;
-            m_savedQueries.append(sent);
-        }
+        // Nothing is lost: the built-in Sent resolves through the same
+        // generator, so it still follows the accounts, and it now composes with
+        // the account dropdown rather than resetting it.
 
         // Order is alphabetical here because childKeys() is genuinely all the
         // INI knows. The user reorders once and it sticks from then on.
@@ -584,6 +578,18 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
                                       "skipped.").arg(m_queriesPath));
             continue;
         }
+
+        // A stored entry naming a generator now duplicates a BUILT-IN filter of
+        // the same name, since item 93 ships all four rather than storing them.
+        // 0.19.0 migrated the hardcoded Sent button into exactly such an entry,
+        // so every existing install has one.
+        //
+        // Unpinned, never dropped: the row would otherwise carry two Sent
+        // buttons, one the user's to edit and one not. Deleting it would be
+        // data loss on a file whose readers are supposed to preserve what they
+        // do not own, and an unpin is reversible from the UI.
+        if (query.isGenerated() && isKnownGenerator(query.generated))
+            query.pinned = false;
 
         for (auto it = object.begin(); it != object.end(); ++it) {
             static const QStringList known = {

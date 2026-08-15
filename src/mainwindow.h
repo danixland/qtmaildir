@@ -274,12 +274,23 @@ public:
     enum class FlatResult { No, Yes };
     Q_ENUM(FlatResult)
 
+    /// Whether runQuery() applies the selected account's scope to the bar text.
+    ///
+    /// Apply is right for anything the user typed or a saved query put there.
+    /// AlreadyScoped is for a built-in filter, whose text was resolved through
+    /// Config::resolvedQuery(query, accountKey) and already carries the scope:
+    /// scoping it a second time would wrap path:"work/Sent/**" in
+    /// path:"work/**", which is the double scope item 93 exists to avoid.
+    enum class AccountScope { Apply, AlreadyScoped };
+    Q_ENUM(AccountScope)
+
 private:
     /// The real query runner. Kept off the slot list deliberately: a slot with
     /// a defaulted argument does not satisfy QObject::connect, which matches
     /// signal and slot arity at compile time, so the zero-argument slot below
     /// is what widgets connect to.
-    void runQuery(FlatResult flat);
+    void runQuery(FlatResult flat,
+                  AccountScope scope = AccountScope::Apply);
 
     /// Builds the row of saved-query buttons, the overflow menu and Sent.
     ///
@@ -294,6 +305,19 @@ private:
     /// selected account's path, so a scope baked in here would be applied
     /// twice. Setting the dropdown also shows the user what scope they are in.
     void runSavedQuery(const SavedQuery &saved);
+
+    /// Runs a built-in filter in whatever account scope is currently selected.
+    ///
+    /// The opposite of runSavedQuery() in the one way that matters: it does NOT
+    /// touch the account box. A filter narrows what the user is already looking
+    /// at, so the dropdown is its input rather than something it overwrites,
+    /// which is item 90's defect and item 93's design.
+    ///
+    /// The query text is resolved here rather than left to runQuery()'s own
+    /// scoping, because a generator must be asked for the account's own query:
+    /// Sent wrapped in a scope double-scopes and works only by accident of
+    /// path: being hierarchical. See Config::resolvedQuery(query, accountKey).
+    void runFilter(const SavedQuery &filter);
 
     /// Names the current query and stores it in queries.json.
     void saveCurrentQuery();

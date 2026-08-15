@@ -11,6 +11,15 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-08-15
+
+Follows 0.21.0's built-in filters with the parts that shipped wrong or missing.
+The filters carry icons and the flagged one is labelled Important, matching the
+action of that name. `startup_query` can name a filter as well as a saved
+query, which it could not, and a new `startup_account` says which account the
+dropdown opens on, so the application can start in "work - Inbox" rather than
+"All accounts - Inbox".
+
 ### Added
 
 - **`startup_account` under `[general]`**, naming the account the dropdown

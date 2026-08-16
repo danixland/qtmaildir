@@ -48,6 +48,20 @@ struct ThreadSummary
     /// with recipients; the two have nothing in common but their position here.
     QString firstMessageId;
 
+    /// The tags of that ONE message, as opposed to `tags` above, which is
+    /// notmuch's union over the whole thread.
+    ///
+    /// A card stands for one message but sits above a conversation, and shows
+    /// both: its own tags at full size, the thread's others smaller (item
+    /// 111). Without this the split is unknown until the row is opened and the
+    /// message loads, so every chip renders as the card's own and then shrinks
+    /// on selection, which is what the user reported.
+    ///
+    /// Free, for the same reason `firstMessageId` is: the walk that finds that
+    /// message is already happening and this reads the INDEX, not the message
+    /// file. Do not move it behind a flag by analogy with `recipients`.
+    QStringList firstMessageTags;
+
     /// Who the thread's messages were sent TO, summarised for one line.
     ///
     /// Empty unless the query asked for it, and that is a performance
@@ -140,6 +154,15 @@ struct MessageNode
     {
         return tags.contains(QStringLiteral("attachment"));
     }
+
+    bool isDeleted() const { return tags.contains(QStringLiteral("deleted")); }
+    bool isSpam() const { return tags.contains(QStringLiteral("spam")); }
+
+    /// True while the message is tagged for removal, exactly as the thread
+    /// predicate of the same name. A reply carries its own fate: a
+    /// message-scoped Delete tags one message, and the reply's row is the only
+    /// place the user can see that happen.
+    bool isDoomed() const { return isDeleted() || isSpam(); }
 };
 
 /// What an action is about to touch, resolved from the selection.

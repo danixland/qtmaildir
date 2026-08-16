@@ -37,6 +37,21 @@ QStringList KeyMap::knownActions()
         QStringLiteral("edit_tags"),
         QStringLiteral("tag_rules"),
         QStringLiteral("flag"),
+        // The whole-thread counterparts (item 108). The names above act on the
+        // message a row displays; these act on its entire thread. Separate
+        // names rather than a scope flag, because a name is what a user writes
+        // in [keys]: giving `delete` new semantics would silently change an
+        // existing config, and renaming it would break one that mentions it.
+        //
+        // Unbound by default. They are reached through the "Whole thread"
+        // submenu, and inventing five more default chords for actions most
+        // users will rarely want is worse than leaving them to bind what they
+        // use.
+        QStringLiteral("archive_thread"),
+        QStringLiteral("delete_thread"),
+        QStringLiteral("spam_thread"),
+        QStringLiteral("toggle_unread_thread"),
+        QStringLiteral("flag_thread"),
         QStringLiteral("focus_query"),
         QStringLiteral("complete_query"),
         QStringLiteral("save_query"),
@@ -90,6 +105,20 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         // action takes the harder chord rather than the easier one.
         { QStringLiteral("Ctrl+Shift+U"), QStringLiteral("mark_all_read") },
         { QStringLiteral("Ctrl+I"),       QStringLiteral("flag") },
+        // The whole-thread tier (item 108), one modifier out from each
+        // message-scoped twin: Ctrl+D deletes the message a row displays,
+        // Ctrl+Alt+D deletes its conversation.
+        //
+        // Ctrl+ALT, not Ctrl+Shift. The obvious pairing is taken twice over:
+        // Ctrl+Shift+S is `spam` and Ctrl+Shift+U is `mark_all_read`, both
+        // shipped and both in users' fingers. Reusing either would silently
+        // change what an existing key does, which is the same objection that
+        // made these separate action names rather than a flag on the old ones.
+        { QStringLiteral("Ctrl+Alt+E"),   QStringLiteral("archive_thread") },
+        { QStringLiteral("Ctrl+Alt+D"),   QStringLiteral("delete_thread") },
+        { QStringLiteral("Ctrl+Alt+S"),   QStringLiteral("spam_thread") },
+        { QStringLiteral("Ctrl+Alt+U"),   QStringLiteral("toggle_unread_thread") },
+        { QStringLiteral("Ctrl+Alt+I"),   QStringLiteral("flag_thread") },
         { QStringLiteral("Ctrl+T"),       QStringLiteral("edit_tags") },
         // Shifted against Ctrl+T for the same reason Ctrl+Shift+U is shifted
         // against Ctrl+U: this is the standing version of tagging, applied to

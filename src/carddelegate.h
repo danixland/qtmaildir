@@ -76,4 +76,22 @@ public:
     ///
     /// Falls back to threadLineColour() for a thread with no account tag.
     static QColor accentLineColour(const QColor &accountColour);
+
+    /// A tag chip's colour, drained for the SIBLING tier (item 111).
+    ///
+    /// Saturation only: hue stays so the tag is still recognisable, and
+    /// lightness stays so `TagColors::textColourOn()` keeps choosing the same
+    /// text colour and the chip cannot become unreadable. Exposed for a test,
+    /// since "muted" has to be asserted on rather than eyeballed.
+    static QColor mutedChipColour(const QColor &chipColour);
+
+    /// The size of one tag chip on a card, for either tier.
+    ///
+    /// The delegate's own arithmetic rather than a duplicate of it: a test
+    /// calling `TagChip::sizeFor` directly proves what that function does and
+    /// nothing about what the delegate ASKS for, which is where the padding
+    /// scale is chosen. A mutation dropping the scale at the call site
+    /// survived exactly that kind of test.
+    static QSize chipSize(const QFontMetrics &metrics, const QString &text,
+                          bool own);
 };

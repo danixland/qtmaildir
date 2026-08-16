@@ -473,13 +473,181 @@ its siblings and `threadAt(current.row())` on the first reply of any thread
 returns the FIRST THREAD IN THE LIST. This shipped in `markCurrentThreadRead`,
 was mostly masked while the write it guarded was thread-wide, and became "a
 random message was marked read" the moment a fix scoped that write to one
-message (items 87 and 88). Reach the thread through the INDEX, never through a
-row number, unless you have already established the index is a thread row.
+message (items 87 and 88).
 
-The general rule is in the item 20 note further down, "anything keyed on a row
-NUMBER did not survive the port to a tree". This is a surviving instance, found
-by corrupting real mail rather than by reading, so treat every remaining
-`.row()` in `mainwindow.cpp` as suspect until checked.
+**Use `threadFor(const QModelIndex &)`**, which resolves a message row through
+its parent and a thread row through itself. Item 88 added it on 2026-08-16 and
+converted every caller; `threadAt(int)` survives only for loops over
+`rowCount()`, which genuinely hold a top-level number. A new caller that has an
+index and reaches for `threadAt(index.row())` is reintroducing the bug.
+
+**The audit found four live sites, not the one that was reported**, which is the
+part worth remembering: `delete` and `toggle_unread` each chose their DIRECTION
+from the wrong thread, and the tag dialog counted the wrong thread's tags. All
+three were reachable by clicking a reply, none had a test, and the reported
+symptom named only `markCurrentThreadRead` (which was in fact protected by an
+unrelated guard and could not fire). One bad accessor produced four defects with
+one symptom between them.
+
+**A thread's first message is NOT among its children, and two lookups forgot
+it.** `setThreadMessages` drops depth 0 because the root row stands for that
+message, so `children` never holds it. `applyMessageTagChange` and
+`messageById` both search the root first now (item 109); before that, a
+message-scoped write to a root card repainted nothing, and the strip refresh set
+the pane's chips to the empty node the lookup returned, destroying a strip that
+had been correct. Item 108 made that the ordinary gesture rather than an edge
+case: the two changes were each correct and broken together.
+
+**`ThreadSummary::tags` is notmuch's UNION over the thread, and a card that
+stands for one message must not draw it.** A four-message thread whose third
+message is `signed` reads as signed, so the root card and the message pane both
+claimed a tag the displayed message did not have (item 110). `MessageRef`
+carries the message's own tags and arrives on every load;
+`ThreadListModel::setRootMessageTags()` records them on `ThreadNode::first`, and
+a thread row's `data()` substitutes `first.tags` for the summary's when that
+node exists. Only the TAGS are substituted: the subject, authors, date and reply
+count describe the thread and are correct. The summary itself is never
+rewritten, because the thread-scoped actions and the query read it.
+
+That was also why a root card could not repaint: with no per-message tags, a
+message-scoped write had nothing to change. `applyMessageTagChange` keeps the
+summary in step only when `totalCount <= 1`, where the union IS the message.
+
+**The card shows BOTH tiers, and that is item 111 rather than a leftover.**
+`PillTagsRole` returns the displayed message's tags first and the thread's other
+tags after; `PillOwnCountRole` is the boundary the delegate switches fonts at.
+The second tier is drawn in `CardLayout::siblingFont()` and
+`CardDelegate::mutedChipColour()`.
+
+**The split comes from the QUERY, not from the message load**, and that
+distinction was worth a whole round trip. `ThreadSummary::firstMessageTags` is
+read by the same worker walk that finds `firstMessageId`, so an UNOPENED row
+already knows which tags are its own. Deriving it from the load instead left
+every unopened row drawing one tier and correcting itself on selection, which is
+most of the list and is exactly the "chip changed when I clicked" the feature
+exists to remove. `nodeFor()` seeds the node on arrival; `reconcile()` must
+refresh it AND compare it, since a survivor keeps its node and a sync can move
+the root's tags while the thread's union stands still.
+
+**A size step must be a FRACTION, not a subtraction, and the padding has to
+follow it.** One point off a 14pt desktop font is a 7% step and reads as the
+same size; the user reported exactly that. `CardLayout::siblingFont()` is 0.70
+of the card font. `TagChip::kPaddingX` is a fixed 9px a side, so an unscaled
+sibling chip is 18px of padding around ~30px of text and stays wide while its
+letters shrink: `TagChip::sizeFor()` takes a scale, and
+`CardDelegate::chipSize()` is where the tier chooses it. Assert on ratios rather
+than sizes, so the test is about the distinction and not the constant.
+
+Muting is **saturation only**. Hue stays so the tag is recognisable; lightness
+stays so `TagColors::textColourOn()` keeps its choice and the chip cannot become
+unreadable. Do not blend toward the background here: `accentLineColour()`
+records what that costs on a dark theme, and a chip is worse because its fill
+carries text.
+
+**`TagStrip::visibleTags()` measures the LAYOUT, not the data.** It is one row
+that collapses the overflow into a trailing "+N" chip, and an unshown window
+under the offscreen platform has no width, so nearly everything lands in
+`hiddenTags()`. A test asserting on `visibleTags()` alone passes or fails on how
+many tags happened to fit; two shipped that way before it was noticed. Assert on
+`visibleTags() + hiddenTags()`.
+
+**A message-scoped write repaints the MESSAGE's row, never the thread's.**
+`ThreadListModel::applyMessageTagChange()` is the counterpart to
+`applyTagChange()` and exists because there was no optimistic update at all for
+a one-message edit: the correct observation that repainting a thread card for a
+one-message change is a lie was turned into the wrong conclusion that nothing
+should repaint, so Delete and Toggle unread on a reply moved the pending count
+and changed nothing on screen (item 105). The thread card deliberately stays
+put; one deleted reply does not doom the conversation.
+
+**A thread ROW means the one message its card displays, not the conversation.**
+Item 108, 2026-08-16. `ThreadListModel::messageScopeFor()` is what the ordinary
+tag actions resolve through; `scopeFor()` still returns whole threads and is
+what the five `*_thread` actions use. A thread row's message is
+`ThreadSummary::firstMessageId`, carried from the query, so no expansion is
+needed; in the Sent view that is the first MATCHED message, which is right for
+the same reason it is right on the card. A row with no id contributes NOTHING
+rather than falling back to its thread: that fallback is the silent escalation
+this removed.
+
+The automatic mark-read follows the same rule (item 87): `m_markReadMessageId`,
+armed for a reply as well as a root. One approximation is deliberate and
+documented at the call site: a thread row arms from `ThreadSummary::isUnread()`,
+a union over the conversation, so it can arm for a thread whose displayed
+message is already read. The write is still scoped to that message, so the cost
+is a no-op rather than a wrong write.
+
+**Adding an action is four places, and three of them are enforced by tests that
+fail in confusing ways.** `KeyMap::knownActions()` (a `Q_ASSERT` in the
+constructor fires otherwise, and it surfaces in whichever suite happens to build
+a `MainWindow` first — `test_tagrules` did), `defaultBindings()` (every action
+must be keyboard-reachable), and the icon table (every action must carry one).
+The no-duplicate-icons rule is narrowed to actions that can reach the toolbar,
+by a named exception list; the five thread actions share their twins' icons
+because a submenu entry always carries text, and the test asserts none of them
+is on the toolbar so the exemption cannot be abused.
+
+**A toggle must read the state of what the row STANDS FOR, not of its thread.**
+`MainWindow::everySelectedRowHasTag()` is the one question `delete` and
+`toggle_unread` both ask; a reply row answers from its message, a thread row
+from its thread. Reading the thread makes a toggle ONE-WAY on a reply, and the
+failure is silent in a specific way worth knowing: the write is message-scoped,
+so it never changes the thread's tags, so the answer never moves however many
+times the key is pressed. The second press re-sends a tag the message already
+has, which is a no-op, and a no-op repaints nothing. The user reports this as
+"the key does nothing", not as "the key did the wrong thing" (item 105).
+
+This is the SECOND fix to the same three lines. Item 88 corrected which thread
+they resolved; that was necessary and not sufficient, because a reply needs a
+message read rather than a better thread. "Resolved through the index" and
+"resolved to the right object" are separate properties, and a test for the first
+passes against the second being wrong.
+
+**Any state a thread row draws, a reply row has to draw too, and this was
+missed once already.** The message-row branch of `data()` is a separate switch
+from the thread branch, so a cue added to one is simply absent from the other
+with nothing to flag it. The doomed fill and the strike-out were thread-only
+from item 13 until item 105, which is why updating the node was not enough on
+its own to make Delete visible. When adding a visual state, check both branches.
+One asymmetry is deliberate and must survive: a reply carries no tag strip. A
+reply is now BOLD when unread, at the user's request on 2026-08-16, combining
+with the dimming for the same two-cue reason a thread row has both; the smaller
+reply font is what keeps it subordinate. A `deleted` reply deliberately shows
+the chip as well as the fill and strike-out, matching the thread row, confirmed
+with the user rather than treated as redundancy to remove.
+
+**And the reverse: a thread-scoped write must reach the thread's LOADED
+replies.** `applyTagChange` updated the summary only, so marking an expanded
+thread read left every reply bold and undimmed until the next query (item 107).
+The symptom reads as a missed repaint and is not: the rows were redrawn from
+data that had not changed. When a model update looks like it did not paint,
+check whether the data behind those rows actually moved.
+
+**Every path a thread-scoped write travels, a message-scoped one travels too,
+and each one was missed separately.** Three of them, found one hand-test round
+apart: the optimistic model update (item 105), the message pane's tag strip
+(also 105, keyed on `m_currentMessageId` and read by id through
+`ThreadListModel::messageById()`, never from `currentIndex()`), and
+`flushHeldEdits()`, which re-sent only thread edits and therefore DROPPED any
+message edit made during a sync after showing it and counting it as pending
+(item 106, data loss, never reported). When adding anything to
+`sendThreadTagChange`, check whether `sendMessageTagChange` needs it. Escalating
+a message edit to its thread is never the fix: it deletes a whole conversation
+when the user deleted one reply.
+
+**Anything applied optimistically must also be reverted.**
+`revertPendingTagChange()` keyed on `m_pendingThreadIds` alone, so adding the
+message-scoped optimistic update would have left a FAILED message write showing
+its optimistic state for good. Both scopes revert now. Undo needs nothing extra:
+`MessageTagCommand` routes back through `sendMessageTagChange`.
+
+**Testing this needs two things that are easy to miss.** Put the reply under the
+SECOND thread, so the wrong answer is plausible rather than accidentally right,
+and give the two threads OPPOSITE states, since two threads in the same state
+answer identically whichever way the code resolves them. That second point is
+why the reverted item 87 fix was mutation-checked and green while corrupting
+real mail. For a toggle, assert on `undoText()`: both directions push one
+command over the same rows, so depth and ids cannot tell them apart.
 
 **A test for a mutation on a data-writing path must exercise the REPLY case,
 not only the root.** The reverted fix above was mutation-checked and green: it
@@ -503,6 +671,12 @@ measuring nothing:
   children are populated by the expansion. `hasChildren()` is the pre-expansion
   question and falls back to `summary.totalCount > 1`. An assertion on
   `rowCount` fails against correct code.
+- **A `ThreadSummary` fixture needs `firstMessageId`.** Since item 108 an
+  ordinary tag action resolves a thread row to that id, so a summary without one
+  names no message and every action on it silently does nothing. Ten tests
+  failed this way at once, all reporting "the action did not happen", which
+  reads as a defect in the action rather than a gap in the fixture.
+  `makeThread()` sets it; a hand-built summary must too.
 - **`currentThreadId()` reports INTENT, not content.** It is assigned
   synchronously in the selection handler before any worker round-trip, so a test
   asserting on it passes with `onThreadLoaded()` disabled entirely, measured.
@@ -543,6 +717,13 @@ a defect that did not exist because of these; each was believed until it was con
   buttons to the query row: the thread list shrank, and a test sizing its window to 300px
   started failing with a message naming a defect that did not exist. Assert the rect is
   INSIDE the viewport, not merely non-empty.
+- **A probe can be correct and still measure nothing, by being pointed at the
+  wrong object.** A test for the sibling chip's padding called
+  `TagChip::sizeFor()` directly: that proves what the function does and nothing
+  about whether the delegate asks it for a scaled padding, so a mutation
+  dropping the scale at the call site stayed green. Assert through the function
+  the production path actually calls (`CardDelegate::chipSize()`), not through
+  the one it calls INTO.
 - **A "saturated pixel" threshold catches antialiased edges of the selection highlight**,
   hundreds of distinct near-background colours, and will pass whatever the code does. Match
   the exact colours the model supplies instead. Two versions of one test passed under

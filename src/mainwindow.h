@@ -167,6 +167,37 @@ public:
     /// command was pushed, which is what "this did nothing" has to assert.
     int undoDepthForTesting() const { return m_undoStack.count(); }
 
+    /// The text of the command on top of the undo stack.
+    ///
+    /// A test seam for the DIRECTION a toggle chose. Delete and Undelete both
+    /// push one command and touch the same rows, so a depth or an id says
+    /// nothing about which way the toggle went, which is exactly what item 88
+    /// got wrong.
+    QString undoTextForTesting() const { return m_undoStack.undoText(); }
+
+    /// The tag counts the tag dialog would be built from, for the current
+    /// selection. A test seam: the dialog is modal, so the counts cannot be
+    /// observed through it.
+    QHash<QString, int> selectionTagCountsForTesting() const
+    {
+        return selectionTagCounts();
+    }
+
+    /// The thread the current row belongs to. A test seam for item 88's
+    /// resolution itself, reachable when the write it guards is not.
+    ThreadSummary threadForCurrentRowForTesting() const;
+
+    /// Sends a message-scoped tag change directly. A test seam for the cases
+    /// where driving the action would move the selection, which is sometimes
+    /// the very thing under test.
+    void sendMessageTagChangeForTesting(const QStringList &messageIds,
+                                        const QStringList &add,
+                                        const QStringList &remove,
+                                        const QString &description)
+    {
+        sendMessageTagChange(messageIds, add, remove, description);
+    }
+
     /// The ids the last tag change was sent for, and whether they were thread
     /// ids or message ids.
     ///
@@ -179,6 +210,11 @@ public:
     {
         return m_pendingChange.messageIds;
     }
+
+    /// The whole change last sent, for tests about WHAT was written rather
+    /// than what it was written to. The tags are the same under either scope,
+    /// so a test about a tag name should read this instead of a model row.
+    TagChange pendingChangeForTesting() const { return m_pendingChange; }
 
     /// The generation a worker reply must carry to be accepted.
     ///
@@ -563,13 +599,32 @@ private:
                        const QString &description,
                        const std::function<void()> &handler);
 
+    /// What a tag action acts on.
+    ///
+    /// Since item 108 a thread ROW means the one message its card displays, so
+    /// Message is the default and Thread is the explicit choice the user makes
+    /// through the "Whole thread" submenu. Before that there was no choice:
+    /// a thread row always meant the conversation.
+    enum class TagScope {
+        Message,   ///< The message each selected row displays.
+        Thread,    ///< Every message of each selected row's thread.
+    };
+
     void tagSelected(const QStringList &add, const QStringList &remove,
-                     const QString &description);
+                     const QString &description,
+                     TagScope scope = TagScope::Message);
 
     /// Starts, restarts or cancels the mark-read timer for a newly opened
-    /// thread. Cancels outright for a thread that is not unread, so an already
-    /// read thread never schedules a write that would change nothing.
-    void scheduleMarkRead(const ThreadSummary &thread);
+    /// MESSAGE. Cancels outright for one that is not unread, so an already read
+    /// message never schedules a write that would change nothing.
+    ///
+    /// Takes the id and the state separately because the two come from
+    /// different places: a reply row has a MessageNode, and a thread row has
+    /// only its summary, whose `unread` is a union over the conversation.
+    void scheduleMarkRead(const QString &messageId, bool unread);
+
+    /// The message id of the thread the pane was opened from, or empty.
+    QString currentThreadFirstMessageId() const;
 
     /// Removes `unread` from the thread the timer was armed for, if it is still
     /// the one on screen.
@@ -631,6 +686,29 @@ private:
     ///
     /// The only route to an arbitrary tag: every other tag action writes a
     /// hardcoded name.
+    /// The "Whole thread" submenu, built fresh for each parent that needs one.
+    ///
+    /// A QMenu lives in one menu tree, so the menu bar and the context menu get
+    /// their own instance. The actions inside are shared, which is what has to
+    /// stay consistent between them.
+    QMenu *buildThreadActionsMenu(QWidget *parent);
+
+    /// Per-tag counts across the selected rows, for the tag dialog.
+    QHash<QString, int> selectionTagCounts() const;
+
+    /// True when every selected row already carries \p tag, which is what a
+    /// toggle asks before choosing its direction.
+    ///
+    /// Under Message scope each row answers about what it STANDS FOR: a reply
+    /// row about its message, a thread row about the message its card
+    /// displays. Asking a reply's thread makes a toggle one-way, since the
+    /// message-scoped write never changes the thread's tags.
+    ///
+    /// Under Thread scope a row answers about its whole thread, so the
+    /// question matches the write the thread actions are about to make.
+    bool everySelectedRowHasTag(const QString &tag,
+                                TagScope scope = TagScope::Message) const;
+
     void editTagsOnSelection();
 
     /// Set once the user has answered the exit prompt, or once a sync started
@@ -981,10 +1059,17 @@ private:
     /// fires, not each one passed through.
     QTimer *m_markReadTimer = nullptr;
 
-    /// The thread m_markReadTimer will mark read. Compared against the current
-    /// selection when it fires, so a timer that outlives its thread does
-    /// nothing rather than marking the wrong one.
-    QString m_markReadThreadId;
+    /// The MESSAGE m_markReadTimer will mark read. Compared against what the
+    /// pane is showing when it fires, so a timer that outlives its message
+    /// does nothing rather than marking the wrong one.
+    ///
+    /// A message id, not a thread id, since item 87. The timer used to mark
+    /// the whole thread, which was coherent while a root card rendered the
+    /// whole conversation and stopped being so when item 66 made it render
+    /// one message: reading one message marked replies read that had never
+    /// been displayed, and with maildir.synchronize_flags on that reaches the
+    /// server.
+    QString m_markReadMessageId;
 
     /// Debounces the automatic sync that follows a tag edit (item 71).
     ///

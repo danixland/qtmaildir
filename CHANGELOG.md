@@ -11,6 +11,107 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Upgrading
+
+**Acting on a thread row now acts on the message it displays, not on the whole
+conversation.** Selecting a thread's card has shown one message since 0.22.0,
+but Delete, Archive, Important, Mark spam and Toggle unread still acted on every
+message in the thread. They now act on the message you are looking at.
+
+The whole-thread versions are still there, under **Whole thread** in the Message
+menu and in the thread list's right-click menu, with new bindings a modifier out
+from their old ones:
+
+| Action | Message | Whole thread |
+|---|---|---|
+| Archive | `Ctrl+E` | `Ctrl+Alt+E` |
+| Delete | `Ctrl+D` | `Ctrl+Alt+D` |
+| Mark spam | `Ctrl+Shift+S` | `Ctrl+Alt+S` |
+| Toggle unread | `Ctrl+U` | `Ctrl+Alt+U` |
+| Important | `Ctrl+I` | `Ctrl+Alt+I` |
+
+Existing `[keys]` entries keep working and keep their meaning: `delete` is still
+`delete`, now scoped to one message. The thread actions are separate names
+(`delete_thread`, `archive_thread`, `spam_thread`, `toggle_unread_thread`,
+`flag_thread`) and can be rebound like any other. "Mark all read" is unchanged:
+it never used the selection.
+
+### Changed
+
+- **Reading a message no longer marks its replies read.** The two-second
+  automatic mark-read applied to the whole thread, so opening a conversation
+  marked messages read that had never been shown. Because
+  `maildir.synchronize_flags` is on, that reached the server and could not be
+  undone from here. It now marks only the message on display, and it applies to
+  a reply as well, which previously was never marked read at all.
+- An unread reply is bold as well as undimmed, which is the pair of cues an
+  unread thread has carried since 0.11.0. Replies were deliberately plain
+  before, on the grounds that the thread row above already flags the
+  conversation; once a thread is expanded, that row cannot say which of its
+  messages are unread, and dimming alone was too quiet to notice. Replies stay
+  a size smaller than their thread, so the two kinds of row still read apart.
+
+### Fixed
+
+- Acting on a reply inside an expanded thread could read a different thread's
+  state, because a reply's position is counted within its own thread and was
+  being used as a position in the whole list. The first reply of any thread
+  therefore answered as the first thread in the list. Three actions chose what
+  to do from that wrong answer: **Delete** could undelete a thread that was
+  never deleted, **Toggle unread** could go the wrong way, and **Edit tags**
+  offered to remove tags the selected message did not carry, while showing the
+  ones it did as unset. Every action that acts on a selection now resolves the
+  thread through the row itself.
+- Acting on a reply gave no visual feedback at all: Delete and Toggle unread
+  moved the unsynced-changes count and left the row looking exactly as it did
+  before. A change scoped to one message now repaints that message's own row.
+  A deleted or spam reply is filled and struck through, as a thread in the same
+  state already was. The thread's own card deliberately does not change, since
+  one deleted reply does not delete the conversation.
+- Marking an expanded thread read left its replies looking unread. The write
+  reached every message, but the list only updated the thread's own card, so
+  the replies stayed bold and undimmed until the next query corrected them.
+  They now follow a thread-wide change as the card does.
+- Acting on a thread's own card did not repaint it, and emptied the message
+  pane's chip row. A message-scoped write was only ever applied to a thread's
+  loaded replies, and a thread's first message is not one of them: the card
+  stands for it. So Delete or Toggle unread on a root card changed nothing on
+  screen, and the pane's chips were replaced with the empty tag list the lookup
+  returned. Both now find a root card's own message.
+- **A thread's card showed tags belonging to other messages in the thread**, and
+  so did the message pane. notmuch reports a thread's tags as the union over
+  its messages, so a four-message thread whose third message is signed read as
+  signed everywhere, including on a card that stands for the first message and
+  in a pane showing only that message. Opening a message now records what it
+  really carries, and the card and the pane both use it.
+
+  A card still shows the whole conversation's tags, since a card sits above a
+  thread: its own message's tags come first at full size, and the ones only its
+  siblings carry follow, smaller and muted. The split arrives with the query,
+  so a row reads correctly before it has ever been selected.
+
+  This is also what was stopping a card from repainting: with no per-message
+  tags for a thread's first message, marking it read or deleting it had nothing
+  to change, so the row stayed bold or unstruck while the write went through.
+- The message pane's tag chips did not follow an edit to the message on
+  display. Tagging a reply repainted its row in the list and left the pane
+  describing the message as it was, until you selected another message and came
+  back. The pane now follows a message-scoped edit, as it already did a
+  thread-scoped one.
+- **A tag change made on a single message during a sync was silently lost.**
+  Edits made while a sync holds notmuch's write lock are held and sent when it
+  finishes; that queue only ever re-sent whole-thread changes, so a
+  message-scoped one was applied to the row, counted in the unsynced-changes
+  indicator, and then dropped without ever being written. The change appeared
+  to have been made and reported itself as pending right up until it vanished.
+- Delete and Toggle unread chose their direction from a reply's THREAD rather
+  than from the reply itself, which made both one-way on a reply. A
+  message-scoped write never changes the thread's tags, so the answer never
+  moved: pressing Toggle unread on an unread reply re-added the tag it already
+  had, and pressing Delete twice on a reply deleted it twice instead of putting
+  it back. Re-applying a tag a message already carries changes nothing, which
+  is why the key looked dead. Each row is now asked about what it stands for.
+
 ## [0.24.0] - 2026-08-15
 
 Double-clicking a row now opens its thread on its own, expanded, with the row

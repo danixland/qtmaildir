@@ -65,6 +65,21 @@ public:
         /// config itself would be a second source of truth.
         PillColoursRole,
 
+        /// How many of PillTagsRole's entries belong to the message the card
+        /// DISPLAYS, the rest belonging only to its siblings.
+        ///
+        /// The card stands for one message but sits above a conversation, so
+        /// it shows both: the message's own tags first at full size, then the
+        /// thread's other tags smaller and muted. Without the split a card
+        /// either claimed a sibling's tag as its own (item 110) or dropped it
+        /// and looked like it had lost information.
+        ///
+        /// Equals the whole list until the row has been opened, since the
+        /// per-message tags arrive with the message load and before that the
+        /// union is the only answer there is. Chips therefore SHRINK when the
+        /// split becomes known; none ever disappears.
+        PillOwnCountRole,
+
         /// True when the row is a MESSAGE row rather than a thread root.
         /// Drives both the action scope and whether the view paints a tag
         /// strip under the row.
@@ -225,7 +240,28 @@ public:
     /// contradict the sort the user selected.
     void reconcile(const QVector<ThreadSummary> &threads);
 
+    /// The thread at a TOP-LEVEL row.
+    ///
+    /// **Wrong for any index that might be a reply**, and that is item 88. A
+    /// tree numbers rows per parent, so a reply's row() indexes its siblings:
+    /// threadAt(0) on the first reply of any thread returns the FIRST THREAD IN
+    /// THE LIST, and the caller acts on unrelated mail while every id it
+    /// compares looks right. Safe only for a row number that came from a loop
+    /// over rowCount(), never from an index the user selected.
+    ///
+    /// Prefer threadFor(index), which cannot be handed the wrong number.
     ThreadSummary threadAt(int row) const;
+
+    /// The thread an index belongs to, whichever kind of row it is.
+    ///
+    /// A thread row resolves to itself; a message row resolves through its
+    /// PARENT rather than through its own row number. This is the accessor
+    /// every caller holding a QModelIndex wants, and it exists because the
+    /// row-taking one above silently answers about unrelated mail for a reply.
+    ///
+    /// An invalid or unknown index gives a default-constructed summary, whose
+    /// empty threadId every caller here already treats as "nothing to do".
+    ThreadSummary threadFor(const QModelIndex &index) const;
 
     /// Fills in a thread's message rows once the worker has walked its tree.
     ///
@@ -249,13 +285,57 @@ public:
     /// message the user could select is always findable here.
     QString threadIdForMessage(const QString &messageId) const;
 
-    /// Resolves a selection into what an action should touch.
+    /// Records the tags a MESSAGE really carries, as the worker reported them.
     ///
-    /// Mixed selections are honoured as given: a thread root and an unrelated
-    /// reply act on that whole thread and that one message. Nothing is
-    /// escalated or narrowed silently, which is the point of the scope being
-    /// visible in the first place.
+    /// Exists because `ThreadSummary::tags` is notmuch's UNION over the
+    /// thread, which is right for a card standing for a conversation and wrong
+    /// for one standing for a message. A four-message thread whose third
+    /// message is signed makes the whole thread read as signed, so the root
+    /// card and the message pane both claimed a tag the displayed message did
+    /// not have.
+    ///
+    /// Only the ROOT needs this: reply rows already carry their own nodes from
+    /// setThreadMessages. Calling it for anything else is a no-op.
+    ///
+    /// The thread's summary is deliberately NOT rewritten. It describes the
+    /// conversation, and three unread siblings do not stop being unread
+    /// because this message was read.
+    void setRootMessageTags(const QString &messageId, const QStringList &tags);
+
+    /// A loaded message row's node, found by id rather than by position.
+    ///
+    /// For callers that know WHICH message they mean and must not depend on it
+    /// being the row the user has selected. Default-constructed when no
+    /// expanded thread holds it.
+    MessageNode messageById(const QString &messageId) const;
+
+    /// Resolves a selection into whole THREADS, for the thread-scoped actions.
+    ///
+    /// A thread row contributes its thread; a message row still contributes
+    /// only itself, since a reply's own row cannot be widened into its
+    /// conversation without escalating silently. Mixed selections are honoured
+    /// as given: a thread root and an unrelated reply act on that whole thread
+    /// and that one message.
+    ///
+    /// **Not the default any more.** Since item 108 the ordinary actions use
+    /// messageScopeFor(); this is what the explicit "whole thread" submenu
+    /// resolves through.
     ActionScope scopeFor(const QModelIndexList &selection) const;
+
+    /// Resolves a selection into individual MESSAGES, which is what the
+    /// ordinary tag actions act on since item 108.
+    ///
+    /// A thread row contributes the ONE message its card displays, not its
+    /// whole conversation. That is `ThreadSummary::firstMessageId`, carried
+    /// from the query, so this needs no expansion and no worker round trip.
+    /// In the Sent view that field is the first MATCHED message rather than
+    /// the thread's opening one, which is right here for the same reason it is
+    /// right on the card: both answer "the message this row shows".
+    ///
+    /// A thread row whose `firstMessageId` is empty contributes nothing. That
+    /// is a row the model cannot name a message for, and acting on the whole
+    /// thread instead would be the silent escalation this exists to remove.
+    ActionScope messageScopeFor(const QModelIndexList &selection) const;
 
     /// The account keys behind a thread's account tags, for item 49's
     /// per-account sync.
@@ -272,6 +352,21 @@ public:
     /// swapped.
     void applyTagChange(const QString &threadId, const QStringList &added,
                         const QStringList &removed);
+
+    /// The same, for a change scoped to ONE message.
+    ///
+    /// Repaints that message's own row and leaves the thread alone. The thread
+    /// row deliberately does not follow: it stands for the whole conversation,
+    /// so redrawing it for a one-message edit would claim every message in it
+    /// had changed. That reasoning is why no optimistic update existed here at
+    /// all, which left Delete and Toggle unread on a reply moving the pending
+    /// count and changing nothing on screen.
+    ///
+    /// A message id that no expanded thread holds is a no-op: only expanded
+    /// threads have message rows, so there is nothing to repaint.
+    void applyMessageTagChange(const QString &messageId,
+                               const QStringList &added,
+                               const QStringList &removed);
 
 private:
     /// One thread root and the message rows expanded under it.
@@ -300,6 +395,21 @@ private:
         /// messages.
         bool loaded = false;
     };
+
+    /// A newly arrived thread, with its card's own message seeded from the
+    /// query.
+    ///
+    /// `ThreadSummary::tags` is notmuch's union over the conversation, and the
+    /// card stands for ONE message. The worker reads that message's own tags
+    /// in the same walk that finds its id, so the two tiers are known from the
+    /// first paint (item 111). Deriving them from the message LOAD instead
+    /// left every unopened row drawing one tier and correcting itself when the
+    /// user selected it, which is most of the list.
+    ///
+    /// `first` is left empty when the query carried no per-message tags, so
+    /// anything that supplies only a summary keeps the old behaviour rather
+    /// than claiming the union as one message's.
+    static ThreadNode nodeFor(const ThreadSummary &summary);
 
     QVector<ThreadNode> m_threads;
     const TagColors *m_tagColors = nullptr;

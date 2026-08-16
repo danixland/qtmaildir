@@ -29,8 +29,18 @@ namespace TagChip {
 
 QSize sizeFor(const QFontMetrics &metrics, const QString &text)
 {
-    return QSize(metrics.horizontalAdvance(text) + kPaddingX * 2,
-                 metrics.height() + kPaddingY * 2);
+    return sizeFor(metrics, text, 1.0);
+}
+
+QSize sizeFor(const QFontMetrics &metrics, const QString &text, qreal scale)
+{
+    // Floored at 2 a side: the corner radius is half the chip's height, so the
+    // leftmost and rightmost pixels of the fill are curve rather than usable
+    // width, and text set flush against it touches the round end.
+    const int padX = qMax(2, qRound(kPaddingX * scale));
+    const int padY = qMax(0, qRound(kPaddingY * scale));
+    return QSize(metrics.horizontalAdvance(text) + padX * 2,
+                 metrics.height() + padY * 2);
 }
 
 void paint(QPainter *painter, const QRect &rect, const QString &text,

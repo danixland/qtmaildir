@@ -57,6 +57,7 @@
 #include <QComboBox>
 #include <QScrollBar>
 #include "tagchip.h"
+#include "tagstrip.h"
 #include "threadlistmodel.h"
 #include "threadlistview.h"
 #include "notmuchfixture.h"
@@ -273,6 +274,23 @@ private slots:
     void escapeBlanksTheMessagePane();
     void deleteTogglesOnAnAlreadyDeletedThread();
     void deleteOnAMixedSelectionDeletesRatherThanSplittingIt();
+    void deleteOnAReplyReadsItsOwnThreadNotTheFirstInTheList();
+    void toggleUnreadOnAReplyReadsItsOwnThreadNotTheFirstInTheList();
+    void editTagsOnAReplyCountsItsOwnThreadNotTheFirstInTheList();
+    void markCurrentThreadReadResolvesTheThreadThroughTheIndex();
+    void deletingAReplyRepaintsThatReplyRow();
+    void toggleUnreadOnAReplyReadsTheReplysOwnState();
+    void toggleUnreadOnAReplyRepaintsItInBothDirections();
+    void taggingTheOpenReplyUpdatesTheMessagePaneStrip();
+    void taggingAnUnrelatedReplyLeavesTheStripAlone();
+    void aHeldMessageEditIsSentWhenTheSyncEnds();
+    void anActionOnAThreadRowActsOnTheMessageItDisplays();
+    void theThreadSubmenuIsReachableFromBothMenus();
+    void autoMarkReadTouchesOnlyTheMessageOnDisplay();
+    void autoMarkReadArmsForAReplyToo();
+    void taggingTheOpenRootMessageKeepsTheStripPopulated();
+    void aLoadedMessageCorrectsTheStripFromTheThreadsUnion();
+    void aLoadedRootMessageGivesTheCardItsOwnTags();
     void aTransientStatusMessageExpires();
     void theSelectionCountIsStateAndDoesNotExpire();
     void anEditUndoneNettsBackToZero();
@@ -790,6 +808,13 @@ static ThreadSummary makeThread(const QString &id, const QStringList &tags)
     thread.subject = QStringLiteral("Subject ") + id;
     thread.authors = QStringLiteral("Someone <someone@example.org>");
     thread.tags = tags;
+
+    // The message the row displays, which the real worker fills in from the
+    // query. Required since item 108: an ordinary tag action resolves a thread
+    // row to THIS id, so a summary without one names no message and every
+    // action on it does nothing. A fixture missing it fails with "the action
+    // did not happen", which reads as a defect in the action.
+    thread.firstMessageId = id + QStringLiteral("-first@example.org");
     return thread;
 }
 
@@ -1372,8 +1397,11 @@ void TestMainWindow::anActionOnAThreadRowSaysItHitTheWholeThread()
     selectThreadRow(view, 0);
     QApplication::processEvents();
 
-    auto *archive = window.findChild<QAction *>(QStringLiteral("archive"));
-    QVERIFY2(archive, "no archive action to trigger");
+    // The THREAD action since item 108. The plain `archive` now acts on the
+    // one message a card displays, and would rightly not claim to have taken
+    // the whole thread; this suffix belongs to the action that really does.
+    auto *archive = window.findChild<QAction *>(QStringLiteral("archive_thread"));
+    QVERIFY2(archive, "no archive_thread action to trigger");
     archive->trigger();
 
     // Read BEFORE processEvents, deliberately. This binary has no worker
@@ -4327,7 +4355,13 @@ void TestMainWindow::aHeldEditIsSentBeforeTheSyncEndRefreshReadsTheDatabase()
     // The write went out. Nothing else in this handler sends one, so its
     // presence is what proves the flush ran, and the refresh below is what it
     // has to have run BEFORE.
-    QVERIFY2(!window.pendingThreadIdsForTesting().isEmpty(),
+    //
+    // Either scope counts. The gesture is Toggle unread on a thread row, which
+    // is message-scoped since item 108, so the ids land in the message list;
+    // the ORDER this test exists for is the same either way, and pinning the
+    // scope here would make it fail for a reason it does not care about.
+    QVERIFY2(!window.pendingThreadIdsForTesting().isEmpty()
+                 || !window.pendingMessageIdsForTesting().isEmpty(),
              "the held edit was dropped rather than sent");
 
     const quint64 after = window.currentGenerationForTesting();
@@ -4593,7 +4627,10 @@ void TestMainWindow::deleteTogglesOnAnAlreadyDeletedThread()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    // The THREAD action, since this is about a THREAD's state. Item 108 made
+    // the plain `delete` act on the one message a card displays, and a thread
+    // summary carrying `deleted` says nothing about that message's own tags.
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete_thread"));
     QVERIFY(action);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"),
@@ -4621,7 +4658,7 @@ void TestMainWindow::deleteOnAMixedSelectionDeletesRatherThanSplittingIt()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete_thread"));
     QVERIFY(action);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"),
@@ -4635,6 +4672,889 @@ void TestMainWindow::deleteOnAMixedSelectionDeletesRatherThanSplittingIt()
 
     QVERIFY2(model->threadAt(0).isDeleted() && model->threadAt(1).isDeleted(),
              "a mixed selection split instead of deleting the whole selection");
+}
+
+/// Builds a window whose SECOND thread is expanded and carries one reply, with
+/// the two threads deliberately in opposite states.
+///
+/// Item 88's shape in one place. A tree numbers rows per parent, so the first
+/// reply of any thread has row() == 0 and threadAt(0) answers about the FIRST
+/// THREAD IN THE LIST. Every test below selects that reply and asserts on
+/// behaviour that can only be right if the thread was resolved through the
+/// index: with the row number, each one reads t1's state while acting on t2.
+///
+/// The opposite states are what makes the tests able to fail. Two threads in
+/// the same state give the same answer either way, which is how the reverted
+/// item 87 fix passed while corrupting mail.
+///
+/// \p replyTags defaults to the thread's own tags, which is the usual case.
+/// Pass it explicitly to make a reply DISAGREE with its thread, which is what
+/// separates "reads the right thread" from "reads the right message": a reply
+/// can be unread inside a thread that is not, and vice versa.
+static QModelIndex expandSecondThreadAndSelectItsReply(
+    QTreeView *view, ThreadListModel *model, const QStringList &firstTags,
+    const QStringList &secondTags,
+    const std::optional<QStringList> &replyTags = std::nullopt)
+{
+    ThreadSummary first = makeThread(QStringLiteral("t1"), firstTags);
+    ThreadSummary second = makeThread(QStringLiteral("t2"), secondTags);
+    second.totalCount = 2;
+    model->appendBatch({ first, second });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("t2");
+    root.tags = secondTags;
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("t2");
+    reply.tags = replyTags.value_or(secondTags);
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("t2"), { root, reply });
+
+    const QModelIndex threadRow = model->index(1, 0, QModelIndex());
+    view->expand(threadRow);
+
+    const QModelIndex replyRow = model->index(0, 0, threadRow);
+    if (!replyRow.isValid() || !model->isMessageRow(replyRow))
+        return {};
+
+    // Row 0 under its parent, which is the trap: the number is a plausible
+    // top-level row and threadAt() cannot tell the difference.
+    if (replyRow.row() != 0)
+        return {};
+
+    view->selectionModel()->select(
+        replyRow, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(replyRow);
+    QApplication::processEvents();
+    return replyRow;
+}
+
+void TestMainWindow::deleteOnAReplyReadsItsOwnThreadNotTheFirstInTheList()
+{
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(action);
+
+    // t1 deleted, t2 not. Reading t1's state for a reply of t2 makes the
+    // toggle choose UNDELETE for a thread that was never deleted.
+    const QModelIndex reply = expandSecondThreadAndSelectItsReply(
+        view, model, { QStringLiteral("deleted") }, {});
+    QVERIFY2(reply.isValid(),
+             "the fixture did not produce a reply row at row 0, so this test "
+             "would assert nothing about item 88's trap");
+
+    action->trigger();
+
+    // Delete, because the message's own thread is not deleted. The write goes
+    // through scopeFor() and lands on the message either way; what is under
+    // test is the DIRECTION, which is chosen from the state that was read.
+    QVERIFY2(window.pendingMessageIdsForTesting().contains(
+                 QStringLiteral("m1@example.org")),
+             "Delete on a reply did not act on that reply");
+    QCOMPARE(window.undoDepthForTesting(), 1);
+    QVERIFY2(window.undoTextForTesting().contains(QStringLiteral("Delete")),
+             qPrintable(QStringLiteral(
+                            "Delete on a reply of an undeleted thread chose "
+                            "the wrong direction: %1. It read the FIRST "
+                            "thread's state, which is deleted.")
+                            .arg(window.undoTextForTesting())));
+}
+
+void TestMainWindow::toggleUnreadOnAReplyReadsItsOwnThreadNotTheFirstInTheList()
+{
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("toggle_unread"));
+    QVERIFY(action);
+
+    // t1 unread, t2 read. Reading t1's state marks an already-read message
+    // read again, which is a no-op write the user sees as a dead key.
+    const QModelIndex reply = expandSecondThreadAndSelectItsReply(
+        view, model, { QStringLiteral("unread") }, {});
+    QVERIFY2(reply.isValid(), "the fixture did not produce a reply row at row 0");
+
+    action->trigger();
+
+    QCOMPARE(window.undoDepthForTesting(), 1);
+    QVERIFY2(window.undoTextForTesting().contains(QStringLiteral("Mark unread")),
+             qPrintable(QStringLiteral(
+                            "Toggle unread on a reply of a READ thread chose "
+                            "the wrong direction: %1. It read the FIRST "
+                            "thread's state, which is unread.")
+                            .arg(window.undoTextForTesting())));
+}
+
+void TestMainWindow::editTagsOnAReplyCountsItsOwnThreadNotTheFirstInTheList()
+{
+    // The tag dialog is modal, so what is tested is the count it is BUILT
+    // from. Those counts drive its tri-state checkboxes, so a wrong count
+    // offers to remove a tag the message does not carry and shows the ones it
+    // does as unset.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    const QModelIndex reply = expandSecondThreadAndSelectItsReply(
+        view, model, { QStringLiteral("t1only") }, { QStringLiteral("t2only") });
+    QVERIFY2(reply.isValid(), "the fixture did not produce a reply row at row 0");
+
+    const QHash<QString, int> counts = window.selectionTagCountsForTesting();
+
+    QVERIFY2(counts.contains(QStringLiteral("t2only")),
+             "the tag dialog would not offer the tag the selected reply "
+             "actually carries");
+    QVERIFY2(!counts.contains(QStringLiteral("t1only")),
+             "the tag dialog counted the FIRST thread's tags for a reply of "
+             "the second, so it would offer to remove a tag that is not there");
+}
+
+void TestMainWindow::markCurrentThreadReadResolvesTheThreadThroughTheIndex()
+{
+    // Item 87 is blocked on this and will scope the write to one message. Today
+    // an unrelated guard hides the defect: onThreadSelected clears
+    // m_currentThreadId for a message row, so markCurrentThreadRead returns
+    // before it can read the wrong thread. That guard is not the protection
+    // this needs, and item 87 does not remove it, so the assertion here is on
+    // the resolution itself rather than on a write that cannot currently
+    // happen.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    const QModelIndex reply = expandSecondThreadAndSelectItsReply(
+        view, model, { QStringLiteral("unread") }, { QStringLiteral("unread") });
+    QVERIFY2(reply.isValid(), "the fixture did not produce a reply row at row 0");
+
+    // The question the timer's handler asks, in isolation: which thread is the
+    // current row part of. With the row number this answers "t1" for a reply
+    // of t2.
+    QCOMPARE(window.threadForCurrentRowForTesting().threadId,
+             QStringLiteral("t2"));
+}
+
+void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
+{
+    // The user's report, at the gesture level: "I'm hitting delete on a reply
+    // to a thread, I see the edits counter increasing but I have no feedback
+    // if that message is being deleted." The model-level test proves
+    // applyMessageTagChange works; this proves the action reaches it, which is
+    // the half that was actually missing.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(action);
+
+    const QModelIndex reply =
+        expandSecondThreadAndSelectItsReply(view, model, {}, {});
+    QVERIFY2(reply.isValid(), "the fixture did not produce a reply row at row 0");
+
+    // Nothing to see before the gesture, so the assertion after it means
+    // something.
+    QVERIFY(!model->messageAt(reply).isDeleted());
+    const QVariant before = model->data(reply, Qt::BackgroundRole);
+
+    QSignalSpy spy(model, &QAbstractItemModel::dataChanged);
+    action->trigger();
+
+    QVERIFY2(model->messageAt(reply).isDeleted(),
+             "Delete on a reply left the reply's own row unchanged, so the "
+             "pending count moved and the user saw nothing");
+    QVERIFY2(spy.count() >= 1, "no repaint was requested for the reply's row");
+    QVERIFY2(model->data(reply, Qt::BackgroundRole) != before,
+             "the deleted reply paints exactly as it did before");
+
+    // The THREAD row must not follow: it stands for the whole conversation,
+    // and one deleted reply does not doom it.
+    const QModelIndex threadRow = reply.parent();
+    QVERIFY2(!model->threadFor(threadRow).isDeleted(),
+             "deleting one reply marked its whole thread deleted");
+}
+
+void TestMainWindow::toggleUnreadOnAReplyReadsTheReplysOwnState()
+{
+    // The user's report: "read/unread still doesn't trigger a repaint of the
+    // reply". The write was already message-scoped and the model already
+    // repaints a message row, so neither was the fault. The DIRECTION was:
+    // the action read threadFor(current).isUnread(), the THREAD's state, even
+    // when the selected row is a reply.
+    //
+    // The consequence is a dead key rather than a wrong write. On a read
+    // thread the answer is always "add unread", so pressing it on an
+    // already-unread reply re-adds a tag it has, which is a no-op the model
+    // correctly declines to repaint. Item 88 fixed WHICH thread this reads;
+    // this is about reading a message at all.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("toggle_unread"));
+    QVERIFY(action);
+
+    // A thread that is READ carrying a reply that is UNREAD. That disagreement
+    // is the whole test: with the thread's state the answer is "mark unread",
+    // with the message's it is "mark read".
+    const QModelIndex reply = expandSecondThreadAndSelectItsReply(
+        view, model, {}, {}, QStringList{ QStringLiteral("unread") });
+    QVERIFY2(reply.isValid(), "the fixture did not produce a reply row at row 0");
+    QVERIFY(model->messageAt(reply).isUnread());
+    QVERIFY2(!model->threadFor(reply).isUnread(),
+             "the fixture's thread is unread too, so this test cannot tell the "
+             "two sources apart");
+
+    action->trigger();
+
+    QVERIFY2(!model->messageAt(reply).isUnread(),
+             "Toggle unread on an unread reply did not mark it read: the "
+             "direction came from the THREAD, which is already read, so it "
+             "re-added a tag the reply already had and nothing changed");
+    QVERIFY2(window.undoTextForTesting().contains(QStringLiteral("Mark read")),
+             qPrintable(QStringLiteral("wrong direction: %1")
+                            .arg(window.undoTextForTesting())));
+}
+
+void TestMainWindow::toggleUnreadOnAReplyRepaintsItInBothDirections()
+{
+    // Visible BOTH ways. The user reached the repaint only by deleting and
+    // undoing, which is a different write forcing the row to redraw; the
+    // unread change itself has to do it on its own, in each direction.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("toggle_unread"));
+    QVERIFY(action);
+
+    const QModelIndex reply = expandSecondThreadAndSelectItsReply(
+        view, model, {}, {}, QStringList{ QStringLiteral("unread") });
+    QVERIFY(reply.isValid());
+
+    const QVariant unreadForeground = model->data(reply, Qt::ForegroundRole);
+    const QVariant unreadFont = model->data(reply, Qt::FontRole);
+
+    QSignalSpy spy(model, &QAbstractItemModel::dataChanged);
+    action->trigger();
+
+    QVERIFY2(spy.count() >= 1, "marking a reply read requested no repaint");
+    QVERIFY2(model->data(reply, Qt::ForegroundRole) != unreadForeground,
+             "a reply marked read paints exactly as it did while unread");
+    QVERIFY2(model->data(reply, Qt::FontRole) != unreadFont,
+             "a reply marked read keeps the unread font");
+
+    // And back. A toggle that is only visible one way is half a toggle.
+    spy.clear();
+    action->trigger();
+    QVERIFY(model->messageAt(reply).isUnread());
+    QVERIFY2(spy.count() >= 1, "marking a reply unread again requested no repaint");
+    QCOMPARE(model->data(reply, Qt::ForegroundRole), unreadForeground);
+    QCOMPARE(model->data(reply, Qt::FontRole), unreadFont);
+}
+
+void TestMainWindow::taggingTheOpenReplyUpdatesTheMessagePaneStrip()
+{
+    // The user's report: "the right pane chips are not [repainted], for it to
+    // sync I have to change message and go back to the edited one".
+    //
+    // sendThreadTagChange refreshes the strip when the edited thread is the
+    // open one. sendMessageTagChange had no equivalent, so a message-scoped
+    // write updated the list row and left the pane's chips describing the
+    // message as it was before the edit.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *strip = window.findChild<TagStrip *>();
+    QVERIFY2(strip, "no tag strip in the message pane");
+
+    // visible + hidden: TagStrip collapses what does not fit into a "+N" chip,
+    // and an unshown window has no width, so visibleTags() alone measures the
+    // layout rather than the data.
+    const auto stripTags = [strip]() {
+        return strip->visibleTags() + strip->hiddenTags();
+    };
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(action);
+
+    // A tag the strip will actually draw. Account tags are filtered out by the
+    // strip, and `unread` and `inbox` are hidden on the card but not here, so
+    // the fixture uses a plain functional tag to keep the assertion honest.
+    const QModelIndex reply = expandSecondThreadAndSelectItsReply(
+        view, model, {}, {}, QStringList{ QStringLiteral("todo") });
+    QVERIFY2(reply.isValid(), "the fixture did not produce a reply row at row 0");
+
+    // Selecting the reply is what puts it in the pane, and the strip has to be
+    // showing the reply's own tags before the edit or this asserts nothing.
+    QVERIFY2(stripTags().contains(QStringLiteral("todo")),
+             "the strip does not show the selected reply's tags, so this test "
+             "cannot tell a missing refresh from a strip that never had them");
+    QVERIFY(!stripTags().contains(QStringLiteral("deleted")));
+
+    action->trigger();
+
+    QVERIFY2(stripTags().contains(QStringLiteral("deleted")),
+             "the message pane's chips still describe the reply as it was "
+             "before the edit; the user has to select away and back to see it");
+}
+
+void TestMainWindow::taggingAnUnrelatedReplyLeavesTheStripAlone()
+{
+    // The guard, not the refresh. The strip describes the message ON DISPLAY,
+    // so a write to a different message must not repaint it with that
+    // message's tags. The thread path has the same guard, keyed on
+    // m_currentThreadId.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *strip = window.findChild<TagStrip *>();
+    QVERIFY(strip);
+
+    // visible + hidden: TagStrip collapses what does not fit into a "+N" chip,
+    // and an unshown window has no width, so visibleTags() alone measures the
+    // layout rather than the data.
+    const auto stripTags = [strip]() {
+        return strip->visibleTags() + strip->hiddenTags();
+    };
+
+    ThreadSummary thread = makeThread(QStringLiteral("t1"), {});
+    thread.totalCount = 3;
+    model->appendBatch({ thread });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("t1");
+    root.depth = 0;
+    MessageNode first;
+    first.messageId = QStringLiteral("m1@example.org");
+    first.threadId = QStringLiteral("t1");
+    first.tags = QStringList{ QStringLiteral("todo") };
+    first.depth = 1;
+    MessageNode second;
+    second.messageId = QStringLiteral("m2@example.org");
+    second.threadId = QStringLiteral("t1");
+    second.tags = QStringList{ QStringLiteral("later") };
+    second.depth = 1;
+    model->setThreadMessages(QStringLiteral("t1"), { root, first, second });
+
+    const QModelIndex threadRow = model->index(0, 0, QModelIndex());
+    view->expand(threadRow);
+
+    // The FIRST reply is the one on display.
+    const QModelIndex displayed = model->index(0, 0, threadRow);
+    view->selectionModel()->select(
+        displayed,
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(displayed);
+    QApplication::processEvents();
+    QVERIFY(stripTags().contains(QStringLiteral("todo")));
+
+    // A write to the OTHER reply, reaching the send path directly: driving it
+    // through the action would move the selection and change what is on
+    // display, which is the thing being held still.
+    window.sendMessageTagChangeForTesting({ QStringLiteral("m2@example.org") },
+                                          { QStringLiteral("deleted") }, {},
+                                          QStringLiteral("Delete"));
+
+    QVERIFY2(!stripTags().contains(QStringLiteral("deleted")),
+             "the strip took on the tags of a message that is not the one in "
+             "the pane");
+    QVERIFY2(stripTags().contains(QStringLiteral("todo")),
+             "the strip stopped describing the message on display");
+}
+
+void TestMainWindow::aHeldMessageEditIsSentWhenTheSyncEnds()
+{
+    // Found by reading while fixing the strip refresh, not reported.
+    //
+    // flushHeldEdits() looped over edit.threadIds and called
+    // sendThreadTagChange() only. A message-scoped edit held during a sync
+    // carries no thread ids at all, so the loop did nothing, the send
+    // early-returned on an empty list, and the edit was DROPPED: applied
+    // optimistically to the row, counted as unsynced, and never written. The
+    // user would have seen the change, been told it was pending, and lost it.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(action);
+
+    const QModelIndex reply =
+        expandSecondThreadAndSelectItsReply(view, model, {}, {});
+    QVERIFY(reply.isValid());
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+    action->trigger();
+    QVERIFY2(window.hasEditAwaitingSend(),
+             "a message edit made during a sync was not held");
+
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Idle));
+
+    QVERIFY2(!window.hasEditAwaitingSend(),
+             "the sync ending did not send the held message edit, so it was "
+             "silently dropped: shown on the row, counted as pending, never "
+             "written");
+
+    // Sent for the MESSAGE, not escalated to its thread. Losing the scope on
+    // the way out of the hold would delete every message in the thread.
+    QVERIFY2(window.pendingMessageIdsForTesting().contains(
+                 QStringLiteral("m1@example.org")),
+             "the held edit was not sent with its message scope");
+    QVERIFY2(window.pendingThreadIdsForTesting().isEmpty(),
+             "a held MESSAGE edit was sent as a thread edit, which would tag "
+             "every message in the thread");
+
+    // And the row still shows it: the flush takes the optimistic update back
+    // before re-sending, so a bug there leaves the row wrong in the other
+    // direction.
+    QVERIFY2(model->messageAt(reply).isDeleted(),
+             "sending the held edit lost the tag from the reply's row");
+}
+
+void TestMainWindow::anActionOnAThreadRowActsOnTheMessageItDisplays()
+{
+    // Item 108, the whole point of it. A root card renders ONE message since
+    // item 66, so acting on it acts on that message; the conversation is
+    // reached through the explicit thread actions.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    ThreadSummary t = makeThread(QStringLiteral("t1"), {});
+    t.totalCount = 7;
+    model->appendBatch({ t });
+    selectThreadRow(view, 0);
+
+    auto *deleteAction = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(deleteAction);
+    deleteAction->trigger();
+
+    QCOMPARE(window.pendingMessageIdsForTesting(),
+             QStringList{ QStringLiteral("t1-first@example.org") });
+    QVERIFY2(window.pendingThreadIdsForTesting().isEmpty(),
+             "the ordinary Delete still acted on the whole thread, so it "
+             "touched six messages the card does not display");
+
+    // The thread action is how the conversation is reached, and it must still
+    // work from the same selection.
+    auto *deleteThread =
+        window.findChild<QAction *>(QStringLiteral("delete_thread"));
+    QVERIFY(deleteThread);
+    deleteThread->trigger();
+
+    QCOMPARE(window.pendingThreadIdsForTesting(),
+             QStringList{ QStringLiteral("t1") });
+
+    // Two commands, one per gesture, each recording the scope it used: a thread
+    // action that pushed the message command would undo a fraction of what it
+    // did.
+    QCOMPARE(window.undoDepthForTesting(), 2);
+}
+
+void TestMainWindow::theThreadSubmenuIsReachableFromBothMenus()
+{
+    // The user asked for "a submenu when right clicking and the same submenu
+    // under Message in the top menu". Both, not one: the context menu is where
+    // the gesture starts and the menu bar is where a shortcut is discovered.
+    //
+    // A QMenu belongs to ONE menu tree, so these are two instances holding the
+    // same actions. Adding a single instance to both silently gives it to
+    // whichever added it last, which is the failure this pins.
+    const Config config;
+    MainWindow window(config);
+
+    auto *context =
+        window.findChild<QMenu *>(QStringLiteral("threadContextMenu"));
+    QVERIFY(context);
+
+    const QStringList expected = {
+        QStringLiteral("archive_thread"),
+        QStringLiteral("delete_thread"),
+        QStringLiteral("spam_thread"),
+        QStringLiteral("toggle_unread_thread"),
+        QStringLiteral("flag_thread"),
+    };
+
+    // Every submenu instance in the window, wherever it was added.
+    const QList<QMenu *> submenus =
+        window.findChildren<QMenu *>(QStringLiteral("threadActionsMenu"));
+    QVERIFY2(submenus.size() >= 2,
+             qPrintable(QStringLiteral("expected the thread submenu in both "
+                                       "the context menu and the menu bar, "
+                                       "found %1 instance(s)")
+                            .arg(submenus.size())));
+
+    for (QMenu *menu : submenus) {
+        QStringList names;
+        for (QAction *action : menu->actions()) {
+            if (!action->isSeparator())
+                names.append(action->objectName());
+        }
+        QCOMPARE(names, expected);
+    }
+
+    // One of them is the context menu's own, reached as a submenu rather than
+    // as a loose action.
+    bool inContextMenu = false;
+    for (QAction *action : context->actions()) {
+        if (action->menu()
+            && action->menu()->objectName()
+                   == QStringLiteral("threadActionsMenu")) {
+            inContextMenu = true;
+            break;
+        }
+    }
+    QVERIFY2(inContextMenu,
+             "right-clicking a thread offers no whole-thread submenu");
+}
+
+void TestMainWindow::autoMarkReadTouchesOnlyTheMessageOnDisplay()
+{
+    // Item 87, reported 2026-08-14: "with the first message in a thread
+    // selected (not expanded), the 2s delay that marks it read applies to the
+    // whole thread, so all answers are marked read as well."
+    //
+    // Not cosmetic. maildir.synchronize_flags is on, so removing `unread`
+    // rewrites Maildir filenames and the next sync carries it to the server:
+    // mail the user never opened stops being unread everywhere, and nothing
+    // here can put it back except reading it again by hand.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("[general]\nmark_read_delay_ms = 0\n");
+    file.close();
+
+    Config config;
+    config.load(path);
+    QCOMPARE(config.markReadDelayMs(), 0);
+
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 { QStringLiteral("unread") });
+    t.totalCount = 7;
+    model->appendBatch({ t });
+
+    selectThreadRow(view, 0);
+    QApplication::processEvents();
+    QVERIFY2(timer->isActive() || !window.pendingMessageIdsForTesting().isEmpty(),
+             "selecting an unread thread armed no mark-read at all");
+
+    // Fire it. A zero-interval timer still goes through the event loop.
+    QTRY_VERIFY_WITH_TIMEOUT(!timer->isActive(), 2000);
+    QApplication::processEvents();
+
+    // ONE message, the one the card renders, and named rather than merely
+    // counted: a thread of seven whose first message is the target is exactly
+    // the case where a count of one could still be the wrong one.
+    QCOMPARE(window.pendingMessageIdsForTesting(),
+             QStringList{ QStringLiteral("t1-first@example.org") });
+    QVERIFY2(window.pendingThreadIdsForTesting().isEmpty(),
+             "the automatic mark-read still wrote to the whole thread, so six "
+             "messages the user never displayed were marked read and the next "
+             "sync carries that to the server");
+
+    // Still not on the undo stack. The user never took this action, so
+    // hijacking Ctrl+Z to reverse it would undo something they did not do.
+    QCOMPARE(window.undoDepthForTesting(), 0);
+}
+
+void TestMainWindow::autoMarkReadArmsForAReplyToo()
+{
+    // Selecting a reply displays that message, so the same rule applies to it.
+    // Before item 87 the timer was deliberately not armed for a message row,
+    // because the write it would have made was thread-scoped and would have
+    // marked the whole conversation read. With the write scoped to one message
+    // that objection is gone, and leaving it unarmed would mean the message
+    // the user is reading is the one kind that never gets marked read.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("[general]\nmark_read_delay_ms = 0\n");
+    file.close();
+
+    Config config;
+    config.load(path);
+
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+
+    // The reply is unread; its thread is not, so a thread-keyed timer would
+    // have declined to arm at all.
+    //
+    // No "is it still unread" guard before the wait: the delay is 0 and the
+    // helper pumps the event loop, so the write has already happened by the
+    // time selection returns. The assertions below are on the write itself,
+    // which is what this test is about, and the fixture above is what
+    // establishes the reply started unread.
+    const QModelIndex reply = expandSecondThreadAndSelectItsReply(
+        view, model, {}, {}, QStringList{ QStringLiteral("unread") });
+    QVERIFY(reply.isValid());
+
+    QTRY_VERIFY_WITH_TIMEOUT(!timer->isActive(), 2000);
+    QApplication::processEvents();
+
+    QCOMPARE(window.pendingMessageIdsForTesting(),
+             QStringList{ QStringLiteral("m1@example.org") });
+    QVERIFY2(window.pendingThreadIdsForTesting().isEmpty(),
+             "reading one reply marked its whole thread read");
+
+    // And the row shows it, which is the half item 105 built.
+    QVERIFY2(!model->messageAt(reply).isUnread(),
+             "the reply was marked read without its row following");
+}
+
+void TestMainWindow::taggingTheOpenRootMessageKeepsTheStripPopulated()
+{
+    // The user, 2026-08-16: "right pane loses the chip row when repainting, it
+    // simply disappears".
+    //
+    // The strip refresh added for item 105 reads the message's tags through
+    // messageById(), which searches only the loaded CHILDREN. A root card's
+    // message is never among them, so the lookup returned a default-constructed
+    // node and the refresh set the strip to that node's empty tag list, wiping
+    // a strip that had been correct a moment earlier. Worse than not
+    // refreshing: it actively destroyed what was there.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *strip = window.findChild<TagStrip *>();
+    QVERIFY(strip);
+
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 { QStringLiteral("todo") });
+    t.totalCount = 1;
+    model->appendBatch({ t });
+
+    selectThreadRow(view, 0);
+    QApplication::processEvents();
+
+    // visible + hidden, not visible alone. TagStrip is a single row that
+    // collapses whatever does not fit into a trailing "+N" chip, and this
+    // window is never shown, so it has no width to lay out with and puts
+    // almost everything in the hidden half. Asserting on visibleTags() alone
+    // measures the layout, not the data, and fails for a reason this test does
+    // not care about.
+    const auto stripTags = [strip]() {
+        return strip->visibleTags() + strip->hiddenTags();
+    };
+
+    // The guard: the strip has to be showing something before the edit, or
+    // this cannot tell "wiped" from "never populated".
+    QVERIFY2(stripTags().contains(QStringLiteral("todo")),
+             "the strip never showed the selected thread's tags");
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(action);
+    action->trigger();
+
+    QVERIFY2(!stripTags().isEmpty(),
+             "the chip row was emptied: the refresh looked the message up "
+             "among the loaded replies, where a root card's message never is, "
+             "and set the strip to the resulting empty tag list");
+    QVERIFY2(stripTags().contains(QStringLiteral("todo")),
+             "the strip lost the tag the message still carries");
+    QVERIFY2(stripTags().contains(QStringLiteral("deleted")),
+             "the strip did not pick up the tag just written");
+}
+
+void TestMainWindow::aLoadedMessageCorrectsTheStripFromTheThreadsUnion()
+{
+    // Reported by hand, 2026-08-16, against a real four-message thread whose
+    // root carried `unread` and whose THIRD message carried `signed`:
+    // "the right pane chips update and both signed and unread disappear ...
+    // changing message and going back makes them reappear".
+    //
+    // Neither half was the write's doing. Selecting a thread row sets the strip
+    // from ThreadSummary::tags, which is notmuch's UNION over the thread, so
+    // the pane claimed the root message was `signed` when a sibling was. The
+    // mark-read write then replaced it with the root's real tags, correctly
+    // dropping both, and reselecting put the union back. The pane was lying
+    // BEFORE the write, not after it.
+    //
+    // The load is the authority: MessageRef carries the message's own tags.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *strip = window.findChild<TagStrip *>();
+    QVERIFY(strip);
+
+    const auto stripTags = [strip]() {
+        return strip->visibleTags() + strip->hiddenTags();
+    };
+
+    // The union carries `signed`; the root message does not.
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 { QStringLiteral("inbox"),
+                                   QStringLiteral("signed"),
+                                   QStringLiteral("unread") });
+    t.totalCount = 4;
+    model->appendBatch({ t });
+
+    selectThreadRow(view, 0);
+    QApplication::processEvents();
+
+    // Before the load the strip can only show the union, which is what the
+    // model holds. That is the state the user saw and reported.
+    QVERIFY(stripTags().contains(QStringLiteral("signed")));
+
+    // The worker answers with the message's OWN tags.
+    MessageRef ref;
+    ref.messageId = QStringLiteral("t1-first@example.org");
+    ref.tags = QStringList{ QStringLiteral("inbox"), QStringLiteral("unread") };
+    QMetaObject::invokeMethod(
+        &window, "onMessageLoaded", Qt::DirectConnection,
+        Q_ARG(QVector<MessageRef>, QVector<MessageRef>{ ref }),
+        Q_ARG(quint64, window.currentGenerationForTesting()));
+    QApplication::processEvents();
+
+    QVERIFY2(!stripTags().contains(QStringLiteral("signed")),
+             "the pane still claims the root message is signed, which is a "
+             "sibling's tag: it is showing the thread's union rather than the "
+             "message on display");
+    QVERIFY2(stripTags().contains(QStringLiteral("unread")),
+             "the pane lost a tag the message really carries");
+}
+
+void TestMainWindow::aLoadedRootMessageGivesTheCardItsOwnTags()
+{
+    // The same correction, reaching the MODEL, which is what fixes the two
+    // repaint reports: "if I mark the root message read the left pane entry
+    // doesn't repaint (stays bold)" and the same for delete.
+    //
+    // The card could not repaint because the model had no per-message tags for
+    // a root at all, so a message-scoped write updated the thread summary only
+    // when the thread was a single message. A load gives the root the same
+    // per-message node a reply has had all along, and from then on the card
+    // draws the message it displays.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 { QStringLiteral("inbox"),
+                                   QStringLiteral("signed"),
+                                   QStringLiteral("unread") });
+    t.totalCount = 4;
+    model->appendBatch({ t });
+
+    selectThreadRow(view, 0);
+    QApplication::processEvents();
+
+    MessageRef ref;
+    ref.messageId = QStringLiteral("t1-first@example.org");
+    ref.tags = QStringList{ QStringLiteral("inbox"), QStringLiteral("unread") };
+    QMetaObject::invokeMethod(
+        &window, "onMessageLoaded", Qt::DirectConnection,
+        Q_ARG(QVector<MessageRef>, QVector<MessageRef>{ ref }),
+        Q_ARG(quint64, window.currentGenerationForTesting()));
+    QApplication::processEvents();
+
+    // The model now knows what the root message itself carries.
+    const MessageNode root =
+        model->messageById(QStringLiteral("t1-first@example.org"));
+    QCOMPARE(root.messageId, QStringLiteral("t1-first@example.org"));
+    QVERIFY2(!root.tags.contains(QStringLiteral("signed")),
+             "the root's node still carries a sibling's tag");
+
+    const QModelIndex threadIndex = model->index(0, 0, QModelIndex());
+    QSignalSpy spy(model, &QAbstractItemModel::dataChanged);
+
+    auto *toggle = window.findChild<QAction *>(QStringLiteral("toggle_unread"));
+    QVERIFY(toggle);
+    toggle->trigger();
+
+    QVERIFY2(spy.count() >= 1, "marking the root message read repainted nothing");
+    QVERIFY2(!model->messageById(QStringLiteral("t1-first@example.org"))
+                  .isUnread(),
+             "the root message is still unread after being marked read");
+
+    // The card now draws that message, so it stops looking unread. Asserted on
+    // the FONT, which is what the user means by "stays bold".
+    QVERIFY2(!model->data(threadIndex, Qt::FontRole).value<QFont>().bold(),
+             "the card still reads as unread, so the row stays bold and the "
+             "user sees nothing");
+    QVERIFY2(model->threadAt(0).isUnread(),
+             "the thread summary was rewritten, claiming a four-message thread "
+             "is read when three of its messages still are not");
 }
 
 void TestMainWindow::aTransientStatusMessageExpires()
@@ -4796,7 +5716,10 @@ void TestMainWindow::anEditDuringABackgroundSyncIsNotSentYet()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    // The THREAD action: this test asserts on the thread ROW, which a
+    // message-scoped write deliberately leaves alone since item 108. What
+    // is under test is the HOLD, which is identical either way.
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag_thread"));
     QVERIFY2(action, "no flag action registered");
 
     model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
@@ -4827,7 +5750,10 @@ void TestMainWindow::aHeldEditIsSentWhenTheBackgroundSyncEnds()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    // The THREAD action: this test asserts on the thread ROW, which a
+    // message-scoped write deliberately leaves alone since item 108. What
+    // is under test is the HOLD, which is identical either way.
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag_thread"));
     QVERIFY(action);
 
     model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
@@ -5360,15 +6286,19 @@ void TestMainWindow::theImportantActionStillWritesTheFlaggedTag()
     QVERIFY(action);
     action->trigger();
 
-    // sendThreadTagChange() applies the change to the model optimistically, so
-    // the tag the action really wrote is observable here without a worker.
-    QVERIFY2(model->threadAt(0).isFlagged(),
+    // Asserted on the CHANGE that was sent rather than on the thread's row.
+    // Since item 108 this action is message-scoped, so it writes to the
+    // message the card displays and the thread summary is deliberately left
+    // alone. The tag name is what this test is about, and the change carries
+    // it whichever scope the action uses.
+    const TagChange sent = window.pendingChangeForTesting();
+    QVERIFY2(sent.added.contains(QStringLiteral("flagged")),
              "the renamed action no longer writes the `flagged` tag");
-    QVERIFY2(model->threadAt(0).tags.contains(QStringLiteral("flagged")),
-             "the tag written was not `flagged`");
-    QVERIFY2(!model->threadAt(0).tags.contains(QStringLiteral("important")),
+    QVERIFY2(!sent.added.contains(QStringLiteral("important")),
              "the rename reached the mail store: an `important` tag was "
              "written, which no other tool reading this Maildir knows");
+    QVERIFY2(sent.removed.isEmpty(),
+             "marking important removed a tag, which it must not");
 }
 
 void TestMainWindow::theToolbarUsesTheConfiguredIconSize()
@@ -5756,20 +6686,59 @@ void TestMainWindow::noTwoActionsShareAnIcon()
     // Compared by cacheKey() rather than by the theme NAME, which this window
     // does not keep. Two distinct names that resolve to the same art on a given
     // theme are just as ambiguous on screen, and that is what the user sees.
+    // Narrowed by item 108 to the actions that can reach the TOOLBAR, which is
+    // where the rule comes from: an icon-only toolbar makes the icon the whole
+    // control. The five whole-thread actions live only in the "Whole thread"
+    // submenu, whose entries always carry text, and each deliberately shares
+    // the icon of its message-scoped twin: same operation, wider scope, with
+    // the words saying which. Giving them five invented shapes would be less
+    // clear than the pairing.
+    //
+    // Named as an exception list rather than by asking the toolbar what it
+    // holds, so that PUTTING one of these on the toolbar fails this test
+    // rather than silently passing it.
+    static const QStringList menuOnlyThreadActions = {
+        QStringLiteral("archive_thread"),
+        QStringLiteral("delete_thread"),
+        QStringLiteral("spam_thread"),
+        QStringLiteral("toggle_unread_thread"),
+        QStringLiteral("flag_thread"),
+    };
+
     const Config config;
     MainWindow window(config);
+
+    // The exception must not become a hiding place: every one of them still
+    // has to carry an icon, which everyActionCarriesAnIcon asserts, and none
+    // may sit on the toolbar.
+    auto *toolBar = window.findChild<QToolBar *>();
+    QVERIFY(toolBar);
+    for (const QString &name : menuOnlyThreadActions) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
+        QVERIFY2(!toolBar->actions().contains(action),
+                 qPrintable(QStringLiteral("%1 is on the toolbar, where a "
+                                           "shared icon is ambiguous, so it "
+                                           "cannot be exempt from this rule")
+                                .arg(name)));
+    }
 
     QHash<qint64, QString> owners;
     QStringList collisions;
     int withIcons = 0;
+    int compared = 0;
 
     for (const QString &name : KeyMap::knownActions()) {
         auto *action = window.findChild<QAction *>(name);
         QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
+        if (!action->icon().isNull())
+            ++withIcons;
+        if (menuOnlyThreadActions.contains(name))
+            continue;
         if (action->icon().isNull())
             continue;
+        ++compared;
 
-        ++withIcons;
         const qint64 key = action->icon().cacheKey();
         const auto existing = owners.constFind(key);
         if (existing != owners.constEnd()) {
@@ -5788,6 +6757,10 @@ void TestMainWindow::noTwoActionsShareAnIcon()
                                        "compare")
                             .arg(withIcons)
                             .arg(KeyMap::knownActions().size())));
+
+    // And the exception list did not swallow the comparison itself.
+    QCOMPARE(compared, KeyMap::knownActions().size()
+                           - menuOnlyThreadActions.size());
 
     QVERIFY2(collisions.isEmpty(),
              qPrintable(QStringLiteral("actions sharing one icon: %1")

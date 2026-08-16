@@ -52,6 +52,7 @@ private slots:
     void applyTagsIgnoresUnknownMessageIds();
     void applyTagsWithNoIdsDoesNothing();
     void queryStillWorksAfterWrite();
+    void aThreadCarriesItsCardMessagesOwnTags();
 
     void applyTagsToThreadsTagsEveryMessage();
     void applyTagsToThreadsSpansMultipleThreads();
@@ -270,6 +271,55 @@ void TestNotmuchWorker::aQueryCarriesEachThreadsFirstMessageId()
             QCOMPARE(t.firstMessageId, QStringLiteral("a1@example.org"));
             sawTheThread = true;
         }
+    }
+    QVERIFY2(sawTheThread, "the two-message thread was not in the results");
+}
+
+void TestNotmuchWorker::aThreadCarriesItsCardMessagesOwnTags()
+{
+    // Item 111. A card draws its own message's tags at full size and the rest
+    // of the conversation's smaller, so it needs BOTH: `tags` is notmuch's
+    // union over the thread and `firstMessageTags` is the one message the card
+    // stands for.
+    //
+    // Derived from the message LOAD at first, which meant an unopened row had
+    // no split and drew everything as its own, correcting itself only when the
+    // user selected it. The user reported exactly that. The query knows, and
+    // the walk that finds firstMessageId is already holding the message, so
+    // this is the same index read rather than a second pass.
+
+    // A tag on the REPLY only, which is the case that separates the two: a1 is
+    // the card's message, a2 its reply.
+    NotmuchWorker writer(m_fixture.configPath());
+    writer.applyTags(TagChange{ { QStringLiteral("a2@example.org") },
+                                { QStringLiteral("signed") },
+                                {},
+                                QStringLiteral("Sign the reply") });
+
+    const QVector<ThreadSummary> threads = runQuery(QStringLiteral("*"));
+    bool sawTheThread = false;
+    for (const ThreadSummary &t : threads) {
+        if (t.subject != QStringLiteral("Release notes"))
+            continue;
+        sawTheThread = true;
+
+        QCOMPARE(t.firstMessageId, QStringLiteral("a1@example.org"));
+
+        // The union carries the reply's tag, as notmuch reports it.
+        QVERIFY2(t.tags.contains(QStringLiteral("signed")),
+                 "the thread's own tags stopped being the union, which the "
+                 "sibling tier is derived from");
+
+        // The card's message does not, and this is the whole point: without it
+        // the card claims a tag belonging to a message it does not display.
+        QVERIFY2(!t.firstMessageTags.isEmpty(),
+                 "the query carried no per-message tags, so an unopened row "
+                 "has no split and draws every chip at full size");
+        QVERIFY2(!t.firstMessageTags.contains(QStringLiteral("signed")),
+                 "the card's message was given its reply's tag");
+
+        // And it does carry its own.
+        QVERIFY(t.firstMessageTags.contains(QStringLiteral("inbox")));
     }
     QVERIFY2(sawTheThread, "the two-message thread was not in the results");
 }

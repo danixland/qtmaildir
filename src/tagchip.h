@@ -43,6 +43,19 @@ constexpr int kSpacing = 4;
 
 QSize sizeFor(const QFontMetrics &metrics, const QString &text);
 
+/// The same, with the padding scaled by \p scale.
+///
+/// The padding is a fixed pixel count, which is right for one chip size and
+/// wrong the moment there are two: at 1.0 it is 18px around roughly 30px of
+/// text on a sibling chip, so the chip stays wide while its text shrinks and
+/// the tier reads as "same size, smaller letters" rather than as a smaller
+/// chip. Scaling it with the font is what makes the second tier actually look
+/// smaller (item 111).
+///
+/// Floored at 2px a side, because the corner radius is half the height and a
+/// chip with no horizontal padding has its text touching the curve.
+QSize sizeFor(const QFontMetrics &metrics, const QString &text, qreal scale);
+
 /// Paints the chip into `rect`, using `text` and `background`. The text colour
 /// is derived from the fill so it stays legible.
 void paint(QPainter *painter, const QRect &rect, const QString &text,

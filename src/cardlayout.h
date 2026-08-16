@@ -160,6 +160,19 @@ struct CardLayout
     /// column of content.
     static QFont smallFont(const QFont &cardFont);
 
+    /// The font a SIBLING's tag chip is drawn in: a size down again from
+    /// smallFont().
+    ///
+    /// A card stands for one message but sits above a conversation, and shows
+    /// both tiers (item 111). Size is what says which is which, so the two
+    /// must be visibly different; taking one more step from the same base
+    /// keeps it following the desktop's font rather than being fixed.
+    ///
+    /// Floored like smallFont(), and the floor really is reachable: a desktop
+    /// at the minimum size gives both tiers the same size, which is a legible
+    /// degradation rather than an illegible chip.
+    static QFont siblingFont(const QFont &cardFont);
+
     static CardLayout compute(const Input &input, const QRect &rect,
                               const QFont &font);
 

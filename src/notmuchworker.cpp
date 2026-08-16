@@ -314,6 +314,9 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
                 if (matched) {
                     summary.firstMessageId = QString::fromUtf8(
                         notmuch_message_get_message_id(message));
+                    // The card's own tags, beside the thread's union above.
+                    // Same walk, same index read, no extra query.
+                    summary.firstMessageTags = tagsOf(message);
                     break;
                 }
             }
@@ -323,6 +326,9 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
                 if (notmuch_message_t *first = notmuch_messages_get(top)) {
                     summary.firstMessageId = QString::fromUtf8(
                         notmuch_message_get_message_id(first));
+                    // The card's own tags, beside the thread's union above.
+                    // Same walk, same index read, no extra query.
+                    summary.firstMessageTags = tagsOf(first);
                 }
             }
         }

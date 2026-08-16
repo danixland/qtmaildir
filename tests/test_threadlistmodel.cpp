@@ -68,6 +68,20 @@ private slots:
     void threadIdIsReachableFromAnIndex();
     void invalidIndexesReturnNothing();
     void threadAtOutOfRangeIsSafe();
+    void threadForResolvesAReplyThroughItsParent();
+    void applyMessageTagChangeRepaintsThatReplyAlone();
+    void aDeletedReplyIsPaintedAsDoomed();
+    void aDeletedReplyIsStruckThrough();
+    void markingAReplyReadChangesItsForeground();
+    void anUnreadReplyIsBoldAndStillSmallerThanItsThread();
+    void aThreadTagChangeReachesItsLoadedReplies();
+    void messageScopeResolvesAThreadRowToTheMessageItDisplays();
+    void messageScopeSkipsAThreadRowItCannotNameAMessageFor();
+    void aMessageTagChangeReachesTheRootCardsOwnMessage();
+    void aMessageTagChangeOnOneOfManyLeavesTheThreadSummaryAlone();
+    void aCardListsItsOwnTagsBeforeItsSiblings();
+    void theSplitIsKnownBeforeTheRowIsEverOpened();
+    void reconcileRefreshesASurvivorsOwnMessageTags();
     void updatesTagsForMessage();
     void tagChangeIsIdempotent();
     void tagChangeSignalsExactlyTheChangedRow();
@@ -874,6 +888,605 @@ void TestThreadListModel::threadAtOutOfRangeIsSafe()
 
     QVERIFY(model.threadAt(-1).threadId.isEmpty());
     QVERIFY(model.threadAt(99).threadId.isEmpty());
+    QCOMPARE(model.threadAt(0).threadId, QStringLiteral("t1"));
+}
+
+void TestThreadListModel::threadForResolvesAReplyThroughItsParent()
+{
+    // Item 88. threadAt() takes a top-level row and a tree numbers rows per
+    // parent, so the first reply of ANY thread has row() == 0 and threadAt(0)
+    // answers "t1" for a reply of t2. threadFor() resolves through the parent
+    // instead, which is what every caller holding an index needs.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")),
+                        makeThread(QStringLiteral("t2"), QStringLiteral("two")) });
+    model.setThreadMessages(QStringLiteral("t2"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1) });
+
+    const QModelIndex second = model.index(1, 0, QModelIndex());
+    QCOMPARE(model.threadFor(second).threadId, QStringLiteral("t2"));
+
+    const QModelIndex reply = model.index(0, 0, second);
+    QVERIFY(reply.isValid());
+    QVERIFY2(model.isMessageRow(reply),
+             "the fixture did not produce a message row");
+    QCOMPARE(reply.row(), 0);   // The trap: a plausible top-level row number.
+
+    QCOMPARE(model.threadFor(reply).threadId, QStringLiteral("t2"));
+
+    // And the row-taking overload still does the wrong thing for that index,
+    // which is why it is documented as unsafe rather than merely deprecated.
+    QCOMPARE(model.threadAt(reply.row()).threadId, QStringLiteral("t1"));
+
+    // An invalid index gives an empty summary, which every caller treats as
+    // "nothing to do" rather than acting on row 0.
+    QVERIFY(model.threadFor(QModelIndex()).threadId.isEmpty());
+}
+
+void TestThreadListModel::applyMessageTagChangeRepaintsThatReplyAlone()
+{
+    // The user's report: hitting Delete or Ctrl+U on a reply moved the pending
+    // count and changed nothing on screen. sendMessageTagChange made no
+    // optimistic update at all, on the correct reasoning that repainting the
+    // THREAD row would claim every message in it had changed. The row that
+    // should have repainted is the reply's own.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")) });
+
+    MessageNode root = makeNode(QStringLiteral("m0@example.org"), 0);
+    MessageNode reply = makeNode(QStringLiteral("m1@example.org"), 1);
+    reply.tags = QStringList{ QStringLiteral("unread") };
+    model.setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
+    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+    QVERIFY(model.isMessageRow(replyIndex));
+
+    const QStringList threadTagsBefore =
+        model.data(threadIndex, ThreadListModel::TagsRole).toStringList();
+
+    QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
+
+    model.applyMessageTagChange(QStringLiteral("m1@example.org"),
+                                { QStringLiteral("deleted") },
+                                { QStringLiteral("unread") });
+
+    // The node carries the change, which is what every reply-row role reads.
+    QCOMPARE(model.messageAt(replyIndex).isDeleted(), true);
+    QCOMPARE(model.messageAt(replyIndex).isUnread(), false);
+
+    // And the view was told, or the change is invisible until something else
+    // happens to repaint the row.
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(0).toModelIndex(), replyIndex);
+
+    // The THREAD is untouched. Claiming the whole thread changed is the lie
+    // the missing update was avoiding, and it must stay avoided.
+    QCOMPARE(model.data(threadIndex, ThreadListModel::TagsRole).toStringList(),
+             threadTagsBefore);
+    QCOMPARE(model.messageAt(model.index(0, 0, threadIndex)).messageId,
+             QStringLiteral("m1@example.org"));
+
+    // An unknown message is a no-op rather than a wrong row repainted.
+    spy.clear();
+    model.applyMessageTagChange(QStringLiteral("nobody@example.org"),
+                                { QStringLiteral("deleted") }, {});
+    QCOMPARE(spy.count(), 0);
+}
+
+void TestThreadListModel::aDeletedReplyIsPaintedAsDoomed()
+{
+    // Updating the node is not enough on its own: a reply row had no doomed
+    // branch at all, so a deleted reply repainted identically to an undeleted
+    // one and the user still saw nothing. The thread row has carried this cue
+    // since item 13.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")) });
+
+    MessageNode root = makeNode(QStringLiteral("m0@example.org"), 0);
+    MessageNode reply = makeNode(QStringLiteral("m1@example.org"), 1);
+    model.setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
+    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+
+    const QVariant plainBackground =
+        model.data(replyIndex, Qt::BackgroundRole);
+
+    model.applyMessageTagChange(QStringLiteral("m1@example.org"),
+                                { QStringLiteral("deleted") }, {});
+
+    const QVariant doomedBackground =
+        model.data(replyIndex, Qt::BackgroundRole);
+    QVERIFY2(doomedBackground != plainBackground,
+             "a deleted reply paints exactly like an undeleted one, so the "
+             "user has no way to see that Delete did anything");
+    QCOMPARE(doomedBackground.value<QBrush>().color(),
+             ThreadListModel::deletedColour());
+
+    // Spam is the other half of isDoomed() and gets its own colour, so the two
+    // are told apart by hue rather than by shade.
+    model.applyMessageTagChange(QStringLiteral("m1@example.org"),
+                                { QStringLiteral("spam") },
+                                { QStringLiteral("deleted") });
+    QCOMPARE(model.data(replyIndex, Qt::BackgroundRole).value<QBrush>().color(),
+             ThreadListModel::spamColour());
+}
+
+void TestThreadListModel::aDeletedReplyIsStruckThrough()
+{
+    // The fill is not the only cue, deliberately: a strike-out survives a
+    // screenshot, a colourblind reader and a theme that overrides the
+    // background. The thread row has carried both since item 13; a reply had
+    // neither.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")) });
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1) });
+
+    const QModelIndex replyIndex =
+        model.index(0, 0, model.index(0, 0, QModelIndex()));
+
+    QVERIFY(!model.data(replyIndex, Qt::FontRole).value<QFont>().strikeOut());
+
+    model.applyMessageTagChange(QStringLiteral("m1@example.org"),
+                                { QStringLiteral("deleted") }, {});
+
+    QVERIFY2(model.data(replyIndex, Qt::FontRole).value<QFont>().strikeOut(),
+             "a deleted reply is not struck through, so the only cue it has "
+             "is a background colour");
+
+    // The reply's smaller font is not lost to the strike-out branch: a reply
+    // reads as subordinate whatever its tags say.
+    const QFont threadFont =
+        model.data(model.index(0, 0, QModelIndex()), Qt::FontRole).value<QFont>();
+    const QFont replyFont =
+        model.data(replyIndex, Qt::FontRole).value<QFont>();
+    if (threadFont.pointSize() > 0 && replyFont.pointSize() > 0)
+        QVERIFY(replyFont.pointSize() < threadFont.pointSize());
+}
+
+void TestThreadListModel::markingAReplyReadChangesItsForeground()
+{
+    // The user's second report: marking a reply read or unread moved the
+    // counter with no visible change. A reply is deliberately NEVER bold, so
+    // unlike a thread row its only cue is the foreground dimming. That cue has
+    // to at least exist and change, which is what this pins.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")) });
+
+    MessageNode root = makeNode(QStringLiteral("m0@example.org"), 0);
+    MessageNode reply = makeNode(QStringLiteral("m1@example.org"), 1);
+    reply.tags = QStringList{ QStringLiteral("unread") };
+    model.setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    const QModelIndex replyIndex =
+        model.index(0, 0, model.index(0, 0, QModelIndex()));
+
+    const QVariant unreadForeground =
+        model.data(replyIndex, Qt::ForegroundRole);
+
+    model.applyMessageTagChange(QStringLiteral("m1@example.org"), {},
+                                { QStringLiteral("unread") });
+
+    const QVariant readForeground = model.data(replyIndex, Qt::ForegroundRole);
+    QVERIFY2(readForeground != unreadForeground,
+             "marking a reply read changed nothing about how its row paints");
+    QCOMPARE(readForeground.value<QBrush>().color(),
+             ThreadListModel::readColour());
+
+    // And back, so the toggle is visible in both directions rather than only
+    // on the way to read.
+    model.applyMessageTagChange(QStringLiteral("m1@example.org"),
+                                { QStringLiteral("unread") }, {});
+    QCOMPARE(model.data(replyIndex, Qt::ForegroundRole), unreadForeground);
+}
+
+void TestThreadListModel::anUnreadReplyIsBoldAndStillSmallerThanItsThread()
+{
+    // Requested by the user on 2026-08-16: "I prefer the bold on replies
+    // combined with the dimming." Replies were deliberately never bold before
+    // that, so this pins the decision rather than describing the code.
+    //
+    // Both halves matter. Bold is the second cue, next to the dimming; the
+    // smaller size is what still separates a reply from the thread heading
+    // above it, and dropping it would make an unread reply indistinguishable
+    // from a thread row.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")) });
+
+    MessageNode root = makeNode(QStringLiteral("m0@example.org"), 0);
+    MessageNode reply = makeNode(QStringLiteral("m1@example.org"), 1);
+    reply.tags = QStringList{ QStringLiteral("unread") };
+    model.setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
+    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+
+    const QFont unreadFont =
+        model.data(replyIndex, Qt::FontRole).value<QFont>();
+    QVERIFY2(unreadFont.bold(), "an unread reply is not bold");
+
+    const QFont threadFont =
+        model.data(threadIndex, Qt::FontRole).value<QFont>();
+    if (threadFont.pointSize() > 0 && unreadFont.pointSize() > 0) {
+        QVERIFY2(unreadFont.pointSize() < threadFont.pointSize(),
+                 "a bold reply is the same size as its thread row, so the two "
+                 "kinds of row no longer read apart");
+    }
+
+    // Bold is the unread cue specifically, not decoration on every reply.
+    model.applyMessageTagChange(QStringLiteral("m1@example.org"), {},
+                                { QStringLiteral("unread") });
+    QVERIFY2(!model.data(replyIndex, Qt::FontRole).value<QFont>().bold(),
+             "a read reply is still bold, so bold says nothing");
+}
+
+void TestThreadListModel::aThreadTagChangeReachesItsLoadedReplies()
+{
+    // The user's report: "if I hit read/unread on the main thread message [...]
+    // only the main message is repainted [...] the replies don't get
+    // repainted."
+    //
+    // A thread-scoped write reaches every message in the thread IN THE
+    // DATABASE. applyTagChange only ever updated the thread's summary, so an
+    // expanded thread kept showing replies with their old tags: bold, undimmed
+    // and unstruck, describing a state the database no longer held. The rows
+    // corrected themselves on the next query, which is what made this look
+    // like a repaint problem rather than a stale-model one.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")) });
+
+    MessageNode root = makeNode(QStringLiteral("m0@example.org"), 0);
+    root.tags = QStringList{ QStringLiteral("unread") };
+    MessageNode reply = makeNode(QStringLiteral("m1@example.org"), 1);
+    reply.tags = QStringList{ QStringLiteral("unread") };
+    model.setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
+    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+    QVERIFY(model.messageAt(replyIndex).isUnread());
+
+    QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
+
+    model.applyTagChange(QStringLiteral("t1"), {},
+                         { QStringLiteral("unread") });
+
+    QVERIFY2(!model.messageAt(replyIndex).isUnread(),
+             "a thread marked read left its loaded replies carrying unread, so "
+             "the rows describe a state the database does not hold");
+
+    // The reply's row was told to repaint, not merely mutated behind the view.
+    bool replyRepainted = false;
+    for (const QList<QVariant> &call : spy) {
+        const QModelIndex from = call.at(0).toModelIndex();
+        const QModelIndex to = call.at(1).toModelIndex();
+        if (from.parent() == threadIndex && replyIndex.row() >= from.row()
+            && replyIndex.row() <= to.row()) {
+            replyRepainted = true;
+            break;
+        }
+    }
+    QVERIFY2(replyRepainted,
+             "no dataChanged covered the reply rows, so the view has no reason "
+             "to redraw them");
+
+    // Both directions, since a toggle is only fixed if it is visible each way.
+    model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("unread") }, {});
+    QVERIFY(model.messageAt(replyIndex).isUnread());
+}
+
+void TestThreadListModel::messageScopeResolvesAThreadRowToTheMessageItDisplays()
+{
+    // Item 108. A thread root RENDERS one message since item 66, so acting on
+    // it acts on that message. The thread's other messages are reached through
+    // the explicit thread actions, which still resolve through scopeFor().
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("A subject"));
+    t.totalCount = 7;
+    t.firstMessageId = QStringLiteral("m0@example.org");
+    model.appendBatch({ t });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+
+    // Unexpanded, which is the case that matters: the id comes from the query,
+    // so this needs no children loaded.
+    QCOMPARE(model.rowCount(root), 0);
+
+    const ActionScope scope = model.messageScopeFor({ root });
+    QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m0@example.org") });
+    QVERIFY2(scope.threadIds.isEmpty(),
+             "a thread row still resolved to its whole thread, so every action "
+             "on a root card would touch messages it does not display");
+    QCOMPARE(scope.messageCount, 1);
+    QVERIFY2(!scope.wholeThread,
+             "the status bar would claim '(whole thread)' for a one-message "
+             "action");
+
+    // The old resolver is unchanged and is what the thread actions use.
+    const ActionScope threadScope = model.scopeFor({ root });
+    QCOMPARE(threadScope.threadIds, QStringList{ QStringLiteral("t1") });
+    QCOMPARE(threadScope.messageCount, 7);
+    QVERIFY(threadScope.wholeThread);
+
+    // A reply row is unchanged in both: it always stood for one message.
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0),
+                              makeNode(QStringLiteral("m1@example.org"), 1) });
+    const QModelIndex reply = model.index(0, 0, root);
+    QCOMPARE(model.messageScopeFor({ reply }).messageIds,
+             QStringList{ QStringLiteral("m1@example.org") });
+
+    // A root and one of its own replies is two DISTINCT messages, not one
+    // deduplicated to the thread.
+    const ActionScope both = model.messageScopeFor({ root, reply });
+    QCOMPARE(both.messageIds,
+             (QStringList{ QStringLiteral("m0@example.org"),
+                           QStringLiteral("m1@example.org") }));
+    QCOMPARE(both.messageCount, 2);
+}
+
+void TestThreadListModel::messageScopeSkipsAThreadRowItCannotNameAMessageFor()
+{
+    // firstMessageId is populated by the worker from the query. A summary that
+    // arrived without one names no message, and the tempting fallback is to
+    // act on the whole thread instead. That is exactly the silent escalation
+    // item 108 exists to remove: the user would ask to act on one message and
+    // hit the conversation.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"),
+                                 QStringLiteral("A subject"));
+    t.totalCount = 4;
+    t.firstMessageId.clear();
+    model.appendBatch({ t });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    const ActionScope scope = model.messageScopeFor({ root });
+
+    QVERIFY2(scope.isEmpty(),
+             "a thread row with no message id was escalated to its whole "
+             "thread rather than skipped");
+    QCOMPARE(scope.messageCount, 0);
+}
+
+void TestThreadListModel::aMessageTagChangeReachesTheRootCardsOwnMessage()
+{
+    // The user, 2026-08-16: "delete single message on the root message of a
+    // thread doesn't trigger the repaint, delete whole thread does".
+    //
+    // applyMessageTagChange only searched `children`, and the root message is
+    // never there: setThreadMessages drops depth 0 because the root row stands
+    // for it. So a write to the message a root card displays found nothing,
+    // updated nothing and repainted nothing, while the same write on a reply
+    // worked. Item 108 made this the ORDINARY case, so the every-day gesture
+    // was the broken one.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("one"));
+    t.totalCount = 1;            // A single-message thread.
+    t.firstMessageId = QStringLiteral("m0@example.org");
+    t.tags = QStringList{ QStringLiteral("inbox") };
+    model.appendBatch({ t });
+
+    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
+    QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
+
+    model.applyMessageTagChange(QStringLiteral("m0@example.org"),
+                                { QStringLiteral("deleted") }, {});
+
+    // The card has to repaint, which is the whole report.
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(0).toModelIndex(), threadIndex);
+
+    // And it has to LOOK deleted. For a one-message thread the thread's tags
+    // ARE that message's tags: notmuch_thread_get_tags is a union over the
+    // thread, and a union over one message is that message.
+    QVERIFY2(model.threadAt(0).isDeleted(),
+             "the root card does not show the state of the message it "
+             "displays, so Delete on it looks like it did nothing");
+
+    // Works before the thread has ever been expanded, which is the case the
+    // user hits: nothing loads a root's node until then.
+    QCOMPARE(model.rowCount(threadIndex), 0);
+}
+
+void TestThreadListModel::aMessageTagChangeOnOneOfManyLeavesTheThreadSummaryAlone()
+{
+    // The other half, and the reason the fix is not "write it to the summary".
+    // A thread's tags are a UNION over its messages, so deleting one message of
+    // seven does not make the conversation deleted, and painting the card
+    // crimson would claim it did.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("one"));
+    t.totalCount = 7;
+    t.firstMessageId = QStringLiteral("m0@example.org");
+    t.tags = QStringList{ QStringLiteral("inbox"), QStringLiteral("unread") };
+    model.appendBatch({ t });
+
+    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
+    QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
+
+    model.applyMessageTagChange(QStringLiteral("m0@example.org"),
+                                { QStringLiteral("deleted") },
+                                { QStringLiteral("unread") });
+
+    // Still repaints: MessageIdRole and anything else keyed on the root's own
+    // node has changed, and the row is what the user is looking at.
+    QCOMPARE(spy.count(), 1);
+
+    QVERIFY2(!model.threadAt(0).isDeleted(),
+             "deleting one message of a seven-message thread painted the whole "
+             "conversation as deleted");
+    QVERIFY2(model.threadAt(0).isUnread(),
+             "marking one message of a seven-message thread read claimed the "
+             "whole conversation was read, though six messages still are not");
+}
+
+void TestThreadListModel::aCardListsItsOwnTagsBeforeItsSiblings()
+{
+    // The user, 2026-08-16, looking at a real four-message thread: the card
+    // showed `mailing-list/SBo` and `signed`, and `signed` vanished the moment
+    // the row was selected, because it belongs to a SIBLING and item 110 made
+    // the card stop claiming it.
+    //
+    // Their answer, which is better than either extreme: show both, and let
+    // size say whose is whose. Own tags first at full size, the thread's other
+    // tags after, smaller and muted. Nothing disappears; a chip only shrinks
+    // once the split becomes known.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("one"));
+    t.totalCount = 4;
+    t.firstMessageId = QStringLiteral("m0@example.org");
+    // The UNION, as notmuch reports it: `signed` is a sibling's.
+    t.tags = QStringList{ QStringLiteral("inbox"),
+                          QStringLiteral("mailing-list/SBo"),
+                          QStringLiteral("signed"),
+                          QStringLiteral("unread") };
+    model.appendBatch({ t });
+
+    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
+
+    // Before the row is opened there is no per-message answer, so every chip
+    // is in the own tier. This is what stops anything from appearing to vanish
+    // later: the split narrows the tier, it does not remove a chip.
+    const QStringList before =
+        model.data(threadIndex, ThreadListModel::PillTagsRole).toStringList();
+    QVERIFY(before.contains(QStringLiteral("mailing-list/SBo")));
+    QVERIFY(before.contains(QStringLiteral("signed")));
+    QCOMPARE(model.data(threadIndex, ThreadListModel::PillOwnCountRole).toInt(),
+             before.size());
+
+    // The message loads, carrying what it really has.
+    model.setRootMessageTags(QStringLiteral("m0@example.org"),
+                             { QStringLiteral("inbox"),
+                               QStringLiteral("mailing-list/SBo"),
+                               QStringLiteral("unread") });
+
+    const QStringList after =
+        model.data(threadIndex, ThreadListModel::PillTagsRole).toStringList();
+
+    // Same chips, still all present. The user explicitly did not want the
+    // sibling's tag dropped.
+    QVERIFY2(after.contains(QStringLiteral("signed")),
+             "the sibling's tag was dropped from the card rather than being "
+             "shown smaller, which is what looked like a bug");
+    QVERIFY2(after.contains(QStringLiteral("mailing-list/SBo")),
+             "the card lost a tag the message really carries");
+
+    // Own first, siblings after, and the count is where the delegate switches
+    // fonts.
+    const int own =
+        model.data(threadIndex, ThreadListModel::PillOwnCountRole).toInt();
+    QVERIFY2(own > 0 && own < after.size(),
+             "the split did not happen: every chip is in one tier");
+    QCOMPARE(after.mid(0, own),
+             QStringList{ QStringLiteral("mailing-list/SBo") });
+    QCOMPARE(after.mid(own), QStringList{ QStringLiteral("signed") });
+
+    // Colours stay aligned with the tags, since the delegate walks them in
+    // step and a shift would colour a chip with its neighbour's colour.
+    QCOMPARE(model.data(threadIndex, ThreadListModel::PillColoursRole)
+                 .toList()
+                 .size(),
+             after.size());
+}
+
+void TestThreadListModel::theSplitIsKnownBeforeTheRowIsEverOpened()
+{
+    // The user, 2026-08-16: "not selecting the thread shows the chips at 'main'
+    // size, not smaller, not dimmed. After selecting the thread the unioned
+    // chips repaint to the correct size/color."
+    //
+    // The first version derived the split from the message LOAD, so an unopened
+    // row had no per-message answer and put every chip in the own tier. That is
+    // honest and useless: the list is mostly unopened rows, so the feature was
+    // invisible exactly where it was meant to be read, and selecting a row
+    // still changed the card.
+    //
+    // The query knows. The worker already walks to the card's message to get
+    // its id, so it reads that message's tags in the same pass and the split
+    // arrives with the row.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("one"));
+    t.totalCount = 4;
+    t.firstMessageId = QStringLiteral("m0@example.org");
+    t.tags = QStringList{ QStringLiteral("inbox"),
+                          QStringLiteral("mailing-list/SBo"),
+                          QStringLiteral("signed"),
+                          QStringLiteral("unread") };
+    // What the worker now supplies: the CARD's message, not the thread.
+    t.firstMessageTags = QStringList{ QStringLiteral("inbox"),
+                                      QStringLiteral("mailing-list/SBo"),
+                                      QStringLiteral("unread") };
+    model.appendBatch({ t });
+
+    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
+
+    // Never opened, never expanded.
+    QCOMPARE(model.rowCount(threadIndex), 0);
+
+    const QStringList pills =
+        model.data(threadIndex, ThreadListModel::PillTagsRole).toStringList();
+    const int own =
+        model.data(threadIndex, ThreadListModel::PillOwnCountRole).toInt();
+
+    QVERIFY2(own < pills.size(),
+             "an unopened row still puts every chip in the own tier, so the "
+             "card renders them all at full size and only corrects itself "
+             "when the row is selected");
+    QCOMPARE(pills.mid(0, own), QStringList{ QStringLiteral("mailing-list/SBo") });
+    QCOMPARE(pills.mid(own), QStringList{ QStringLiteral("signed") });
+
+    // And a message-scoped write still lands, without a load having happened.
+    model.applyMessageTagChange(QStringLiteral("m0@example.org"),
+                                { QStringLiteral("deleted") }, {});
+    QVERIFY(model.messageById(QStringLiteral("m0@example.org")).isDeleted());
+    QVERIFY2(!model.threadAt(0).isDeleted(),
+             "the thread summary was rewritten for a one-message edit on a "
+             "four-message thread");
+}
+
+void TestThreadListModel::reconcileRefreshesASurvivorsOwnMessageTags()
+{
+    // reconcile() keeps a surviving row's NODE, deliberately: its children and
+    // its loaded flag are the expansion state the method exists to preserve.
+    // That means the per-message tags have to be refreshed explicitly, and the
+    // change detector has to notice when only they moved.
+    //
+    // The case: a sync where the root message alone changed, which is exactly
+    // what an external `notmuch tag` or another client does. The thread's union
+    // can be identical while the card's own message is not.
+    ThreadListModel model;
+    ThreadSummary before = makeThread(QStringLiteral("t1"),
+                                      QStringLiteral("one"));
+    before.totalCount = 2;
+    before.firstMessageId = QStringLiteral("m0@example.org");
+    before.tags = QStringList{ QStringLiteral("inbox"),
+                               QStringLiteral("unread") };
+    before.firstMessageTags = QStringList{ QStringLiteral("inbox"),
+                                           QStringLiteral("unread") };
+    model.appendBatch({ before });
+
+    QVERIFY(model.messageById(QStringLiteral("m0@example.org")).isUnread());
+
+    // The root was read elsewhere. The THREAD is still unread, because its
+    // reply is, so the union does not move at all.
+    ThreadSummary after = before;
+    after.firstMessageTags = QStringList{ QStringLiteral("inbox") };
+
+    QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
+    model.reconcile({ after });
+
+    QVERIFY2(!model.messageById(QStringLiteral("m0@example.org")).isUnread(),
+             "a sync that changed only the card's own message left the row "
+             "showing the old per-message tags");
+    QVERIFY2(spy.count() >= 1,
+             "the change was applied without telling the view, so the card "
+             "keeps its old pixels until something else repaints it");
+
+    // The expansion state is still what reconcile() exists to preserve.
     QCOMPARE(model.threadAt(0).threadId, QStringLiteral("t1"));
 }
 

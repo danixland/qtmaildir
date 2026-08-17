@@ -11,6 +11,17 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-17
+
+Acting on a row now means the message that row displays, not the whole
+conversation, which is the change most likely to affect your habits: Ctrl+D on
+a thread's card deletes one message where it used to delete the thread. The
+whole-thread actions are still there under a Whole thread submenu. Important
+becomes a toggle, the tagging rules list gains a Note column, and the message
+pane stops offering browser actions that could never work. The Italian
+translation catches up with the whole-thread actions, which shipped as English
+in 0.24.0.
+
 ### Upgrading
 
 **Acting on a thread row now acts on the message it displays, not on the whole

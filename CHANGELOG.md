@@ -36,6 +36,18 @@ Existing `[keys]` entries keep working and keep their meaning: `delete` is still
 `flag_thread`) and can be rebound like any other. "Mark all read" is unchanged:
 it never used the selection.
 
+**Important is now a toggle.** `Ctrl+I` on something already marked important
+removes the tag, where before it re-applied it and appeared to do nothing. If
+you were using it to mark a batch that already contained important messages,
+note that a selection where *everything* is already important now unmarks all of
+it, matching how Delete and Toggle unread have always behaved.
+
+**The tagging rules window forgets its column widths once.** A Note column was
+added to the rule list, and a saved layout describing the old set of columns
+cannot be applied to the new one. The first time you open the dialog after
+upgrading, the columns are sized to fit; drag them once and the new layout is
+remembered as before.
+
 ### Changed
 
 - **Reading a message no longer marks its replies read.** The two-second
@@ -50,8 +62,26 @@ it never used the selection.
   conversation; once a thread is expanded, that row cannot say which of its
   messages are unread, and dimming alone was too quiet to notice. Replies stay
   a size smaller than their thread, so the two kinds of row still read apart.
+- **Important is a toggle**, like Delete and Toggle unread beside it. It only
+  ever added the tag, so pressing it on something already important re-applied
+  a tag that was already there, which changes nothing and looked like a dead
+  key. Removing `flagged` previously meant opening the tag dialog. As with
+  Delete, one direction is chosen for the whole selection: it unmarks only when
+  every selected row is already important, so a single keystroke cannot leave a
+  selection in two states.
+- The tagging rules window shows each rule's **Note** in the list. The field
+  explaining why a rule is shaped the way it is was only visible after
+  selecting that rule and reading the form, which is the wrong way round for
+  the one column that says what a rule is for. Long notes are elided with the
+  full text in the tooltip.
 
 ### Fixed
+
+- The message pane's right-click menu offered **Back, Forward, Reload** and
+  **Save page**. The pane is not a browser: every message is rendered from
+  memory with no history and no network, so all four were inert as well as
+  meaningless. The menu now carries only what applies to a message: Copy, View
+  source, and searching for the selected text.
 
 - Acting on a reply inside an expanded thread could read a different thread's
   state, because a reply's position is counted within its own thread and was

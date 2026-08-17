@@ -1,6 +1,8 @@
 # Delete moves mail to trash
 
-Item 103. Design settled 2026-08-17 with the user.
+**Resolves item 103.** Design settled 2026-08-17 with the user. Item 118
+(Empty Trash) is blocked on this and deliberately out of scope, see the last
+section.
 
 ## The problem, measured
 
@@ -211,5 +213,9 @@ folder is purged on a timer.
 ## Out of scope
 
 No purge, no empty-trash, no expiry inside the app. Mail leaves the trash folder
-when the server does it or when the user restores it. Purging from inside
-qtmaildir is a separate item if it is ever wanted.
+when the server does it or when the user restores it.
+
+Emptying the trash is **item 118**, filed separately at the user's request
+rather than folded in here. It is blocked on this item, and it is the first
+action in the application that would destroy mail with no undo, so it needs the
+no-confirmation rule re-examined in a way this item does not.

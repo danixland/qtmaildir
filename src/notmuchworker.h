@@ -120,6 +120,19 @@ public slots:
     /// it would block the user's cron `notmuch new`.
     void applyTags(const TagChange &change);
 
+    /// Moves messages into `destFolder`, relative to the database path.
+    ///
+    /// A folder NAME rather than a "move to trash" call, because v2's Send
+    /// needs exactly this operation for Drafts and Sent. Nothing
+    /// trash-specific belongs here.
+    ///
+    /// The first mutation in this class that is not a notmuch tag: a rename on
+    /// disk plus a reindex. Ordering is rename, index the new path, drop the
+    /// old one. Indexing first is required, not stylistic: removing the last
+    /// filename for a message id deletes the database entry and every tag on
+    /// it, so removing before indexing loses the message's tags.
+    void moveMessages(const QStringList &messageIds, const QString &destFolder);
+
     /// Batch tagging over whole threads. The UI holds thread ids, not message
     /// ids, for rows it has not opened, so the resolution happens here where
     /// the database handle lives. This is the path the archive/flag/delete
@@ -184,6 +197,11 @@ signals:
                           quint64 generation);
     void messageLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void tagsApplied(const TagChange &change);
+
+    /// Carries the ids that ACTUALLY moved, which may be fewer than requested.
+    /// A stale id, a missing folder or a failed rename drops out here rather
+    /// than aborting the batch.
+    void messagesMoved(const QStringList &messageIds, const QString &destFolder);
     void allTagsReady(const QStringList &tags, quint64 generation);
 
     /// One entry per requested query, in the order they were asked for. A query

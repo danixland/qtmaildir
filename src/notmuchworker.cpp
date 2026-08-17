@@ -614,6 +614,112 @@ void NotmuchWorker::applyTags(const TagChange &change)
     emit tagsApplied(change);
 }
 
+void NotmuchWorker::moveMessages(const QStringList &messageIds,
+                                 const QString &destFolder)
+{
+    if (messageIds.isEmpty() || destFolder.isEmpty())
+        return;
+
+    // The read-only handle must be closed first: notmuch allows only one open
+    // handle per process. Same ordering as applyTags, for the same reason.
+    close();
+
+    const QByteArray configPath = configPathArg();
+    notmuch_database_t *db = nullptr;
+    char *error = nullptr;
+    const notmuch_status_t status = notmuch_database_open_with_config(
+        nullptr,
+        NOTMUCH_DATABASE_MODE_READ_WRITE,
+        configPath.isEmpty() ? nullptr : configPath.constData(),
+        nullptr,
+        &db,
+        &error);
+
+    if (status != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(
+            QStringLiteral("Cannot open database for writing: %1")
+                .arg(QString::fromUtf8(error ? error
+                                             : notmuch_status_to_string(status))));
+        free(error);
+        return;
+    }
+
+    const QString root = QString::fromUtf8(notmuch_database_get_path(db));
+    const QString destDir =
+        root + QLatin1Char('/') + destFolder + QStringLiteral("/cur");
+
+    QStringList moved;
+    for (const QString &id : messageIds) {
+        notmuch_message_t *raw = nullptr;
+        // find_message reports SUCCESS with a null message when the id is not
+        // in the database, so both have to be checked. A stale id must not
+        // abort the batch: the live ids alongside it still need moving.
+        if (notmuch_database_find_message(db, id.toUtf8().constData(), &raw)
+                != NOTMUCH_STATUS_SUCCESS || !raw) {
+            continue;
+        }
+        NmMessage message(raw);
+
+        const char *rawName = notmuch_message_get_filename(message.get());
+        if (!rawName)
+            continue;
+        const QString from = QString::fromUtf8(rawName);
+        // The handle is released before the file moves under it.
+        message.reset();
+
+        // cur/, never new/. A file dropped in new/ is re-announced as fresh
+        // mail by every reader of the Maildir.
+        if (!QDir().mkpath(destDir)) {
+            emit errorOccurred(QStringLiteral("Cannot create folder %1")
+                                   .arg(destDir));
+            continue;
+        }
+
+        const QString to = destDir + QLatin1Char('/') + QFileInfo(from).fileName();
+        if (from == to) {
+            // Already where it was asked to go. Reported as moved, since the
+            // caller's request is satisfied.
+            moved.append(id);
+            continue;
+        }
+
+        if (!QFile::rename(from, to)) {
+            emit errorOccurred(QStringLiteral("Cannot move %1 to %2")
+                                   .arg(QFileInfo(from).fileName(), destFolder));
+            continue;
+        }
+
+        // Index the NEW path BEFORE dropping the old one. The reverse order
+        // removes the last filename for this message id, which deletes the
+        // database entry and every tag on it; the file then reindexes as a
+        // brand new message with default tags, silently.
+        notmuch_message_t *indexed = nullptr;
+        const notmuch_status_t added = notmuch_database_index_file(
+            db, to.toUtf8().constData(), nullptr, &indexed);
+        if (indexed)
+            notmuch_message_destroy(indexed);
+
+        // DUPLICATE_MESSAGE_ID is success here: it means the id was already
+        // known, which is exactly the case for a file this just moved.
+        if (added != NOTMUCH_STATUS_SUCCESS
+            && added != NOTMUCH_STATUS_DUPLICATE_MESSAGE_ID) {
+            QFile::rename(to, from);
+            emit errorOccurred(QStringLiteral("Cannot index %1 at its new path: %2")
+                                   .arg(id, QString::fromUtf8(
+                                                notmuch_status_to_string(added))));
+            continue;
+        }
+
+        notmuch_database_remove_message(db, from.toUtf8().constData());
+        moved.append(id);
+    }
+
+    notmuch_database_close(db);
+    notmuch_database_destroy(db);
+
+    emit messagesMoved(moved, destFolder);
+}
+
 void NotmuchWorker::requestAllTags(quint64 generation)
 {
     if (!openReadOnly())

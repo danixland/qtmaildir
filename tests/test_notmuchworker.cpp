@@ -86,7 +86,20 @@ private slots:
     void requestFoldersListsEveryMaildirFolder();
     void requestFoldersOnUnreadableConfigEmitsError();
 
+    void moveMessagesRelocatesTheFile();
+    void moveMessagesReindexesAtTheNewPath();
+    void moveMessagesKeepsTheMessagesTags();
+    void moveMessagesReportsOnlyWhatMoved();
+
 private:
+    /// Adds one read message in `folder` and reindexes, for the move tests.
+    /// Each of those takes its own message, because a move is destructive and
+    /// the fixture database is shared by every test in this class.
+    bool addMovableMessage(const QString &folder, const QString &messageId);
+    /// The single file backing `messageId`, or an empty string when the
+    /// database does not know the id.
+    QString fileOf(const QString &messageId);
+
     /// Tags of one message, read back through a fresh worker query.
     QStringList tagsOf(const QString &messageId);
     QVector<MessageRef> messagesOfThread(const QString &threadId,
@@ -179,6 +192,34 @@ QString TestNotmuchWorker::threadIdOf(const QString &subject)
             return t.threadId;
     }
     return QString();
+}
+
+bool TestNotmuchWorker::addMovableMessage(const QString &folder,
+                                          const QString &messageId)
+{
+    if (!m_fixture.addMessage(folder, messageId,
+                              QStringLiteral("Movable %1").arg(messageId),
+                              QStringLiteral("Erin <erin@example.org>"),
+                              QStringLiteral("Sun, 7 Jun 2026 10:00:00 +0000"),
+                              QStringLiteral("movable body"), false)) {
+        return false;
+    }
+    return m_fixture.index();
+}
+
+QString TestNotmuchWorker::fileOf(const QString &messageId)
+{
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy loaded(&worker, &NotmuchWorker::threadLoaded);
+    worker.loadThread(QStringLiteral("{id:%1}").arg(messageId), QString(), 1);
+    if (loaded.isEmpty())
+        return {};
+    const auto messages = loaded.first().at(0).value<QVector<MessageRef>>();
+    for (const MessageRef &m : messages) {
+        if (m.messageId == messageId)
+            return m.filePath;
+    }
+    return {};
 }
 
 QVector<MessageRef> TestNotmuchWorker::messagesOfThread(const QString &threadId,
@@ -1094,6 +1135,109 @@ void TestNotmuchWorker::requestFoldersOnUnreadableConfigEmitsError()
 
     QCOMPARE(errors.size(), 1);
     QVERIFY(ready.isEmpty());
+}
+
+void TestNotmuchWorker::moveMessagesRelocatesTheFile()
+{
+    const QString id = QStringLiteral("move1@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("inbox"), id),
+             qPrintable(m_fixture.error()));
+
+    const QString before = fileOf(id);
+    QVERIFY(!before.isEmpty());
+    QVERIFY(QFile::exists(before));
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy moved(&worker, &NotmuchWorker::messagesMoved);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.moveMessages({ id }, QStringLiteral("trash"));
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    QCOMPARE(moved.size(), 1);
+    QCOMPARE(moved.first().at(0).toStringList(), QStringList{ id });
+    QCOMPARE(moved.first().at(1).toString(), QStringLiteral("trash"));
+
+    // cur/, never new/: a file in new/ is re-announced as fresh mail by every
+    // reader of the Maildir.
+    const QString expected = m_fixture.maildirPath() + QStringLiteral("/trash/cur/")
+                             + QFileInfo(before).fileName();
+    QVERIFY2(QFile::exists(expected), qPrintable(expected));
+    QVERIFY(!QFile::exists(before));
+}
+
+void TestNotmuchWorker::moveMessagesReindexesAtTheNewPath()
+{
+    // The half a filesystem check cannot see. A moved file with a stale index
+    // entry sits correctly on disk and is invisible to every query.
+    const QString id = QStringLiteral("move2@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("inbox"), id),
+             qPrintable(m_fixture.error()));
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+    worker.moveMessages({ id }, QStringLiteral("trash"));
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    const QVector<ThreadSummary> inTrash =
+        runQuery(QStringLiteral("path:\"trash/**\" and id:%1").arg(id));
+    QCOMPARE(inTrash.size(), 1);
+
+    const QVector<ThreadSummary> inInbox =
+        runQuery(QStringLiteral("path:\"inbox/**\" and id:%1").arg(id));
+    QCOMPARE(inInbox.size(), 0);
+}
+
+void TestNotmuchWorker::moveMessagesKeepsTheMessagesTags()
+{
+    // The ordering test. notmuch_database_remove_message() removes the LAST
+    // filename for a message id by deleting the whole database entry, tags
+    // included, so the new path must be indexed before the old one is dropped.
+    // The reverse order leaves the file correctly placed, findable by query,
+    // and stripped of every tag the user ever put on it.
+    const QString id = QStringLiteral("move3@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("inbox"), id),
+             qPrintable(m_fixture.error()));
+
+    NotmuchWorker tagger(m_fixture.configPath());
+    tagger.applyTags(TagChange{ { id },
+                                { QStringLiteral("keepme") },
+                                {},
+                                QStringLiteral("Tag before moving") });
+    QVERIFY(tagsOf(id).contains(QStringLiteral("keepme")));
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+    worker.moveMessages({ id }, QStringLiteral("trash"));
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    const QStringList after = tagsOf(id);
+    QVERIFY2(after.contains(QStringLiteral("keepme")),
+             qPrintable(QStringLiteral("tags after the move: %1")
+                            .arg(after.join(QLatin1Char(' ')))));
+}
+
+void TestNotmuchWorker::moveMessagesReportsOnlyWhatMoved()
+{
+    // A stale id must not abort the batch, and must not be reported as moved
+    // either: a caller that assumed the request succeeded would show a delete
+    // that never happened.
+    const QString id = QStringLiteral("move4@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("inbox"), id),
+             qPrintable(m_fixture.error()));
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy moved(&worker, &NotmuchWorker::messagesMoved);
+
+    worker.moveMessages({ QStringLiteral("nosuchmessage@example.org"), id },
+                        QStringLiteral("trash"));
+
+    QCOMPARE(moved.size(), 1);
+    QCOMPARE(moved.first().at(0).toStringList(), QStringList{ id });
+
+    const QVector<ThreadSummary> inTrash =
+        runQuery(QStringLiteral("path:\"trash/**\" and id:%1").arg(id));
+    QCOMPARE(inTrash.size(), 1);
 }
 
 QTEST_MAIN(TestNotmuchWorker)

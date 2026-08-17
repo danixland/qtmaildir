@@ -160,6 +160,39 @@ void walkReplies(notmuch_messages_t *messages, int depth,
     }
 }
 
+/// The Maildir FOLDER a message file sits in, relative to the database root.
+///
+/// `<root>/acct/inbox/cur/12345` becomes `acct/inbox`: the `cur`/`new` segment
+/// is stripped because it is Maildir's read-state bookkeeping rather than part
+/// of the folder's name, and moveMessages() takes a folder without one. That
+/// makes the value round-trip: what comes out here can be handed straight back
+/// to move a message home.
+///
+/// Empty when the file is not under the root at all, which the caller treats as
+/// "origin unknown" rather than guessing. A wrong folder here would send a
+/// restored message somewhere the user never had it.
+QString folderOfMessageFile(const QString &root, const QString &filePath)
+{
+    const QString rootPath = QDir(root).absolutePath();
+    const QString dir = QFileInfo(filePath).absolutePath();
+
+    const QString relative = QDir(rootPath).relativeFilePath(dir);
+    // relativeFilePath happily walks upwards, so a path outside the root comes
+    // back as `../something` rather than as a failure.
+    if (relative.isEmpty() || relative == QStringLiteral(".")
+        || relative.startsWith(QStringLiteral("../"))) {
+        return QString();
+    }
+
+    QStringList parts = relative.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    if (!parts.isEmpty()
+        && (parts.last() == QStringLiteral("cur")
+            || parts.last() == QStringLiteral("new"))) {
+        parts.removeLast();
+    }
+    return parts.join(QLatin1Char('/'));
+}
+
 } // namespace
 
 /// Registers SortOrder for queued calls, once, before main() runs.
@@ -254,6 +287,13 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
     }
     NmThreads threads(rawThreads);
 
+    // Message paths are reported RELATIVE to this. An absolute path would be
+    // useless to the UI, which knows accounts only by their maildir, a
+    // database-relative prefix: comparing the two never matched and left every
+    // row resolving to no account at all.
+    const QString dbRoot =
+        QDir(QString::fromUtf8(notmuch_database_get_path(m_db))).absolutePath();
+
     QVector<ThreadSummary> batch;
     batch.reserve(kBatchSize);
     int total = 0;
@@ -317,6 +357,10 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
                     // The card's own tags, beside the thread's union above.
                     // Same walk, same index read, no extra query.
                     summary.firstMessageTags = tagsOf(message);
+                    // Which account this belongs to, for Delete's destination.
+                    summary.firstMessagePath = QDir(dbRoot).relativeFilePath(
+                        QString::fromUtf8(
+                            notmuch_message_get_filename(message)));
                     break;
                 }
             }
@@ -329,6 +373,10 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
                     // The card's own tags, beside the thread's union above.
                     // Same walk, same index read, no extra query.
                     summary.firstMessageTags = tagsOf(first);
+                    // Which account this belongs to, for Delete's destination.
+                    summary.firstMessagePath = QDir(dbRoot).relativeFilePath(
+                        QString::fromUtf8(
+                            notmuch_message_get_filename(first)));
                 }
             }
         }
@@ -649,6 +697,7 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
         root + QLatin1Char('/') + destFolder + QStringLiteral("/cur");
 
     QStringList moved;
+    QMap<QString, QString> origins;
     for (const QString &id : messageIds) {
         notmuch_message_t *raw = nullptr;
         // find_message reports SUCCESS with a null message when the id is not
@@ -667,6 +716,10 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
         // The handle is released before the file moves under it.
         message.reset();
 
+        // Where it is coming FROM, captured here because this is the only
+        // moment the old filename exists. See messagesMovedFrom().
+        const QString origin = folderOfMessageFile(root, from);
+
         // cur/, never new/. A file dropped in new/ is re-announced as fresh
         // mail by every reader of the Maildir.
         if (!QDir().mkpath(destDir)) {
@@ -680,6 +733,7 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
             // Already where it was asked to go. Reported as moved, since the
             // caller's request is satisfied.
             moved.append(id);
+            origins.insert(id, origin);
             continue;
         }
 
@@ -712,12 +766,14 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
 
         notmuch_database_remove_message(db, from.toUtf8().constData());
         moved.append(id);
+        origins.insert(id, origin);
     }
 
     notmuch_database_close(db);
     notmuch_database_destroy(db);
 
     emit messagesMoved(moved, destFolder);
+    emit messagesMovedFrom(origins, destFolder);
 }
 
 void NotmuchWorker::requestAllTags(quint64 generation)

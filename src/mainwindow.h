@@ -739,6 +739,56 @@ private:
                               const QStringList &remove,
                               const QString &description);
 
+    /// Moves messages into `destFolder` and applies the tags that go with it.
+    ///
+    /// The counterpart to sendMessageTagChange() for the one action that is
+    /// not purely a tag change. Both trashSelected() and MoveCommand route
+    /// through this.
+    ///
+    /// The tags are NOT applied here: they are applied when the worker
+    /// confirms the move, in onMessagesMoved(). Tagging first would leave a
+    /// message marked `deleted` in a folder it never left if the rename
+    /// failed, which is the half-done state item 103 exists to remove.
+    ///
+    /// `add` may contain the placeholder kOriginTagPlaceholder, which
+    /// onMessagesMoved() replaces with `deleted-from:<origin>` per message.
+    /// The origin is not known until the worker reports it, and it differs per
+    /// message in a multi-row selection.
+    void sendMove(const QStringList &messageIds, const QString &destFolder,
+                  const QStringList &add, const QStringList &remove,
+                  const QString &description);
+
+    /// Moves each selected row's message to its account's trash, tagging it
+    /// `deleted` and recording where it came from.
+    void trashSelected();
+
+    /// The inverse: moves each selected row's message back to the folder its
+    /// `deleted-from:` tag names, stripping both tags.
+    void restoreSelected();
+
+    /// The account whose maildir contains `path`, or an invalid account when
+    /// no configured maildir does.
+    ///
+    /// Resolved from the PATH rather than from the thread's account tag. The
+    /// tag is optional config, so an account without one would resolve to
+    /// nothing and silently disable Delete; the maildir prefix is what makes
+    /// a message belong to an account in the first place.
+    Account accountForMessagePath(const QString &path) const;
+
+    /// Confirms a move: applies the tags the move was asked to carry, with the
+    /// origin placeholder resolved per message.
+    void onMessagesMoved(const QMap<QString, QString> &originByMessageId,
+                         const QString &destFolder);
+
+    /// What a move asked to be tagged, held until the worker confirms it.
+    /// Keyed by destination folder so two moves in flight cannot be confused.
+    struct PendingMove {
+        QStringList add;
+        QStringList remove;
+        QString description;
+    };
+    QHash<QString, PendingMove> m_pendingMoves;
+
     /// Undoes the optimistic model update for a write the worker rejected.
     void revertPendingTagChange();
 
@@ -791,10 +841,35 @@ private:
     /// it. Order matters: two edits touching one thread must reach the database
     /// in the order they were made, or the later one does not win.
     QVector<HeldEdit> m_heldEdits;
+
+    /// A MOVE not yet sent, for the same reason a tag edit is held.
+    ///
+    /// A separate queue rather than an entry in m_heldEdits, because a move is
+    /// not a tag change and cannot be replayed as one: pushing it through the
+    /// edit queue would apply `deleted` and never move the file, leaving the
+    /// message reading as deleted while still sitting in the inbox. Item 106
+    /// recorded what a dropped held edit costs, and a move dropped the same
+    /// way is worse: the tag lands and the file does not.
+    struct HeldMove {
+        QStringList messageIds;
+        QString destFolder;
+        QStringList add;
+        QStringList remove;
+        QString description;
+    };
+    QVector<HeldMove> m_heldMoves;
+
     quint64 m_flushGeneration = 0;
 
     friend class ThreadTagCommand;
     friend class MessageTagCommand;
+    friend class MoveCommand;
+
+    /// Stands in for `deleted-from:<origin>` between asking for a move and
+    /// learning where each message actually came from. Not a tag anyone ever
+    /// sees: onMessagesMoved() substitutes the real one per message before
+    /// anything is written.
+    static const QString &kOriginTagPlaceholder();
 
     Config m_config;
     KeyMap m_keyMap;
@@ -1187,6 +1262,70 @@ public:
 private:
     MainWindow *m_window;
     QStringList m_messageIds;
+    QStringList m_add;
+    QStringList m_remove;
+    QString m_description;
+    bool m_firstRedo = true;
+};
+
+/// Undo entry for a message MOVE, which is a file rename plus a tag change.
+///
+/// The destination is CARRIED rather than derived, and that is the whole
+/// reason `deleted-from:` exists at all. A Maildir filename does not record
+/// where a message came from, and once the file has moved notmuch cannot
+/// answer either, so an undo that recomputed the origin would have nothing to
+/// recompute it from. Each message carries its own, since one selection can
+/// span folders and accounts.
+///
+/// Grouped by destination: undoing a delete of five messages from three
+/// folders is three moves, not five, because moveMessages() takes one folder
+/// per call.
+class MoveCommand : public QUndoCommand
+{
+public:
+    /// `originByMessageId` names where each message came FROM, and
+    /// `destFolder` where they all went.
+    MoveCommand(MainWindow *window,
+                const QMap<QString, QString> &originByMessageId,
+                const QString &destFolder, const QStringList &add,
+                const QStringList &remove, const QString &description)
+        : QUndoCommand(description), m_window(window),
+          m_origins(originByMessageId), m_dest(destFolder), m_add(add),
+          m_remove(remove), m_description(description) {}
+
+    /// The stack calls redo() when the command is pushed, by which point the
+    /// move has already been sent, so the first call is skipped. Same shape as
+    /// the two tag commands above.
+    void redo() override
+    {
+        if (m_firstRedo) {
+            m_firstRedo = false;
+            return;
+        }
+        m_window->sendMove(m_origins.keys(), m_dest, m_add, m_remove,
+                           m_description);
+    }
+
+    void undo() override
+    {
+        // Back to each message's OWN folder, one call per distinct
+        // destination. The tags invert with the direction: what the delete
+        // added, the undo removes.
+        QHash<QString, QStringList> byOrigin;
+        for (auto it = m_origins.cbegin(); it != m_origins.cend(); ++it) {
+            if (!it.value().isEmpty())
+                byOrigin[it.value()].append(it.key());
+        }
+        for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
+            m_window->sendMove(it.value(), it.key(), m_remove, m_add,
+                               QStringLiteral("Undo %1").arg(m_description));
+        }
+    }
+
+private:
+    MainWindow *m_window;
+    QMap<QString, QString> m_origins;
+    QString m_dest;
     QStringList m_add;
     QStringList m_remove;
     QString m_description;

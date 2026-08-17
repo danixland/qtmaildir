@@ -262,6 +262,13 @@
         <source>Add or remove the deleted tag</source>
         <translation>Aggiunge o rimuove l&apos;etichetta deleted</translation>
     </message>
+    <message numerus="yes">
+        <source>%n message(s) could not be deleted: no trash folder is configured for their account.</source>
+        <translation>
+            <numerusform>%n messaggio non è stato eliminato: nessuna cartella cestino è configurata per il suo account.</numerusform>
+            <numerusform>%n messaggi non sono stati eliminati: nessuna cartella cestino è configurata per il loro account.</numerusform>
+        </translation>
+    </message>
     <message>
         <source>Undelete</source>
         <translation>Ripristina</translation>

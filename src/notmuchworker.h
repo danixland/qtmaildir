@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QMap>
 #include <QObject>
 #include <QStringList>
 #include <QVector>
@@ -202,6 +203,25 @@ signals:
     /// A stale id, a missing folder or a failed rename drops out here rather
     /// than aborting the batch.
     void messagesMoved(const QStringList &messageIds, const QString &destFolder);
+
+    /// The same move, reported per message with the folder it came FROM.
+    ///
+    /// Emitted alongside messagesMoved rather than replacing it: that signal's
+    /// shape is what test_notmuchworker asserts on, and a caller wanting only
+    /// "did it move" should not have to unpack a map.
+    ///
+    /// The origin has to be reported from HERE because nowhere else knows it.
+    /// A Maildir filename does not record the folder a message came from, and
+    /// once the file has moved notmuch cannot answer either; the UI holds no
+    /// path at all for a thread row it has not expanded. This is the one
+    /// moment the old filename exists, so it is the only place the origin can
+    /// be derived.
+    ///
+    /// Folders are relative to the database path and carry no `cur`/`new`
+    /// segment, matching the `destFolder` moveMessages() takes, so a value
+    /// from here can be passed straight back to move a message home.
+    void messagesMovedFrom(const QMap<QString, QString> &originByMessageId,
+                           const QString &destFolder);
     void allTagsReady(const QStringList &tags, quint64 generation);
 
     /// One entry per requested query, in the order they were asked for. A query

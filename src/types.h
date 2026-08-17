@@ -62,6 +62,26 @@ struct ThreadSummary
     /// file. Do not move it behind a flag by analogy with `recipients`.
     QStringList firstMessageTags;
 
+    /// That message's file, RELATIVE to the database path, which is what says
+    /// which ACCOUNT it belongs to.
+    ///
+    /// Relative and not absolute, deliberately. The UI knows an account only
+    /// by its `maildir`, itself a database-relative prefix, so an absolute
+    /// path here matches no account and silently resolves every row to none.
+    ///
+    /// Needed because Delete moves the file (item 103) and the destination is
+    /// per account, so the action has to resolve an account before it can name
+    /// a trash folder. Resolving through the thread's account TAG instead is
+    /// not equivalent: that tag is optional config, so an account without one
+    /// would silently be undeletable, while a maildir prefix is what makes a
+    /// message belong to an account in the first place.
+    ///
+    /// Free for the same reason firstMessageId and firstMessageTags are: the
+    /// walk that finds that message is already happening, and this reads the
+    /// INDEX rather than the message file. Do not move it behind a flag by
+    /// analogy with `recipients`.
+    QString firstMessagePath;
+
     /// Who the thread's messages were sent TO, summarised for one line.
     ///
     /// Empty unless the query asked for it, and that is a performance

@@ -58,6 +58,15 @@ struct Account
     /// one for the account that has none.
     QString sent;
 
+    /// The account's trash folder, relative to maildir.
+    ///
+    /// MANDATORY, unlike `sent` and `drafts`. Delete moves a file into this
+    /// folder, so an account without one cannot delete at all, and the user
+    /// chose a config error over a per-account disabled state: "it is
+    /// mandatory for the program to function properly". Config::load()
+    /// reports a missing key through the warnings path.
+    QString trash;
+
     /// Chip colour in the thread list. Invalid when unset, in which case one
     /// is generated from the account tag's name.
     QColor color;
@@ -98,6 +107,13 @@ struct Account
     /// keys are independent, and one real account configures `drafts` with no
     /// `sent` at all.
     QString draftsQuery() const;
+
+    /// Matches this account's trash, or empty when `trash` is unset.
+    ///
+    /// Empty is a config error rather than a legitimate state, unlike
+    /// sentQuery(). The query helper still returns empty so callers compose
+    /// uniformly; it is Config::load() that reports the problem.
+    QString trashQuery() const;
 };
 
 /// A named query, stored in queries.json.

@@ -116,6 +116,8 @@ private slots:
     void draftsQuerySurvivesABracketedPath();
     void allDraftsQuerySkipsAccountsWithoutTheKey();
     void allDraftsQueryIsIndependentOfSent();
+    void anAccountCarriesItsTrashFolder();
+    void aBracketedTrashFolderIsQuoted();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -951,6 +953,34 @@ void TestConfig::sentQuerySurvivesABracketedPath()
     QVERIFY2(query.contains(QStringLiteral("\"provider-a/[Provider]")),
              "the composed path is not quoted, so Xapian will read the "
              "brackets as syntax and the query will match nothing");
+}
+
+void TestConfig::anAccountCarriesItsTrashFolder()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n"
+        "trash=Trash\n")));
+
+    const Account account = config.account(QStringLiteral("work"));
+    QCOMPARE(account.trash, QStringLiteral("Trash"));
+    // Quoted and globbed exactly as sentQuery() does it, so a folder with a
+    // space or a bracket cannot break the query.
+    QCOMPARE(account.trashQuery(), QStringLiteral("path:\"work/Trash/**\""));
+}
+
+void TestConfig::aBracketedTrashFolderIsQuoted()
+{
+    // The real setup nests a localised trash folder under a bracketed parent.
+    // The brackets are not notmuch syntax, but the quoting has to survive them.
+    Account account;
+    account.maildir = QStringLiteral("provider-a");
+    account.trash = QStringLiteral("[Provider]/Cestino");
+
+    QCOMPARE(account.trashQuery(),
+             QStringLiteral("path:\"provider-a/[Provider]/Cestino/**\""));
 }
 
 void TestConfig::sentQueryComposesWithScopedQuery()

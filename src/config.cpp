@@ -137,6 +137,11 @@ QString Account::draftsQuery() const
     return folderQuery(maildir, drafts);
 }
 
+QString Account::trashQuery() const
+{
+    return folderQuery(maildir, trash);
+}
+
 QString Config::allSentQuery() const
 {
     return joinAccountQueries(m_accounts, &Account::sentQuery);
@@ -432,6 +437,12 @@ void Config::load(const QString &path)
         // and match nothing, which is invisible in a config file.
         account.sent =
             settings.value(QStringLiteral("sent")).toString().trimmed();
+
+        // Mandatory, unlike sent: Delete moves a file into this folder, so an
+        // account without one cannot delete at all. Trimmed for the same
+        // reason as sent, above.
+        account.trash =
+            settings.value(QStringLiteral("trash")).toString().trimmed();
 
         // Both optional, and both describe this account's chip in the thread
         // list. An account tag is a different taxonomy from a functional one,

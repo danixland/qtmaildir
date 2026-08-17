@@ -29,6 +29,7 @@
 
 class QLabel;
 class QMenu;
+class QWebEnginePage;
 class QPushButton;
 class QWebEngineView;
 class QWebEngineProfile;
@@ -148,6 +149,26 @@ public:
     /// arbitrary prose and can carry quotes, newlines and query syntax, none
     /// of which notmuch reports as an error.
     SearchOffer selectionSearchOffer(const QString &selectedText) const;
+
+    /// Strips the browser actions out of Chromium's standard context menu.
+    ///
+    /// Item 100. The pane is not a browser: every document arrives through
+    /// setHtml() with a fixed base URL, so Back, Forward, Reload and Save page
+    /// have nothing to act on and the interceptor blocks everything by default
+    /// anyway. Copy and Select all are the reason the standard menu is used at
+    /// all, so the menu is filtered, not rebuilt.
+    ///
+    /// View source is NOT filtered, though it was at first. It has a real
+    /// document and a real use; item 113 implements it as our own dialog,
+    /// since Chromium's entry navigates to view-source:<url> and MessagePage
+    /// refuses that.
+    ///
+    /// Matches on the page's own QAction POINTERS, never on text, which is
+    /// translated and would make the filter fail in every locale but one.
+    ///
+    /// Static and taking the menu so a test can build one and check it
+    /// without a rendered document or a shown popup.
+    static void removeBrowserActions(QMenu *menu, QWebEnginePage *page);
 
     /// Tells the pane whether the query bar currently holds anything.
     ///

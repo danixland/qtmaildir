@@ -612,6 +612,54 @@ SearchOffer MessageView::selectionSearchOffer(const QString &selectedText) const
              query };
 }
 
+void MessageView::removeBrowserActions(QMenu *menu, QWebEnginePage *page)
+{
+    if (!menu || !page)
+        return;
+
+    // Item 100. Every one of these needs a history, a network or a file, and
+    // this pane has none of the three.
+    //
+    // ViewSource is NOT in this list, and that is deliberate. It was removed
+    // here first, on the reasoning that it was the same kind of thing; it is
+    // not. The four below have nothing to act on, while view-source has a real
+    // document and a real use. Chromium's own entry cannot work here either
+    // (it navigates to view-source:<url>, which MessagePage refuses), so item
+    // 113 implements it as our own plain-text dialog. Removing it in the
+    // meantime would delete the gesture the user reaches for.
+    static constexpr QWebEnginePage::WebAction kUnwanted[] = {
+        QWebEnginePage::Back,
+        QWebEnginePage::Forward,
+        QWebEnginePage::Reload,
+        QWebEnginePage::SavePage,
+    };
+
+    for (const QWebEnginePage::WebAction which : kUnwanted) {
+        // pageAction() is the same QAction instance the standard menu holds,
+        // so the pointer identifies it whatever language it is displayed in.
+        if (QAction *action = page->action(which))
+            menu->removeAction(action);
+    }
+
+    // Removing entries can leave a separator at an edge or two in a row, which
+    // reads as a menu that lost something. Qt has no "tidy separators", so
+    // this walks what is left.
+    const QList<QAction *> remaining = menu->actions();
+    bool previousWasSeparator = true;  // leading separators are unwanted too
+    for (QAction *action : remaining) {
+        if (!action->isSeparator()) {
+            previousWasSeparator = false;
+            continue;
+        }
+        if (previousWasSeparator)
+            menu->removeAction(action);
+        else
+            previousWasSeparator = true;
+    }
+    if (!menu->actions().isEmpty() && menu->actions().constLast()->isSeparator())
+        menu->removeAction(menu->actions().constLast());
+}
+
 void MessageView::showBodyContextMenu(const QPoint &pos)
 {
     // The page's own menu first: copy, select all and the rest stay exactly as
@@ -620,6 +668,10 @@ void MessageView::showBodyContextMenu(const QPoint &pos)
     if (!menu)
         menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
+
+    // ...minus the browser's own navigation and page actions, which cannot
+    // apply here. Item 100.
+    removeBrowserActions(menu, m_view->page());
 
     // selectedText() reads the selection out of the render process with no
     // script injection. JavaScript is disabled in this profile and stays so.

@@ -17,8 +17,10 @@
  */
 
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QWebEnginePage>
 #include <QWebEngineUrlScheme>
 #include <QWebEngineView>
 #include <QtTest>
@@ -54,6 +56,7 @@ private slots:
     void headerOffersNoSenderForARealThread();
     void headerOffersNothingForAnAbsentField();
     void bodySelectionBecomesAQuotedSearch();
+    void theBodyMenuDropsTheBrowsersOwnActions();
     void aSearchFromTheDetailsDialogClosesIt();
 
 private:
@@ -697,6 +700,83 @@ void TestMessageView::bodySelectionBecomesAQuotedSearch()
     // A usable offer always carries a label for the menu to show.
     QVERIFY(!view.selectionSearchOffer(QStringLiteral("invoice 4471"))
                  .label.isEmpty());
+}
+
+void TestMessageView::theBodyMenuDropsTheBrowsersOwnActions()
+{
+    // Item 100. The pane starts from Chromium's standard context menu, which
+    // is built for a browser: Back, Forward, Reload, Save page and View source
+    // all arrive with it and none of them can apply, since every document
+    // comes through setHtml() with a fixed base URL and the interceptor blocks
+    // everything by default.
+    //
+    // Asserted on the ACTION POINTERS, which is also how the production code
+    // matches them. Matching on text would pass here and fail in every locale
+    // but English, and an untranslated match is exactly the defect this could
+    // reintroduce without any test noticing.
+    MessageView view;
+    auto *page = view.findChild<QWebEnginePage *>();
+    QVERIFY2(page, "no page, so this test would assert nothing");
+
+    QMenu menu;
+    const QList<QWebEnginePage::WebAction> unwanted = {
+        QWebEnginePage::Back,     QWebEnginePage::Forward,
+        QWebEnginePage::Reload,   QWebEnginePage::SavePage,
+    };
+    // Kept, and the reason the standard menu is used at all rather than being
+    // rebuilt from scratch.
+    //
+    // ViewSource is in this list deliberately. It was removed with the four
+    // above at first, which was an overreach: it has a real document and a
+    // real use, and item 113 implements it properly. A test asserting it is
+    // GONE would lock in the overreach, so it asserts it survives.
+    //
+    // SelectAll is deliberately NOT here, and the reason is a limit of this
+    // test worth stating. This menu is built BY HAND, so "SelectAll survives"
+    // would only prove the filter does not remove it, and prove nothing about
+    // whether Chromium's real menu ever offers it. Measured by hand on
+    // 2026-08-17, with a selection active: the real menu holds Copy and the
+    // search entries and no Select all, both before and after this filter
+    // existed. Asserting on it here would read as a guarantee the code does
+    // not make. See item 117.
+    const QList<QWebEnginePage::WebAction> wanted = {
+        QWebEnginePage::Copy,
+        QWebEnginePage::ViewSource,
+    };
+
+    for (const QWebEnginePage::WebAction which : unwanted)
+        menu.addAction(page->action(which));
+    menu.addSeparator();
+    for (const QWebEnginePage::WebAction which : wanted)
+        menu.addAction(page->action(which));
+
+    // The guard: the menu really does hold what the assertions below are about,
+    // so a filter that removed everything, or a page that offered nothing,
+    // cannot pass by accident.
+    QCOMPARE(menu.actions().size(), unwanted.size() + wanted.size() + 1);
+
+    MessageView::removeBrowserActions(&menu, page);
+
+    const QList<QAction *> left = menu.actions();
+    for (const QWebEnginePage::WebAction which : unwanted) {
+        QVERIFY2(!left.contains(page->action(which)),
+                 qPrintable(QStringLiteral(
+                                "a browser action survived the filter: %1")
+                                .arg(page->action(which)->text())));
+    }
+    for (const QWebEnginePage::WebAction which : wanted) {
+        QVERIFY2(left.contains(page->action(which)),
+                 qPrintable(QStringLiteral(
+                                "the filter removed an action the pane needs: "
+                                "%1")
+                                .arg(page->action(which)->text())));
+    }
+
+    // No separator left stranded at either edge by the removals, which reads
+    // as a menu that lost something.
+    QVERIFY(!left.isEmpty());
+    QVERIFY(!left.constFirst()->isSeparator());
+    QVERIFY(!left.constLast()->isSeparator());
 }
 
 void TestMessageView::aSearchFromTheDetailsDialogClosesIt()

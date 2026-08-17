@@ -143,6 +143,18 @@ public:
     int columnWidthForTest(int column) const;
     void setColumnWidthForTest(int column, int width);
 
+    /// The text and tooltip of one cell of the rule list, by top-level row.
+    ///
+    /// Reads the LIST rather than the editor form, which is the distinction
+    /// item 102 is about: the note was always in the form and invisible until
+    /// a rule was selected.
+    QString listCellTextForTest(int row, int column) const;
+    QString listCellToolTipForTest(int row, int column) const;
+
+    /// The header labels, so a test can assert where a column landed without
+    /// hardcoding the enum it is checking.
+    QStringList listHeaderLabelsForTest() const;
+
     /// Repopulates the rule list, as adding or deleting a rule does. Exposed
     /// because a restored column width has to survive one of these, not only
     /// a close and reopen: `resizeColumnToContents` on every reload discarded

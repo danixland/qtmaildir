@@ -45,8 +45,21 @@
 namespace {
 
 /// Columns of the rule list.
+///
+/// Item 102 added ColumnNote, and the user asked for it LAST, after Matches:
+/// a note is prose and the widest thing here, so it belongs at the end where
+/// it can run on without pushing the narrow columns off screen.
+///
+/// "Matches" is the counts column and is the one that is NOT in this enum: it
+/// sits at index ColumnCount, appended past the end. That is why Note is
+/// declared before ColumnCount and still draws after Matches, and why
+/// ColumnNote must be given its index explicitly rather than left to follow
+/// ColumnTags. Get this wrong and the counts land in the Note column, which
+/// no test would call an error since both hold text.
 enum Column { ColumnEnabled = 0, ColumnStage, ColumnId, ColumnTags,
-              ColumnCount };
+              ColumnCount,          ///< "Matches", filled by the preview
+              ColumnNote,           ///< last, per the user
+              ColumnTotal };
 
 QStringList splitTags(const QString &text)
 {
@@ -112,9 +125,11 @@ TagRulesDialog::TagRulesDialog(const TagRule &seed, QWidget *parent)
     layout->addWidget(intro);
 
     m_list = new QTreeWidget(this);
-    m_list->setColumnCount(ColumnCount + 1);
+    // ColumnTotal, not ColumnCount + 1: the counts column used to be the one
+    // past the end, and since item 102 put Note after it there are two.
+    m_list->setColumnCount(ColumnTotal);
     m_list->setHeaderLabels({ tr("On"), tr("Stage"), tr("Rule"), tr("Tags"),
-                              tr("Matches") });
+                              tr("Matches"), tr("Note") });
     m_list->setRootIsDecorated(false);
     m_list->setUniformRowHeights(true);
 
@@ -390,8 +405,14 @@ void TagRulesDialog::restoreUiState()
 
     const QByteArray header =
         state.value(QStringLiteral("tagrules/header")).toByteArray();
-    if (!header.isEmpty()) {
-        m_list->header()->restoreState(header);
+    // Only when the restore actually took. QHeaderView::restoreState REFUSES a
+    // state saved with a different column count, returning false and leaving
+    // the header untouched, which is exactly what every existing state file
+    // does now that item 102 added a column. Setting the sized flags anyway
+    // would spend the one auto-size each column gets on a restore that did
+    // nothing, and the new Note column would open at whatever width it
+    // defaulted to, once, for good.
+    if (!header.isEmpty() && m_list->header()->restoreState(header)) {
         // Counts as the one auto-size each column gets, so the restore is not
         // immediately overwritten. reloadList() runs before this in the
         // constructor and has already sized the first two; the count column
@@ -482,6 +503,26 @@ void TagRulesDialog::setColumnWidthForTest(int column, int width)
     m_list->setColumnWidth(column, width);
 }
 
+QString TagRulesDialog::listCellTextForTest(int row, int column) const
+{
+    const QTreeWidgetItem *item = m_list->topLevelItem(row);
+    return item ? item->text(column) : QString();
+}
+
+QString TagRulesDialog::listCellToolTipForTest(int row, int column) const
+{
+    const QTreeWidgetItem *item = m_list->topLevelItem(row);
+    return item ? item->toolTip(column) : QString();
+}
+
+QStringList TagRulesDialog::listHeaderLabelsForTest() const
+{
+    QStringList labels;
+    for (int column = 0; column < m_list->columnCount(); ++column)
+        labels.append(m_list->headerItem()->text(column));
+    return labels;
+}
+
 void TagRulesDialog::reloadListForTest()
 {
     reloadList();
@@ -531,6 +572,14 @@ void TagRulesDialog::fillItem(QTreeWidgetItem *item, const TagRule &rule) const
     for (const QString &tag : rule.remove)
         tags.append(QStringLiteral("-") + tag);
     item->setText(ColumnTags, tags.join(QStringLiteral(" ")));
+
+    // Item 102. The note explains why a rule is shaped the way it is, and was
+    // reachable only by selecting the rule and reading the form. simplified()
+    // because a note is free text and a newline in a tree cell truncates the
+    // row at it; the full text stays in the tooltip and in the editor.
+    const QString note = rule.note.simplified();
+    item->setText(ColumnNote, note);
+    item->setToolTip(ColumnNote, rule.note);
 }
 
 void TagRulesDialog::reloadList()

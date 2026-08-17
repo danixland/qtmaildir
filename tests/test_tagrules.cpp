@@ -57,6 +57,7 @@ private slots:
     void aNewerVersionIsRefused();
     void openingARuleFillsTheBuilderRows();
     void switchingRulesDoesNotLeakRowsBetweenThem();
+    void theRuleListShowsEachRulesNote();
     void openingARuleWithoutEditingLeavesItByteIdentical();
     void anUnrepresentableRuleOpensInTextMode();
     void editingARowRewritesTheQuery();
@@ -504,6 +505,74 @@ void TestTagRules::switchingRulesDoesNotLeakRowsBetweenThem()
     QCoreApplication::processEvents();
     QCOMPARE(dialog.rowCountForTest(), 1);
     QCOMPARE(dialog.queryLineForTest(), QStringLiteral("from:one.example.org"));
+}
+
+void TestTagRules::theRuleListShowsEachRulesNote()
+{
+    // Item 102. `note` is the field explaining why a rule is shaped the way it
+    // is, and it was reachable only by selecting the rule and reading the
+    // editor form. The LIST is what the item is about, so this asserts on the
+    // list and never on the form, which was always correct.
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    QFile out(configHome.filePath(QStringLiteral("mailrules/rules.json")));
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "one", "query": "from:one.example.org",
+         "add": ["one"], "stage": 50, "enabled": true,
+         "note": "Only the digest,\nnot the alerts."},
+        {"id": "two", "query": "from:two.example.org",
+         "add": ["two"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    TagRulesDialog dialog;
+
+    const QStringList headers = dialog.listHeaderLabelsForTest();
+    const int noteColumn = headers.indexOf(QStringLiteral("Note"));
+    QVERIFY2(noteColumn >= 0,
+             qPrintable(QStringLiteral("no Note column in the rule list: %1")
+                            .arg(headers.join(QStringLiteral(", ")))));
+
+    // Note is LAST, per the user: it is prose and the widest thing here, so it
+    // runs on at the end rather than pushing the narrow columns off screen.
+    //
+    // The trap this guards is that "Matches" is NOT in the Column enum, it is
+    // appended past the end, so Note has to be declared before ColumnCount and
+    // still draw after it. Both columns hold text, so a mix-up puts the counts
+    // under Note and looks perfectly plausible.
+    QCOMPARE(headers.constLast(), QStringLiteral("Note"));
+    QCOMPARE(headers.at(headers.size() - 2), QStringLiteral("Matches"));
+
+    // simplified(), because a newline in a tree cell truncates the row at it
+    // and a note is free text. The full text stays in the tooltip.
+    QCOMPARE(dialog.listCellTextForTest(0, noteColumn),
+             QStringLiteral("Only the digest, not the alerts."));
+    QCOMPARE(dialog.listCellToolTipForTest(0, noteColumn),
+             QStringLiteral("Only the digest,\nnot the alerts."));
+
+    // A rule with no note leaves the cell empty rather than showing anything.
+    QVERIFY(dialog.listCellTextForTest(1, noteColumn).isEmpty());
+
+    // And the counts still land under Matches, not under Note. Asserting the
+    // header order alone would pass with the two columns swapped in the enum,
+    // since both hold text and nothing else would complain.
+    const int matchesColumn = headers.indexOf(QStringLiteral("Matches"));
+    QVERIFY(matchesColumn >= 0);
+    dialog.setCounts({ 7, 9 });
+    QCOMPARE(dialog.listCellTextForTest(0, matchesColumn), QStringLiteral("7"));
+    QCOMPARE(dialog.listCellTextForTest(1, matchesColumn), QStringLiteral("9"));
+
+    // The note survived the counts arriving: setCounts writes by column index,
+    // so an off-by-one there would overwrite the note with a number.
+    QCOMPARE(dialog.listCellTextForTest(0, noteColumn),
+             QStringLiteral("Only the digest, not the alerts."));
 }
 
 void TestTagRules::openingARuleWithoutEditingLeavesItByteIdentical()

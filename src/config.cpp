@@ -60,7 +60,8 @@ constexpr int kQueriesFormatVersion = 1;
 const QStringList kQueryGenerators = { QStringLiteral("unread"),
                                        QStringLiteral("inbox"),
                                        QStringLiteral("flagged"),
-                                       QStringLiteral("sent") };
+                                       QStringLiteral("sent"),
+                                       QStringLiteral("trash") };
 
 /// The tag a generator matches, for the three filters that are a plain tag
 /// query. Empty for "sent", which composes from each account's folder instead
@@ -150,6 +151,11 @@ QString Config::allSentQuery() const
 QString Config::allDraftsQuery() const
 {
     return joinAccountQueries(m_accounts, &Account::draftsQuery);
+}
+
+QString Config::allTrashQuery() const
+{
+    return joinAccountQueries(m_accounts, &Account::trashQuery);
 }
 
 QString Config::defaultPath()
@@ -737,6 +743,8 @@ QString Config::resolvedQuery(const SavedQuery &query) const
     if (query.isGenerated()) {
         if (query.generated == QStringLiteral("sent"))
             return allSentQuery();
+        if (query.generated == QStringLiteral("trash"))
+            return allTrashQuery();
         // An unknown generator was reported on load. Empty rather than the
         // bare stored query, which for a generated entry is empty anyway and
         // would otherwise run as "match everything".
@@ -809,6 +817,11 @@ SavedQuery Config::builtinFilter(const QString &generator)
         // thread would fold the user's sent message back into the conversation
         // it belongs to, which is item 63's finding.
         filter.flat = true;
+    } else if (generator == QStringLiteral("trash")) {
+        filter.name = tr("Trash");
+        // NOT flat, unlike Sent. A deleted message still belongs to its
+        // conversation, and folding it back is what Sent had to avoid rather
+        // than something every folder filter wants.
     }
 
     return filter;
@@ -833,6 +846,10 @@ QString Config::resolvedQuery(const SavedQuery &query,
             const QString all = allSentQuery();
             return all.isEmpty() ? matchNothingQuery() : all;
         }
+        if (query.generated == QStringLiteral("trash")) {
+            const QString all = allTrashQuery();
+            return all.isEmpty() ? matchNothingQuery() : all;
+        }
         return QStringLiteral("tag:%1").arg(generatorTag(query.generated));
     }
 
@@ -851,6 +868,14 @@ QString Config::resolvedQuery(const SavedQuery &query,
         // case and not a misconfiguration. Returned as-is it would mean "match
         // everything", so a button labelled Sent would show the whole Maildir.
         return sent.isEmpty() ? matchNothingQuery() : sent;
+    }
+
+    if (query.generated == QStringLiteral("trash")) {
+        // The account's OWN trash query, for the reason spelled out above the
+        // sent case: wrapping the all-accounts query in this account's path
+        // works by accident of path: being hierarchical.
+        const QString trash = scope.trashQuery();
+        return trash.isEmpty() ? matchNothingQuery() : trash;
     }
 
     // A tag filter carries no path of its own, so scoping is exactly what

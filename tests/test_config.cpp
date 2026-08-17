@@ -119,6 +119,8 @@ private slots:
     void anAccountCarriesItsTrashFolder();
     void aBracketedTrashFolderIsQuoted();
     void anAccountWithoutATrashFolderWarns();
+    void theTrashFilterComposesPerAccount();
+    void theTrashFilterMatchesNothingWithoutAFolder();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -1009,6 +1011,54 @@ void TestConfig::anAccountWithoutATrashFolderWarns()
     QVERIFY(joined.contains(QStringLiteral("trash")));
 }
 
+void TestConfig::theTrashFilterComposesPerAccount()
+{
+    // Two accounts, one with a plain folder and one nested under a bracketed
+    // parent, since the real setup has both shapes.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n"
+        "trash=Trash\n"
+        "\n"
+        "[account.personal]\n"
+        "maildir=personal\n"
+        "trash=[Provider]/Cestino\n")));
+
+    const SavedQuery trash = Config::builtinFilter(QStringLiteral("trash"));
+    QVERIFY(trash.isGenerated());
+
+    // All accounts: the union, never a bare path that would match one account.
+    const QString all = config.resolvedQuery(trash, QString());
+    QVERIFY(all.contains(QStringLiteral("path:\"work/Trash/**\"")));
+    QVERIFY(all.contains(
+        QStringLiteral("path:\"personal/[Provider]/Cestino/**\"")));
+
+    // One account: that account's OWN query. Asserting on the STRING, not on a
+    // row count: the all-accounts query wrapped in this account's path returns
+    // exactly the right rows, because path: is hierarchical, so a count passes
+    // against the wrong thing. Config::resolvedQuery documents this trap.
+    const QString scoped = config.resolvedQuery(trash, QStringLiteral("work"));
+    QCOMPARE(scoped, QStringLiteral("path:\"work/Trash/**\""));
+    QVERIFY(!scoped.contains(QStringLiteral("personal")));
+}
+
+void TestConfig::theTrashFilterMatchesNothingWithoutAFolder()
+{
+    // An empty query means "match everything" to notmuch, so a filter with
+    // nothing to match must say so explicitly. A button labelled Trash that
+    // showed the whole Maildir is the failure this prevents.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n")));
+
+    const SavedQuery trash = Config::builtinFilter(QStringLiteral("trash"));
+    QCOMPARE(config.resolvedQuery(trash, QString()), Config::matchNothingQuery());
+}
+
 void TestConfig::sentQueryComposesWithScopedQuery()
 {
     // A Sent view under one account must not show another account's sent mail.
@@ -1432,7 +1482,7 @@ void TestConfig::everyBuiltinFilterIsAKnownGenerator()
     Config config;
     const QList<SavedQuery> filters = config.builtinFilters();
 
-    QCOMPARE(filters.size(), 4);
+    QCOMPARE(filters.size(), 5);
 
     QStringList names;
     for (const SavedQuery &filter : filters) {
@@ -1453,7 +1503,8 @@ void TestConfig::everyBuiltinFilterIsAKnownGenerator()
     QCOMPARE(names, (QStringList{ QStringLiteral("Unread"),
                                   QStringLiteral("Inbox"),
                                   QStringLiteral("Important"),
-                                  QStringLiteral("Sent") }));
+                                  QStringLiteral("Sent"),
+                                  QStringLiteral("Trash") }));
 }
 
 void TestConfig::aFilterAcrossAllAccountsIsTheUnscopedQuery()

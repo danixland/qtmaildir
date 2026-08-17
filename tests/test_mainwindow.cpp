@@ -7922,10 +7922,20 @@ void TestMainWindow::everyBuiltinFilterButtonCarriesAnIconAndItsText()
     // which is the same argument the Save button records.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    Config config;
-    config.load(writeSentConfig(dir, {
+    const QString path = writeSentConfig(dir, {
         {QStringLiteral("work"), QStringLiteral("Sent")},
-    }));
+    });
+    // A trash key too, or the Trash filter finds nothing and is skipped from
+    // the row entirely (item 103), leaving no trashButton for this loop to
+    // find.
+    {
+        QSettings s(path, QSettings::IniFormat);
+        s.beginGroup(QStringLiteral("account.work"));
+        s.setValue(QStringLiteral("trash"), QStringLiteral("Trash"));
+        s.endGroup();
+    }
+    Config config;
+    config.load(path);
 
     MainWindow window(config);
 

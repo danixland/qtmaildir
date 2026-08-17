@@ -95,6 +95,10 @@
         <source>Sent</source>
         <translation>Inviati</translation>
     </message>
+    <message>
+        <source>Trash</source>
+        <translation>Cestino</translation>
+    </message>
 </context>
 <context>
     <name>HtmlBuilder</name>

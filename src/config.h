@@ -291,6 +291,13 @@ public:
     /// open-coded at the call site.
     QString allSentQuery() const;
 
+    /// Matches every configured account's trash, or empty when none has one.
+    ///
+    /// Joins only the NON-EMPTY trashQuery() results, for the same reason
+    /// allSentQuery() does: notmuch accepts a bare "or" without complaint and
+    /// silently answers a different question.
+    QString allTrashQuery() const;
+
     /// Matches every configured account's drafts, or empty when none has one.
     ///
     /// Joins only the NON-EMPTY draftsQuery() results, for the same reason

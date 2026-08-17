@@ -44,6 +44,10 @@
         <translation>[completion] extra_mimetypes: la voce &apos;%1&apos; non ha un mimetype; verrà ignorata.</translation>
     </message>
     <message>
+        <source>Account &apos;%1&apos; has no trash folder configured; add a &apos;trash&apos; key to its section. Delete will not work for this account until it does.</source>
+        <translation>L&apos;account &apos;%1&apos; non ha un cestino configurato; aggiungere una chiave &apos;trash&apos; alla sua sezione. L&apos;eliminazione non funzionerà per questo account finché non verrà fatto.</translation>
+    </message>
+    <message>
         <source>Startup account &apos;%1&apos; is not a configured account; starting on all accounts.</source>
         <translation>L&apos;account iniziale &apos;%1&apos; non è un account configurato; si parte da tutti gli account.</translation>
     </message>
@@ -280,7 +284,7 @@
     </message>
     <message>
         <source>Add or remove the important tag</source>
-        <translation>Aggiunge o rimuove l'etichetta importante</translation>
+        <translation>Aggiunge o rimuove l&apos;etichetta importante</translation>
     </message>
     <message>
         <source>Unmark important</source>
@@ -340,7 +344,7 @@
     </message>
     <message>
         <source>Add or remove the deleted tag on whole threads</source>
-        <translation>Aggiunge o rimuove l'etichetta eliminato su intere conversazioni</translation>
+        <translation>Aggiunge o rimuove l&apos;etichetta eliminato su intere conversazioni</translation>
     </message>
     <message>
         <source>Undelete thread</source>
@@ -364,7 +368,7 @@
     </message>
     <message>
         <source>Toggle the unread tag on whole threads</source>
-        <translation>Inverte l'etichetta non letto su intere conversazioni</translation>
+        <translation>Inverte l&apos;etichetta non letto su intere conversazioni</translation>
     </message>
     <message>
         <source>Mark thread read</source>

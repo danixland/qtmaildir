@@ -473,6 +473,21 @@ void Config::load(const QString &path)
                     .arg(account.key));
             continue;
         }
+
+        // Mandatory, unlike sent: Delete moves a file into this folder, so an
+        // account without one cannot delete at all. Reported rather than
+        // silently disabled, so the user finds out from a warning rather than
+        // from a Delete that quietly does nothing. The account still loads;
+        // only Delete is unusable, which does not warrant losing the rest of
+        // the account's mail.
+        if (account.trash.isEmpty()) {
+            addProblem(
+                tr("Account '%1' has no trash folder configured; add a "
+                   "'trash' key to its section. Delete will not work for "
+                   "this account until it does.")
+                    .arg(account.key));
+        }
+
         m_accounts.append(account);
     }
 

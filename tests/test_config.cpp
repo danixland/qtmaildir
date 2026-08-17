@@ -118,6 +118,7 @@ private slots:
     void allDraftsQueryIsIndependentOfSent();
     void anAccountCarriesItsTrashFolder();
     void aBracketedTrashFolderIsQuoted();
+    void anAccountWithoutATrashFolderWarns();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -430,7 +431,8 @@ void TestConfig::absentSyncCommandIsNoticeNotProblem()
     QTemporaryDir dir;
     const QString path = writeIni(dir, QStringLiteral(
         "[account.work]\n"
-        "maildir=work-mail\n"));
+        "maildir=work-mail\n"
+        "trash=Trash\n"));
 
     Config config;
     config.load(path);
@@ -450,7 +452,8 @@ void TestConfig::brokenSyncCommandIsAProblem()
         "command=/nonexistent/qtmaildir-test/mailsync.sh\n"
         "\n"
         "[account.work]\n"
-        "maildir=work-mail\n"));
+        "maildir=work-mail\n"
+        "trash=Trash\n"));
 
     Config config;
     config.load(path);
@@ -485,7 +488,8 @@ void TestConfig::validConfigHasNoProblems()
         "\n"
         "[account.work]\n"
         "maildir=work-mail\n"
-        "address=user@example.org\n"));
+        "address=user@example.org\n"
+        "trash=Trash\n"));
 
     Config config;
     config.load(path);
@@ -905,7 +909,8 @@ void TestConfig::sentQueryIsEmptyWithoutTheKey()
     Config config;
     config.load(writeIni(dir, QStringLiteral(
         "[account.provider-c]\n"
-        "maildir = provider-c\n")));
+        "maildir = provider-c\n"
+        "trash = Trash\n")));
 
     QCOMPARE(config.accounts().size(), 1);
     QVERIFY(config.accounts().at(0).sentQuery().isEmpty());
@@ -981,6 +986,27 @@ void TestConfig::aBracketedTrashFolderIsQuoted()
 
     QCOMPARE(account.trashQuery(),
              QStringLiteral("path:\"provider-a/[Provider]/Cestino/**\""));
+}
+
+void TestConfig::anAccountWithoutATrashFolderWarns()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n")));
+
+    // The account still loads. A missing trash folder disables Delete, it does
+    // not invalidate the account: the user can still read mail.
+    QVERIFY(config.account(QStringLiteral("work")).isValid());
+
+    // Names the account and the key, so the warning is actionable. A warning
+    // the user cannot act on teaches them to ignore warnings, which item 83
+    // recorded the hard way.
+    QVERIFY(!config.problems().isEmpty());
+    const QString joined = config.warnings().join(QLatin1Char('\n'));
+    QVERIFY(joined.contains(QStringLiteral("work")));
+    QVERIFY(joined.contains(QStringLiteral("trash")));
 }
 
 void TestConfig::sentQueryComposesWithScopedQuery()
@@ -1103,9 +1129,11 @@ void TestConfig::theStartupAccountIsReadAndValidated()
         "\n"
         "[account.work]\n"
         "maildir=work\n"
+        "trash=Trash\n"
         "\n"
         "[account.personal]\n"
-        "maildir=personal\n")));
+        "maildir=personal\n"
+        "trash=Trash\n")));
 
     QCOMPARE(config.startupAccount(), QStringLiteral("work"));
     QVERIFY(config.problems().isEmpty());
@@ -1130,7 +1158,8 @@ void TestConfig::theStartupAccountIsReadAndValidated()
         "startup_account=nosuchaccount\n"
         "\n"
         "[account.work]\n"
-        "maildir=work\n")));
+        "maildir=work\n"
+        "trash=Trash\n")));
     QVERIFY2(wrong.startupAccount().isEmpty(),
              "an unknown startup account was passed through rather than "
              "falling back to All accounts");
@@ -1155,7 +1184,8 @@ void TestConfig::theStartupAccountTakesTheKeyNotTheSyncChannel()
         "\n"
         "[account.provider-work.mailbox]\n"
         "maildir=provider-work.mailbox\n"
-        "channel=provider-workmailbox\n")));
+        "channel=provider-workmailbox\n"
+        "trash=Trash\n")));
 
     QCOMPARE(config.accounts().size(), 1);
     QCOMPARE(config.accounts().constFirst().key,
@@ -1177,7 +1207,8 @@ void TestConfig::theStartupAccountTakesTheKeyNotTheSyncChannel()
         "\n"
         "[account.provider-work.mailbox]\n"
         "maildir=provider-work.mailbox\n"
-        "channel=provider-workmailbox\n")));
+        "channel=provider-workmailbox\n"
+        "trash=Trash\n")));
 
     QVERIFY2(byChannel.startupAccount().isEmpty(),
              "the sync channel was accepted as an account key");
@@ -1261,7 +1292,8 @@ void TestConfig::theStartupQuerySurvivesATranslatedFilterName()
         "\n"
         "[account.work]\n"
         "maildir=work\n"
-        "sent=Sent\n")));
+        "sent=Sent\n"
+        "trash=Trash\n")));
     QVERIFY2(!config.savedQueries().isEmpty(),
              "queries.json did not load, so the warning path is unreachable");
 
@@ -1286,7 +1318,8 @@ void TestConfig::theStartupQuerySurvivesATranslatedFilterName()
         "\n"
         "[account.work]\n"
         "maildir=work\n"
-        "sent=Sent\n")));
+        "sent=Sent\n"
+        "trash=Trash\n")));
     QVERIFY(!byLabel.savedQueries().isEmpty());
     QCOMPARE(byLabel.startupSavedQuery().generated, QStringLiteral("inbox"));
     QVERIFY(byLabel.problems().isEmpty());
@@ -1513,7 +1546,8 @@ void TestConfig::draftsQueryIsEmptyWithoutTheKey()
     Config config;
     config.load(writeIni(dir, QStringLiteral(
         "[account.provider-c]\n"
-        "maildir = provider-c\n")));
+        "maildir = provider-c\n"
+        "trash = Trash\n")));
 
     QCOMPARE(config.accounts().size(), 1);
     QVERIFY(config.accounts().at(0).draftsQuery().isEmpty());

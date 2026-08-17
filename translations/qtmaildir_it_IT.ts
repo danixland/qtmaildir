@@ -4,6 +4,10 @@
 <context>
     <name>Config</name>
     <message>
+        <source>Language &apos;%1&apos; is not a locale name; using the system language. Expected something like &apos;it&apos; or &apos;it_IT&apos;.</source>
+        <translation>&apos;%1&apos; non è un nome di locale; verrà usata la lingua di sistema. Atteso qualcosa come &apos;it&apos; o &apos;it_IT&apos;.</translation>
+    </message>
+    <message>
         <source>Message zoom %1 is outside %2 to %3; using the nearest allowed value.</source>
         <translation>Lo zoom del messaggio %1 non rientra tra %2 e %3; verrà usato il valore consentito più vicino.</translation>
     </message>
@@ -275,8 +279,12 @@
         <translation>&amp;Importante</translation>
     </message>
     <message>
-        <source>Mark the selected threads as important</source>
-        <translation>Segna come importanti le conversazioni selezionate</translation>
+        <source>Add or remove the important tag</source>
+        <translation>Aggiunge o rimuove l'etichetta importante</translation>
+    </message>
+    <message>
+        <source>Unmark important</source>
+        <translation>Rimuovi importante</translation>
     </message>
     <message>
         <source>Mark important</source>
@@ -313,6 +321,66 @@
     <message>
         <source>Add or remove any tag on the selected threads</source>
         <translation>Aggiunge o rimuove qualsiasi etichetta sulle conversazioni selezionate</translation>
+    </message>
+    <message>
+        <source>&amp;Archive thread</source>
+        <translation>&amp;Archivia conversazione</translation>
+    </message>
+    <message>
+        <source>Remove inbox from every message of the selected threads</source>
+        <translation>Rimuove inbox da ogni messaggio delle conversazioni selezionate</translation>
+    </message>
+    <message>
+        <source>Archive thread</source>
+        <translation>Archivia conversazione</translation>
+    </message>
+    <message>
+        <source>&amp;Delete thread</source>
+        <translation>&amp;Elimina conversazione</translation>
+    </message>
+    <message>
+        <source>Add or remove the deleted tag on whole threads</source>
+        <translation>Aggiunge o rimuove l'etichetta eliminato su intere conversazioni</translation>
+    </message>
+    <message>
+        <source>Undelete thread</source>
+        <translation>Ripristina conversazione</translation>
+    </message>
+    <message>
+        <source>Delete thread</source>
+        <translation>Elimina conversazione</translation>
+    </message>
+    <message>
+        <source>Mark thread as &amp;spam</source>
+        <translation>Segna conversazione come &amp;spam</translation>
+    </message>
+    <message>
+        <source>Add spam and remove inbox on whole threads</source>
+        <translation>Aggiunge spam e rimuove inbox su intere conversazioni</translation>
+    </message>
+    <message>
+        <source>Mark thread spam</source>
+        <translation>Segna conversazione come spam</translation>
+    </message>
+    <message>
+        <source>Toggle the unread tag on whole threads</source>
+        <translation>Inverte l'etichetta non letto su intere conversazioni</translation>
+    </message>
+    <message>
+        <source>Mark thread read</source>
+        <translation>Segna conversazione come letta</translation>
+    </message>
+    <message>
+        <source>Mark thread unread</source>
+        <translation>Segna conversazione come non letta</translation>
+    </message>
+    <message>
+        <source>Mark every message of the selected threads as important</source>
+        <translation>Segna come importante ogni messaggio delle conversazioni selezionate</translation>
+    </message>
+    <message>
+        <source>Mark thread important</source>
+        <translation>Segna conversazione come importante</translation>
     </message>
     <message>
         <source>Tagging &amp;rules...</source>
@@ -770,6 +838,10 @@
     <message>
         <source>Tag changes made here that a sync has not yet carried to the mail store. An external notmuch run can clear them without this count noticing.</source>
         <translation>Modifiche alle etichette fatte qui che nessuna sincronizzazione ha ancora trasferito all&apos;archivio di posta. Un&apos;esecuzione esterna di notmuch può azzerarle senza che questo conteggio se ne accorga.</translation>
+    </message>
+    <message>
+        <source>&amp;Whole thread</source>
+        <translation>&amp;Intera conversazione</translation>
     </message>
     <message>
         <source>Select a thread first</source>

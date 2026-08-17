@@ -276,6 +276,9 @@ private slots:
     void deleteOnAMixedSelectionDeletesRatherThanSplittingIt();
     void deleteOnAReplyReadsItsOwnThreadNotTheFirstInTheList();
     void toggleUnreadOnAReplyReadsItsOwnThreadNotTheFirstInTheList();
+    void importantOnAnAlreadyImportantThreadRemovesTheTag();
+    void importantOnAPlainThreadStillAddsTheTag();
+    void importantOnAReplyReadsItsOwnStateNotItsThreads();
     void editTagsOnAReplyCountsItsOwnThreadNotTheFirstInTheList();
     void markCurrentThreadReadResolvesTheThreadThroughTheIndex();
     void deletingAReplyRepaintsThatReplyRow();
@@ -4795,6 +4798,132 @@ void TestMainWindow::toggleUnreadOnAReplyReadsItsOwnThreadNotTheFirstInTheList()
                             "Toggle unread on a reply of a READ thread chose "
                             "the wrong direction: %1. It read the FIRST "
                             "thread's state, which is unread.")
+                            .arg(window.undoTextForTesting())));
+}
+
+void TestMainWindow::importantOnAnAlreadyImportantThreadRemovesTheTag()
+{
+    // Item 98. `flag` was a one-way add, so pressing it on a thread that is
+    // already important re-sent a tag the thread had: a no-op write, and a
+    // no-op repaints nothing, so the key read as dead. Its two neighbours,
+    // Delete and Toggle unread, had been toggles for a long time.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(action);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    QStringList{ QStringLiteral("inbox"),
+                                                 QStringLiteral("flagged") }) });
+    QApplication::processEvents();
+
+    view->setCurrentIndex(model->index(0, 0));
+    view->selectionModel()->select(model->index(0, 0),
+                                   QItemSelectionModel::ClearAndSelect
+                                       | QItemSelectionModel::Rows);
+    QApplication::processEvents();
+
+    action->trigger();
+
+    QCOMPARE(window.undoDepthForTesting(), 1);
+    QVERIFY2(window.undoTextForTesting().contains(
+                 QStringLiteral("Unmark important")),
+             qPrintable(QStringLiteral(
+                            "Important on an already-important thread did not "
+                            "remove the tag: %1. A one-way add is a no-op the "
+                            "user cannot see.")
+                            .arg(window.undoTextForTesting())));
+}
+
+void TestMainWindow::importantOnAPlainThreadStillAddsTheTag()
+{
+    // The other direction, so a mutation inverting the test above cannot pass.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(action);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    QStringList{ QStringLiteral("inbox") }) });
+    QApplication::processEvents();
+
+    view->setCurrentIndex(model->index(0, 0));
+    view->selectionModel()->select(model->index(0, 0),
+                                   QItemSelectionModel::ClearAndSelect
+                                       | QItemSelectionModel::Rows);
+    QApplication::processEvents();
+
+    action->trigger();
+
+    QCOMPARE(window.undoDepthForTesting(), 1);
+    QVERIFY2(window.undoTextForTesting().contains(
+                 QStringLiteral("Mark important"))
+                 && !window.undoTextForTesting().contains(
+                     QStringLiteral("Unmark")),
+             qPrintable(QStringLiteral(
+                            "Important on a plain thread did not add the tag: "
+                            "%1")
+                            .arg(window.undoTextForTesting())));
+}
+
+void TestMainWindow::importantOnAReplyReadsItsOwnStateNotItsThreads()
+{
+    // The trap items 88 and 105 each fixed once, which is why item 98 says to
+    // call everySelectedRowHasTag() rather than copy the then-current Delete
+    // loop.
+    //
+    // THREE states, all different, which is what the test needs to distinguish
+    // the two wrong answers from the right one. t1 (the first thread in the
+    // list) is unflagged, t2 (the reply's own thread) is flagged, and the
+    // REPLY is unflagged. Reading t1 by row number answers "not flagged" and
+    // reading the reply's THREAD answers "flagged", so only a read of the
+    // message itself gives "not flagged" for the right reason.
+    //
+    // Leaving the reply's tags defaulted to its thread's is the trap: a reply
+    // in the same state as its thread answers identically whichever of the two
+    // the code reads, and the mutation putting item 105's bug back stays green.
+    // Measured: it did.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(action);
+
+    const QModelIndex reply = expandSecondThreadAndSelectItsReply(
+        view, model, {}, { QStringLiteral("flagged") },
+        QStringList{});
+    QVERIFY2(reply.isValid(),
+             "the fixture did not produce a reply row at row 0, so this test "
+             "would assert nothing");
+
+    action->trigger();
+
+    QVERIFY2(window.pendingMessageIdsForTesting().contains(
+                 QStringLiteral("m1@example.org")),
+             "Important on a reply did not act on that reply");
+    QCOMPARE(window.undoDepthForTesting(), 1);
+    QVERIFY2(window.undoTextForTesting().contains(
+                 QStringLiteral("Mark important"))
+                 && !window.undoTextForTesting().contains(
+                     QStringLiteral("Unmark")),
+             qPrintable(QStringLiteral(
+                            "Important on an unflagged reply chose the wrong "
+                            "direction: %1. Its own THREAD is flagged, so "
+                            "reading the thread gives Unmark.")
                             .arg(window.undoTextForTesting())));
 }
 

@@ -860,8 +860,23 @@ void MainWindow::registerActions()
     // &I rather than &S: the Message menu already has "Mark &spam", so
     // "Starred" would have needed an accelerator from inside the word.
     addAction(QStringLiteral("flag"), tr("&Important"),
-              tr("Mark the selected threads as important"), [this]() {
-        tagSelected({ QStringLiteral("flagged") }, {}, tr("Mark important"));
+              tr("Add or remove the important tag"), [this]() {
+        // Item 98. A toggle, like Delete and Toggle unread beside it: adding a
+        // tag that is already there is a no-op the user cannot see, so a
+        // one-way add read as a dead key on anything already important.
+        //
+        // everySelectedRowHasTag() rather than a loop of its own. Two separate
+        // bugs went into that logic on 2026-08-16 (items 88 and 105), and a
+        // copy of the then-current Delete loop would have inherited both:
+        // resolving a reply's row number to the wrong thread, and asking a
+        // reply's THREAD where the write is message-scoped, which makes a
+        // toggle one-way.
+        const bool allFlagged = everySelectedRowHasTag(QStringLiteral("flagged"));
+
+        if (allFlagged)
+            tagSelected({}, { QStringLiteral("flagged") }, tr("Unmark important"));
+        else
+            tagSelected({ QStringLiteral("flagged") }, {}, tr("Mark important"));
     });
     addAction(QStringLiteral("toggle_unread"), tr("Toggle &unread"),
               tr("Toggle the unread tag"), [this]() {

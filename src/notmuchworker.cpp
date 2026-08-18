@@ -776,6 +776,72 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
     emit messagesMovedFrom(origins, destFolder);
 }
 
+void NotmuchWorker::resolveThreadMessages(const QStringList &threadIds,
+                                          const QString &requestTag)
+{
+    if (threadIds.isEmpty())
+        return;
+
+    if (!openReadOnly())
+        return;
+
+    // One combined query, for the reason applyTagsToThreads() gives: a query
+    // per thread reopens the same Xapian cursor once per selected row.
+    QStringList terms;
+    terms.reserve(threadIds.size());
+    for (const QString &id : threadIds)
+        terms.append(QStringLiteral("thread:%1").arg(id));
+
+    const QString query = terms.join(QStringLiteral(" or "));
+    NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+    if (!nmQuery) {
+        emit errorOccurred(QStringLiteral("Cannot resolve selected threads"));
+        return;
+    }
+
+    notmuch_messages_t *raw = nullptr;
+    if (notmuch_query_search_messages(nmQuery.get(), &raw)
+        != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(QStringLiteral("Cannot resolve selected threads"));
+        return;
+    }
+
+    // Paths are reported RELATIVE to the database root, matching
+    // ThreadSummary::firstMessagePath: the UI knows accounts only by their
+    // maildir, itself a database-relative prefix.
+    const QString dbRoot =
+        QDir(QString::fromUtf8(notmuch_database_get_path(m_db))).absolutePath();
+
+    QStringList messageIds;
+    QStringList paths;
+    QStringList tags;
+    NmMessages messages(raw);
+    for (; notmuch_messages_valid(messages.get());
+           notmuch_messages_move_to_next(messages.get())) {
+        NmMessage message(notmuch_messages_get(messages.get()));
+        if (!message)
+            continue;
+        const char *rawName = notmuch_message_get_filename(message.get());
+        if (!rawName)
+            continue;
+        messageIds.append(
+            QString::fromUtf8(notmuch_message_get_message_id(message.get())));
+        paths.append(
+            QDir(dbRoot).relativeFilePath(QString::fromUtf8(rawName)));
+        // Joined by a TAB, not a space. A notmuch tag may absolutely contain
+        // a space: a Maildir folder named "Inbox/SlackBuilds users" produces
+        // `deleted-from:Inbox/SlackBuilds users`, and splitting that on spaces
+        // truncated the folder to "Inbox/SlackBuilds". Restore then moved the
+        // messages into a folder of that name, CREATING it, so four real
+        // messages ended up in a directory mbsync does not sync and the user
+        // could not find them. A tab cannot appear in a tag, because notmuch's
+        // own dump/restore format is whitespace-delimited by line.
+        tags.append(tagsOf(message.get()).join(QLatin1Char('\t')));
+    }
+
+    emit threadMessagesResolved(messageIds, paths, tags, requestTag);
+}
+
 void NotmuchWorker::requestAllTags(quint64 generation)
 {
     if (!openReadOnly())

@@ -143,6 +143,21 @@ public slots:
                             const QStringList &remove,
                             const QString &description);
 
+    /// Resolves whole threads to the message ids and file paths they contain.
+    ///
+    /// Delete thread MOVES every message, and a move needs message ids, which
+    /// the UI does not hold for a thread it never expanded. The resolution
+    /// happens here for the same reason applyTagsToThreads() does it here:
+    /// the database handle lives on this thread, and one combined query beats
+    /// reopening the cursor per thread.
+    ///
+    /// Paths come back beside the ids because the destination is per ACCOUNT
+    /// and the UI resolves an account from a message's path. Without them the
+    /// caller would know which messages to move and not where any of them
+    /// belongs.
+    void resolveThreadMessages(const QStringList &threadIds,
+                               const QString &requestTag);
+
     /// Every tag in the database, sorted. Feeds query bar completion, which
     /// cannot offer tag names it has no way to enumerate. Called at startup,
     /// after a sync, and after a tag mutation introduces an unknown tag.
@@ -222,6 +237,18 @@ signals:
     /// from here can be passed straight back to move a message home.
     void messagesMovedFrom(const QMap<QString, QString> &originByMessageId,
                            const QString &destFolder);
+    /// The answer to resolveThreadMessages(), as parallel lists: `messageIds`
+    /// and the database-relative `paths` of the same messages, in the same
+    /// order. `requestTag` is echoed back so a caller can tell which request
+    /// this answers.
+    /// `tags` carries each message's tags joined by a space, in the same
+    /// order. Needed because Restore reads a message's `deleted-from:` tag to
+    /// decide where to send it, and an unexpanded thread's messages have no
+    /// node in the model to read tags from.
+    void threadMessagesResolved(const QStringList &messageIds,
+                                const QStringList &paths,
+                                const QStringList &tags,
+                                const QString &requestTag);
     void allTagsReady(const QStringList &tags, quint64 generation);
 
     /// One entry per requested query, in the order they were asked for. A query

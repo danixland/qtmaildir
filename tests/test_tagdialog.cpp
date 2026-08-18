@@ -47,6 +47,7 @@ private slots:
     void acceptingACandidateKeepsTheOtherTags();
     void removeCompletesOnlyTheSelectionsOwnTags();
     void removeStillAcceptsATagItDoesNotSuggest();
+    void aTagWithASpaceCanStillBeRemoved();
 };
 
 void TestTagDialog::validNamesAreAccepted()
@@ -164,6 +165,62 @@ void TestTagDialog::multipleTagsSeparateOnComma()
     QCOMPARE(dialog.tagsToAdd(), QStringList({ QStringLiteral("one"),
                                                QStringLiteral("two"),
                                                QStringLiteral("three") }));
+}
+
+void TestTagDialog::aTagWithASpaceCanStillBeRemoved()
+{
+    // validateTagName() rejects a space, and that rule is right: it stops a
+    // troublesome tag being CREATED. It ran on the removal list too, which is
+    // not the same question. A tag that already exists is a fact, and refusing
+    // to remove it because it breaks a naming rule leaves the user with a tag
+    // they can see and cannot get rid of.
+    //
+    // Reached by a real Maildir: a folder named "Inbox/SlackBuilds users"
+    // produced `deleted-from:Inbox/SlackBuilds users`, and the one dialog that
+    // could have cleared it refused the only text that names it.
+    //
+    // Only the TYPED route was blocked. Unchecking appends to the removal list
+    // after validation has run, so it worked throughout; that asymmetry is why
+    // both routes are asserted here rather than just the one that failed.
+    const QString spaced =
+        QStringLiteral("deleted-from:Inbox/SlackBuilds users");
+    QHash<QString, int> current;
+    current.insert(spaced, 1);
+
+    // Typed into the remove field, which is what a user does for a tag they
+    // can see on the message. Before the fix this raised a modal warning and
+    // returned without accepting, so the dialog simply would not close.
+    TagDialog typed({ spaced }, current, 1);
+    const QList<QLineEdit *> edits = typed.findChildren<QLineEdit *>();
+    QCOMPARE(edits.size(), 2);
+    edits.at(1)->setText(spaced);
+    typed.accept();
+
+    QCOMPARE(typed.tagsToRemove(), QStringList{ spaced });
+    QVERIFY(typed.tagsToAdd().isEmpty());
+
+    // And unchecking it in the list, the other way to the same place.
+    TagDialog unchecked({ spaced }, current, 1);
+    auto *list = unchecked.findChild<QListWidget *>();
+    QVERIFY(list);
+    QCOMPARE(list->count(), 1);
+    QCOMPARE(list->item(0)->data(Qt::UserRole).toString(), spaced);
+    list->item(0)->setCheckState(Qt::Unchecked);
+    unchecked.accept();
+
+    QCOMPARE(unchecked.tagsToRemove(), QStringList{ spaced });
+
+    // ADDING one is still refused, which is the rule this must not have
+    // weakened. accept() returns without setting the lists, so the dialog
+    // stays open with the text there to fix.
+    TagDialog added({}, {}, 1);
+    const QList<QLineEdit *> addEdits = added.findChildren<QLineEdit *>();
+    QCOMPARE(addEdits.size(), 2);
+    addEdits.at(0)->setText(QStringLiteral("two words"));
+    // Not calling accept(): it would raise a modal warning and block. The
+    // validator is the thing under test and is asked directly.
+    QVERIFY(validateTagName(QStringLiteral("two words"))
+            != TagNameProblem::Ok);
 }
 
 void TestTagDialog::uncheckingACurrentTagRemovesIt()

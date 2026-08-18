@@ -268,16 +268,25 @@ void TagDialog::accept()
     QStringList add = splitTags(m_addEdit->text());
     QStringList remove = splitTags(m_removeEdit->text());
 
-    // Validate before applying anything: a partial change is worse than none,
-    // since the user cannot tell which half landed.
-    for (const QStringList &list : { add, remove }) {
-        for (const QString &tag : list) {
-            const TagNameProblem problem = validateTagName(tag);
-            if (problem != TagNameProblem::Ok) {
-                QMessageBox::warning(this, tr("Invalid tag"),
-                                     tagNameProblemText(problem, tag));
-                return;   // Stay open, with the text still there to fix.
-            }
+    // Validate what is being ADDED. A partial change is worse than none, since
+    // the user cannot tell which half landed, so this runs before anything is
+    // applied.
+    //
+    // REMOVAL is deliberately not validated. The rules here exist to stop a
+    // troublesome tag being CREATED; a tag that already exists is a fact, and
+    // refusing to remove it because it breaks a rule leaves the user with a
+    // tag they can see, cannot type, and cannot get rid of. That happened with
+    // `deleted-from:Inbox/SlackBuilds users`: an origin tag naming a Maildir
+    // folder whose name contains a space, rejected by the space rule, so the
+    // one dialog that could have cleared it refused the only text that names
+    // it. Whether such a tag SHOULD exist is a separate question from whether
+    // the user may delete it, and the answer to the second is always yes.
+    for (const QString &tag : add) {
+        const TagNameProblem problem = validateTagName(tag);
+        if (problem != TagNameProblem::Ok) {
+            QMessageBox::warning(this, tr("Invalid tag"),
+                                 tagNameProblemText(problem, tag));
+            return;   // Stay open, with the text still there to fix.
         }
     }
 

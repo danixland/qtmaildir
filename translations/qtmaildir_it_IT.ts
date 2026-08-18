@@ -132,20 +132,6 @@
         <source>Unsynced changes</source>
         <translation>Modifiche non sincronizzate</translation>
     </message>
-    <message numerus="yes">
-        <source>%n tag change(s) have not been synced, and no sync command is configured. Quit anyway?</source>
-        <translation>
-            <numerusform>%n modifica alle etichette non è stata sincronizzata e non è configurato alcun comando di sincronizzazione. Uscire comunque?</numerusform>
-            <numerusform>%n modifiche alle etichette non sono state sincronizzate e non è configurato alcun comando di sincronizzazione. Uscire comunque?</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n tag change(s) have not been synced.</source>
-        <translation>
-            <numerusform>%n modifica alle etichette non è stata sincronizzata.</numerusform>
-            <numerusform>%n modifiche alle etichette non sono state sincronizzate.</numerusform>
-        </translation>
-    </message>
     <message>
         <source>Sync before quitting?</source>
         <translation>Sincronizzare prima di uscire?</translation>
@@ -262,6 +248,10 @@
         <source>Add or remove the deleted tag</source>
         <translation>Aggiunge o rimuove l&apos;etichetta deleted</translation>
     </message>
+    <message>
+        <source>Changes made here that a sync has not yet carried to the mail store. An external notmuch run can clear them without this count noticing.</source>
+        <translation>Modifiche fatte qui che nessuna sincronizzazione ha ancora trasferito all&apos;archivio di posta. Un&apos;esecuzione esterna di notmuch può azzerarle senza che questo conteggio se ne accorga.</translation>
+    </message>
     <message numerus="yes">
         <source>%n message(s) could not be deleted: no trash folder is configured for their account.</source>
         <translation>
@@ -276,6 +266,20 @@
     <message>
         <source>Delete</source>
         <translation>Elimina</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n change(s) have not been synced, and no sync command is configured. Quit anyway?</source>
+        <translation>
+            <numerusform>%n modifica non è stata sincronizzata e non è configurato alcun comando di sincronizzazione. Uscire comunque?</numerusform>
+            <numerusform>%n modifiche non sono state sincronizzate e non è configurato alcun comando di sincronizzazione. Uscire comunque?</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n change(s) have not been synced.</source>
+        <translation>
+            <numerusform>%n modifica non è stata sincronizzata.</numerusform>
+            <numerusform>%n modifiche non sono state sincronizzate.</numerusform>
+        </translation>
     </message>
     <message>
         <source>Mark &amp;spam</source>
@@ -360,10 +364,6 @@
     <message>
         <source>Undelete thread</source>
         <translation>Ripristina conversazione</translation>
-    </message>
-    <message>
-        <source>Delete thread</source>
-        <translation>Elimina conversazione</translation>
     </message>
     <message>
         <source>Mark thread as &amp;spam</source>
@@ -849,10 +849,6 @@
             <numerusform>%n modifica non sincronizzata</numerusform>
             <numerusform>%n modifiche non sincronizzate</numerusform>
         </translation>
-    </message>
-    <message>
-        <source>Tag changes made here that a sync has not yet carried to the mail store. An external notmuch run can clear them without this count noticing.</source>
-        <translation>Modifiche alle etichette fatte qui che nessuna sincronizzazione ha ancora trasferito all&apos;archivio di posta. Un&apos;esecuzione esterna di notmuch può azzerarle senza che questo conteggio se ne accorga.</translation>
     </message>
     <message>
         <source>&amp;Whole thread</source>

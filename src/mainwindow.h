@@ -21,6 +21,7 @@
 #include <QHash>
 #include <QSet>
 #include <QMainWindow>
+#include <QQueue>
 #include <QPointer>
 #include <QThread>
 #include <QUndoCommand>
@@ -754,17 +755,68 @@ private:
     /// onMessagesMoved() replaces with `deleted-from:<origin>` per message.
     /// The origin is not known until the worker reports it, and it differs per
     /// message in a multi-row selection.
+    /// `fromUndo` marks a move the undo stack itself started, which must NOT
+    /// push a command of its own when it is confirmed. See onMessagesMoved().
+    /// `wholeThreadIds`, when non-empty, says this move covers every message
+    /// of those threads, so the optimistic repaint updates each thread's
+    /// SUMMARY rather than each message's node. A thread row's card reads the
+    /// summary, so a thread-scoped move that updated only nodes repainted the
+    /// replies and left the root card stale until the next query.
     void sendMove(const QStringList &messageIds, const QString &destFolder,
                   const QStringList &add, const QStringList &remove,
-                  const QString &description);
+                  const QString &description, bool fromUndo = false,
+                  const QStringList &wholeThreadIds = {});
 
     /// Moves each selected row's message to its account's trash, tagging it
     /// `deleted` and recording where it came from.
     void trashSelected();
 
+    /// The half of trashSelected() that does the work, given the messages and
+    /// their paths.
+    ///
+    /// Paths are passed in rather than looked up, because the thread-scoped
+    /// caller has messages the MODEL has never seen: an unexpanded thread
+    /// holds no node for its replies, so a model lookup resolves them to no
+    /// account and the move is silently dropped. The worker supplies them.
+    void trashMessages(const QStringList &messageIds,
+                       const QHash<QString, QString> &pathById,
+                       int messageCount,
+                       const QStringList &wholeThreadIds = {});
+
+    /// Moves every message of each selected THREAD to its account's trash.
+    ///
+    /// Asynchronous, unlike its message-scoped twin: the ids and paths of an
+    /// unexpanded thread's messages live only in the database, so this asks
+    /// the worker and finishes in onThreadMessagesResolved().
+    void trashSelectedThreads();
+
+    /// The thread ids the selection covers, resolving a reply row to its own
+    /// thread. scopeFor() reports a reply under messageIds instead, which left
+    /// a thread action on a reply row doing nothing at all.
+    QStringList selectedThreadIds() const;
+
+    /// The inverse of trashSelectedThreads(): moves every message of each
+    /// selected thread back where it came from.
+    void restoreSelectedThreads();
+
+    /// Runs the thread-scoped delete once the worker has resolved the
+    /// threads to messages.
+    void onThreadMessagesResolved(const QStringList &messageIds,
+                                  const QStringList &paths,
+                                  const QStringList &tags,
+                                  const QString &requestTag);
+
     /// The inverse: moves each selected row's message back to the folder its
     /// `deleted-from:` tag names, stripping both tags.
     void restoreSelected();
+
+    /// The `deleted-from:` tag naming `dbRelativeFolder`, or empty when no
+    /// account owns it.
+    ///
+    /// One rule for both sites that need the tag: the delete that writes it
+    /// and the restore that strips it. Deriving it twice let them disagree,
+    /// and a restore stripped a tag that had never been written.
+    QString originTagFor(const QString &dbRelativeFolder) const;
 
     /// The account whose maildir contains `path`, or an invalid account when
     /// no configured maildir does.
@@ -781,13 +833,27 @@ private:
                          const QString &destFolder);
 
     /// What a move asked to be tagged, held until the worker confirms it.
-    /// Keyed by destination folder so two moves in flight cannot be confused.
+    ///
+    /// A FIFO and not a map keyed on the destination: two Deletes in one
+    /// account before the first confirmation arrives name the same folder, so
+    /// a keyed map dropped the first entry and left the second confirmation
+    /// with nothing to apply. That file reached the trash carrying neither
+    /// `deleted` nor `deleted-from:`, unrestorable and invisible to a
+    /// `tag:deleted` query. The worker moves one batch at a time and emits in
+    /// request order, so position alone matches a confirmation to its request.
     struct PendingMove {
         QStringList add;
         QStringList remove;
         QString description;
+        /// Set for a move the undo stack started, which must not push again.
+        bool fromUndo = false;
     };
-    QHash<QString, PendingMove> m_pendingMoves;
+    QQueue<PendingMove> m_pendingMoves;
+
+    /// The threads a resolveThreadMessages() request was made for, held until
+    /// the answer arrives so the optimistic repaint knows the move is
+    /// thread-scoped.
+    QStringList m_pendingThreadScope;
 
     /// Undoes the optimistic model update for a write the worker rejected.
     void revertPendingTagChange();
@@ -856,6 +922,9 @@ private:
         QStringList add;
         QStringList remove;
         QString description;
+        /// Carried through the hold, or a move undone during a sync would
+        /// push a command when it is finally flushed.
+        bool fromUndo = false;
     };
     QVector<HeldMove> m_heldMoves;
 
@@ -1302,8 +1371,10 @@ public:
             m_firstRedo = false;
             return;
         }
+        // Also fromUndo: a redo replays a command that is ALREADY on the
+        // stack, so confirming it must not push a duplicate either.
         m_window->sendMove(m_origins.keys(), m_dest, m_add, m_remove,
-                           m_description);
+                           m_description, true);
     }
 
     void undo() override
@@ -1317,8 +1388,12 @@ public:
                 byOrigin[it.value()].append(it.key());
         }
         for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
+            // fromUndo: this move is the undo, so its confirmation must not
+            // push a command of its own. Without it the stack grew on every
+            // press and a second undo re-deleted the message.
             m_window->sendMove(it.value(), it.key(), m_remove, m_add,
-                               QStringLiteral("Undo %1").arg(m_description));
+                               QStringLiteral("Undo %1").arg(m_description),
+                               true);
         }
     }
 

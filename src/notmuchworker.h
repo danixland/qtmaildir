@@ -158,6 +158,24 @@ public slots:
     void resolveThreadMessages(const QStringList &threadIds,
                                const QString &requestTag);
 
+    /// The same walk for a set of MESSAGE ids rather than thread ids.
+    ///
+    /// Restore needs each message's tags and path to decide where to send it,
+    /// and must not read them from the model: the model's tags come from the
+    /// query, so a row whose delete has not been re-queried still carries its
+    /// pre-delete tags and the origin tag is missing. A restore that guesses
+    /// the destination is worse than one that does nothing.
+    void resolveMessages(const QStringList &messageIds,
+                         const QString &requestTag);
+
+private:
+    /// The shared walk behind resolveMessages() and resolveThreadMessages():
+    /// runs `query` and emits threadMessagesResolved() with each match's id,
+    /// database-relative path and tab-joined tags.
+    void resolveQuery(const QString &query, const QString &requestTag);
+
+public slots:
+
     /// Every tag in the database, sorted. Feeds query bar completion, which
     /// cannot offer tag names it has no way to enumerate. Called at startup,
     /// after a sync, and after a tag mutation introduces an unknown tag.

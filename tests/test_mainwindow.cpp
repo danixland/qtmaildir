@@ -377,6 +377,8 @@ private slots:
     void deletingAThreadRootTwiceRestoresItRatherThanRedeleting();
     void deleteThreadMovesEveryMessageAndRepaintsTheRootCard();
     void aFolderNameWithASpaceSurvivesTheRoundTrip();
+    void deleteIsBoundToTheDeleteKey();
+    void theDeleteKeyEditsTextInTheQueryBar();
     void restoreIsReachableWithoutTheKeyboard();
     void restoreIsOnlyEnabledInTheTrashView();
     void restoreReturnsAMessageToItsOriginFolder();
@@ -9466,6 +9468,68 @@ void TestMainWindow::aFolderNameWithASpaceSurvivesTheRoundTrip()
              "messages are somewhere mbsync will never sync");
 }
 
+void TestMainWindow::deleteIsBoundToTheDeleteKey()
+{
+    // Del is the key a user reaches for, and Ctrl+D is not a guess anyone
+    // makes. Both are bound; this asserts the bare one is really there,
+    // since setShortcut() keeps only the LAST of several and silently drops
+    // the rest, which would leave the documented binding absent.
+    const Config config;
+    MainWindow window(config);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(action);
+
+    QVERIFY2(action->shortcuts().contains(QKeySequence(Qt::Key_Delete)),
+             qPrintable(QStringLiteral("delete is not on the Del key; it has: %1")
+                            .arg(QKeySequence::listToString(action->shortcuts()))));
+}
+
+void TestMainWindow::theDeleteKeyEditsTextInTheQueryBar()
+{
+    // `delete` is bound to bare Del, and a QAction shortcut is dispatched
+    // BEFORE the focused widget sees the key. Qt withholds only plain LETTERS
+    // from editable widgets, so by the argument that made bare Return break
+    // the query bar, Delete should move mail to the trash while the user is
+    // editing a query.
+    //
+    // It does not: QLineEdit accepts the ShortcutOverride for Delete itself,
+    // because Delete is one of its own editing keys, which Return is not. That
+    // is a property of Qt rather than of this code, which is exactly why it is
+    // pinned here: it is the assumption the bare binding rests on, and if a
+    // future Qt or a future focus proxy changes it, mail gets deleted while
+    // someone types.
+    //
+    // Asserted on the ACTION not firing, not on the ShortcutOverride phase. A
+    // probe on the override reports notify=1 accepted=1 whether or not this
+    // window filters the key, since QLineEdit accepts it either way, so it
+    // cannot distinguish the two and passes against any implementation.
+    // Measured, while trying to write this test the obvious way.
+    const Config config;
+    MainWindow window(config);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *deleteAction = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(queryEdit && deleteAction);
+
+    int fired = 0;
+    QObject::connect(deleteAction, &QAction::triggered,
+                     [&fired]() { ++fired; });
+
+    queryEdit->setFocus();
+    QTRY_VERIFY(queryEdit->hasFocus());
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->setCursorPosition(0);
+
+    QTest::keyClick(queryEdit, Qt::Key_Delete);
+
+    QCOMPARE(fired, 0);
+    QCOMPARE(queryEdit->text(), QStringLiteral("ag:inbox"));
+}
+
 void TestMainWindow::restoreIsReachableWithoutTheKeyboard()
 {
     // Restore shipped as a keyboard shortcut and nothing else: registered,
@@ -9603,15 +9667,23 @@ void TestMainWindow::restoreReturnsAMessageToItsOriginFolder()
             || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
                                     stem),
         15000);
+    // Waited on the ORIGIN tag, not on `deleted`.
+    //
+    // Both come off in one write, but the file rename and the tag write are
+    // separate operations and the assertions below raced the second one:
+    // measured 1 failure in 3 runs waiting on `deleted` alone, reporting the
+    // origin tag still present. Waiting on the tag this test is actually about
+    // removes the race rather than papering over it with a longer timeout.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:ro1@example.org and "
+                                         "tag:\"deleted-from:inbox\"")) == 0,
+        15000);
     QTRY_VERIFY_WITH_TIMEOUT(
         notmuchCount(cfg,
                      QStringLiteral("id:ro1@example.org and tag:deleted")) == 0,
         15000);
 
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ro1@example.org")), 1);
-    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ro1@example.org and "
-                                              "tag:\"deleted-from:inbox\"")),
-             0);
     QVERIFY(!folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
                                   stem));
 }

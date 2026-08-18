@@ -817,6 +817,25 @@ private:
     /// tag, so the tag comes off and the file stays where it is.
     void restoreSelected(bool fallbackToInbox = false);
 
+    /// Restore as reached from the TRASH VIEW: resolves each selected
+    /// message against the database first, then moves it.
+    ///
+    /// Asynchronous, unlike restoreSelected(), and that is the point. The
+    /// model's tags come from the query, so a row whose delete has not been
+    /// re-queried still carries its pre-delete tags; reading the origin from
+    /// there found none and sent the message to the INBOX instead of the
+    /// folder it came from, one run in three.
+    void restoreSelectedFromTrash();
+
+    /// Moves each resolved message home, using the tags and paths the WORKER
+    /// reported rather than anything the model holds.
+    void restoreResolvedMessages(const QStringList &messageIds,
+                                 const QStringList &paths,
+                                 const QStringList &tags);
+
+    /// The messages a resolveMessages() request was made for.
+    QStringList m_pendingRestoreIds;
+
     /// The account's inbox FOLDER name, discovered from its inbox query.
     ///
     /// Never hardcoded: the real Maildir has `Inbox` and a fixture has

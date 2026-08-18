@@ -309,6 +309,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             keyEvent->accept();
             return true;
         }
+        // Delete needs NO entry here, and that is worth stating because the
+        // reasoning that says it does is nearly right. It is bound bare to
+        // `delete`, and Qt's protection for editable widgets covers plain
+        // LETTERS only, so by the same argument that made Return a problem it
+        // should trigger the action while the user edits a query.
+        //
+        // It does not, because QLineEdit accepts the ShortcutOverride for
+        // Delete itself: Delete is one of its own editing keys, which Return
+        // is not. Measured both ways, with this branch present and absent:
+        // the action fires 0 times either way and the text is edited either
+        // way. Adding a guard here would be dead code carrying a test that
+        // cannot fail.
     }
 
     return QMainWindow::eventFilter(watched, event);
@@ -851,7 +863,7 @@ void MainWindow::registerActions()
     });
     addAction(QStringLiteral("restore"), tr("&Restore from trash"),
               tr("Move the selected messages out of the trash"), [this]() {
-        restoreSelected(true);
+        restoreSelectedFromTrash();
     });
     addAction(QStringLiteral("spam"), tr("Mark &spam"),
               tr("Add spam and remove inbox"), [this]() {
@@ -4414,6 +4426,11 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
         return;
     }
 
+    if (requestTag == QStringLiteral("restore_messages")) {
+        restoreResolvedMessages(messageIds, paths, tags);
+        return;
+    }
+
     if (requestTag != QStringLiteral("undelete_thread"))
         return;
 
@@ -4529,6 +4546,107 @@ QString MainWindow::inboxFolderFor(const Account &account) const
     // No inbox configured for this account. `Inbox` is the Maildir
     // convention and is what mbsync's own `Inbox` directive defaults to.
     return QStringLiteral("Inbox");
+}
+
+void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
+                                         const QStringList &paths,
+                                         const QStringList &tags)
+{
+    if (messageIds.size() != paths.size() || messageIds.size() != tags.size())
+        return;
+
+    const QString prefix = QStringLiteral("deleted-from:");
+    QHash<QString, QStringList> byOrigin;
+    QHash<QString, QStringList> byInbox;
+    QStringList stranded;
+
+    for (int i = 0; i < messageIds.size(); ++i) {
+        const QStringList messageTags =
+            tags.at(i).split(QLatin1Char('\t'), Qt::SkipEmptyParts);
+        QString origin;
+        for (const QString &tag : messageTags) {
+            if (tag.startsWith(prefix)) {
+                origin = tag.mid(prefix.length());
+                break;
+            }
+        }
+
+        const Account account = accountForMessagePath(paths.at(i));
+        if (account.maildir.isEmpty()) {
+            stranded.append(messageIds.at(i));
+            continue;
+        }
+
+        if (origin.isEmpty()) {
+            // Trashed by another client, so there is no record of where it
+            // belongs. Inbox is the documented fallback, and it is reported:
+            // a guess the user is not told about is worse than the guess.
+            byInbox[account.maildir + QLatin1Char('/')
+                    + account.inboxFolder()]
+                .append(messageIds.at(i));
+            continue;
+        }
+        byOrigin[account.maildir + QLatin1Char('/') + origin]
+            .append(messageIds.at(i));
+    }
+
+    for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
+        // The origin tag is named here rather than left as the placeholder,
+        // which onMessagesMoved() would resolve to the folder the message is
+        // coming FROM, namely the trash.
+        const QString origin = originTagFor(it.key());
+        QStringList remove{ QStringLiteral("deleted") };
+        if (!origin.isEmpty())
+            remove.append(origin);
+        sendMove(it.value(), it.key(), {}, remove, tr("Restore"));
+    }
+
+    for (auto it = byInbox.cbegin(); it != byInbox.cend(); ++it) {
+        sendMove(it.value(), it.key(), {}, { QStringLiteral("deleted") },
+                 tr("Restore"));
+    }
+
+    if (!byInbox.isEmpty()) {
+        m_statusLabel->setText(
+            tr("%n message(s) had no record of where they came from and were "
+               "moved to the inbox.", "", int(byInbox.size())));
+    }
+    if (!stranded.isEmpty()) {
+        m_statusLabel->setText(
+            tr("%n message(s) could not be restored: they belong to no "
+               "configured account.", "", int(stranded.size())));
+    }
+}
+
+void MainWindow::restoreSelectedFromTrash()
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return;
+
+    const ActionScope scope = m_model->messageScopeFor(rows);
+    if (scope.messageIds.isEmpty())
+        return;
+
+    // Resolved by the WORKER, not read from the model.
+    //
+    // The model's tags come from the QUERY, and a row whose delete has not yet
+    // been re-queried still carries its pre-delete tags: measured
+    // `[inbox,unread]` on a message already in the trash, one run in three.
+    // The origin tag is then not found, the message falls into the
+    // no-origin branch, and Restore sends it to the INBOX instead of the
+    // folder it came from, silently and irreversibly.
+    //
+    // A restore has to be right about the destination or it is worse than
+    // doing nothing, so it asks the database rather than trusting a view that
+    // may be a moment behind. restoreSelectedThreads() already worked this
+    // way; this is the same reasoning applied to the message-scoped path.
+    m_pendingRestoreIds = scope.messageIds;
+    QMetaObject::invokeMethod(
+        m_worker, "resolveMessages", Qt::QueuedConnection,
+        Q_ARG(QStringList, scope.messageIds),
+        Q_ARG(QString, QStringLiteral("restore_messages")));
 }
 
 void MainWindow::restoreSelected(bool fallbackToInbox)

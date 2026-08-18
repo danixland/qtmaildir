@@ -776,13 +776,24 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
     emit messagesMovedFrom(origins, destFolder);
 }
 
+void NotmuchWorker::resolveMessages(const QStringList &messageIds,
+                                   const QString &requestTag)
+{
+    if (messageIds.isEmpty())
+        return;
+
+    QStringList terms;
+    terms.reserve(messageIds.size());
+    for (const QString &id : messageIds)
+        terms.append(QStringLiteral("id:%1").arg(id));
+
+    resolveQuery(terms.join(QStringLiteral(" or ")), requestTag);
+}
+
 void NotmuchWorker::resolveThreadMessages(const QStringList &threadIds,
                                           const QString &requestTag)
 {
     if (threadIds.isEmpty())
-        return;
-
-    if (!openReadOnly())
         return;
 
     // One combined query, for the reason applyTagsToThreads() gives: a query
@@ -792,7 +803,15 @@ void NotmuchWorker::resolveThreadMessages(const QStringList &threadIds,
     for (const QString &id : threadIds)
         terms.append(QStringLiteral("thread:%1").arg(id));
 
-    const QString query = terms.join(QStringLiteral(" or "));
+    resolveQuery(terms.join(QStringLiteral(" or ")), requestTag);
+}
+
+void NotmuchWorker::resolveQuery(const QString &query,
+                                 const QString &requestTag)
+{
+    if (!openReadOnly())
+        return;
+
     NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
     if (!nmQuery) {
         emit errorOccurred(QStringLiteral("Cannot resolve selected threads"));

@@ -73,6 +73,14 @@ public:
     /// The built-in sequence for an action, ignoring any user override.
     static QKeySequence defaultSequenceFor(const QString &action);
 
+    /// Whether `sequence` is ANY of `action`'s default bindings.
+    ///
+    /// Not the same question as `sequence == defaultSequenceFor(action)`: an
+    /// action can ship several, and comparing against only the first makes the
+    /// others look like user overrides.
+    static bool isDefaultBinding(const QKeySequence &sequence,
+                                 const QString &action);
+
     /// Every action name carrying a built-in binding.
     static QStringList defaultActions();
 

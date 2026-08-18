@@ -260,6 +260,24 @@
         </translation>
     </message>
     <message>
+        <source>Restore</source>
+        <translation>Ripristina</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) had no record of where they came from and were moved to the inbox.</source>
+        <translation>
+            <numerusform>%n messaggio non aveva traccia della sua provenienza ed è stato spostato in arrivo.</numerusform>
+            <numerusform>%n messaggi non avevano traccia della loro provenienza e sono stati spostati in arrivo.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) could not be restored: they belong to no configured account.</source>
+        <translation>
+            <numerusform>%n messaggio non è stato ripristinato: non appartiene ad alcun account configurato.</numerusform>
+            <numerusform>%n messaggi non sono stati ripristinati: non appartengono ad alcun account configurato.</numerusform>
+        </translation>
+    </message>
+    <message>
         <source>Undelete</source>
         <translation>Ripristina</translation>
     </message>
@@ -368,6 +386,14 @@
     <message>
         <source>Mark thread as &amp;spam</source>
         <translation>Segna conversazione come &amp;spam</translation>
+    </message>
+    <message>
+        <source>&amp;Restore from trash</source>
+        <translation>&amp;Ripristina dal cestino</translation>
+    </message>
+    <message>
+        <source>Move the selected messages out of the trash</source>
+        <translation>Sposta i messaggi selezionati fuori dal cestino</translation>
     </message>
     <message>
         <source>Add spam and remove inbox on whole threads</source>

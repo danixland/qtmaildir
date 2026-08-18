@@ -31,6 +31,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("open_thread"),
         QStringLiteral("archive"),
         QStringLiteral("delete"),
+        QStringLiteral("restore"),
         QStringLiteral("spam"),
         QStringLiteral("toggle_unread"),
         QStringLiteral("mark_all_read"),
@@ -98,6 +99,9 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Return"),       QStringLiteral("open_thread") },
         { QStringLiteral("Ctrl+E"),       QStringLiteral("archive") },
         { QStringLiteral("Ctrl+D"),       QStringLiteral("delete") },
+        // Restore is only enabled in the trash view, so its key is dead
+        // elsewhere rather than doing something surprising.
+        { QStringLiteral("Ctrl+R"),       QStringLiteral("restore") },
         { QStringLiteral("Ctrl+Shift+S"), QStringLiteral("spam") },
         { QStringLiteral("Ctrl+U"),       QStringLiteral("toggle_unread") },
         // Shifted against Ctrl+U, which toggles unread on the selection: this

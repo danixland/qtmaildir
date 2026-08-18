@@ -143,6 +143,18 @@ QString Account::trashQuery() const
     return folderQuery(maildir, trash);
 }
 
+QString Account::inboxFolder() const
+{
+    // Never empty: Restore needs a folder to name, and "Inbox" is both the
+    // Maildir convention and what mbsync's own Inbox directive defaults to.
+    return inbox.isEmpty() ? QStringLiteral("Inbox") : inbox;
+}
+
+QString Account::inboxQuery() const
+{
+    return folderQuery(maildir, inboxFolder());
+}
+
 QString Config::allSentQuery() const
 {
     return joinAccountQueries(m_accounts, &Account::sentQuery);
@@ -449,6 +461,13 @@ void Config::load(const QString &path)
         // reason as sent, above.
         account.trash =
             settings.value(QStringLiteral("trash")).toString().trimmed();
+
+        // Optional, unlike trash: inboxFolder() defaults it to "Inbox", which
+        // is right for any ordinary Maildir. Read so an account whose inbox is
+        // named otherwise can say so, rather than having Restore create a
+        // second folder under a name this program assumed.
+        account.inbox =
+            settings.value(QStringLiteral("inbox")).toString().trimmed();
 
         // Both optional, and both describe this account's chip in the thread
         // list. An account tag is a different taxonomy from a functional one,

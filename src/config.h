@@ -67,6 +67,20 @@ struct Account
     /// reports a missing key through the warnings path.
     QString trash;
 
+    /// The account's inbox folder, relative to maildir. Optional.
+    ///
+    /// Only Restore reads it, as the destination for a message that carries no
+    /// `deleted-from:` origin, which is what mail trashed by another client
+    /// looks like. Defaults to "Inbox", the Maildir convention and mbsync's
+    /// own default.
+    ///
+    /// Configurable rather than hardcoded because the name is not ours to
+    /// assume: naming a folder that does not exist CREATES it, beside the real
+    /// one, and under mbsync's `Create Both` that folder reaches the server.
+    /// Unlike `trash` this is optional, since the default is right for every
+    /// ordinary Maildir and a wrong guess here only affects the fallback.
+    QString inbox;
+
     /// Chip colour in the thread list. Invalid when unset, in which case one
     /// is generated from the account tag's name.
     QColor color;
@@ -114,6 +128,13 @@ struct Account
     /// sentQuery(). The query helper still returns empty so callers compose
     /// uniformly; it is Config::load() that reports the problem.
     QString trashQuery() const;
+
+    /// Matches this account's inbox folder, using inboxFolder().
+    QString inboxQuery() const;
+
+    /// The inbox folder name, which is `inbox` when set and "Inbox"
+    /// otherwise. Never empty, so a caller always has a folder to name.
+    QString inboxFolder() const;
 };
 
 /// A named query, stored in queries.json.

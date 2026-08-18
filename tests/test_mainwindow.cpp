@@ -135,6 +135,11 @@ public:
                     << "maildir=" << accountMaildir << "\n";
                 if (!accountTrash.isEmpty())
                     out << "trash=" << accountTrash << "\n";
+                // The fixture's folders are lowercase, unlike the Maildir
+                // convention Account::inboxFolder() defaults to. Stated rather
+                // than assumed, which is the whole point of the key: naming a
+                // folder that does not exist would CREATE it.
+                out << "inbox=inbox\n";
             }
         }
         file.close();
@@ -372,6 +377,10 @@ private slots:
     void deletingAThreadRootTwiceRestoresItRatherThanRedeleting();
     void deleteThreadMovesEveryMessageAndRepaintsTheRootCard();
     void aFolderNameWithASpaceSurvivesTheRoundTrip();
+    void restoreIsReachableWithoutTheKeyboard();
+    void restoreIsOnlyEnabledInTheTrashView();
+    void restoreReturnsAMessageToItsOriginFolder();
+    void restoreFallsBackToInboxWithoutAnOriginTag();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -9455,6 +9464,208 @@ void TestMainWindow::aFolderNameWithASpaceSurvivesTheRoundTrip()
     QVERIFY2(!QDir(root + QStringLiteral("/acct/Inbox/SlackBuilds")).exists(),
              "a folder named after the truncated origin was created, so the "
              "messages are somewhere mbsync will never sync");
+}
+
+void TestMainWindow::restoreIsReachableWithoutTheKeyboard()
+{
+    // Restore shipped as a keyboard shortcut and nothing else: registered,
+    // iconned, enabled correctly, and present in no menu at all. A user who
+    // does not read the changelog would never learn it exists, and Ctrl+R is
+    // not a guess anyone makes.
+    //
+    // The four places an action must touch are enforced by tests
+    // (knownActions, defaultBindings, the icon table); being REACHABLE is a
+    // fifth that nothing checked, which is why the gap survived a green suite.
+    const Config config;
+    MainWindow window(config);
+
+    auto *restore = window.findChild<QAction *>(QStringLiteral("restore"));
+    QVERIFY(restore);
+
+    const auto menuContains = [](const QMenu *menu, const QAction *action) {
+        return menu && menu->actions().contains(action);
+    };
+
+    // A menu on the MENU BAR, beside Delete whose inverse it is. The context
+    // menu is excluded here so this assertion cannot be satisfied by the one
+    // the next assertion checks: findChildren finds both.
+    auto *context =
+        window.findChild<QMenu *>(QStringLiteral("threadContextMenu"));
+    QVERIFY(context);
+
+    bool inAMenuBarMenu = false;
+    for (const QMenu *menu : window.findChildren<QMenu *>()) {
+        if (menu != context && menuContains(menu, restore)) {
+            inAMenuBarMenu = true;
+            break;
+        }
+    }
+    QVERIFY2(inAMenuBarMenu,
+             "Restore is in no menu-bar menu, so a user browsing the menus "
+             "would never learn it exists");
+
+    // And the thread list's context menu, which is where the other
+    // message-scoped actions are reached by mouse.
+    QVERIFY2(menuContains(context, restore),
+             "Restore is missing from the thread context menu");
+}
+
+void TestMainWindow::restoreIsOnlyEnabledInTheTrashView()
+{
+    // Restore has no meaning outside the trash, and an enabled action that
+    // does nothing is worse than an absent one.
+    //
+    // Enabled from the QUERY rather than from the selection's tags: a message
+    // trashed by another client carries no tag of ours and must still be
+    // restorable, which is the whole reason the trash view is path-based.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("re1@example.org"),
+        QStringLiteral("In the inbox"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Trash"), QStringLiteral("re2@example.org"),
+        QStringLiteral("In the trash"), QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *restore = window.findChild<QAction *>(QStringLiteral("restore"));
+    QVERIFY(model && queryEdit);
+    QVERIFY2(restore, "there is no restore action");
+
+    // An ordinary view. Both fixture messages carry `inbox`, since the
+    // fixture tags all new mail that way regardless of folder, so this is two
+    // rows rather than one; the count is not what is under test.
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2, 15000);
+    QVERIFY2(!restore->isEnabled(),
+             "Restore is enabled in an ordinary view, where it means nothing");
+
+    // The trash view, which is the account's own generated trash query.
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    QVERIFY2(restore->isEnabled(),
+             "Restore is disabled in the trash view, where it is the point");
+}
+
+void TestMainWindow::restoreReturnsAMessageToItsOriginFolder()
+{
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("ro1@example.org"),
+        QStringLiteral("Send me back"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("ro1.example.org");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
+        15000);
+
+    // Now from the trash view, through Restore rather than through a second
+    // Delete: this is the action the user reaches for when browsing trash.
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("restore"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg,
+                     QStringLiteral("id:ro1@example.org and tag:deleted")) == 0,
+        15000);
+
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ro1@example.org")), 1);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ro1@example.org and "
+                                              "tag:\"deleted-from:inbox\"")),
+             0);
+    QVERIFY(!folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
+                                  stem));
+}
+
+void TestMainWindow::restoreFallsBackToInboxWithoutAnOriginTag()
+{
+    // A message trashed by ANOTHER client: it sits in the trash folder and
+    // carries no `deleted-from:` tag, because nothing here put it there. The
+    // real Maildir has such messages, which is why the trash view is path
+    // based rather than tag based.
+    //
+    // Inbox is the documented fallback. Refusing to move it would leave the
+    // user with a message they can see in the trash and cannot get out.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Trash"), QStringLiteral("foreign@example.org"),
+        QStringLiteral("Trashed elsewhere"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("foreign.example.org");
+
+    // The guard this test needs: no origin tag, so the fallback is what is
+    // under test rather than an ordinary restore.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:foreign@example.org and "
+                                              "tag:\"deleted-from:inbox\"")),
+             0);
+
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("restore"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
+                                   stem),
+             "the message was copied out of the trash rather than moved");
 }
 
 void TestMainWindow::undoMovesTheMessageBack()

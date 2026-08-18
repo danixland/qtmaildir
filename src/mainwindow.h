@@ -808,7 +808,28 @@ private:
 
     /// The inverse: moves each selected row's message back to the folder its
     /// `deleted-from:` tag names, stripping both tags.
-    void restoreSelected();
+    ///
+    /// `fallbackToInbox` decides what happens to a message with NO origin tag,
+    /// and the two callers want opposite things. From the trash view the
+    /// message is demonstrably in the trash, trashed by another client, and
+    /// must still come out: it goes to the inbox, reported. From a second
+    /// press of Delete it is not in the trash at all and merely wears a stale
+    /// tag, so the tag comes off and the file stays where it is.
+    void restoreSelected(bool fallbackToInbox = false);
+
+    /// The account's inbox FOLDER name, discovered from its inbox query.
+    ///
+    /// Never hardcoded: the real Maildir has `Inbox` and a fixture has
+    /// `inbox`, and assuming either would create a second folder beside the
+    /// real one on the side that disagreed.
+    QString inboxFolderFor(const Account &account) const;
+
+    /// Whether the current query IS a trash view, for either scope.
+    ///
+    /// Compared against the trash generator's own query rather than against a
+    /// tag: the view is path-based so mail trashed by another client appears
+    /// in it, and such a message carries no tag of ours.
+    bool isShowingTrash() const;
 
     /// The `deleted-from:` tag naming `dbRelativeFolder`, or empty when no
     /// account owns it.

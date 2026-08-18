@@ -849,6 +849,10 @@ void MainWindow::registerActions()
         else
             trashSelected();
     });
+    addAction(QStringLiteral("restore"), tr("&Restore from trash"),
+              tr("Move the selected messages out of the trash"), [this]() {
+        restoreSelected(true);
+    });
     addAction(QStringLiteral("spam"), tr("Mark &spam"),
               tr("Add spam and remove inbox"), [this]() {
         tagSelected({ QStringLiteral("spam") }, { QStringLiteral("inbox") },
@@ -1136,6 +1140,11 @@ void MainWindow::buildMenus()
     auto *messageMenu = menuBar()->addMenu(tr("&Message"));
     messageMenu->addAction(m_actions.value(QStringLiteral("archive")));
     messageMenu->addAction(m_actions.value(QStringLiteral("delete")));
+    // Beside Delete, whose inverse it is. Greyed outside the trash view
+    // rather than hidden: an action that vanishes teaches nothing, while a
+    // disabled entry with its shortcut beside it says both that it exists and
+    // where it applies.
+    messageMenu->addAction(m_actions.value(QStringLiteral("restore")));
     messageMenu->addAction(m_actions.value(QStringLiteral("spam")));
     messageMenu->addSeparator();
     messageMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
@@ -1193,6 +1202,9 @@ void MainWindow::buildMenus()
         // control: two buttons with different consequences looked identical.
         { QStringLiteral("archive"), QStringLiteral("mail-archive") },
         { QStringLiteral("delete"),  QStringLiteral("edit-delete") },
+        // The inverse of delete, and the theme's own name for it: the icon
+        // every desktop uses for taking something back out of the wastebasket.
+        { QStringLiteral("restore"), QStringLiteral("edit-undelete") },
         { QStringLiteral("undo"),    QStringLiteral("edit-undo") },
         { QStringLiteral("spam"),    QStringLiteral("mail-mark-junk") },
         { QStringLiteral("flag"),    QStringLiteral("mail-mark-important") },
@@ -1259,6 +1271,7 @@ void MainWindow::buildMenus()
     m_threadContextMenu->setObjectName(QStringLiteral("threadContextMenu"));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("archive")));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("delete")));
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("restore")));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("spam")));
     m_threadContextMenu->addSeparator();
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
@@ -2459,8 +2472,40 @@ void MainWindow::onQueryFinished(int total, quint64 generation)
     applyPendingRecovery();
 }
 
+bool MainWindow::isShowingTrash() const
+{
+    // Compared against the trash GENERATOR's query, not against the word
+    // "trash" or against a tag. The trash view is path-based so that mail
+    // trashed by another client shows up in it; deciding this from
+    // `tag:deleted` instead would disable Restore on exactly the messages
+    // that most need it, which is the case Restore's fallback exists for.
+    //
+    // Both scopes, because the view composes with the account dropdown like
+    // every other filter: one account's trash, or all of them.
+    const QString query = m_lastQuery.trimmed();
+    if (query.isEmpty())
+        return false;
+
+    const QString all = m_config.allTrashQuery().trimmed();
+    if (!all.isEmpty() && query == all)
+        return true;
+
+    for (const Account &account : m_config.accounts()) {
+        const QString trash = account.trashQuery().trimmed();
+        if (!trash.isEmpty() && query == trash)
+            return true;
+    }
+    return false;
+}
+
 void MainWindow::updateViewWideActions()
 {
+    // Only meaningful on mail that is actually in a trash folder. An enabled
+    // action that does nothing is worse than an absent one, and Restore
+    // outside the trash has nothing to restore from.
+    if (QAction *action = m_actions.value(QStringLiteral("restore")))
+        action->setEnabled(isShowingTrash());
+
     // Threads arrive in batches of kBatchSize, so before the query reports its
     // total the model holds only what has landed. An action that says "all"
     // must not run against a partial set and silently skip the rest, and a
@@ -4458,7 +4503,35 @@ void MainWindow::restoreSelectedThreads()
         Q_ARG(QString, QStringLiteral("undelete_thread")));
 }
 
-void MainWindow::restoreSelected()
+QString MainWindow::inboxFolderFor(const Account &account) const
+{
+    // Discovered from the account's OWN inbox query, never hardcoded.
+    //
+    // The casing is not ours to assume: the real Maildir has `Inbox` and a
+    // test fixture has `inbox`, and picking either would create a SECOND
+    // folder beside the real one on whichever side disagreed. That is exactly
+    // the failure a truncated origin folder caused on real mail this morning,
+    // and under mbsync's `Create Both` such a folder can reach the server.
+    //
+    // The inbox query is a generated `path:"<maildir>/<folder>/**"`, so the
+    // folder name is the part between the account prefix and the glob.
+    const QString query = account.inboxQuery();
+    const QString prefix =
+        QStringLiteral("path:\"") + account.maildir + QLatin1Char('/');
+    const QString suffix = QStringLiteral("/**\"");
+    if (query.startsWith(prefix) && query.endsWith(suffix)) {
+        const int from = prefix.length();
+        const int length = query.length() - from - suffix.length();
+        if (length > 0)
+            return query.mid(from, length);
+    }
+
+    // No inbox configured for this account. `Inbox` is the Maildir
+    // convention and is what mbsync's own `Inbox` directive defaults to.
+    return QStringLiteral("Inbox");
+}
+
+void MainWindow::restoreSelected(bool fallbackToInbox)
 {
     const QModelIndexList rows =
         m_threadView->selectionModel()->selectedRows();
@@ -4496,14 +4569,58 @@ void MainWindow::restoreSelected()
     }
 
     if (!unknown.isEmpty()) {
-        // No origin recorded, which is the case for mail deleted by an older
-        // version or tagged by hand. The tag comes off so the row stops
-        // claiming to be deleted, but no file moves: guessing a folder would
-        // put the message somewhere the user never had it.
-        sendMessageTagChange(unknown, {}, { QStringLiteral("deleted") },
-                             tr("Undelete"));
-        m_undoStack.push(new MessageTagCommand(
-            this, unknown, {}, { QStringLiteral("deleted") }, tr("Undelete")));
+        // No origin recorded. Two quite different situations reach here and
+        // they want opposite things, which is what `fallbackToInbox` selects.
+        //
+        // From the TRASH VIEW the message is demonstrably in the trash, put
+        // there by another client, and refusing to move it leaves the user
+        // looking at a message they cannot get out. Inbox is the documented
+        // fallback, and it is reported, because a guess the user is not told
+        // about is worse than the guess itself.
+        //
+        // From a second press of Delete the message is NOT in the trash: it is
+        // sitting wherever it always was, wearing a stale `deleted` tag from
+        // an older version or from a hand-written notmuch command. Moving it
+        // to the inbox there would relocate mail the user never asked to move.
+        // The tag comes off and the file stays put.
+        if (fallbackToInbox) {
+            QHash<QString, QStringList> byInbox;
+            QStringList stranded;
+            for (const QString &messageId : unknown) {
+                const Account account =
+                    accountForMessagePath(m_model->messageById(messageId).filePath);
+                if (account.maildir.isEmpty()) {
+                    stranded.append(messageId);
+                    continue;
+                }
+                byInbox[account.maildir + QLatin1Char('/')
+                        + inboxFolderFor(account)]
+                    .append(messageId);
+            }
+
+            for (auto it = byInbox.cbegin(); it != byInbox.cend(); ++it) {
+                sendMove(it.value(), it.key(), {},
+                         { QStringLiteral("deleted") }, tr("Restore"));
+            }
+
+            if (!byInbox.isEmpty()) {
+                m_statusLabel->setText(
+                    tr("%n message(s) had no record of where they came from "
+                       "and were moved to the inbox.", "",
+                       int(unknown.size() - stranded.size())));
+            }
+            if (!stranded.isEmpty()) {
+                m_statusLabel->setText(
+                    tr("%n message(s) could not be restored: they belong to no "
+                       "configured account.", "", int(stranded.size())));
+            }
+        } else {
+            sendMessageTagChange(unknown, {}, { QStringLiteral("deleted") },
+                                 tr("Undelete"));
+            m_undoStack.push(new MessageTagCommand(
+                this, unknown, {}, { QStringLiteral("deleted") },
+                tr("Undelete")));
+        }
     }
 
     for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {

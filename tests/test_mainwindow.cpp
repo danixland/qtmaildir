@@ -9079,10 +9079,19 @@ void TestMainWindow::deletingTwiceLeavesNoOriginTagBehind()
 
     // The origin tag really was written, so the assertion after the second
     // delete is about it being REMOVED rather than never having existed.
-    queryEdit->setText(QStringLiteral(
-        "id:twice@example.org and tag:\"deleted-from:inbox\""));
-    queryEdit->returnPressed();
-    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    //
+    // Asked of the DATABASE, not through the query bar. The file arriving in
+    // the trash is not the end of the delete: the tag writes land after the
+    // rename this test waits for, and a query bar run inside that gap returns
+    // zero rows FOREVER, because QTRY_VERIFY re-reads rowCount() and never
+    // re-runs the query. Measured 1 failure in 3 runs, each burning the full
+    // 15s timeout on a guard that was correct about a database it had asked
+    // too early.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(backed.fixture().configPath(),
+                     QStringLiteral("id:twice@example.org and "
+                                    "tag:\"deleted-from:inbox\"")) == 1,
+        15000);
 
     // Second press on the same message, which restores it.
     queryEdit->setText(QStringLiteral("id:twice@example.org"));

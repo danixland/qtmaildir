@@ -278,6 +278,10 @@
         </translation>
     </message>
     <message>
+        <source>Mail tagged deleted but not in a trash folder. Select what should go and press Delete.</source>
+        <translation>Posta etichettata come eliminata ma non in un cestino. Seleziona cosa deve essere rimosso e premi Elimina.</translation>
+    </message>
+    <message>
         <source>Undelete</source>
         <translation>Ripristina</translation>
     </message>
@@ -394,6 +398,14 @@
     <message>
         <source>Move the selected messages out of the trash</source>
         <translation>Sposta i messaggi selezionati fuori dal cestino</translation>
+    </message>
+    <message>
+        <source>Find &amp;stranded deleted mail</source>
+        <translation>&amp;Cerca posta eliminata non spostata</translation>
+    </message>
+    <message>
+        <source>Show mail tagged deleted that is not in a trash folder</source>
+        <translation>Mostra la posta etichettata come eliminata che non si trova in un cestino</translation>
     </message>
     <message>
         <source>Add spam and remove inbox on whole threads</source>

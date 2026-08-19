@@ -11,6 +11,55 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- Delete now moves mail into the account's trash folder instead of only
+  tagging it. A **Trash** filter sits beside Unread, Inbox, Important and
+  Sent, and composes with the account selector like the others.
+- **Restore from trash** (`Ctrl+R`), enabled while the trash view is showing.
+  A message this application deleted returns to the folder it came from; one
+  trashed by another client returns to the inbox.
+- **Find stranded deleted mail** (`Ctrl+Alt+T`), in the Message menu. It lists
+  mail tagged `deleted` that never moved anywhere. Run it whenever you like;
+  it reports and moves nothing on its own.
+- An optional per-account `inbox` key, naming the inbox folder a restore falls
+  back to when a message carries no record of where it came from. It defaults
+  to `Inbox`, so an account whose inbox is named that needs nothing.
+- `Del` now deletes, alongside `Ctrl+D`. It still edits text in the query bar
+  and in any other text field, so nothing is lost where the key already had a
+  job.
+
+### Changed
+
+- Open thread, Clear message pane and Clear selection appear in the View menu.
+  All three existed and were reachable only by their shortcuts.
+
+### Upgrading
+
+**Every account now needs a `trash` key** in `qtmaildir.conf`, naming its
+trash folder relative to `maildir`:
+
+    [account.work]
+    maildir = work
+    trash = Trash
+
+The folder must be one your `mbsync` configuration actually syncs, or the move
+will never reach the server. Accounts without the key still load and still
+read mail, but Delete cannot work on them and a warning says so at startup.
+
+**Name the folder exactly as it exists on the server.** A trash or inbox name
+that does not match creates that folder rather than reporting an error, and
+under mbsync's `Create Both` the wrongly named folder then propagates to the
+mail server, where other clients will see it.
+
+**Mail deleted by earlier versions is not migrated.** It carries the `deleted`
+tag and sits wherever it always was. Use **Find stranded deleted mail** to
+review it, and Delete on what should really go.
+
+Note that Delete's reversibility depends on your provider: a trash folder the
+provider purges on a timer will eventually remove the mail for good.
+
+
 ## [0.25.0] - 2026-08-17
 
 Acting on a row now means the message that row displays, not the whole

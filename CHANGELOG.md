@@ -11,6 +11,17 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-08-19
+
+Delete now moves mail into the account's trash folder instead of only tagging
+it. Every version before this one added a `deleted` tag and left the file
+exactly where it was, so deleted mail accumulated in the inboxes with only a
+chip to say otherwise. A Trash filter joins the other four, Restore from trash
+is its inverse, and a menu entry lists the mail the old behaviour stranded so
+it can be reviewed rather than migrated behind your back.
+
+**Every account needs a new `trash` key.** See Upgrading below.
+
 ### Added
 
 - Delete now moves mail into the account's trash folder instead of only

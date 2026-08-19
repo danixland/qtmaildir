@@ -11,6 +11,28 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Fixed
+
+- Moving a message between folders now gives its file a fresh Maildir name.
+  0.26.0 carried the old name across, including mbsync's `,U=<n>` UID infix,
+  which belongs to the folder the file came from. Moving a message out and
+  back reinserted a UID the server had since reassigned, and mbsync refused
+  the folder with `Maildir error: duplicate UID`. If you saw that error, see
+  Upgrading below.
+
+### Upgrading
+
+If a sync reported `Maildir error: duplicate UID <n> in <folder>` after
+deleting or restoring mail with 0.26.0, that folder holds two files claiming
+one UID. No mail is lost; mbsync simply refuses to sync the folder until it is
+resolved. Stop any running sync, then strip the `,U=<n>` infix from the newer
+of each pair and reindex:
+
+    notmuch new
+
+mbsync re-derives the UID on the next sync. The code no longer creates this
+state.
+
 ### Added
 
 - The message pane's right-click menu offers **Select all**. Chromium's own menu

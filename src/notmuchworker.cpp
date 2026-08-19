@@ -20,9 +20,12 @@
 
 #include <notmuch.h>
 
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QHostInfo>
 #include <QSet>
 
 #include <cstdlib>
@@ -662,6 +665,63 @@ void NotmuchWorker::applyTags(const TagChange &change)
     emit tagsApplied(change);
 }
 
+namespace {
+
+/// A fresh Maildir filename for a message being moved between folders,
+/// preserving only its `:2,<flags>` suffix.
+///
+/// mbsync's manual is explicit about why this exists, under "the more
+/// efficient default UID mapping scheme": "it is important that the MUA
+/// renames files when moving them between Maildir folders", and "the general
+/// expectation is that a completely new filename is generated as if the
+/// message was new".
+///
+/// The `,U=<n>` infix mbsync writes is its per-folder IMAP UID. Carrying it
+/// into another folder makes it a claim about a folder the file is no longer
+/// in; moving a message out and back then reinserts a UID the server has
+/// since reassigned, and mbsync refuses the folder with `Maildir error:
+/// duplicate UID`. Measured on real mail, four collisions in one folder from
+/// a single move-and-restore.
+///
+/// The FLAGS are kept, deliberately, and that is not a contradiction of
+/// "as if the message was new". They record seen, flagged and replied, and
+/// `maildir.synchronize_flags` is true, so notmuch reads them back as tags:
+/// dropping them would mark every deleted message unread and lose Important
+/// on the way to the trash. Only the unique part is regenerated.
+QString freshMaildirName(const QString &oldName)
+{
+    // The `:2,` suffix, when there is one. `info` is everything from the
+    // separator on, so an empty-flag `:2,` is preserved as faithfully as
+    // `:2,FS`.
+    QString info;
+    const int sep = oldName.indexOf(QStringLiteral(":2,"));
+    if (sep >= 0)
+        info = oldName.mid(sep);
+
+    // The conventional left-to-right unique part: time, a per-process counter,
+    // the pid, the host. The counter is what makes two messages moved in the
+    // same second distinct, which a timestamp alone does not guarantee.
+    static quint64 counter = 0;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const QString host = QHostInfo::localHostName().isEmpty()
+                             ? QStringLiteral("localhost")
+                             : QHostInfo::localHostName();
+
+    return QStringLiteral("%1.M%2P%3Q%4.%5%6")
+        .arg(now)
+        .arg(QDateTime::currentMSecsSinceEpoch() % 1000)
+        .arg(QCoreApplication::applicationPid())
+        .arg(++counter)
+        // A `/` or a `:` in a hostname would break the path or the flag
+        // separator. Neither is legal in a hostname, so this is belt and
+        // braces rather than a known case.
+        .arg(QString(host).replace(QLatin1Char('/'), QLatin1Char('_'))
+                 .replace(QLatin1Char(':'), QLatin1Char('_')))
+        .arg(info);
+}
+
+}  // namespace
+
 void NotmuchWorker::moveMessages(const QStringList &messageIds,
                                  const QString &destFolder)
 {
@@ -728,14 +788,23 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
             continue;
         }
 
-        const QString to = destDir + QLatin1Char('/') + QFileInfo(from).fileName();
-        if (from == to) {
-            // Already where it was asked to go. Reported as moved, since the
-            // caller's request is satisfied.
+        // Already where it was asked to go, compared on the DIRECTORY rather
+        // than on the full path. It used to compare paths, which worked only
+        // because the filename was carried across unchanged; with a fresh name
+        // that test can never be true, so a message already in the destination
+        // would be renamed on every move for no reason, and every rename is a
+        // new filename mbsync has to reconcile.
+        if (QFileInfo(from).absolutePath() == QFileInfo(destDir).absoluteFilePath()) {
             moved.append(id);
             origins.insert(id, origin);
             continue;
         }
+
+        // A FRESH name, never the old one. See freshMaildirName(): carrying
+        // the `,U=` infix across a folder boundary is what produced
+        // `Maildir error: duplicate UID` on real mail.
+        const QString to = destDir + QLatin1Char('/')
+                           + freshMaildirName(QFileInfo(from).fileName());
 
         if (!QFile::rename(from, to)) {
             emit errorOccurred(QStringLiteral("Cannot move %1 to %2")

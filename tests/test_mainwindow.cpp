@@ -8907,15 +8907,51 @@ static bool notmuchTag(const QString &configPath, const QStringList &args)
     return process.waitForFinished(15000) && process.exitCode() == 0;
 }
 
+/// Whether `dir` holds the message whose id the fixture wrote as `stem`.
+///
+/// Matches on the MESSAGE-ID INSIDE each file, never on the filename. It used
+/// to compare filenames, which worked only while a move carried the name
+/// across unchanged. It no longer does: mbsync requires an MUA to rename a
+/// file when it moves it between folders, so `NotmuchWorker::moveMessages()`
+/// generates a fresh name and this helper could never find a moved message
+/// again. Every one of these assertions failed at once, each reporting "the
+/// file is not there" about a file that was.
+///
+/// `stem` stays in the fixture's `<local>.example.org` form so the fifty-odd
+/// call sites did not have to change; it is turned back into
+/// `<local@example.org>` here.
 static bool folderHasMessageFile(const QString &dir, const QString &stem)
 {
     QDir directory(dir);
     if (!directory.exists())
         return false;
+
+    // `del1.example.org` is the fixture's rendering of `del1@example.org`:
+    // it replaces the `@` to make a filename-safe stem. Only the LAST dot
+    // before the domain is the substituted one, so the split is on the first
+    // dot, which is where the local part ends for every id these tests use.
+    const int dot = stem.indexOf(QLatin1Char('.'));
+    if (dot < 0)
+        return false;
+    const QString messageId = QStringLiteral("<%1@%2>")
+                                  .arg(stem.left(dot), stem.mid(dot + 1));
+
     const QStringList entries = directory.entryList(QDir::Files);
     for (const QString &entry : entries) {
-        if (entry == stem || entry.startsWith(stem + QLatin1Char(':')))
-            return true;
+        QFile file(directory.filePath(entry));
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        // The header block only: a quoted id in a body must not count.
+        while (!file.atEnd()) {
+            const QByteArray line = file.readLine();
+            if (line.trimmed().isEmpty())
+                break;
+            if (line.startsWith("Message-ID:") || line.startsWith("Message-Id:")) {
+                if (QString::fromUtf8(line).contains(messageId))
+                    return true;
+                break;
+            }
+        }
     }
     return false;
 }

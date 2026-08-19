@@ -38,8 +38,9 @@ state.
 - The message pane's right-click menu offers **Select all**. Chromium's own menu
   for this pane has never carried it.
 - Copying from the message pane now says what was copied. Copy, Copy link
-  address, Copy image and Copy image address each report in the status bar,
-  where they expire like every other transient message.
+  address, Copy image and Copy image address each show a brief confirmation in
+  the bottom right of the pane, beside the gesture rather than at the far end
+  of the window.
 
 ## [0.26.0] - 2026-08-19
 

@@ -33,6 +33,7 @@
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QtNumeric>
+#include <QResizeEvent>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -180,13 +181,39 @@ MessageView::MessageView(QWidget *parent)
         { QWebEnginePage::CopyImageUrlToClipboard, QT_TR_NOOP("Copied the image address") },
     };
 
+    // The toast itself, a child of the pane rather than a layout item: it
+    // floats OVER the message, so nothing reflows when it appears and the text
+    // the user just copied does not jump under the cursor.
+    m_copyToast = new QLabel(this);
+    m_copyToast->setObjectName(QStringLiteral("copyToast"));
+    // Plain text, deliberately. The strings are ours, but a label that guesses
+    // under Qt::AutoText is one careless change away from rendering markup,
+    // and this pane's whole job is displaying input from strangers.
+    m_copyToast->setTextFormat(Qt::PlainText);
+    m_copyToast->setAlignment(Qt::AlignCenter);
+    // Opaque, or the message underneath shows through and the confirmation is
+    // unreadable over exactly the content it is confirming.
+    m_copyToast->setAutoFillBackground(true);
+    applyToastPalette();
+    m_copyToast->hide();
+
+    m_copyToastTimer = new QTimer(this);
+    m_copyToastTimer->setSingleShot(true);
+    m_copyToastTimer->setInterval(kToastMs);
+    connect(m_copyToastTimer, &QTimer::timeout,
+            m_copyToast, &QWidget::hide);
+
     for (const auto &report : kCopyReports) {
         QAction *action = m_view->page()->action(report.action);
         if (!action)
             continue;
         const QString message = tr(report.message);
         connect(action, &QAction::triggered, this, [this, message]() {
-            emit statusMessage(message);
+            // In the pane, at the user's request, rather than in the status
+            // bar item 115 first used: a copy happens here, and the status bar
+            // is at the other end of the window, so the confirmation was
+            // landing far from the gesture that caused it.
+            showCopyToast(message);
         });
     }
 
@@ -773,14 +800,87 @@ void MessageView::showDetailsDialog()
     dialog.exec();
 }
 
+void MessageView::applyToastPalette()
+{
+    if (!m_copyToast)
+        return;
+
+    // From the PALETTE, never hardcoded. The pane already re-renders its
+    // document on a PaletteChange so the message follows the desktop theme;
+    // a toast painted in fixed colours would be the one part of the pane that
+    // did not, and would be unreadable under whichever theme it was not
+    // designed for.
+    //
+    // ToolTipBase/ToolTipText specifically: a toast IS a tooltip in everything
+    // but how it is triggered, so this is the role the theme already styles
+    // for "small transient thing floating over content".
+    QPalette toastPalette = m_copyToast->palette();
+    toastPalette.setColor(QPalette::Window,
+                          palette().color(QPalette::ToolTipBase));
+    toastPalette.setColor(QPalette::WindowText,
+                          palette().color(QPalette::ToolTipText));
+    m_copyToast->setPalette(toastPalette);
+}
+
+void MessageView::showCopyToast(const QString &text)
+{
+    if (!m_copyToast)
+        return;
+
+    // A checkmark, per the user's description. Prepended here rather than
+    // baked into each string so the four messages stay translatable as plain
+    // sentences and the mark cannot go missing from one of them.
+    m_copyToast->setText(QStringLiteral("\u2713  ") + text);
+    m_copyToast->adjustSize();
+    positionToast();
+    m_copyToast->show();
+    m_copyToast->raise();
+
+    // Restarted, not merely started: a second copy while the first toast is up
+    // must get its own full reading time rather than inheriting what is left
+    // of the previous countdown.
+    m_copyToastTimer->start();
+}
+
+void MessageView::positionToast()
+{
+    if (!m_copyToast)
+        return;
+
+    // Anchored to the pane's bottom right, inset by a margin so it does not
+    // touch the edges. Placed against the WIDGET rather than against m_view:
+    // the web view's geometry shifts as the header grows and the attachment
+    // bar appears, and the toast should sit in the same corner regardless.
+    constexpr int margin = 12;
+    const QSize size = m_copyToast->sizeHint();
+    m_copyToast->setGeometry(width() - size.width() - margin,
+                             height() - size.height() - margin,
+                             size.width(), size.height());
+}
+
+void MessageView::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+
+    // A hand-placed child does not follow its parent the way a laid-out one
+    // does, so without this the toast stays where the pane used to end.
+    positionToast();
+}
+
 void MessageView::changeEvent(QEvent *event)
 {
     QWidget::changeEvent(event);
 
     // Only when there is something to re-render: rendering an empty item list
     // would replace a deliberately blank pane with an empty document.
-    if (event->type() == QEvent::PaletteChange && !m_items.isEmpty())
-        render();
+    if (event->type() == QEvent::PaletteChange) {
+        // The toast follows the theme too, and unconditionally: unlike the
+        // document it has no items to guard against, and a toast left in the
+        // old theme's colours would be unreadable the first time it appeared.
+        applyToastPalette();
+        if (!m_items.isEmpty())
+            render();
+    }
 }
 
 void MessageView::render()

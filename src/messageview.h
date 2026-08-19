@@ -20,6 +20,7 @@
 
 #include <QList>
 #include <QUrl>
+#include <QTimer>
 #include <QWidget>
 
 #include "htmlbuilder.h"
@@ -97,6 +98,10 @@ public:
     /// The body zoom factor. Chromium's own range is roughly 0.25 to 5.0;
     /// these are tighter, since a pane at either extreme is unusable and the
     /// only visible way back is a menu entry the user cannot read.
+    /// How long the copy confirmation stays up. Long enough to read four
+    /// words, short enough that it is gone before it becomes furniture.
+    static constexpr int kToastMs = 2000;
+
     static constexpr qreal kMinZoom = 0.5;
     static constexpr qreal kMaxZoom = 3.0;
     static constexpr qreal kDefaultZoom = 1.0;
@@ -257,6 +262,9 @@ protected:
     /// until the next selection.
     void changeEvent(QEvent *event) override;
 
+    /// Keeps the hand-placed toast anchored to the bottom right.
+    void resizeEvent(QResizeEvent *event) override;
+
 private:
     void render();
     void updateHeader();
@@ -303,6 +311,30 @@ private:
     /// Shared with the web view's menu in a later task so the two cannot grow
     /// different wording or a different pair of operations.
     void addSearchEntries(QMenu *menu, const QList<SearchOffer> &offers);
+
+    /// The copy confirmation, floating over the web view in the pane's bottom
+    /// right rather than in the window's status bar.
+    ///
+    /// A CHILD placed by hand, never a layout item: it must sit on top of the
+    /// message rather than take a strip away from it, so nothing reflows when
+    /// it appears and the text the user just copied does not jump. That is
+    /// also why positionToast() exists and why resizeEvent() is overridden;
+    /// a hand-placed child does not follow its parent the way a laid-out one
+    /// does.
+    QLabel *m_copyToast = nullptr;
+    QTimer *m_copyToastTimer = nullptr;
+
+    /// Paints the toast in the theme's tooltip colours.
+    ///
+    /// Re-applied on a PaletteChange, so it follows the desktop theme the way
+    /// the rendered document already does.
+    void applyToastPalette();
+
+    /// Shows the toast with `text` and restarts its countdown.
+    void showCopyToast(const QString &text);
+
+    /// Puts the toast in the pane's bottom right, inside the margins.
+    void positionToast();
 
     QList<ThreadRenderItem> m_items;
     bool m_preferHtml = true;

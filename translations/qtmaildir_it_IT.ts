@@ -982,7 +982,7 @@
     </message>
     <message>
         <source>Copied the image address</source>
-        <translation>Indirizzo dell'immagine copiato</translation>
+        <translation>Indirizzo dell&apos;immagine copiato</translation>
     </message>
     <message>
         <source>Details...</source>

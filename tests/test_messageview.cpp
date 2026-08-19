@@ -60,6 +60,8 @@ private slots:
     void theBodyMenuDropsTheBrowsersOwnActions();
     void theBodyMenuOffersSelectAll();
     void aCopyFromThePaneReportsWhatWasCopied();
+    void theCopyToastAppearsOverThePaneAndFades();
+    void theCopyToastStaysAnchoredWhenThePaneResizes();
     void aSearchFromTheDetailsDialogClosesIt();
 
 private:
@@ -825,7 +827,13 @@ void TestMessageView::aCopyFromThePaneReportsWhatWasCopied()
 {
     // Item 115. Copy link address, Copy image address and Copy image all work
     // and none of them said so. Chromium does not report success, so the pane
-    // listens to its actions and emits the pane's own status message.
+    // listens to its actions and shows its own confirmation.
+    //
+    // Reported through the in-pane TOAST since the user asked for it there
+    // rather than in the status bar: a copy happens in the pane, and the
+    // status bar is at the other end of the window. This test is about the
+    // four entries each saying something DIFFERENT; where it is displayed is
+    // theCopyToastAppearsOverThePaneAndFades().
     //
     // Unlike item 117's entry, this IS fully testable: the connections are made
     // to the page's own QActions in the constructor, so triggering one runs the
@@ -834,8 +842,8 @@ void TestMessageView::aCopyFromThePaneReportsWhatWasCopied()
     auto *page = view.findChild<QWebEnginePage *>();
     QVERIFY2(page, "no page, so this test would assert nothing");
 
-    QSignalSpy spy(&view, &MessageView::statusMessage);
-    QVERIFY(spy.isValid());
+    auto *toast = view.findChild<QLabel *>(QStringLiteral("copyToast"));
+    QVERIFY2(toast, "there is no copy toast at all");
 
     // Each entry names WHAT was copied. "Copied" alone is worse than nothing
     // when three entries sit together in one menu, which the item states as a
@@ -858,18 +866,122 @@ void TestMessageView::aCopyFromThePaneReportsWhatWasCopied()
         // nothing while looking thorough.
         action->setEnabled(true);
 
-        spy.clear();
+        toast->clear();
         action->trigger();
 
-        QTRY_VERIFY_WITH_TIMEOUT(spy.count() == 1, 5000);
-        const QString message = spy.takeFirst().at(0).toString();
-        QVERIFY2(!message.isEmpty(), "a copy reported an empty status message");
+        QTRY_VERIFY_WITH_TIMEOUT(!toast->text().isEmpty(), 5000);
+        const QString message = toast->text();
         seen.append(message);
     }
 
     // Four distinct messages, so no two entries report the same thing.
     QCOMPARE(seen.size(), copies.size());
     QCOMPARE(QSet<QString>(seen.cbegin(), seen.cend()).size(), copies.size());
+}
+
+void TestMessageView::theCopyToastAppearsOverThePaneAndFades()
+{
+    // The user's preference, given after item 115 shipped the status-bar
+    // version: "a small transient with a checkmark in the bottom right of the
+    // message pane". A copy happens IN the pane, and the status bar is at the
+    // other end of the window, so the confirmation was landing far from the
+    // gesture that caused it.
+    MessageView view;
+    view.resize(600, 400);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+
+    auto *page = view.findChild<QWebEnginePage *>();
+    auto *toast = view.findChild<QLabel *>(QStringLiteral("copyToast"));
+    QVERIFY2(page, "no page, so this test would assert nothing");
+    QVERIFY2(toast, "there is no copy toast at all");
+
+    // Hidden until something is copied: a confirmation that is always visible
+    // confirms nothing.
+    QVERIFY2(!toast->isVisible(), "the toast is showing before anything was copied");
+
+    QAction *copy = page->action(QWebEnginePage::CopyLinkToClipboard);
+    QVERIFY(copy);
+    // Chromium disables a copy action when there is nothing of that kind under
+    // the cursor, and trigger() on a disabled QAction emits nothing at all.
+    copy->setEnabled(true);
+    copy->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(toast->isVisible(), 5000);
+    // It says WHAT was copied, not merely that something was, which is the
+    // constraint item 115 already carried: three copy entries sit together in
+    // one menu.
+    QVERIFY2(toast->text().contains(QStringLiteral("link")),
+             qPrintable(QStringLiteral("the toast says '%1'").arg(toast->text())));
+
+    // Opaque and theme-coloured. A transparent label over a rendered message
+    // is unreadable against exactly the content it is confirming, and a
+    // geometry assertion cannot see that: the rect is correct either way.
+    QVERIFY2(toast->autoFillBackground(),
+             "the toast is transparent, so it reads over the message body");
+    QCOMPARE(toast->palette().color(QPalette::Window),
+             view.palette().color(QPalette::ToolTipBase));
+
+    // Bottom right of the pane, inside it rather than beside it.
+    const QRect paneRect = view.rect();
+    const QRect toastRect = toast->geometry();
+    QVERIFY2(toastRect.right() <= paneRect.right(),
+             "the toast hangs off the right edge of the pane");
+    QVERIFY2(toastRect.bottom() <= paneRect.bottom(),
+             "the toast hangs off the bottom edge of the pane");
+    QVERIFY2(toastRect.center().x() > paneRect.center().x(),
+             "the toast is not in the right half of the pane");
+    QVERIFY2(toastRect.center().y() > paneRect.center().y(),
+             "the toast is not in the bottom half of the pane");
+
+    // And it goes away on its own. Transient is the whole point: a
+    // confirmation the user has to dismiss is worse than none.
+    QTRY_VERIFY_WITH_TIMEOUT(!toast->isVisible(),
+                             int(MessageView::kToastMs) + 4000);
+}
+
+void TestMessageView::theCopyToastStaysAnchoredWhenThePaneResizes()
+{
+    // A manually positioned child does not follow its parent, unlike a widget
+    // in a layout. The toast cannot BE in the layout, since it floats over the
+    // web view rather than taking space from it, so the anchoring is this
+    // class's job and a resize is where that breaks.
+    MessageView view;
+    view.resize(600, 400);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+
+    auto *page = view.findChild<QWebEnginePage *>();
+    auto *toast = view.findChild<QLabel *>(QStringLiteral("copyToast"));
+    QVERIFY(page && toast);
+
+    QAction *copy = page->action(QWebEnginePage::Copy);
+    QVERIFY(copy);
+    copy->setEnabled(true);
+    copy->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(toast->isVisible(), 5000);
+
+    // SHRUNK, not grown, and that distinction is the whole test. Growing the
+    // pane moves its right and bottom edges AWAY, so a toast left at the old
+    // position still satisfies "inside the pane" and the assertions below pass
+    // against a toast that never moved. Measured: with the reposition deleted,
+    // a 600x400 -> 900x700 resize left this test green.
+    //
+    // Shrinking puts the stale position outside the new rect, which is also
+    // what the user would actually see: a confirmation half off the pane.
+    view.resize(360, 240);
+    // The guard: the pane really did change size, so the assertion below is
+    // about the toast following rather than about nothing having moved.
+    QTRY_COMPARE_WITH_TIMEOUT(view.width(), 360, 5000);
+
+    const QRect paneRect = view.rect();
+    const QRect toastRect = toast->geometry();
+    QVERIFY2(toastRect.right() <= paneRect.right(),
+             "the toast did not follow the pane's right edge");
+    QVERIFY2(toastRect.center().x() > paneRect.center().x(),
+             "the toast is stranded in the left half after a resize");
+    QVERIFY2(toastRect.center().y() > paneRect.center().y(),
+             "the toast is stranded in the top half after a resize");
 }
 
 void TestMessageView::aSearchFromTheDetailsDialogClosesIt()

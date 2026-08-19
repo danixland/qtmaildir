@@ -44,6 +44,10 @@
         <translation>[completion] extra_mimetypes: la voce &apos;%1&apos; non ha un mimetype; verrà ignorata.</translation>
     </message>
     <message>
+        <source>Account &apos;%1&apos; has no trash folder configured; add a &apos;trash&apos; key to its section. Delete will not work for this account until it does.</source>
+        <translation>L&apos;account &apos;%1&apos; non ha un cestino configurato; aggiungere una chiave &apos;trash&apos; alla sua sezione. L&apos;eliminazione non funzionerà per questo account finché non verrà fatto.</translation>
+    </message>
+    <message>
         <source>Startup account &apos;%1&apos; is not a configured account; starting on all accounts.</source>
         <translation>L&apos;account iniziale &apos;%1&apos; non è un account configurato; si parte da tutti gli account.</translation>
     </message>
@@ -91,6 +95,10 @@
         <source>Sent</source>
         <translation>Inviati</translation>
     </message>
+    <message>
+        <source>Trash</source>
+        <translation>Cestino</translation>
+    </message>
 </context>
 <context>
     <name>HtmlBuilder</name>
@@ -123,20 +131,6 @@
     <message>
         <source>Unsynced changes</source>
         <translation>Modifiche non sincronizzate</translation>
-    </message>
-    <message numerus="yes">
-        <source>%n tag change(s) have not been synced, and no sync command is configured. Quit anyway?</source>
-        <translation>
-            <numerusform>%n modifica alle etichette non è stata sincronizzata e non è configurato alcun comando di sincronizzazione. Uscire comunque?</numerusform>
-            <numerusform>%n modifiche alle etichette non sono state sincronizzate e non è configurato alcun comando di sincronizzazione. Uscire comunque?</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n tag change(s) have not been synced.</source>
-        <translation>
-            <numerusform>%n modifica alle etichette non è stata sincronizzata.</numerusform>
-            <numerusform>%n modifiche alle etichette non sono state sincronizzate.</numerusform>
-        </translation>
     </message>
     <message>
         <source>Sync before quitting?</source>
@@ -255,12 +249,59 @@
         <translation>Aggiunge o rimuove l&apos;etichetta deleted</translation>
     </message>
     <message>
+        <source>Changes made here that a sync has not yet carried to the mail store. An external notmuch run can clear them without this count noticing.</source>
+        <translation>Modifiche fatte qui che nessuna sincronizzazione ha ancora trasferito all&apos;archivio di posta. Un&apos;esecuzione esterna di notmuch può azzerarle senza che questo conteggio se ne accorga.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) could not be deleted: no trash folder is configured for their account.</source>
+        <translation>
+            <numerusform>%n messaggio non è stato eliminato: nessuna cartella cestino è configurata per il suo account.</numerusform>
+            <numerusform>%n messaggi non sono stati eliminati: nessuna cartella cestino è configurata per il loro account.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>Ripristina</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) had no record of where they came from and were moved to the inbox.</source>
+        <translation>
+            <numerusform>%n messaggio non aveva traccia della sua provenienza ed è stato spostato in arrivo.</numerusform>
+            <numerusform>%n messaggi non avevano traccia della loro provenienza e sono stati spostati in arrivo.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) could not be restored: they belong to no configured account.</source>
+        <translation>
+            <numerusform>%n messaggio non è stato ripristinato: non appartiene ad alcun account configurato.</numerusform>
+            <numerusform>%n messaggi non sono stati ripristinati: non appartengono ad alcun account configurato.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Mail tagged deleted but not in a trash folder. Select what should go and press Delete.</source>
+        <translation>Posta etichettata come eliminata ma non in un cestino. Seleziona cosa deve essere rimosso e premi Elimina.</translation>
+    </message>
+    <message>
         <source>Undelete</source>
         <translation>Ripristina</translation>
     </message>
     <message>
         <source>Delete</source>
         <translation>Elimina</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n change(s) have not been synced, and no sync command is configured. Quit anyway?</source>
+        <translation>
+            <numerusform>%n modifica non è stata sincronizzata e non è configurato alcun comando di sincronizzazione. Uscire comunque?</numerusform>
+            <numerusform>%n modifiche non sono state sincronizzate e non è configurato alcun comando di sincronizzazione. Uscire comunque?</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n change(s) have not been synced.</source>
+        <translation>
+            <numerusform>%n modifica non è stata sincronizzata.</numerusform>
+            <numerusform>%n modifiche non sono state sincronizzate.</numerusform>
+        </translation>
     </message>
     <message>
         <source>Mark &amp;spam</source>
@@ -280,7 +321,7 @@
     </message>
     <message>
         <source>Add or remove the important tag</source>
-        <translation>Aggiunge o rimuove l'etichetta importante</translation>
+        <translation>Aggiunge o rimuove l&apos;etichetta importante</translation>
     </message>
     <message>
         <source>Unmark important</source>
@@ -340,19 +381,31 @@
     </message>
     <message>
         <source>Add or remove the deleted tag on whole threads</source>
-        <translation>Aggiunge o rimuove l'etichetta eliminato su intere conversazioni</translation>
+        <translation>Aggiunge o rimuove l&apos;etichetta eliminato su intere conversazioni</translation>
     </message>
     <message>
         <source>Undelete thread</source>
         <translation>Ripristina conversazione</translation>
     </message>
     <message>
-        <source>Delete thread</source>
-        <translation>Elimina conversazione</translation>
-    </message>
-    <message>
         <source>Mark thread as &amp;spam</source>
         <translation>Segna conversazione come &amp;spam</translation>
+    </message>
+    <message>
+        <source>&amp;Restore from trash</source>
+        <translation>&amp;Ripristina dal cestino</translation>
+    </message>
+    <message>
+        <source>Move the selected messages out of the trash</source>
+        <translation>Sposta i messaggi selezionati fuori dal cestino</translation>
+    </message>
+    <message>
+        <source>Find &amp;stranded deleted mail</source>
+        <translation>&amp;Cerca posta eliminata non spostata</translation>
+    </message>
+    <message>
+        <source>Show mail tagged deleted that is not in a trash folder</source>
+        <translation>Mostra la posta etichettata come eliminata che non si trova in un cestino</translation>
     </message>
     <message>
         <source>Add spam and remove inbox on whole threads</source>
@@ -364,7 +417,7 @@
     </message>
     <message>
         <source>Toggle the unread tag on whole threads</source>
-        <translation>Inverte l'etichetta non letto su intere conversazioni</translation>
+        <translation>Inverte l&apos;etichetta non letto su intere conversazioni</translation>
     </message>
     <message>
         <source>Mark thread read</source>
@@ -834,10 +887,6 @@
             <numerusform>%n modifica non sincronizzata</numerusform>
             <numerusform>%n modifiche non sincronizzate</numerusform>
         </translation>
-    </message>
-    <message>
-        <source>Tag changes made here that a sync has not yet carried to the mail store. An external notmuch run can clear them without this count noticing.</source>
-        <translation>Modifiche alle etichette fatte qui che nessuna sincronizzazione ha ancora trasferito all&apos;archivio di posta. Un&apos;esecuzione esterna di notmuch può azzerarle senza che questo conteggio se ne accorga.</translation>
     </message>
     <message>
         <source>&amp;Whole thread</source>

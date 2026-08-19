@@ -696,6 +696,10 @@ ThreadListModel::nodeFor(const ThreadSummary &summary)
         node.first.messageId = summary.firstMessageId;
         node.first.threadId = summary.threadId;
         node.first.tags = summary.firstMessageTags;
+        // Carried alongside the tags, for the same reason messageById()
+        // carries it onto a synthesised root: an unexpanded row has to know
+        // which account it belongs to before Delete can name a folder.
+        node.first.filePath = summary.firstMessagePath;
     }
     return node;
 }
@@ -984,6 +988,12 @@ MessageNode ThreadListModel::messageById(const QString &messageId) const
             root.subject = node.summary.subject;
             root.date = node.summary.date;
             root.tags = node.summary.tags;
+            // Carried from the query, so an UNEXPANDED row still knows which
+            // account it belongs to. Delete needs that to name a trash folder,
+            // and an unexpanded row is the ordinary case rather than an edge
+            // one: without this every thread row resolved to no account and
+            // Delete reported "no trash folder configured" for all of them.
+            root.filePath = node.summary.firstMessagePath;
             return root;
         }
 
@@ -1198,6 +1208,7 @@ void ThreadListModel::applyMessageTagChange(const QString &messageId,
                 node.first.messageId = node.summary.firstMessageId;
                 node.first.threadId = node.summary.threadId;
                 node.first.tags = node.summary.tags;
+                node.first.filePath = node.summary.firstMessagePath;
             }
             retag(node.first.tags);
 

@@ -60,7 +60,8 @@ constexpr int kQueriesFormatVersion = 1;
 const QStringList kQueryGenerators = { QStringLiteral("unread"),
                                        QStringLiteral("inbox"),
                                        QStringLiteral("flagged"),
-                                       QStringLiteral("sent") };
+                                       QStringLiteral("sent"),
+                                       QStringLiteral("trash") };
 
 /// The tag a generator matches, for the three filters that are a plain tag
 /// query. Empty for "sent", which composes from each account's folder instead
@@ -137,6 +138,23 @@ QString Account::draftsQuery() const
     return folderQuery(maildir, drafts);
 }
 
+QString Account::trashQuery() const
+{
+    return folderQuery(maildir, trash);
+}
+
+QString Account::inboxFolder() const
+{
+    // Never empty: Restore needs a folder to name, and "Inbox" is both the
+    // Maildir convention and what mbsync's own Inbox directive defaults to.
+    return inbox.isEmpty() ? QStringLiteral("Inbox") : inbox;
+}
+
+QString Account::inboxQuery() const
+{
+    return folderQuery(maildir, inboxFolder());
+}
+
 QString Config::allSentQuery() const
 {
     return joinAccountQueries(m_accounts, &Account::sentQuery);
@@ -145,6 +163,11 @@ QString Config::allSentQuery() const
 QString Config::allDraftsQuery() const
 {
     return joinAccountQueries(m_accounts, &Account::draftsQuery);
+}
+
+QString Config::allTrashQuery() const
+{
+    return joinAccountQueries(m_accounts, &Account::trashQuery);
 }
 
 QString Config::defaultPath()
@@ -433,6 +456,19 @@ void Config::load(const QString &path)
         account.sent =
             settings.value(QStringLiteral("sent")).toString().trimmed();
 
+        // Mandatory, unlike sent: Delete moves a file into this folder, so an
+        // account without one cannot delete at all. Trimmed for the same
+        // reason as sent, above.
+        account.trash =
+            settings.value(QStringLiteral("trash")).toString().trimmed();
+
+        // Optional, unlike trash: inboxFolder() defaults it to "Inbox", which
+        // is right for any ordinary Maildir. Read so an account whose inbox is
+        // named otherwise can say so, rather than having Restore create a
+        // second folder under a name this program assumed.
+        account.inbox =
+            settings.value(QStringLiteral("inbox")).toString().trimmed();
+
         // Both optional, and both describe this account's chip in the thread
         // list. An account tag is a different taxonomy from a functional one,
         // saying which mailbox a thread arrived in rather than what state it
@@ -462,6 +498,21 @@ void Config::load(const QString &path)
                     .arg(account.key));
             continue;
         }
+
+        // Mandatory, unlike sent: Delete moves a file into this folder, so an
+        // account without one cannot delete at all. Reported rather than
+        // silently disabled, so the user finds out from a warning rather than
+        // from a Delete that quietly does nothing. The account still loads;
+        // only Delete is unusable, which does not warrant losing the rest of
+        // the account's mail.
+        if (account.trash.isEmpty()) {
+            addProblem(
+                tr("Account '%1' has no trash folder configured; add a "
+                   "'trash' key to its section. Delete will not work for "
+                   "this account until it does.")
+                    .arg(account.key));
+        }
+
         m_accounts.append(account);
     }
 
@@ -711,6 +762,8 @@ QString Config::resolvedQuery(const SavedQuery &query) const
     if (query.isGenerated()) {
         if (query.generated == QStringLiteral("sent"))
             return allSentQuery();
+        if (query.generated == QStringLiteral("trash"))
+            return allTrashQuery();
         // An unknown generator was reported on load. Empty rather than the
         // bare stored query, which for a generated entry is empty anyway and
         // would otherwise run as "match everything".
@@ -783,6 +836,11 @@ SavedQuery Config::builtinFilter(const QString &generator)
         // thread would fold the user's sent message back into the conversation
         // it belongs to, which is item 63's finding.
         filter.flat = true;
+    } else if (generator == QStringLiteral("trash")) {
+        filter.name = tr("Trash");
+        // NOT flat, unlike Sent. A deleted message still belongs to its
+        // conversation, and folding it back is what Sent had to avoid rather
+        // than something every folder filter wants.
     }
 
     return filter;
@@ -807,6 +865,10 @@ QString Config::resolvedQuery(const SavedQuery &query,
             const QString all = allSentQuery();
             return all.isEmpty() ? matchNothingQuery() : all;
         }
+        if (query.generated == QStringLiteral("trash")) {
+            const QString all = allTrashQuery();
+            return all.isEmpty() ? matchNothingQuery() : all;
+        }
         return QStringLiteral("tag:%1").arg(generatorTag(query.generated));
     }
 
@@ -825,6 +887,14 @@ QString Config::resolvedQuery(const SavedQuery &query,
         // case and not a misconfiguration. Returned as-is it would mean "match
         // everything", so a button labelled Sent would show the whole Maildir.
         return sent.isEmpty() ? matchNothingQuery() : sent;
+    }
+
+    if (query.generated == QStringLiteral("trash")) {
+        // The account's OWN trash query, for the reason spelled out above the
+        // sent case: wrapping the all-accounts query in this account's path
+        // works by accident of path: being hierarchical.
+        const QString trash = scope.trashQuery();
+        return trash.isEmpty() ? matchNothingQuery() : trash;
     }
 
     // A tag filter carries no path of its own, so scoping is exactly what

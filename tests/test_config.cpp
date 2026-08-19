@@ -116,6 +116,11 @@ private slots:
     void draftsQuerySurvivesABracketedPath();
     void allDraftsQuerySkipsAccountsWithoutTheKey();
     void allDraftsQueryIsIndependentOfSent();
+    void anAccountCarriesItsTrashFolder();
+    void aBracketedTrashFolderIsQuoted();
+    void anAccountWithoutATrashFolderWarns();
+    void theTrashFilterComposesPerAccount();
+    void theTrashFilterMatchesNothingWithoutAFolder();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -428,7 +433,8 @@ void TestConfig::absentSyncCommandIsNoticeNotProblem()
     QTemporaryDir dir;
     const QString path = writeIni(dir, QStringLiteral(
         "[account.work]\n"
-        "maildir=work-mail\n"));
+        "maildir=work-mail\n"
+        "trash=Trash\n"));
 
     Config config;
     config.load(path);
@@ -448,7 +454,8 @@ void TestConfig::brokenSyncCommandIsAProblem()
         "command=/nonexistent/qtmaildir-test/mailsync.sh\n"
         "\n"
         "[account.work]\n"
-        "maildir=work-mail\n"));
+        "maildir=work-mail\n"
+        "trash=Trash\n"));
 
     Config config;
     config.load(path);
@@ -483,7 +490,8 @@ void TestConfig::validConfigHasNoProblems()
         "\n"
         "[account.work]\n"
         "maildir=work-mail\n"
-        "address=user@example.org\n"));
+        "address=user@example.org\n"
+        "trash=Trash\n"));
 
     Config config;
     config.load(path);
@@ -903,7 +911,8 @@ void TestConfig::sentQueryIsEmptyWithoutTheKey()
     Config config;
     config.load(writeIni(dir, QStringLiteral(
         "[account.provider-c]\n"
-        "maildir = provider-c\n")));
+        "maildir = provider-c\n"
+        "trash = Trash\n")));
 
     QCOMPARE(config.accounts().size(), 1);
     QVERIFY(config.accounts().at(0).sentQuery().isEmpty());
@@ -951,6 +960,103 @@ void TestConfig::sentQuerySurvivesABracketedPath()
     QVERIFY2(query.contains(QStringLiteral("\"provider-a/[Provider]")),
              "the composed path is not quoted, so Xapian will read the "
              "brackets as syntax and the query will match nothing");
+}
+
+void TestConfig::anAccountCarriesItsTrashFolder()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n"
+        "trash=Trash\n")));
+
+    const Account account = config.account(QStringLiteral("work"));
+    QCOMPARE(account.trash, QStringLiteral("Trash"));
+    // Quoted and globbed exactly as sentQuery() does it, so a folder with a
+    // space or a bracket cannot break the query.
+    QCOMPARE(account.trashQuery(), QStringLiteral("path:\"work/Trash/**\""));
+}
+
+void TestConfig::aBracketedTrashFolderIsQuoted()
+{
+    // The real setup nests a localised trash folder under a bracketed parent.
+    // The brackets are not notmuch syntax, but the quoting has to survive them.
+    Account account;
+    account.maildir = QStringLiteral("provider-a");
+    account.trash = QStringLiteral("[Provider]/Cestino");
+
+    QCOMPARE(account.trashQuery(),
+             QStringLiteral("path:\"provider-a/[Provider]/Cestino/**\""));
+}
+
+void TestConfig::anAccountWithoutATrashFolderWarns()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n")));
+
+    // The account still loads. A missing trash folder disables Delete, it does
+    // not invalidate the account: the user can still read mail.
+    QVERIFY(config.account(QStringLiteral("work")).isValid());
+
+    // Names the account and the key, so the warning is actionable. A warning
+    // the user cannot act on teaches them to ignore warnings, which item 83
+    // recorded the hard way.
+    QVERIFY(!config.problems().isEmpty());
+    const QString joined = config.warnings().join(QLatin1Char('\n'));
+    QVERIFY(joined.contains(QStringLiteral("work")));
+    QVERIFY(joined.contains(QStringLiteral("trash")));
+}
+
+void TestConfig::theTrashFilterComposesPerAccount()
+{
+    // Two accounts, one with a plain folder and one nested under a bracketed
+    // parent, since the real setup has both shapes.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n"
+        "trash=Trash\n"
+        "\n"
+        "[account.personal]\n"
+        "maildir=personal\n"
+        "trash=[Provider]/Cestino\n")));
+
+    const SavedQuery trash = Config::builtinFilter(QStringLiteral("trash"));
+    QVERIFY(trash.isGenerated());
+
+    // All accounts: the union, never a bare path that would match one account.
+    const QString all = config.resolvedQuery(trash, QString());
+    QVERIFY(all.contains(QStringLiteral("path:\"work/Trash/**\"")));
+    QVERIFY(all.contains(
+        QStringLiteral("path:\"personal/[Provider]/Cestino/**\"")));
+
+    // One account: that account's OWN query. Asserting on the STRING, not on a
+    // row count: the all-accounts query wrapped in this account's path returns
+    // exactly the right rows, because path: is hierarchical, so a count passes
+    // against the wrong thing. Config::resolvedQuery documents this trap.
+    const QString scoped = config.resolvedQuery(trash, QStringLiteral("work"));
+    QCOMPARE(scoped, QStringLiteral("path:\"work/Trash/**\""));
+    QVERIFY(!scoped.contains(QStringLiteral("personal")));
+}
+
+void TestConfig::theTrashFilterMatchesNothingWithoutAFolder()
+{
+    // An empty query means "match everything" to notmuch, so a filter with
+    // nothing to match must say so explicitly. A button labelled Trash that
+    // showed the whole Maildir is the failure this prevents.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n")));
+
+    const SavedQuery trash = Config::builtinFilter(QStringLiteral("trash"));
+    QCOMPARE(config.resolvedQuery(trash, QString()), Config::matchNothingQuery());
 }
 
 void TestConfig::sentQueryComposesWithScopedQuery()
@@ -1073,9 +1179,11 @@ void TestConfig::theStartupAccountIsReadAndValidated()
         "\n"
         "[account.work]\n"
         "maildir=work\n"
+        "trash=Trash\n"
         "\n"
         "[account.personal]\n"
-        "maildir=personal\n")));
+        "maildir=personal\n"
+        "trash=Trash\n")));
 
     QCOMPARE(config.startupAccount(), QStringLiteral("work"));
     QVERIFY(config.problems().isEmpty());
@@ -1100,7 +1208,8 @@ void TestConfig::theStartupAccountIsReadAndValidated()
         "startup_account=nosuchaccount\n"
         "\n"
         "[account.work]\n"
-        "maildir=work\n")));
+        "maildir=work\n"
+        "trash=Trash\n")));
     QVERIFY2(wrong.startupAccount().isEmpty(),
              "an unknown startup account was passed through rather than "
              "falling back to All accounts");
@@ -1125,7 +1234,8 @@ void TestConfig::theStartupAccountTakesTheKeyNotTheSyncChannel()
         "\n"
         "[account.provider-work.mailbox]\n"
         "maildir=provider-work.mailbox\n"
-        "channel=provider-workmailbox\n")));
+        "channel=provider-workmailbox\n"
+        "trash=Trash\n")));
 
     QCOMPARE(config.accounts().size(), 1);
     QCOMPARE(config.accounts().constFirst().key,
@@ -1147,7 +1257,8 @@ void TestConfig::theStartupAccountTakesTheKeyNotTheSyncChannel()
         "\n"
         "[account.provider-work.mailbox]\n"
         "maildir=provider-work.mailbox\n"
-        "channel=provider-workmailbox\n")));
+        "channel=provider-workmailbox\n"
+        "trash=Trash\n")));
 
     QVERIFY2(byChannel.startupAccount().isEmpty(),
              "the sync channel was accepted as an account key");
@@ -1231,7 +1342,8 @@ void TestConfig::theStartupQuerySurvivesATranslatedFilterName()
         "\n"
         "[account.work]\n"
         "maildir=work\n"
-        "sent=Sent\n")));
+        "sent=Sent\n"
+        "trash=Trash\n")));
     QVERIFY2(!config.savedQueries().isEmpty(),
              "queries.json did not load, so the warning path is unreachable");
 
@@ -1256,7 +1368,8 @@ void TestConfig::theStartupQuerySurvivesATranslatedFilterName()
         "\n"
         "[account.work]\n"
         "maildir=work\n"
-        "sent=Sent\n")));
+        "sent=Sent\n"
+        "trash=Trash\n")));
     QVERIFY(!byLabel.savedQueries().isEmpty());
     QCOMPARE(byLabel.startupSavedQuery().generated, QStringLiteral("inbox"));
     QVERIFY(byLabel.problems().isEmpty());
@@ -1369,7 +1482,7 @@ void TestConfig::everyBuiltinFilterIsAKnownGenerator()
     Config config;
     const QList<SavedQuery> filters = config.builtinFilters();
 
-    QCOMPARE(filters.size(), 4);
+    QCOMPARE(filters.size(), 5);
 
     QStringList names;
     for (const SavedQuery &filter : filters) {
@@ -1390,7 +1503,8 @@ void TestConfig::everyBuiltinFilterIsAKnownGenerator()
     QCOMPARE(names, (QStringList{ QStringLiteral("Unread"),
                                   QStringLiteral("Inbox"),
                                   QStringLiteral("Important"),
-                                  QStringLiteral("Sent") }));
+                                  QStringLiteral("Sent"),
+                                  QStringLiteral("Trash") }));
 }
 
 void TestConfig::aFilterAcrossAllAccountsIsTheUnscopedQuery()
@@ -1483,7 +1597,8 @@ void TestConfig::draftsQueryIsEmptyWithoutTheKey()
     Config config;
     config.load(writeIni(dir, QStringLiteral(
         "[account.provider-c]\n"
-        "maildir = provider-c\n")));
+        "maildir = provider-c\n"
+        "trash = Trash\n")));
 
     QCOMPARE(config.accounts().size(), 1);
     QVERIFY(config.accounts().at(0).draftsQuery().isEmpty());

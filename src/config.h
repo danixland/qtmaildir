@@ -58,6 +58,29 @@ struct Account
     /// one for the account that has none.
     QString sent;
 
+    /// The account's trash folder, relative to maildir.
+    ///
+    /// MANDATORY, unlike `sent` and `drafts`. Delete moves a file into this
+    /// folder, so an account without one cannot delete at all, and the user
+    /// chose a config error over a per-account disabled state: "it is
+    /// mandatory for the program to function properly". Config::load()
+    /// reports a missing key through the warnings path.
+    QString trash;
+
+    /// The account's inbox folder, relative to maildir. Optional.
+    ///
+    /// Only Restore reads it, as the destination for a message that carries no
+    /// `deleted-from:` origin, which is what mail trashed by another client
+    /// looks like. Defaults to "Inbox", the Maildir convention and mbsync's
+    /// own default.
+    ///
+    /// Configurable rather than hardcoded because the name is not ours to
+    /// assume: naming a folder that does not exist CREATES it, beside the real
+    /// one, and under mbsync's `Create Both` that folder reaches the server.
+    /// Unlike `trash` this is optional, since the default is right for every
+    /// ordinary Maildir and a wrong guess here only affects the fallback.
+    QString inbox;
+
     /// Chip colour in the thread list. Invalid when unset, in which case one
     /// is generated from the account tag's name.
     QColor color;
@@ -98,6 +121,20 @@ struct Account
     /// keys are independent, and one real account configures `drafts` with no
     /// `sent` at all.
     QString draftsQuery() const;
+
+    /// Matches this account's trash, or empty when `trash` is unset.
+    ///
+    /// Empty is a config error rather than a legitimate state, unlike
+    /// sentQuery(). The query helper still returns empty so callers compose
+    /// uniformly; it is Config::load() that reports the problem.
+    QString trashQuery() const;
+
+    /// Matches this account's inbox folder, using inboxFolder().
+    QString inboxQuery() const;
+
+    /// The inbox folder name, which is `inbox` when set and "Inbox"
+    /// otherwise. Never empty, so a caller always has a folder to name.
+    QString inboxFolder() const;
 };
 
 /// A named query, stored in queries.json.
@@ -274,6 +311,13 @@ public:
     /// ships, which is why the join lives here and is tested rather than being
     /// open-coded at the call site.
     QString allSentQuery() const;
+
+    /// Matches every configured account's trash, or empty when none has one.
+    ///
+    /// Joins only the NON-EMPTY trashQuery() results, for the same reason
+    /// allSentQuery() does: notmuch accepts a bare "or" without complaint and
+    /// silently answers a different question.
+    QString allTrashQuery() const;
 
     /// Matches every configured account's drafts, or empty when none has one.
     ///

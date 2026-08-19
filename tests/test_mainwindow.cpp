@@ -16,6 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <QProcess>
 #include <QtTest>
 
 #include <QAction>
@@ -26,6 +27,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenuBar>
 #include <QMenu>
 #include <QPushButton>
 #include <QProgressBar>
@@ -86,8 +88,17 @@ public:
     /// `accountKey` and `accountMaildir` add one [account.<key>] section, which
     /// is what makes runQuery() scope the bar's text with scopedQuery(). A test
     /// that never selects an account can leave them empty.
+    ///
+    /// `accountTrash` writes that section's `trash` key, which Delete needs to
+    /// know where to move a file to. A DEFAULTED parameter rather than an
+    /// overload: an overload would have to repeat the whole body, and every
+    /// existing caller passes no account at all and so writes no section and
+    /// no trash key either. A caller that names an account and wants Delete to
+    /// work has to say where its trash is, which is the same requirement the
+    /// real config imposes.
     bool build(const QString &accountKey = QString(),
-               const QString &accountMaildir = QString())
+               const QString &accountMaildir = QString(),
+               const QString &accountTrash = QString())
     {
         if (!m_fixture.isValid()) {
             m_error = QStringLiteral("fixture directory invalid");
@@ -123,6 +134,13 @@ public:
                 // so the section is [account.key], never [account/key].
                 out << "\n[account." << accountKey << "]\n"
                     << "maildir=" << accountMaildir << "\n";
+                if (!accountTrash.isEmpty())
+                    out << "trash=" << accountTrash << "\n";
+                // The fixture's folders are lowercase, unlike the Maildir
+                // convention Account::inboxFolder() defaults to. Stated rather
+                // than assumed, which is the whole point of the key: naming a
+                // folder that does not exist would CREATE it.
+                out << "inbox=inbox\n";
             }
         }
         file.close();
@@ -313,6 +331,7 @@ private slots:
     void aCronSyncDoesNotClearAnEditMadeWhileItRan();
 
     void everyActionCarriesAnIcon();
+    void everyActionIsReachableFromAMenu();
     void theToolbarDoesNotOverrideTheDesktopButtonStyle();
     void theImportantActionIsLabelledImportant();
     void theImportantActionStillWritesTheFlaggedTag();
@@ -346,6 +365,32 @@ private slots:
     void deletingRemovesTheQueryFromTheFile();
     void anEditedQueryKeepsItsUnknownFields();
     void renamingReplacesRatherThanDuplicating();
+
+    void deleteMovesTheMessageToTrash();
+    void deleteRecordsWhereTheMessageCameFrom();
+    void undoMovesTheMessageBack();
+    void deleteOnAReplyMovesThatReplyOnly();
+    void deleteWithoutATrashFolderSaysSoRatherThanDoingNothing();
+    void undoingADeleteConsumesItsCommandRatherThanPushingAnother();
+    void aDeleteHeldDuringASyncCountsAsUnsyncedWork();
+    void twoDeletesToOneTrashBothGetTheirTags();
+    void deletingTwiceLeavesNoOriginTagBehind();
+    void undoOfADeleteRemovesTheOriginTagToo();
+    void deletingAThreadRootTwiceRestoresItRatherThanRedeleting();
+    void deleteThreadMovesEveryMessageAndRepaintsTheRootCard();
+    void aFolderNameWithASpaceSurvivesTheRoundTrip();
+    void deleteIsBoundToTheDeleteKey();
+    void theDeleteKeyEditsTextInTheQueryBar();
+    void restoreIsReachableWithoutTheKeyboard();
+    void restoreIsOnlyEnabledInTheTrashView();
+    void restoreReturnsAMessageToItsOriginFolder();
+    void restoreFallsBackToInboxWithoutAnOriginTag();
+    void theCleanupQueryFindsStrandedMail();
+    void theCleanupQueryExcludesMailAlreadyInTrash();
+    void aMoveThatRelocatesNothingWritesNoTag();
+    void restoringFromTheTrashViewRefreshesTheList();
+    void theRefreshAfterARestoreLeavesUndoIntact();
+    void deletingOutsideTheTrashViewLeavesTheRowInPlace();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -4737,6 +4782,16 @@ static QModelIndex expandSecondThreadAndSelectItsReply(
 
 void TestMainWindow::deleteOnAReplyReadsItsOwnThreadNotTheFirstInTheList()
 {
+    // Item 88's trap, still live: a toggle must read the state of the row it
+    // is on, not of whichever thread sits at that row NUMBER in the list.
+    //
+    // Through `delete_thread` rather than `delete`. Since item 103 Delete
+    // MOVES the file, so it is no longer a pure toggle over a tag and needs a
+    // configured trash folder and a worker; `delete_thread` is the variant
+    // that stayed tag-only, and it is a toggle over `deleted` exactly as
+    // Delete used to be. The message-scoped Delete's own direction choice is
+    // covered by the worker-backed cases at the bottom of this file, which is
+    // where a move can actually be observed.
     const Config config;
     MainWindow window(config);
 
@@ -4744,7 +4799,7 @@ void TestMainWindow::deleteOnAReplyReadsItsOwnThreadNotTheFirstInTheList()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete_thread"));
     QVERIFY(action);
 
     // t1 deleted, t2 not. Reading t1's state for a reply of t2 makes the
@@ -4755,21 +4810,27 @@ void TestMainWindow::deleteOnAReplyReadsItsOwnThreadNotTheFirstInTheList()
              "the fixture did not produce a reply row at row 0, so this test "
              "would assert nothing about item 88's trap");
 
+    // t2 is the reply's thread and is NOT deleted, so the correct direction
+    // is Delete. Reading t1's state instead would choose Undelete.
+    QVERIFY2(!model->threadAt(1).isDeleted(),
+             "the fixture's second thread is already deleted, so both "
+             "directions would look alike and this test would assert nothing");
+
     action->trigger();
 
-    // Delete, because the message's own thread is not deleted. The write goes
-    // through scopeFor() and lands on the message either way; what is under
-    // test is the DIRECTION, which is chosen from the state that was read.
-    QVERIFY2(window.pendingMessageIdsForTesting().contains(
-                 QStringLiteral("m1@example.org")),
-             "Delete on a reply did not act on that reply");
-    QCOMPARE(window.undoDepthForTesting(), 1);
-    QVERIFY2(window.undoTextForTesting().contains(QStringLiteral("Delete")),
-             qPrintable(QStringLiteral(
-                            "Delete on a reply of an undeleted thread chose "
-                            "the wrong direction: %1. It read the FIRST "
-                            "thread's state, which is deleted.")
-                            .arg(window.undoTextForTesting())));
+    // Asserted on the MODEL, not on the undo stack. Delete thread MOVES since
+    // item 103's follow-up, and the undo entry is pushed once the worker
+    // confirms the move, which this bare window has no database to perform.
+    // The DIRECTION is chosen synchronously and is what item 88's trap was
+    // about: the repaint below happens only on the delete direction.
+    QVERIFY2(model->threadAt(1).isDeleted(),
+             "Delete on a reply of an undeleted thread chose the wrong "
+             "direction: it read the FIRST thread's state, which is deleted");
+    // And the OTHER thread is untouched: the action must act on the reply's
+    // own conversation, not on both.
+    QVERIFY2(model->threadAt(0).isDeleted(),
+             "the fixture's first thread stopped being deleted, which means "
+             "the action reached a thread it was never pointed at");
 }
 
 void TestMainWindow::toggleUnreadOnAReplyReadsItsOwnThreadNotTheFirstInTheList()
@@ -4985,6 +5046,11 @@ void TestMainWindow::markCurrentThreadReadResolvesTheThreadThroughTheIndex()
 
 void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
 {
+    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
+    // an account with a configured trash folder and a worker to do the move;
+    // this bare window has neither, and Delete correctly refuses. What is
+    // under test here is unchanged by that: `spam` is the other message-scoped
+    // tag-only action, and it paints the same doomed state.
     // The user's report, at the gesture level: "I'm hitting delete on a reply
     // to a thread, I see the edits counter increasing but I have no feedback
     // if that message is being deleted." The model-level test proves
@@ -4997,7 +5063,7 @@ void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("spam"));
     QVERIFY(action);
 
     const QModelIndex reply =
@@ -5006,13 +5072,13 @@ void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
 
     // Nothing to see before the gesture, so the assertion after it means
     // something.
-    QVERIFY(!model->messageAt(reply).isDeleted());
+    QVERIFY(!model->messageAt(reply).isSpam());
     const QVariant before = model->data(reply, Qt::BackgroundRole);
 
     QSignalSpy spy(model, &QAbstractItemModel::dataChanged);
     action->trigger();
 
-    QVERIFY2(model->messageAt(reply).isDeleted(),
+    QVERIFY2(model->messageAt(reply).isSpam(),
              "Delete on a reply left the reply's own row unchanged, so the "
              "pending count moved and the user saw nothing");
     QVERIFY2(spy.count() >= 1, "no repaint was requested for the reply's row");
@@ -5022,7 +5088,7 @@ void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
     // The THREAD row must not follow: it stands for the whole conversation,
     // and one deleted reply does not doom it.
     const QModelIndex threadRow = reply.parent();
-    QVERIFY2(!model->threadFor(threadRow).isDeleted(),
+    QVERIFY2(!model->threadFor(threadRow).isSpam(),
              "deleting one reply marked its whole thread deleted");
 }
 
@@ -5113,6 +5179,11 @@ void TestMainWindow::toggleUnreadOnAReplyRepaintsItInBothDirections()
 
 void TestMainWindow::taggingTheOpenReplyUpdatesTheMessagePaneStrip()
 {
+    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
+    // an account with a configured trash folder and a worker to do the move;
+    // this bare window has neither, and Delete correctly refuses. What is
+    // under test here is unchanged by that: `spam` is the other message-scoped
+    // tag-only action, and it paints the same doomed state.
     // The user's report: "the right pane chips are not [repainted], for it to
     // sync I have to change message and go back to the edited one".
     //
@@ -5136,7 +5207,7 @@ void TestMainWindow::taggingTheOpenReplyUpdatesTheMessagePaneStrip()
     const auto stripTags = [strip]() {
         return strip->visibleTags() + strip->hiddenTags();
     };
-    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("spam"));
     QVERIFY(action);
 
     // A tag the strip will actually draw. Account tags are filtered out by the
@@ -5151,11 +5222,11 @@ void TestMainWindow::taggingTheOpenReplyUpdatesTheMessagePaneStrip()
     QVERIFY2(stripTags().contains(QStringLiteral("todo")),
              "the strip does not show the selected reply's tags, so this test "
              "cannot tell a missing refresh from a strip that never had them");
-    QVERIFY(!stripTags().contains(QStringLiteral("deleted")));
+    QVERIFY(!stripTags().contains(QStringLiteral("spam")));
 
     action->trigger();
 
-    QVERIFY2(stripTags().contains(QStringLiteral("deleted")),
+    QVERIFY2(stripTags().contains(QStringLiteral("spam")),
              "the message pane's chips still describe the reply as it was "
              "before the edit; the user has to select away and back to see it");
 }
@@ -5231,6 +5302,11 @@ void TestMainWindow::taggingAnUnrelatedReplyLeavesTheStripAlone()
 
 void TestMainWindow::aHeldMessageEditIsSentWhenTheSyncEnds()
 {
+    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
+    // an account with a configured trash folder and a worker to do the move;
+    // this bare window has neither, and Delete correctly refuses. What is
+    // under test here is unchanged by that: `spam` is the other message-scoped
+    // tag-only action, and it paints the same doomed state.
     // Found by reading while fixing the strip refresh, not reported.
     //
     // flushHeldEdits() looped over edit.threadIds and called
@@ -5246,7 +5322,7 @@ void TestMainWindow::aHeldMessageEditIsSentWhenTheSyncEnds()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("spam"));
     QVERIFY(action);
 
     const QModelIndex reply =
@@ -5281,12 +5357,17 @@ void TestMainWindow::aHeldMessageEditIsSentWhenTheSyncEnds()
     // And the row still shows it: the flush takes the optimistic update back
     // before re-sending, so a bug there leaves the row wrong in the other
     // direction.
-    QVERIFY2(model->messageAt(reply).isDeleted(),
+    QVERIFY2(model->messageAt(reply).isSpam(),
              "sending the held edit lost the tag from the reply's row");
 }
 
 void TestMainWindow::anActionOnAThreadRowActsOnTheMessageItDisplays()
 {
+    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
+    // an account with a configured trash folder and a worker to do the move;
+    // this bare window has neither, and Delete correctly refuses. What is
+    // under test here is unchanged by that: `spam` is the other message-scoped
+    // tag-only action, and it paints the same doomed state.
     // Item 108, the whole point of it. A root card renders ONE message since
     // item 66, so acting on it acts on that message; the conversation is
     // reached through the explicit thread actions.
@@ -5303,7 +5384,7 @@ void TestMainWindow::anActionOnAThreadRowActsOnTheMessageItDisplays()
     model->appendBatch({ t });
     selectThreadRow(view, 0);
 
-    auto *deleteAction = window.findChild<QAction *>(QStringLiteral("delete"));
+    auto *deleteAction = window.findChild<QAction *>(QStringLiteral("spam"));
     QVERIFY(deleteAction);
     deleteAction->trigger();
 
@@ -5315,18 +5396,24 @@ void TestMainWindow::anActionOnAThreadRowActsOnTheMessageItDisplays()
 
     // The thread action is how the conversation is reached, and it must still
     // work from the same selection.
+    //
+    // Asserted on the MODEL rather than on a pending write. Delete thread
+    // MOVES every message since item 103's follow-up, and a move needs ids and
+    // paths that only the database holds for a thread this bare window never
+    // expanded, so the write is issued after a worker round trip that never
+    // completes here. What is synchronous, and what this test is about, is the
+    // scope: the whole thread is marked, not the one message its card shows.
     auto *deleteThread =
         window.findChild<QAction *>(QStringLiteral("delete_thread"));
     QVERIFY(deleteThread);
+    QVERIFY2(!model->threadAt(0).isDeleted(),
+             "the thread already read as deleted, so the check below would "
+             "pass without the action doing anything");
     deleteThread->trigger();
 
-    QCOMPARE(window.pendingThreadIdsForTesting(),
-             QStringList{ QStringLiteral("t1") });
-
-    // Two commands, one per gesture, each recording the scope it used: a thread
-    // action that pushed the message command would undo a fraction of what it
-    // did.
-    QCOMPARE(window.undoDepthForTesting(), 2);
+    QVERIFY2(model->threadAt(0).isDeleted(),
+             "Delete thread did not mark the whole thread, so the card paints "
+             "undeleted until the row is clicked");
 }
 
 void TestMainWindow::theThreadSubmenuIsReachableFromBothMenus()
@@ -5501,6 +5588,11 @@ void TestMainWindow::autoMarkReadArmsForAReplyToo()
 
 void TestMainWindow::taggingTheOpenRootMessageKeepsTheStripPopulated()
 {
+    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
+    // an account with a configured trash folder and a worker to do the move;
+    // this bare window has neither, and Delete correctly refuses. What is
+    // under test here is unchanged by that: `spam` is the other message-scoped
+    // tag-only action, and it paints the same doomed state.
     // The user, 2026-08-16: "right pane loses the chip row when repainting, it
     // simply disappears".
     //
@@ -5543,7 +5635,7 @@ void TestMainWindow::taggingTheOpenRootMessageKeepsTheStripPopulated()
     QVERIFY2(stripTags().contains(QStringLiteral("todo")),
              "the strip never showed the selected thread's tags");
 
-    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("spam"));
     QVERIFY(action);
     action->trigger();
 
@@ -5553,7 +5645,7 @@ void TestMainWindow::taggingTheOpenRootMessageKeepsTheStripPopulated()
              "and set the strip to the resulting empty tag list");
     QVERIFY2(stripTags().contains(QStringLiteral("todo")),
              "the strip lost the tag the message still carries");
-    QVERIFY2(stripTags().contains(QStringLiteral("deleted")),
+    QVERIFY2(stripTags().contains(QStringLiteral("spam")),
              "the strip did not pick up the tag just written");
 }
 
@@ -6299,6 +6391,75 @@ void TestMainWindow::aCronSyncDoesNotClearAnEditMadeWhileItRan()
 }
 
 // Items 56 and 57.
+
+void TestMainWindow::everyActionIsReachableFromAMenu()
+{
+    // The fourth registration site nothing enforced. CLAUDE.md says adding an
+    // action is four places: knownActions(), defaultBindings(), the icon table
+    // and the action itself. It is FIVE, and the fifth is a menu.
+    //
+    // Found the hard way on the trash branch: `restore` shipped keyboard-only,
+    // reachable by a chord and by nothing a user could see or discover, and no
+    // test noticed. The three existing coverage tests each assert a different
+    // property and all three pass against an action that appears nowhere in
+    // the interface.
+    //
+    // The MENU rather than the toolbar, since the toolbar is a small
+    // deliberate subset and always will be. Every menu is walked, submenus
+    // included, because the five whole-thread actions live only in the "Whole
+    // thread" submenu.
+    const Config config;
+    MainWindow window(config);
+
+    auto *bar = window.menuBar();
+    QVERIFY(bar);
+
+    QSet<QAction *> reachable;
+    QList<QMenu *> pending;
+    const auto topLevel = bar->actions();
+    for (QAction *action : topLevel) {
+        if (action->menu())
+            pending.append(action->menu());
+    }
+    QVERIFY2(!pending.isEmpty(), "the menu bar holds no menus");
+
+    while (!pending.isEmpty()) {
+        QMenu *menu = pending.takeFirst();
+        const auto entries = menu->actions();
+        for (QAction *entry : entries) {
+            if (QMenu *sub = entry->menu()) {
+                pending.append(sub);
+                // An action owning a menu emits no `triggered`, so it is the
+                // submenu that makes its children reachable and never the
+                // parent entry itself. Not counted as reachable.
+                continue;
+            }
+            reachable.insert(entry);
+        }
+    }
+
+    // The guard, before anything is asserted about what is missing: a walk
+    // that found nothing would report every action as unreachable and read as
+    // a catastrophic regression rather than as a broken probe.
+    QVERIFY2(reachable.size() > 10,
+             qPrintable(QStringLiteral("the menu walk found only %1 entries")
+                            .arg(reachable.size())));
+
+    QStringList unreachable;
+    for (const QString &name : KeyMap::knownActions()) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
+        if (!reachable.contains(action))
+            unreachable.append(name);
+    }
+
+    QVERIFY2(unreachable.isEmpty(),
+             qPrintable(QStringLiteral("%1 action(s) reach no menu, so they "
+                                       "exist only for whoever already knows "
+                                       "the chord: %2")
+                            .arg(unreachable.size())
+                            .arg(unreachable.join(QStringLiteral(", ")))));
+}
 
 void TestMainWindow::everyActionCarriesAnIcon()
 {
@@ -7922,10 +8083,20 @@ void TestMainWindow::everyBuiltinFilterButtonCarriesAnIconAndItsText()
     // which is the same argument the Save button records.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    Config config;
-    config.load(writeSentConfig(dir, {
+    const QString path = writeSentConfig(dir, {
         {QStringLiteral("work"), QStringLiteral("Sent")},
-    }));
+    });
+    // A trash key too, or the Trash filter finds nothing and is skipped from
+    // the row entirely (item 103), leaving no trashButton for this loop to
+    // find.
+    {
+        QSettings s(path, QSettings::IniFormat);
+        s.beginGroup(QStringLiteral("account.work"));
+        s.setValue(QStringLiteral("trash"), QStringLiteral("Trash"));
+        s.endGroup();
+    }
+    Config config;
+    config.load(path);
 
     MainWindow window(config);
 
@@ -8686,6 +8857,1711 @@ void TestMainWindow::aSingleMessageIdQuerysCardOpensInTheMessagePane()
 
     view->setCurrentIndex(root);
     QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
+}
+
+/// Whether any file in `dir` belongs to the message whose filename starts with
+/// `stem`.
+///
+/// A Maildir filename is NOT stable across a move, which is the trap this
+/// exists to avoid. `maildir.synchronize_flags` is on, so notmuch rewrites the
+/// name to carry the read/seen flags: a message that leaves `new/del1.x` lands
+/// as `cur/del1.x:2,S`. Asserting on the exact basename therefore fails
+/// against a move that worked perfectly, which is how three of these tests
+/// first "failed".
+/// Counts messages matching `query` in the fixture's database, by running
+/// notmuch itself.
+///
+/// Asked directly rather than through the query bar because the UI's
+/// rowCount() reads 0 for the whole interval before the worker answers, so an
+/// assertion that a tag is ABSENT is satisfied by the gap before any answer
+/// arrives and passes against a database that still carries the tag.
+static int notmuchCount(const QString &configPath, const QString &query)
+{
+    QProcess process;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("NOTMUCH_CONFIG"), configPath);
+    process.setProcessEnvironment(env);
+    process.start(QStringLiteral("notmuch"),
+                  { QStringLiteral("count"), query });
+    if (!process.waitForFinished(15000))
+        return -1;
+    bool ok = false;
+    const int count =
+        QString::fromUtf8(process.readAllStandardOutput()).trimmed().toInt(&ok);
+    return ok ? count : -1;
+}
+
+/// Applies a tag change with the notmuch binary, for the one thing the UI
+/// cannot produce any more: a message tagged `deleted` while its file is still
+/// in the inbox. That is the state the OLD Delete left mail in, and the state
+/// the cleanup action exists to find, so a test for it has to write it
+/// directly rather than through an action that now moves the file too.
+static bool notmuchTag(const QString &configPath, const QStringList &args)
+{
+    QProcess process;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("NOTMUCH_CONFIG"), configPath);
+    process.setProcessEnvironment(env);
+    process.start(QStringLiteral("notmuch"),
+                  QStringList{ QStringLiteral("tag") } + args);
+    return process.waitForFinished(15000) && process.exitCode() == 0;
+}
+
+static bool folderHasMessageFile(const QString &dir, const QString &stem)
+{
+    QDir directory(dir);
+    if (!directory.exists())
+        return false;
+    const QStringList entries = directory.entryList(QDir::Files);
+    for (const QString &entry : entries) {
+        if (entry == stem || entry.startsWith(stem + QLatin1Char(':')))
+            return true;
+    }
+    return false;
+}
+
+void TestMainWindow::deleteMovesTheMessageToTrash()
+{
+    // The whole point of item 103. Before it, Delete added a tag and moved no
+    // file, so deleted mail sat in the inbox for good.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("del1@example.org"),
+        QStringLiteral("Delete me"), QStringLiteral("sender@example.org"),
+        // Friday, verified with `date -d 2026-08-14 +%A`.
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString inbox = root + QStringLiteral("/acct/inbox/new");
+    const QString stem = QStringLiteral("del1.example.org");
+    QVERIFY(folderHasMessageFile(inbox, stem));
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+
+    auto *del = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(del);
+    del->trigger();
+
+    // The filesystem half. cur/, never new/: a file in new/ is re-announced as
+    // fresh mail by every reader of the Maildir.
+    const QString trash = root + QStringLiteral("/acct/Trash/cur");
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(trash, stem), 15000);
+    QVERIFY2(!folderHasMessageFile(inbox, stem),
+             "the file is in the trash and still in the inbox");
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
+                                   stem),
+             "the file is in the trash and still in the inbox");
+
+    // The index half, which the filesystem cannot see. A moved file with a
+    // stale index entry sits correctly on disk and is invisible to every query.
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::deleteRecordsWhereTheMessageCameFrom()
+{
+    // A Maildir filename does not record where a message came from, and once
+    // the file has moved notmuch cannot know either. The tag is the only
+    // record, and Restore needs it days later.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("del2@example.org"),
+        QStringLiteral("Delete me too"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    // Asked of the database, not of the model: the model's optimistic update
+    // would report the tag whether or not the write ever landed.
+    // Re-queried by id and asserted on the TAG LIST the database returns.
+    //
+    // Not with `tag:"deleted-from:inbox"` in the query: notmuch's parser does
+    // not match a quoted tag containing a colon that way, so such a query
+    // returns nothing against a perfectly tagged message and reads as the
+    // feature being broken. Asking for the message and inspecting its tags
+    // cannot fail that way.
+    // Re-run per attempt, not once. The tag write is QUEUED behind the move,
+    // so a single query can land before the tags do; QTRY_VERIFY on the
+    // model's contents would then re-test a result that can never change,
+    // because nothing re-asks the database. Asking again each time is what
+    // makes this wait for the write rather than for the clock.
+    bool tagged = false;
+    for (int attempt = 0; attempt < 30 && !tagged; ++attempt) {
+        queryEdit->setText(QStringLiteral("id:del2@example.org"));
+        queryEdit->returnPressed();
+        QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+        const QStringList tags = model->threadAt(0).tags;
+        tagged = tags.contains(QStringLiteral("deleted"))
+                 && tags.contains(QStringLiteral("deleted-from:inbox"));
+        if (!tagged)
+            QTest::qWait(200);
+    }
+    QVERIFY2(tagged,
+             qPrintable(QStringLiteral("tags after the delete: %1")
+                            .arg(model->threadAt(0).tags.join(
+                                QLatin1Char(' ')))));
+}
+
+void TestMainWindow::deletingTwiceLeavesNoOriginTagBehind()
+{
+    // Delete twice is the ordinary way back: the action toggles, so a second
+    // press on a deleted message restores it. That path is NOT the undo path
+    // and had its own defect.
+    //
+    // onMessagesMoved() resolved the origin placeholder from the folder the
+    // WORKER reported, which is where the message came FROM. On a delete that
+    // is the inbox and correct. On a restore it is the TRASH, so the restore
+    // asked to remove `deleted-from:Trash`, a tag that had never been written,
+    // while the real `deleted-from:inbox` was never named and stayed on the
+    // message. It came home still claiming to have been deleted from
+    // somewhere, which makes Restore offer to move a message already at home.
+    //
+    // Reported from a hand test. The undo test passed throughout, because undo
+    // carries its tags on the command and never resolves a placeholder.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("twice@example.org"),
+        QStringLiteral("Delete me twice"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("twice.example.org");
+    const QString trash = root + QStringLiteral("/acct/Trash/cur");
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(trash, stem), 15000);
+
+    // The origin tag really was written, so the assertion after the second
+    // delete is about it being REMOVED rather than never having existed.
+    //
+    // Asked of the DATABASE, not through the query bar. The file arriving in
+    // the trash is not the end of the delete: the tag writes land after the
+    // rename this test waits for, and a query bar run inside that gap returns
+    // zero rows FOREVER, because QTRY_VERIFY re-reads rowCount() and never
+    // re-runs the query. Measured 1 failure in 3 runs, each burning the full
+    // 15s timeout on a guard that was correct about a database it had asked
+    // too early.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(backed.fixture().configPath(),
+                     QStringLiteral("id:twice@example.org and "
+                                    "tag:\"deleted-from:inbox\"")) == 1,
+        15000);
+
+    // Second press on the same message, which restores it.
+    queryEdit->setText(QStringLiteral("id:twice@example.org"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+
+    // The file arriving is NOT the end of the restore. The tags are written
+    // only once the worker confirms the move, so the writes land after the
+    // rename the assertion above waits for. Querying in that gap reads the
+    // state before the restore finished tagging, which is how an earlier
+    // version of this test passed against the bug it exists to catch.
+    //
+    // Waited on the `deleted` tag, which the restore removes on every code
+    // path, rather than on a fixed sleep.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(backed.fixture().configPath(),
+                     QStringLiteral("id:twice@example.org and tag:deleted"))
+            == 0,
+        15000);
+
+    // BOTH tags gone, asked of the database. `deleted-from:` left behind is
+    // the defect this covers, and it survived a green suite before.
+    // The origin tag specifically, asserted on its OWN query.
+    //
+    // A combined `tag:deleted or tag:"deleted-from:inbox"` query is NOT
+    // equivalent and passed against the bug: `deleted` is removed correctly
+    // and promptly, so the disjunction went to zero on that term alone while
+    // the origin tag was still on the message. Split, so the assertion can
+    // only be satisfied by the tag it names.
+    // Asked of notmuch DIRECTLY, not through the query bar.
+    //
+    // A UI query cannot answer this reliably: rowCount() is 0 for the whole
+    // interval before the worker replies, so QTRY_VERIFY(rowCount() == 0) is
+    // satisfied instantly by the empty pre-result and passes against any
+    // state of the database. Measured while building this test: 0 right after
+    // returnPressed(), 1 once the answer actually landed. The database is the
+    // thing under test here, so it is asked directly.
+    const QString cfg = backed.fixture().configPath();
+
+    // The message still exists: an assertion that a tag is absent would be
+    // satisfied just as well by the message having vanished.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:twice@example.org")), 1);
+
+    // The origin tag is gone. This is the defect: it used to survive the
+    // restore, because the placeholder resolved to `deleted-from:Trash`, the
+    // folder the message was coming FROM, and stripped a tag that had never
+    // been written.
+    QCOMPARE(notmuchCount(cfg,
+                          QStringLiteral("id:twice@example.org and "
+                                         "tag:\"deleted-from:inbox\"")),
+             0);
+
+    // And no tag naming the trash was invented in its place.
+    QCOMPARE(notmuchCount(cfg,
+                          QStringLiteral("id:twice@example.org and "
+                                         "tag:\"deleted-from:Trash\"")),
+             0);
+
+    // `deleted` itself, so a fix that dropped this one instead cannot hide.
+    QCOMPARE(notmuchCount(
+                 cfg, QStringLiteral("id:twice@example.org and tag:deleted")),
+             0);
+
+}
+
+void TestMainWindow::undoOfADeleteRemovesTheOriginTagToo()
+{
+    // Ctrl+Z is a THIRD way back, beside the second Delete, and it had the
+    // same defect for a different reason.
+    //
+    // MoveCommand was constructed with pending.add, which still holds the
+    // unresolved origin PLACEHOLDER: onMessagesMoved() resolved the
+    // placeholder for the tags it wrote to the database, but handed the undo
+    // command the raw list. Undo then asked to remove a tag by the
+    // placeholder's literal name, which no message carries, so the removal
+    // was a silent no-op and `deleted-from:inbox` survived. The message came
+    // home still claiming to have been deleted from somewhere, which makes
+    // Restore offer to move a message that is already at home.
+    //
+    // Reported from a hand test after the second-Delete path was fixed: that
+    // fix did not touch this one, and the existing undo test asserted on the
+    // file's location rather than on its tags.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("undotag@example.org"),
+        QStringLiteral("Undo my tags"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("undotag.example.org");
+    const QString cfg = backed.fixture().configPath();
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
+        15000);
+
+    // The origin tag really was written, so the assertion after the undo is
+    // about it being REMOVED rather than never having existed.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:undotag@example.org and "
+                                         "tag:\"deleted-from:inbox\"")) == 1,
+        15000);
+
+    window.findChild<QAction *>(QStringLiteral("undo"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+
+    // The file arriving is not the end of the undo: the tags are written only
+    // once the worker confirms the move, so they land after the rename.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg,
+                     QStringLiteral("id:undotag@example.org and tag:deleted"))
+            == 0,
+        15000);
+
+    // Asked of notmuch directly. A UI query cannot answer this: rowCount() is
+    // 0 for the whole interval before the worker replies, so an assertion
+    // that a tag is absent is satisfied by the gap before any answer arrives.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:undotag@example.org")), 1);
+    QCOMPARE(notmuchCount(cfg,
+                          QStringLiteral("id:undotag@example.org and "
+                                         "tag:\"deleted-from:inbox\"")),
+             0);
+    QCOMPARE(notmuchCount(cfg,
+                          QStringLiteral("id:undotag@example.org and "
+                                         "tag:\"deleted-from:Trash\"")),
+             0);
+}
+
+void TestMainWindow::deletingAThreadRootTwiceRestoresItRatherThanRedeleting()
+{
+    // The toggle asked a THREAD ROW about its thread's tags, which notmuch
+    // gives as a UNION over the conversation. Delete the root of a
+    // three-message thread and the two replies are untouched, so the union
+    // carries no `deleted`, so a second press read the row as not-deleted and
+    // ran Delete AGAIN: the message was moved trash-to-trash and came out
+    // carrying `deleted`, `deleted-from:inbox` AND `deleted-from:Trash`, with
+    // no way back, since a later restore would send it to the trash it now
+    // claims to have come from.
+    //
+    // The union was a documented approximation, called bounded because the
+    // worst case for a TAG toggle was re-applying a tag the message already
+    // had, which is a no-op. A MOVE re-applies the move. The comment outlived
+    // the code it described.
+    //
+    // The row must be left ALONE between the two presses: a re-query rebuilds
+    // it from the database and hides the defect, which is why an earlier
+    // version of this probe passed. The user's gesture is two presses on the
+    // list as it stands.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("troot@example.org"),
+        QStringLiteral("Thread root"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Root body.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("trep1@example.org"),
+        QStringLiteral("Re: Thread root"), QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Reply one."), true,
+        QStringLiteral("troot@example.org")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("trep2@example.org"),
+        QStringLiteral("Re: Thread root"), QStringLiteral("third@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 12:00:00 +0200"),
+        QStringLiteral("Reply two."), true,
+        QStringLiteral("troot@example.org")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("troot.example.org");
+    const QString trash = root + QStringLiteral("/acct/Trash/cur");
+
+    // Three messages, so the union genuinely differs from the root's own
+    // tags. With one message the two are identical and the defect cannot
+    // appear at all.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("thread:{id:troot@example.org}")),
+             3);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(trash, stem), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:troot@example.org and "
+                                         "tag:\"deleted-from:inbox\"")) == 1,
+        15000);
+
+    // Only the root moved. The replies are what make the union disagree, so
+    // this is also the guard the rest of the test depends on.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:trep1@example.org and "
+                                              "tag:deleted")),
+             0);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:trep2@example.org and "
+                                              "tag:deleted")),
+             0);
+
+    // Second press on the row as it stands, no re-query.
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg,
+                     QStringLiteral("id:troot@example.org and tag:deleted"))
+            == 0,
+        15000);
+
+    // Asked of notmuch directly: a UI query reads 0 rows for the whole
+    // interval before the worker answers, so an absence assertion through the
+    // query bar passes against any state of the database.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:troot@example.org")), 1);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:troot@example.org and "
+                                              "tag:\"deleted-from:inbox\"")),
+             0);
+    // The tag the re-delete invented. Its presence is the signature of this
+    // defect rather than a variation on the origin-tag ones.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:troot@example.org and "
+                                              "tag:\"deleted-from:Trash\"")),
+             0);
+    QVERIFY2(!folderHasMessageFile(trash, stem),
+             "the second press left the message in the trash");
+}
+
+void TestMainWindow::deleteThreadMovesEveryMessageAndRepaintsTheRootCard()
+{
+    // Two defects in one gesture, both reported from a hand test.
+    //
+    // Delete thread never moved anything: it was left calling tagSelected()
+    // when Delete became a move, so a whole conversation stayed in the inbox
+    // wearing a `deleted` chip, which is the half-deleted state item 103
+    // existed to remove. It moves every message now, each carrying its own
+    // `deleted-from:` origin so a thread spanning folders reassembles.
+    //
+    // And the ROOT card did not repaint until it was clicked, while its
+    // replies did. A thread-scoped move updated each message's node;
+    // applyMessageTagChange() deliberately leaves a multi-message thread's
+    // SUMMARY alone, because one message's edit does not describe the
+    // conversation. The replies have nodes and repainted; the root card reads
+    // the summary and did not. A thread-scoped move DID change every message,
+    // so the summary genuinely moves and applyTagChange() is the right update.
+    //
+    // The stale summary was also why a second press did nothing: the toggle
+    // asks the summary for its direction and kept reading "not deleted".
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("dt0@example.org"),
+        QStringLiteral("DT root"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Root body.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("dt1@example.org"),
+        QStringLiteral("Re: DT root"), QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Reply one."), true, QStringLiteral("dt0@example.org")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("dt2@example.org"),
+        QStringLiteral("Re: DT root"), QStringLiteral("third@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 12:00:00 +0200"),
+        QStringLiteral("Reply two."), true, QStringLiteral("dt0@example.org")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString trash = root + QStringLiteral("/acct/Trash/cur");
+    const QString thread = QStringLiteral("thread:{id:dt0@example.org}");
+
+    // Three messages, so a thread-scoped action is distinguishable from a
+    // message-scoped one at all.
+    QCOMPARE(notmuchCount(cfg, thread), 3);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    view->expand(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete_thread"))->trigger();
+
+    // Every message MOVED, not merely tagged. This is the half that was
+    // missing entirely: the action tagged and moved nothing.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(trash, QStringLiteral("dt0.example.org"))
+            && folderHasMessageFile(trash, QStringLiteral("dt1.example.org"))
+            && folderHasMessageFile(trash, QStringLiteral("dt2.example.org")),
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:deleted")) == 3,
+        15000);
+    // Each with its own origin, which is what makes the move reversible.
+    QCOMPARE(notmuchCount(cfg, thread
+                                   + QStringLiteral(" and "
+                                                    "tag:\"deleted-from:inbox\"")),
+             3);
+
+    // The ROOT CARD's own state, which is what the user watches. Read from the
+    // summary because that is what a thread row draws, and it is the value
+    // that stayed stale: the replies repainted and the root did not.
+    QVERIFY2(model->threadAt(0).tags.contains(QStringLiteral("deleted")),
+             "the root card still reads as not deleted, so it paints "
+             "undeleted until the row is clicked");
+
+    // Second press restores the whole thread, which only works if the toggle
+    // can see the state the first press produced.
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete_thread"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:deleted")) == 0,
+        15000);
+
+    // Home, and nothing left behind in the trash.
+    QCOMPARE(notmuchCount(cfg, thread), 3);
+    QCOMPARE(notmuchCount(cfg, thread
+                                   + QStringLiteral(" and "
+                                                    "tag:\"deleted-from:inbox\"")),
+             0);
+    QVERIFY(!folderHasMessageFile(trash, QStringLiteral("dt0.example.org")));
+    QVERIFY(!folderHasMessageFile(trash, QStringLiteral("dt1.example.org")));
+    QVERIFY(!folderHasMessageFile(trash, QStringLiteral("dt2.example.org")));
+}
+
+void TestMainWindow::aFolderNameWithASpaceSurvivesTheRoundTrip()
+{
+    // A notmuch tag MAY contain a space, and a Maildir folder name may too.
+    // The worker reported each message's tags as one space-joined string, so
+    // `deleted-from:Inbox/SlackBuilds users` was split back into
+    // "deleted-from:Inbox/SlackBuilds" and "users", and Restore moved the
+    // messages to the truncated folder, CREATING it. On the user's real
+    // Maildir that put four messages into a directory mbsync does not sync,
+    // beside the real folder of 808, and they read as missing.
+    //
+    // The leftover origin tag was the visible half: the restore stripped the
+    // truncated name, which no message carried, so the real tag stayed on.
+    //
+    // Separator is a TAB now. A tag cannot contain one, since notmuch's own
+    // dump format is line-based and whitespace-delimited.
+    WorkerBackedWindow backed;
+    const QString folder = QStringLiteral("acct/Inbox/SlackBuilds users");
+    QVERIFY(backed.fixture().addMessage(
+        folder, QStringLiteral("sp0@example.org"), QStringLiteral("SP root"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Root body.")));
+    QVERIFY(backed.fixture().addMessage(
+        folder, QStringLiteral("sp1@example.org"),
+        QStringLiteral("Re: SP root"), QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Reply."), true, QStringLiteral("sp0@example.org")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString thread = QStringLiteral("thread:{id:sp0@example.org}");
+    const QString home = root + QLatin1Char('/') + folder;
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete_thread"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:deleted")) == 2,
+        15000);
+
+    // The origin tag carries the WHOLE folder name, space included.
+    QCOMPARE(notmuchCount(cfg,
+                          thread
+                              + QStringLiteral(" and tag:\"deleted-from:"
+                                               "Inbox/SlackBuilds users\"")),
+             2);
+
+    // Back again.
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete_thread"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:deleted")) == 0,
+        15000);
+
+    // No origin tag left behind. This is the half the user saw: a tag they
+    // could see, could not type, and could not remove.
+    QCOMPARE(notmuchCount(cfg,
+                          thread
+                              + QStringLiteral(" and tag:\"deleted-from:"
+                                               "Inbox/SlackBuilds users\"")),
+             0);
+    // Nor a truncated one, which is what a space-split would have written.
+    QCOMPARE(notmuchCount(cfg,
+                          thread
+                              + QStringLiteral(" and tag:\"deleted-from:"
+                                               "Inbox/SlackBuilds\"")),
+             0);
+
+    // Home, in the folder with the space in its name.
+    QVERIFY2(folderHasMessageFile(home + QStringLiteral("/cur"),
+                                  QStringLiteral("sp0.example.org")),
+             "the root did not come back to the folder it was deleted from");
+    QVERIFY2(folderHasMessageFile(home + QStringLiteral("/cur"),
+                                  QStringLiteral("sp1.example.org")),
+             "the reply did not come back to the folder it was deleted from");
+
+    // And the truncated folder was never created. Its existence is the defect
+    // that hid four real messages from the user and from mbsync.
+    QVERIFY2(!QDir(root + QStringLiteral("/acct/Inbox/SlackBuilds")).exists(),
+             "a folder named after the truncated origin was created, so the "
+             "messages are somewhere mbsync will never sync");
+}
+
+void TestMainWindow::deleteIsBoundToTheDeleteKey()
+{
+    // Del is the key a user reaches for, and Ctrl+D is not a guess anyone
+    // makes. Both are bound; this asserts the bare one is really there,
+    // since setShortcut() keeps only the LAST of several and silently drops
+    // the rest, which would leave the documented binding absent.
+    const Config config;
+    MainWindow window(config);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(action);
+
+    QVERIFY2(action->shortcuts().contains(QKeySequence(Qt::Key_Delete)),
+             qPrintable(QStringLiteral("delete is not on the Del key; it has: %1")
+                            .arg(QKeySequence::listToString(action->shortcuts()))));
+}
+
+void TestMainWindow::theDeleteKeyEditsTextInTheQueryBar()
+{
+    // `delete` is bound to bare Del, and a QAction shortcut is dispatched
+    // BEFORE the focused widget sees the key. Qt withholds only plain LETTERS
+    // from editable widgets, so by the argument that made bare Return break
+    // the query bar, Delete should move mail to the trash while the user is
+    // editing a query.
+    //
+    // It does not: QLineEdit accepts the ShortcutOverride for Delete itself,
+    // because Delete is one of its own editing keys, which Return is not. That
+    // is a property of Qt rather than of this code, which is exactly why it is
+    // pinned here: it is the assumption the bare binding rests on, and if a
+    // future Qt or a future focus proxy changes it, mail gets deleted while
+    // someone types.
+    //
+    // Asserted on the ACTION not firing, not on the ShortcutOverride phase. A
+    // probe on the override reports notify=1 accepted=1 whether or not this
+    // window filters the key, since QLineEdit accepts it either way, so it
+    // cannot distinguish the two and passes against any implementation.
+    // Measured, while trying to write this test the obvious way.
+    const Config config;
+    MainWindow window(config);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *deleteAction = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(queryEdit && deleteAction);
+
+    int fired = 0;
+    QObject::connect(deleteAction, &QAction::triggered,
+                     [&fired]() { ++fired; });
+
+    queryEdit->setFocus();
+    QTRY_VERIFY(queryEdit->hasFocus());
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->setCursorPosition(0);
+
+    QTest::keyClick(queryEdit, Qt::Key_Delete);
+
+    QCOMPARE(fired, 0);
+    QCOMPARE(queryEdit->text(), QStringLiteral("ag:inbox"));
+}
+
+void TestMainWindow::restoreIsReachableWithoutTheKeyboard()
+{
+    // Restore shipped as a keyboard shortcut and nothing else: registered,
+    // iconned, enabled correctly, and present in no menu at all. A user who
+    // does not read the changelog would never learn it exists, and Ctrl+R is
+    // not a guess anyone makes.
+    //
+    // The four places an action must touch are enforced by tests
+    // (knownActions, defaultBindings, the icon table); being REACHABLE is a
+    // fifth that nothing checked, which is why the gap survived a green suite.
+    const Config config;
+    MainWindow window(config);
+
+    auto *restore = window.findChild<QAction *>(QStringLiteral("restore"));
+    QVERIFY(restore);
+
+    const auto menuContains = [](const QMenu *menu, const QAction *action) {
+        return menu && menu->actions().contains(action);
+    };
+
+    // A menu on the MENU BAR, beside Delete whose inverse it is. The context
+    // menu is excluded here so this assertion cannot be satisfied by the one
+    // the next assertion checks: findChildren finds both.
+    auto *context =
+        window.findChild<QMenu *>(QStringLiteral("threadContextMenu"));
+    QVERIFY(context);
+
+    bool inAMenuBarMenu = false;
+    for (const QMenu *menu : window.findChildren<QMenu *>()) {
+        if (menu != context && menuContains(menu, restore)) {
+            inAMenuBarMenu = true;
+            break;
+        }
+    }
+    QVERIFY2(inAMenuBarMenu,
+             "Restore is in no menu-bar menu, so a user browsing the menus "
+             "would never learn it exists");
+
+    // And the thread list's context menu, which is where the other
+    // message-scoped actions are reached by mouse.
+    QVERIFY2(menuContains(context, restore),
+             "Restore is missing from the thread context menu");
+}
+
+void TestMainWindow::restoreIsOnlyEnabledInTheTrashView()
+{
+    // Restore has no meaning outside the trash, and an enabled action that
+    // does nothing is worse than an absent one.
+    //
+    // Enabled from the QUERY rather than from the selection's tags: a message
+    // trashed by another client carries no tag of ours and must still be
+    // restorable, which is the whole reason the trash view is path-based.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("re1@example.org"),
+        QStringLiteral("In the inbox"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Trash"), QStringLiteral("re2@example.org"),
+        QStringLiteral("In the trash"), QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *restore = window.findChild<QAction *>(QStringLiteral("restore"));
+    QVERIFY(model && queryEdit);
+    QVERIFY2(restore, "there is no restore action");
+
+    // An ordinary view. Both fixture messages carry `inbox`, since the
+    // fixture tags all new mail that way regardless of folder, so this is two
+    // rows rather than one; the count is not what is under test.
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2, 15000);
+    QVERIFY2(!restore->isEnabled(),
+             "Restore is enabled in an ordinary view, where it means nothing");
+
+    // The trash view, which is the account's own generated trash query.
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    QVERIFY2(restore->isEnabled(),
+             "Restore is disabled in the trash view, where it is the point");
+}
+
+void TestMainWindow::restoreReturnsAMessageToItsOriginFolder()
+{
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("ro1@example.org"),
+        QStringLiteral("Send me back"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("ro1.example.org");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
+        15000);
+
+    // Now from the trash view, through Restore rather than through a second
+    // Delete: this is the action the user reaches for when browsing trash.
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("restore"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    // Waited on the ORIGIN tag, not on `deleted`.
+    //
+    // Both come off in one write, but the file rename and the tag write are
+    // separate operations and the assertions below raced the second one:
+    // measured 1 failure in 3 runs waiting on `deleted` alone, reporting the
+    // origin tag still present. Waiting on the tag this test is actually about
+    // removes the race rather than papering over it with a longer timeout.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:ro1@example.org and "
+                                         "tag:\"deleted-from:inbox\"")) == 0,
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg,
+                     QStringLiteral("id:ro1@example.org and tag:deleted")) == 0,
+        15000);
+
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ro1@example.org")), 1);
+    QVERIFY(!folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
+                                  stem));
+}
+
+void TestMainWindow::restoreFallsBackToInboxWithoutAnOriginTag()
+{
+    // A message trashed by ANOTHER client: it sits in the trash folder and
+    // carries no `deleted-from:` tag, because nothing here put it there. The
+    // real Maildir has such messages, which is why the trash view is path
+    // based rather than tag based.
+    //
+    // Inbox is the documented fallback. Refusing to move it would leave the
+    // user with a message they can see in the trash and cannot get out.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Trash"), QStringLiteral("foreign@example.org"),
+        QStringLiteral("Trashed elsewhere"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("foreign.example.org");
+
+    // The guard this test needs: no origin tag, so the fallback is what is
+    // under test rather than an ordinary restore.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:foreign@example.org and "
+                                              "tag:\"deleted-from:inbox\"")),
+             0);
+
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("restore"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
+                                   stem),
+             "the message was copied out of the trash rather than moved");
+}
+
+void TestMainWindow::undoMovesTheMessageBack()
+{
+    // Undo is this project's answer to the confirmation dialog it rules out,
+    // so a delete that cannot be undone is a delete with no safety net at all.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("del3@example.org"),
+        QStringLiteral("Put me back"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("del3.example.org");
+    const QString trash = root + QStringLiteral("/acct/Trash/cur");
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(trash, stem), 15000);
+
+    window.findChild<QAction *>(QStringLiteral("undo"))->trigger();
+
+    // Back in the EXACT folder it came from. A move-back that guessed "inbox"
+    // for every account would pass a laxer assertion than this one.
+    //
+    // cur/, not the new/ it started in: a file coming back from the trash has
+    // been read, and re-announcing it as fresh mail is worse than the flag
+    // change.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    QVERIFY2(!folderHasMessageFile(trash, stem),
+             "undo restored the file and left a copy in the trash");
+
+    // Both tags gone, asked of the database. `deleted-from:` left behind would
+    // make Restore offer to move a message that is already home.
+    queryEdit->setText(QStringLiteral(
+        "id:del3@example.org and (tag:deleted or tag:\"deleted-from:inbox\")"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 0, 15000);
+    // The guard the assertion above needs: a query that matches nothing
+    // because the message vanished would pass it too.
+    queryEdit->setText(QStringLiteral("id:del3@example.org"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::deleteOnAReplyMovesThatReplyOnly()
+{
+    // The reply case. A test asserting on a root selection is the one case
+    // where the wrong resolution is accidentally right, so a mutation on this
+    // path stays green without it.
+    //
+    // Put under the SECOND thread, so the wrong answer is plausible rather
+    // than accidentally correct.
+    WorkerBackedWindow backed;
+    NotmuchFixture &fx = backed.fixture();
+    QVERIFY(fx.addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("other@example.org"),
+        QStringLiteral("An unrelated thread"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 09:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY(fx.addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("rootof@example.org"),
+        QStringLiteral("A conversation"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY(fx.addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("reply@example.org"),
+        QStringLiteral("Re: A conversation"),
+        QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Reply body."), true,
+        QStringLiteral("rootof@example.org")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2, 15000);
+
+    // Whichever row holds the conversation. The sort is the model's business,
+    // so this asks rather than assuming.
+    QModelIndex conversation;
+    for (int row = 0; row < model->rowCount(QModelIndex()); ++row) {
+        const QModelIndex index = model->index(row, 0, QModelIndex());
+        if (model->threadAt(row).totalCount > 1) {
+            conversation = index;
+            break;
+        }
+    }
+    QVERIFY2(conversation.isValid(), "no multi-message thread in the list");
+
+    view->expand(conversation);
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(conversation) == 1, 15000);
+
+    const QModelIndex replyIndex = model->index(0, 0, conversation);
+    QVERIFY(model->isMessageRow(replyIndex));
+    QCOMPARE(model->messageAt(replyIndex).messageId,
+             QStringLiteral("reply@example.org"));
+
+    view->setCurrentIndex(replyIndex);
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    const QString root = fx.maildirPath();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
+                             QStringLiteral("reply.example.org")),
+        15000);
+
+    // Only that reply. Escalating a message-scoped delete to its thread would
+    // move the root as well, which is the failure worth naming: the user
+    // deleted one reply and lost the conversation.
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
+                                   QStringLiteral("rootof.example.org")),
+             "deleting a reply moved its thread's root as well");
+}
+
+void TestMainWindow::undoingADeleteConsumesItsCommandRatherThanPushingAnother()
+{
+    // A move is confirmed through onMessagesMoved(), and so is the move an
+    // UNDO makes. Pushing a command there unconditionally meant undo left a
+    // fresh command on the stack instead of consuming the one it undid, so
+    // the stack grew on every press: "Delete", "Undo Delete", "Undo Undo
+    // Delete". A user pressing undo twice to be sure re-deleted the mail they
+    // had just rescued, which is the opposite of what undo is for here, undo
+    // being this project's stand-in for a confirmation dialog.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("undo2@example.org"),
+        QStringLiteral("Undo twice"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("undo2.example.org");
+    const QString trash = root + QStringLiteral("/acct/Trash/cur");
+    const auto inInbox = [&] {
+        return folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
+                                    stem)
+               || folderHasMessageFile(
+                   root + QStringLiteral("/acct/inbox/new"), stem);
+    };
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(trash, stem), 15000);
+
+    // The guard the assertions below need: one command, from the delete.
+    QTRY_VERIFY_WITH_TIMEOUT(window.undoDepthForTesting() == 1, 15000);
+
+    window.findChild<QAction *>(QStringLiteral("undo"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(inInbox(), 15000);
+
+    // The stack is spent. Asserted on undoText rather than depth alone
+    // because a command that is merely marked done still reports its text,
+    // and it is the text the user reads off the Edit menu.
+    QTRY_VERIFY_WITH_TIMEOUT(window.undoTextForTesting().isEmpty(), 15000);
+
+    // And the real point: pressing undo again must not move the message
+    // anywhere. Before the fix this put it straight back in the trash.
+    window.findChild<QAction *>(QStringLiteral("undo"))->trigger();
+    QTest::qWait(1500);
+    QVERIFY2(!folderHasMessageFile(trash, stem),
+             "a second undo re-deleted the message the first one restored");
+    QVERIFY2(inInbox(), "a second undo moved the message out of the inbox");
+}
+
+void TestMainWindow::aDeleteHeldDuringASyncCountsAsUnsyncedWork()
+{
+    // pendingEditCount() summed the held TAG edits and not the held MOVES, so
+    // a Delete pressed during a sync left the count at zero: the indicator
+    // stayed hidden and closeEvent()'s `pendingEditCount() > 0` guard never
+    // fired, discarding the move on quit with no prompt. That is item 106's
+    // data loss with a worse shape, since a dropped move leaves the file in
+    // the folder the user asked it out of.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("held1@example.org"),
+        QStringLiteral("Held by a sync"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(model && view && queryEdit && label);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    // Hidden before the gesture, so the assertion after it means something.
+    QVERIFY2(label->isHidden(), "the pending indicator was already showing");
+
+    // A sync now holds the write lock, which is what makes the move held
+    // rather than sent.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    QVERIFY2(!label->isHidden(),
+             "a Delete held by a sync did not count as unsynced work, so "
+             "quitting would have discarded it with no prompt");
+
+    // The file really is still where it was: this is a HELD move, not a
+    // failed one, and the indicator would be meaningless otherwise.
+    const QString root = backed.fixture().maildirPath();
+    QVERIFY(!folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
+                                  QStringLiteral("held1.example.org")));
+}
+
+void TestMainWindow::twoDeletesToOneTrashBothGetTheirTags()
+{
+    // The pending-move table was keyed on the destination folder, so two
+    // Deletes in one account before the first confirmation arrived both named
+    // `acct/Trash`: the second insert overwrote the first and the second
+    // confirmation took an empty entry. That file reached the trash carrying
+    // neither `deleted` nor `deleted-from:`, which makes it unrestorable by
+    // Restore and invisible to a `tag:deleted` query.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("two1@example.org"),
+        QStringLiteral("First"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("two2@example.org"),
+        QStringLiteral("Second"), QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2, 15000);
+
+    // Both Deletes issued back to back, WITHOUT waiting for the first to be
+    // confirmed. That is the whole point: waiting would serialise them and
+    // the keyed table would have coped.
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+    view->setCurrentIndex(model->index(1, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    const QString root = backed.fixture().maildirPath();
+    const QString trash = root + QStringLiteral("/acct/Trash/cur");
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(trash, QStringLiteral("two1.example.org"))
+            && folderHasMessageFile(trash, QStringLiteral("two2.example.org")),
+        15000);
+
+    // Both carry BOTH tags, asked of the database rather than of the model:
+    // the defect was a write that never happened, and the model would have
+    // shown the optimistic state either way.
+    queryEdit->setText(QStringLiteral(
+        "tag:deleted and tag:\"deleted-from:inbox\" and "
+        "(id:two1@example.org or id:two2@example.org)"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2, 15000);
+}
+
+void TestMainWindow::deleteWithoutATrashFolderSaysSoRatherThanDoingNothing()
+{
+    // Task 2 warns at config load. This is the second line of defence: a key
+    // the user never fixed must not leave Delete silently inert.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("notrash@example.org"),
+        QStringLiteral("Nowhere to go"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    // No trash key, which is what this is about.
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(model && view && queryEdit && status);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+
+    // Cleared FIRST, so the assertion below cannot be satisfied by whatever
+    // the query left behind. Without this the test passes against a Delete
+    // that says nothing at all, which is exactly what it exists to catch: it
+    // did, before the implementation landed.
+    status->clear();
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    QVERIFY2(status->text().contains(QStringLiteral("trash")),
+             qPrintable(QStringLiteral(
+                            "Delete with no trash folder configured said: '%1'")
+                            .arg(status->text())));
+
+    // And it did not tag the message either. A `deleted` tag with the file
+    // still in the inbox is exactly the half-done state item 103 removes.
+    const QString mail = backed.fixture().maildirPath();
+    QVERIFY(folderHasMessageFile(mail + QStringLiteral("/acct/inbox/new"),
+                                 QStringLiteral("notrash.example.org"))
+            || folderHasMessageFile(mail + QStringLiteral("/acct/inbox/cur"),
+                                    QStringLiteral("notrash.example.org")));
+}
+
+void TestMainWindow::theCleanupQueryFindsStrandedMail()
+{
+    // The state 848 real messages are in today: tagged `deleted` by a version
+    // of Delete that only ever tagged, with the file still sitting in the
+    // inbox. Nothing moves them on their own, so the action reports them and
+    // the user decides.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("strand@example.org"),
+        QStringLiteral("Tagged but never moved"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("keep@example.org"),
+        QStringLiteral("Perfectly ordinary mail"),
+        QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    const QString cfg = backed.fixture().configPath();
+    QVERIFY(notmuchTag(cfg, { QStringLiteral("+deleted"),
+                              QStringLiteral("--"),
+                              QStringLiteral("id:strand@example.org") }));
+    // The guard, before anything is asserted about what the action finds: one
+    // message is stranded and one is not, so a query that simply returns
+    // everything cannot pass.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("tag:deleted")), 1);
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *cleanup =
+        window.findChild<QAction *>(QStringLiteral("cleanup_stranded"));
+    QVERIFY(model && queryEdit);
+    QVERIFY2(cleanup, "there is no cleanup_stranded action");
+
+    cleanup->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    // The query lands in the bar, like every other generated query, so what
+    // ran is visible and the user can edit it.
+    QVERIFY2(queryEdit->text().contains(QStringLiteral("tag:deleted")),
+             qPrintable(QStringLiteral("the bar holds '%1'")
+                            .arg(queryEdit->text())));
+    QVERIFY2(queryEdit->text().contains(QStringLiteral("not ")),
+             qPrintable(QStringLiteral("the bar holds '%1'")
+                            .arg(queryEdit->text())));
+
+    // It reports and moves NOTHING. A cleanup that acted on its own would be a
+    // bulk delete with no selection behind it, which is the opposite of what
+    // the user asked for.
+    const QString mail = backed.fixture().maildirPath();
+    QVERIFY(folderHasMessageFile(mail + QStringLiteral("/acct/inbox/new"),
+                                 QStringLiteral("strand.example.org"))
+            || folderHasMessageFile(mail + QStringLiteral("/acct/inbox/cur"),
+                                    QStringLiteral("strand.example.org")));
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("path:\"acct/Trash/**\"")), 0);
+}
+
+void TestMainWindow::theCleanupQueryExcludesMailAlreadyInTrash()
+{
+    // Properly trashed mail carries the tag AND sits in the folder. Without
+    // the exclusion this reports every deleted message ever, which makes the
+    // action useless the moment Delete starts working.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("cln1@example.org"),
+        QStringLiteral("Going to the trash"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString cfg = backed.fixture().configPath();
+    const QString mail = backed.fixture().maildirPath();
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    // Asked of the database, never of the list: rowCount() reads 0 for the
+    // whole interval before the worker answers, so "the cleanup found
+    // nothing" would pass against a delete that never happened.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(mail + QStringLiteral("/acct/Trash/cur"),
+                             QStringLiteral("cln1.example.org")),
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("tag:deleted")) == 1, 15000);
+
+    auto *cleanup =
+        window.findChild<QAction *>(QStringLiteral("cleanup_stranded"));
+    QVERIFY2(cleanup, "there is no cleanup_stranded action");
+    cleanup->trigger();
+
+    // The query the action ran, asked of notmuch directly. The list is the
+    // wrong instrument for an emptiness claim, for the reason above.
+    QTRY_VERIFY_WITH_TIMEOUT(!queryEdit->text().isEmpty(), 15000);
+    QCOMPARE(notmuchCount(cfg, queryEdit->text()), 0);
+}
+
+void TestMainWindow::aMoveThatRelocatesNothingWritesNoTag()
+{
+    // The spec's ordering bullet, at the UI level: a failed rename must leave
+    // no tag. The worker half is moveMessagesReportsOnlyWhatMoved(); this is
+    // the other half, that the window writes tags only for what the worker
+    // reported as actually moved.
+    //
+    // The failure is provoked by making the destination unwritable, which is
+    // the closest thing to a failed rename that a test can arrange without
+    // stubbing the worker. A tag written anyway would be the exact half-done
+    // state item 103 exists to remove: a message marked deleted, with its file
+    // still in the inbox and its origin tag lying about where it went.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("nomove@example.org"),
+        QStringLiteral("Cannot be moved"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+
+    // The trash as a FILE where the folder must be, so creating the Maildir
+    // subdirectories under it cannot succeed. A read-only directory would be
+    // ignored by a test running as root, which this one must not depend on.
+    QFile blocker(root + QStringLiteral("/acct/Trash"));
+    QVERIFY2(blocker.open(QIODevice::WriteOnly),
+             "could not put a file where the trash folder would go");
+    blocker.close();
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    // The guard, so this cannot pass by the delete never having been
+    // attempted: the message is still there and still findable afterwards.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:nomove@example.org")) == 1, 15000);
+
+    // A tag write is a round trip, so an immediate read would pass against a
+    // write still in flight. Given time to arrive, then asserted absent.
+    QTest::qWait(1500);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:nomove@example.org and "
+                                              "tag:deleted")), 0);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:nomove@example.org and "
+                                              "tag:\"deleted-from:inbox\"")), 0);
+
+    // And the file never left.
+    QVERIFY(folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                 QStringLiteral("nomove.example.org"))
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
+                                    QStringLiteral("nomove.example.org")));
+}
+
+void TestMainWindow::restoringFromTheTrashViewRefreshesTheList()
+{
+    // Reported from a hand test: Restore moved the message correctly and the
+    // row it came from sat in the trash list until the Trash filter was
+    // clicked again.
+    //
+    // The trash view is PATH based, so a restored message no longer matches
+    // the query the list was built from. That is a state no tag change can
+    // express: onMessagesMoved() updates tags and the undo stack and never
+    // removes a row, which is right in an ordinary view (a deleted message's
+    // card should stay put) and wrong here, where the row is the one thing
+    // that is now false.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Trash"), QStringLiteral("refr1@example.org"),
+        QStringLiteral("Restore me"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("refr1.example.org");
+
+    // The account's own generated trash query, which is what the Trash filter
+    // puts in the bar.
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("restore"))->trigger();
+
+    // The move really happened, waited on the FILE. Without this the row
+    // assertion below could pass against a restore that never ran.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+
+    // And the list no longer shows it, without the user touching anything.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 0, 15000);
+}
+
+void TestMainWindow::theRefreshAfterARestoreLeavesUndoIntact()
+{
+    // The refresh that fixes the stale trash row runs immediately after the
+    // undo entry is pushed, so it must not be the thing that destroys it.
+    // runCurrentQuery() clears the undo stack outright, which would make
+    // Restore the one mutation in the window with no way back; this asserts
+    // the non-destructive refresh was used and stayed non-destructive.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Trash"), QStringLiteral("undoref@example.org"),
+        QStringLiteral("Restore then undo"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("undoref.example.org");
+
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("restore"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    // The refresh has run by now, which is what the row count proves.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 0, 15000);
+
+    // And the undo entry is still there afterwards.
+    auto *undo = window.findChild<QAction *>(QStringLiteral("undo"));
+    QVERIFY(undo);
+    QVERIFY2(undo->isEnabled(),
+             "the refresh after a restore cleared the undo stack");
+
+    undo->trigger();
+
+    // Back in the trash, asserted on the FILE: the undo has to move it, not
+    // merely re-tag it.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
+        15000);
+}
+
+void TestMainWindow::deletingOutsideTheTrashViewLeavesTheRowInPlace()
+{
+    // The other half of the trash-view refresh, and the reason it is gated.
+    //
+    // A Delete is a move too and reaches the same confirmation slot. Refreshing
+    // on every move would make the row vanish from under the user in every
+    // ordinary view, which this project has decided against twice: the card
+    // deliberately stays put, because one deleted message does not doom the
+    // conversation and a row disappearing mid-gesture loses the user's place.
+    //
+    // Nothing asserted this, so a mutation dropping the isShowingTrash() gate
+    // passed the whole suite.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("stay1@example.org"),
+        QStringLiteral("Stay on screen"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("stay1.example.org");
+
+    // An ORDINARY view that the message STOPS MATCHING once the delete lands.
+    // Both halves matter and the first draft of this test had only one: a
+    // `tag:inbox` view looks ordinary but Delete adds `deleted` and the origin
+    // tag and removes nothing, so the message keeps `inbox` and keeps matching.
+    // A refresh there is a no-op, and the mutation dropping the
+    // isShowingTrash() gate passed against it.
+    //
+    // A path query on the inbox folder is the honest instrument: the file
+    // really leaves that folder, so the row survives only because nothing
+    // refreshed.
+    queryEdit->setText(QStringLiteral("path:\"acct/inbox/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    // The delete really happened, waited on the file rather than on the list.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
+        15000);
+
+    // A refresh is a queued round trip, so an immediate read would pass against
+    // one still in flight. Given time to arrive, then asserted not to have
+    // taken the row away.
+    QTest::qWait(1500);
+    QCOMPARE(model->rowCount(QModelIndex()), 1);
 }
 
 #include "test_mainwindow.moc"

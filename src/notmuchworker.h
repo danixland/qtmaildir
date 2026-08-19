@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QMap>
 #include <QObject>
 #include <QStringList>
 #include <QVector>
@@ -120,6 +121,19 @@ public slots:
     /// it would block the user's cron `notmuch new`.
     void applyTags(const TagChange &change);
 
+    /// Moves messages into `destFolder`, relative to the database path.
+    ///
+    /// A folder NAME rather than a "move to trash" call, because v2's Send
+    /// needs exactly this operation for Drafts and Sent. Nothing
+    /// trash-specific belongs here.
+    ///
+    /// The first mutation in this class that is not a notmuch tag: a rename on
+    /// disk plus a reindex. Ordering is rename, index the new path, drop the
+    /// old one. Indexing first is required, not stylistic: removing the last
+    /// filename for a message id deletes the database entry and every tag on
+    /// it, so removing before indexing loses the message's tags.
+    void moveMessages(const QStringList &messageIds, const QString &destFolder);
+
     /// Batch tagging over whole threads. The UI holds thread ids, not message
     /// ids, for rows it has not opened, so the resolution happens here where
     /// the database handle lives. This is the path the archive/flag/delete
@@ -128,6 +142,39 @@ public slots:
                             const QStringList &add,
                             const QStringList &remove,
                             const QString &description);
+
+    /// Resolves whole threads to the message ids and file paths they contain.
+    ///
+    /// Delete thread MOVES every message, and a move needs message ids, which
+    /// the UI does not hold for a thread it never expanded. The resolution
+    /// happens here for the same reason applyTagsToThreads() does it here:
+    /// the database handle lives on this thread, and one combined query beats
+    /// reopening the cursor per thread.
+    ///
+    /// Paths come back beside the ids because the destination is per ACCOUNT
+    /// and the UI resolves an account from a message's path. Without them the
+    /// caller would know which messages to move and not where any of them
+    /// belongs.
+    void resolveThreadMessages(const QStringList &threadIds,
+                               const QString &requestTag);
+
+    /// The same walk for a set of MESSAGE ids rather than thread ids.
+    ///
+    /// Restore needs each message's tags and path to decide where to send it,
+    /// and must not read them from the model: the model's tags come from the
+    /// query, so a row whose delete has not been re-queried still carries its
+    /// pre-delete tags and the origin tag is missing. A restore that guesses
+    /// the destination is worse than one that does nothing.
+    void resolveMessages(const QStringList &messageIds,
+                         const QString &requestTag);
+
+private:
+    /// The shared walk behind resolveMessages() and resolveThreadMessages():
+    /// runs `query` and emits threadMessagesResolved() with each match's id,
+    /// database-relative path and tab-joined tags.
+    void resolveQuery(const QString &query, const QString &requestTag);
+
+public slots:
 
     /// Every tag in the database, sorted. Feeds query bar completion, which
     /// cannot offer tag names it has no way to enumerate. Called at startup,
@@ -184,6 +231,42 @@ signals:
                           quint64 generation);
     void messageLoaded(const QVector<MessageRef> &messages, quint64 generation);
     void tagsApplied(const TagChange &change);
+
+    /// Carries the ids that ACTUALLY moved, which may be fewer than requested.
+    /// A stale id, a missing folder or a failed rename drops out here rather
+    /// than aborting the batch.
+    void messagesMoved(const QStringList &messageIds, const QString &destFolder);
+
+    /// The same move, reported per message with the folder it came FROM.
+    ///
+    /// Emitted alongside messagesMoved rather than replacing it: that signal's
+    /// shape is what test_notmuchworker asserts on, and a caller wanting only
+    /// "did it move" should not have to unpack a map.
+    ///
+    /// The origin has to be reported from HERE because nowhere else knows it.
+    /// A Maildir filename does not record the folder a message came from, and
+    /// once the file has moved notmuch cannot answer either; the UI holds no
+    /// path at all for a thread row it has not expanded. This is the one
+    /// moment the old filename exists, so it is the only place the origin can
+    /// be derived.
+    ///
+    /// Folders are relative to the database path and carry no `cur`/`new`
+    /// segment, matching the `destFolder` moveMessages() takes, so a value
+    /// from here can be passed straight back to move a message home.
+    void messagesMovedFrom(const QMap<QString, QString> &originByMessageId,
+                           const QString &destFolder);
+    /// The answer to resolveThreadMessages(), as parallel lists: `messageIds`
+    /// and the database-relative `paths` of the same messages, in the same
+    /// order. `requestTag` is echoed back so a caller can tell which request
+    /// this answers.
+    /// `tags` carries each message's tags joined by a space, in the same
+    /// order. Needed because Restore reads a message's `deleted-from:` tag to
+    /// decide where to send it, and an unexpanded thread's messages have no
+    /// node in the model to read tags from.
+    void threadMessagesResolved(const QStringList &messageIds,
+                                const QStringList &paths,
+                                const QStringList &tags,
+                                const QString &requestTag);
     void allTagsReady(const QStringList &tags, quint64 generation);
 
     /// One entry per requested query, in the order they were asked for. A query

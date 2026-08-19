@@ -21,6 +21,7 @@
 #include <QHash>
 #include <QSet>
 #include <QMainWindow>
+#include <QQueue>
 #include <QPointer>
 #include <QThread>
 #include <QUndoCommand>
@@ -739,6 +740,172 @@ private:
                               const QStringList &remove,
                               const QString &description);
 
+    /// Moves messages into `destFolder` and applies the tags that go with it.
+    ///
+    /// The counterpart to sendMessageTagChange() for the one action that is
+    /// not purely a tag change. Both trashSelected() and MoveCommand route
+    /// through this.
+    ///
+    /// The tags are NOT applied here: they are applied when the worker
+    /// confirms the move, in onMessagesMoved(). Tagging first would leave a
+    /// message marked `deleted` in a folder it never left if the rename
+    /// failed, which is the half-done state item 103 exists to remove.
+    ///
+    /// `add` may contain the placeholder kOriginTagPlaceholder, which
+    /// onMessagesMoved() replaces with `deleted-from:<origin>` per message.
+    /// The origin is not known until the worker reports it, and it differs per
+    /// message in a multi-row selection.
+    /// `fromUndo` marks a move the undo stack itself started, which must NOT
+    /// push a command of its own when it is confirmed. See onMessagesMoved().
+    /// `wholeThreadIds`, when non-empty, says this move covers every message
+    /// of those threads, so the optimistic repaint updates each thread's
+    /// SUMMARY rather than each message's node. A thread row's card reads the
+    /// summary, so a thread-scoped move that updated only nodes repainted the
+    /// replies and left the root card stale until the next query.
+    void sendMove(const QStringList &messageIds, const QString &destFolder,
+                  const QStringList &add, const QStringList &remove,
+                  const QString &description, bool fromUndo = false,
+                  const QStringList &wholeThreadIds = {});
+
+    /// Moves each selected row's message to its account's trash, tagging it
+    /// `deleted` and recording where it came from.
+    void trashSelected();
+
+    /// The half of trashSelected() that does the work, given the messages and
+    /// their paths.
+    ///
+    /// Paths are passed in rather than looked up, because the thread-scoped
+    /// caller has messages the MODEL has never seen: an unexpanded thread
+    /// holds no node for its replies, so a model lookup resolves them to no
+    /// account and the move is silently dropped. The worker supplies them.
+    void trashMessages(const QStringList &messageIds,
+                       const QHash<QString, QString> &pathById,
+                       int messageCount,
+                       const QStringList &wholeThreadIds = {});
+
+    /// Moves every message of each selected THREAD to its account's trash.
+    ///
+    /// Asynchronous, unlike its message-scoped twin: the ids and paths of an
+    /// unexpanded thread's messages live only in the database, so this asks
+    /// the worker and finishes in onThreadMessagesResolved().
+    void trashSelectedThreads();
+
+    /// The thread ids the selection covers, resolving a reply row to its own
+    /// thread. scopeFor() reports a reply under messageIds instead, which left
+    /// a thread action on a reply row doing nothing at all.
+    QStringList selectedThreadIds() const;
+
+    /// The inverse of trashSelectedThreads(): moves every message of each
+    /// selected thread back where it came from.
+    void restoreSelectedThreads();
+
+    /// Runs the thread-scoped delete once the worker has resolved the
+    /// threads to messages.
+    void onThreadMessagesResolved(const QStringList &messageIds,
+                                  const QStringList &paths,
+                                  const QStringList &tags,
+                                  const QString &requestTag);
+
+    /// The inverse: moves each selected row's message back to the folder its
+    /// `deleted-from:` tag names, stripping both tags.
+    ///
+    /// `fallbackToInbox` decides what happens to a message with NO origin tag,
+    /// and the two callers want opposite things. From the trash view the
+    /// message is demonstrably in the trash, trashed by another client, and
+    /// must still come out: it goes to the inbox, reported. From a second
+    /// press of Delete it is not in the trash at all and merely wears a stale
+    /// tag, so the tag comes off and the file stays where it is.
+    void restoreSelected(bool fallbackToInbox = false);
+
+    /// Restore as reached from the TRASH VIEW: resolves each selected
+    /// message against the database first, then moves it.
+    ///
+    /// Asynchronous, unlike restoreSelected(), and that is the point. The
+    /// model's tags come from the query, so a row whose delete has not been
+    /// re-queried still carries its pre-delete tags; reading the origin from
+    /// there found none and sent the message to the INBOX instead of the
+    /// folder it came from, one run in three.
+    void restoreSelectedFromTrash();
+
+    /// Runs the query that finds mail tagged `deleted` whose file never left
+    /// its original folder, which is what every version before item 103 left
+    /// behind. It REPORTS and moves nothing: acting on its own would be a bulk
+    /// delete with no selection behind it, and the user asked for something
+    /// they could come back to and review.
+    ///
+    /// Repeatable rather than a one-time startup migration, for the same
+    /// reason: mail reaches this state again whenever another client tags
+    /// without moving.
+    void showStrandedDeletedMail();
+
+    /// Moves each resolved message home, using the tags and paths the WORKER
+    /// reported rather than anything the model holds.
+    void restoreResolvedMessages(const QStringList &messageIds,
+                                 const QStringList &paths,
+                                 const QStringList &tags);
+
+    /// The messages a resolveMessages() request was made for.
+    QStringList m_pendingRestoreIds;
+
+    /// The account's inbox FOLDER name, discovered from its inbox query.
+    ///
+    /// Never hardcoded: the real Maildir has `Inbox` and a fixture has
+    /// `inbox`, and assuming either would create a second folder beside the
+    /// real one on the side that disagreed.
+    QString inboxFolderFor(const Account &account) const;
+
+    /// Whether the current query IS a trash view, for either scope.
+    ///
+    /// Compared against the trash generator's own query rather than against a
+    /// tag: the view is path-based so mail trashed by another client appears
+    /// in it, and such a message carries no tag of ours.
+    bool isShowingTrash() const;
+
+    /// The `deleted-from:` tag naming `dbRelativeFolder`, or empty when no
+    /// account owns it.
+    ///
+    /// One rule for both sites that need the tag: the delete that writes it
+    /// and the restore that strips it. Deriving it twice let them disagree,
+    /// and a restore stripped a tag that had never been written.
+    QString originTagFor(const QString &dbRelativeFolder) const;
+
+    /// The account whose maildir contains `path`, or an invalid account when
+    /// no configured maildir does.
+    ///
+    /// Resolved from the PATH rather than from the thread's account tag. The
+    /// tag is optional config, so an account without one would resolve to
+    /// nothing and silently disable Delete; the maildir prefix is what makes
+    /// a message belong to an account in the first place.
+    Account accountForMessagePath(const QString &path) const;
+
+    /// Confirms a move: applies the tags the move was asked to carry, with the
+    /// origin placeholder resolved per message.
+    void onMessagesMoved(const QMap<QString, QString> &originByMessageId,
+                         const QString &destFolder);
+
+    /// What a move asked to be tagged, held until the worker confirms it.
+    ///
+    /// A FIFO and not a map keyed on the destination: two Deletes in one
+    /// account before the first confirmation arrives name the same folder, so
+    /// a keyed map dropped the first entry and left the second confirmation
+    /// with nothing to apply. That file reached the trash carrying neither
+    /// `deleted` nor `deleted-from:`, unrestorable and invisible to a
+    /// `tag:deleted` query. The worker moves one batch at a time and emits in
+    /// request order, so position alone matches a confirmation to its request.
+    struct PendingMove {
+        QStringList add;
+        QStringList remove;
+        QString description;
+        /// Set for a move the undo stack started, which must not push again.
+        bool fromUndo = false;
+    };
+    QQueue<PendingMove> m_pendingMoves;
+
+    /// The threads a resolveThreadMessages() request was made for, held until
+    /// the answer arrives so the optimistic repaint knows the move is
+    /// thread-scoped.
+    QStringList m_pendingThreadScope;
+
     /// Undoes the optimistic model update for a write the worker rejected.
     void revertPendingTagChange();
 
@@ -791,10 +958,38 @@ private:
     /// it. Order matters: two edits touching one thread must reach the database
     /// in the order they were made, or the later one does not win.
     QVector<HeldEdit> m_heldEdits;
+
+    /// A MOVE not yet sent, for the same reason a tag edit is held.
+    ///
+    /// A separate queue rather than an entry in m_heldEdits, because a move is
+    /// not a tag change and cannot be replayed as one: pushing it through the
+    /// edit queue would apply `deleted` and never move the file, leaving the
+    /// message reading as deleted while still sitting in the inbox. Item 106
+    /// recorded what a dropped held edit costs, and a move dropped the same
+    /// way is worse: the tag lands and the file does not.
+    struct HeldMove {
+        QStringList messageIds;
+        QString destFolder;
+        QStringList add;
+        QStringList remove;
+        QString description;
+        /// Carried through the hold, or a move undone during a sync would
+        /// push a command when it is finally flushed.
+        bool fromUndo = false;
+    };
+    QVector<HeldMove> m_heldMoves;
+
     quint64 m_flushGeneration = 0;
 
     friend class ThreadTagCommand;
     friend class MessageTagCommand;
+    friend class MoveCommand;
+
+    /// Stands in for `deleted-from:<origin>` between asking for a move and
+    /// learning where each message actually came from. Not a tag anyone ever
+    /// sees: onMessagesMoved() substitutes the real one per message before
+    /// anything is written.
+    static const QString &kOriginTagPlaceholder();
 
     Config m_config;
     KeyMap m_keyMap;
@@ -1187,6 +1382,76 @@ public:
 private:
     MainWindow *m_window;
     QStringList m_messageIds;
+    QStringList m_add;
+    QStringList m_remove;
+    QString m_description;
+    bool m_firstRedo = true;
+};
+
+/// Undo entry for a message MOVE, which is a file rename plus a tag change.
+///
+/// The destination is CARRIED rather than derived, and that is the whole
+/// reason `deleted-from:` exists at all. A Maildir filename does not record
+/// where a message came from, and once the file has moved notmuch cannot
+/// answer either, so an undo that recomputed the origin would have nothing to
+/// recompute it from. Each message carries its own, since one selection can
+/// span folders and accounts.
+///
+/// Grouped by destination: undoing a delete of five messages from three
+/// folders is three moves, not five, because moveMessages() takes one folder
+/// per call.
+class MoveCommand : public QUndoCommand
+{
+public:
+    /// `originByMessageId` names where each message came FROM, and
+    /// `destFolder` where they all went.
+    MoveCommand(MainWindow *window,
+                const QMap<QString, QString> &originByMessageId,
+                const QString &destFolder, const QStringList &add,
+                const QStringList &remove, const QString &description)
+        : QUndoCommand(description), m_window(window),
+          m_origins(originByMessageId), m_dest(destFolder), m_add(add),
+          m_remove(remove), m_description(description) {}
+
+    /// The stack calls redo() when the command is pushed, by which point the
+    /// move has already been sent, so the first call is skipped. Same shape as
+    /// the two tag commands above.
+    void redo() override
+    {
+        if (m_firstRedo) {
+            m_firstRedo = false;
+            return;
+        }
+        // Also fromUndo: a redo replays a command that is ALREADY on the
+        // stack, so confirming it must not push a duplicate either.
+        m_window->sendMove(m_origins.keys(), m_dest, m_add, m_remove,
+                           m_description, true);
+    }
+
+    void undo() override
+    {
+        // Back to each message's OWN folder, one call per distinct
+        // destination. The tags invert with the direction: what the delete
+        // added, the undo removes.
+        QHash<QString, QStringList> byOrigin;
+        for (auto it = m_origins.cbegin(); it != m_origins.cend(); ++it) {
+            if (!it.value().isEmpty())
+                byOrigin[it.value()].append(it.key());
+        }
+        for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
+            // fromUndo: this move is the undo, so its confirmation must not
+            // push a command of its own. Without it the stack grew on every
+            // press and a second undo re-deleted the message.
+            m_window->sendMove(it.value(), it.key(), m_remove, m_add,
+                               QStringLiteral("Undo %1").arg(m_description),
+                               true);
+        }
+    }
+
+private:
+    MainWindow *m_window;
+    QMap<QString, QString> m_origins;
+    QString m_dest;
     QStringList m_add;
     QStringList m_remove;
     QString m_description;

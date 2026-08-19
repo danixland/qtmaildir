@@ -31,6 +31,8 @@ QStringList KeyMap::knownActions()
         QStringLiteral("open_thread"),
         QStringLiteral("archive"),
         QStringLiteral("delete"),
+        QStringLiteral("restore"),
+        QStringLiteral("cleanup_stranded"),
         QStringLiteral("spam"),
         QStringLiteral("toggle_unread"),
         QStringLiteral("mark_all_read"),
@@ -97,7 +99,31 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Alt+Up"),        QStringLiteral("prev_thread") },
         { QStringLiteral("Return"),       QStringLiteral("open_thread") },
         { QStringLiteral("Ctrl+E"),       QStringLiteral("archive") },
+        // Del FIRST, and the order matters twice over. defaultSequenceFor()
+        // returns the first match, and sequenceFor() prefers any binding that
+        // is not that default, treating it as a user override; listing Del
+        // second therefore made it the "override" of Ctrl+D and left the two
+        // functions disagreeing about which key the menus should advertise.
+        // First also makes it the ADVERTISED one, which is the point: it is
+        // the key a user reaches for, and Ctrl+D is not a guess anyone makes.
+        //
+        // Bare, which is safe for a reason that does NOT generalise to other
+        // bare keys. Delete is not a letter, so Qt's protection for editable
+        // widgets does not cover it, but QLineEdit accepts the
+        // ShortcutOverride for Delete itself, because it is one of its own
+        // editing keys. Return is not, which is why that one needed an
+        // explicit filter in MainWindow::eventFilter() and this one does not.
+        // Measured both ways; see theDeleteKeyEditsTextInTheQueryBar().
+        { QStringLiteral("Del"),          QStringLiteral("delete") },
         { QStringLiteral("Ctrl+D"),       QStringLiteral("delete") },
+        // Restore is only enabled in the trash view, so its key is dead
+        // elsewhere rather than doing something surprising.
+        { QStringLiteral("Ctrl+R"),       QStringLiteral("restore") },
+        // Item 103's cleanup. A chord rather than a plain key: it replaces the
+        // whole view, and it is reached from a menu far more often than from
+        // the keyboard. Ctrl+Shift+D is message_details and Ctrl+Alt+D is
+        // delete_thread, so this takes the T of "trash".
+        { QStringLiteral("Ctrl+Alt+T"),   QStringLiteral("cleanup_stranded") },
         { QStringLiteral("Ctrl+Shift+S"), QStringLiteral("spam") },
         { QStringLiteral("Ctrl+U"),       QStringLiteral("toggle_unread") },
         // Shifted against Ctrl+U, which toggles unread on the selection: this
@@ -246,7 +272,7 @@ QKeySequence KeyMap::sequenceFor(const QString &action) const
         if (it.value() != action)
             continue;
 
-        const bool isBuiltIn = !builtIn.isEmpty() && it.key() == builtIn;
+        const bool isBuiltIn = isDefaultBinding(it.key(), action);
         if (best.isEmpty()) {
             best = it.key();
             bestIsBuiltIn = isBuiltIn;
@@ -256,12 +282,40 @@ QKeySequence KeyMap::sequenceFor(const QString &action) const
         if (bestIsBuiltIn && !isBuiltIn) {
             best = it.key();
             bestIsBuiltIn = false;
+        } else if (bestIsBuiltIn && isBuiltIn) {
+            // Both are defaults, so the ADVERTISED one is whichever
+            // defaultBindings() lists first: that order is the author's
+            // preference and is why Del is listed before Ctrl+D. Falling back
+            // to alphabetical here would advertise Ctrl+D instead.
+            if (it.key() == builtIn)
+                best = it.key();
         } else if (bestIsBuiltIn == isBuiltIn
                    && it.key().toString() < best.toString()) {
             best = it.key();
         }
     }
     return best;
+}
+
+bool KeyMap::isDefaultBinding(const QKeySequence &sequence,
+                             const QString &action)
+{
+    // ANY of the action's defaults, not just the first.
+    //
+    // An action can ship with more than one binding: `delete` has Del and
+    // Ctrl+D. sequenceFor() compares against defaultSequenceFor(), which
+    // returns only the first, so the second looked like a USER binding and
+    // won the "a user binding always beats the default" rule. The menus then
+    // advertised Ctrl+D for a user who had configured nothing, and
+    // sequenceFor() and defaultSequenceFor() disagreed about an untouched
+    // action.
+    for (const auto &binding : defaultBindings()) {
+        if (binding.second == action
+            && normalizeSequence(binding.first) == sequence) {
+            return true;
+        }
+    }
+    return false;
 }
 
 QKeySequence KeyMap::defaultSequenceFor(const QString &action)

@@ -227,6 +227,34 @@ combined `thread:a or thread:b` query rather than one query per thread.
 The only escape hatch is `general/notmuch_config`, pointing at an alternate notmuch config.
 Per-account subdirectories *are* configured, since notmuch does not model accounts at all.
 
+**Delete MOVES the file, and a wrong folder name reaches the mail server.**
+Item 103. Every account carries a mandatory `trash` key and an optional
+`inbox` one, both naming a folder relative to `maildir`. Naming a folder that
+does not exist does not fail: the move CREATES it, mbsync adopts it and writes
+state files for it, and under `Create Both` it then propagates to the server,
+where every other client sees it. This is not theoretical. A folder name
+containing a space was truncated by the origin tag, a bogus folder was created
+beside the real one, and four messages of a thread were stranded in it on the
+user's real mail. Treat any code that composes a folder name as reaching the
+server, because it does.
+
+**A message records where it came from in a tag, because nothing else can.**
+`deleted-from:<folder>` is written when Delete moves the file, and read back by
+Restore. The file has moved, so neither the path nor anything in notmuch still
+knows the original folder. A notmuch tag MAY contain a space, so tags crossing
+the thread boundary are joined by a TAB rather than a space; joining on a space
+truncated every folder name containing one. A message trashed by another client
+carries no such tag at all, which is why the trash view is path-based and why
+Restore falls back to the account's inbox rather than refusing.
+
+**Restore reads the DATABASE, never the model.** The model's tags come from the
+query, so a row whose delete has not been re-queried still carries its pre-delete
+tags: measured `[inbox,unread]` on a message already in the trash, one run in
+three. The origin tag is then not found, the message falls into the no-origin
+branch, and it goes to the inbox instead of where it came from, silently and
+irreversibly. A restore must be right about its destination or it is worse than
+doing nothing.
+
 **The sync script lives here, in `assets/mailsync.sh`.** It moved from the
 companion `mailctl` project, which documents that it never calls it: the script
 is `mbsync` plus `notmuch new` with a lock, and qtmaildir is the only thing that
@@ -577,15 +605,27 @@ a union over the conversation, so it can arm for a thread whose displayed
 message is already read. The write is still scoped to that message, so the cost
 is a no-op rather than a wrong write.
 
-**Adding an action is four places, and three of them are enforced by tests that
+**Adding an action is FIVE places, and four of them are enforced by tests that
 fail in confusing ways.** `KeyMap::knownActions()` (a `Q_ASSERT` in the
 constructor fires otherwise, and it surfaces in whichever suite happens to build
 a `MainWindow` first — `test_tagrules` did), `defaultBindings()` (every action
-must be keyboard-reachable), and the icon table (every action must carry one).
-The no-duplicate-icons rule is narrowed to actions that can reach the toolbar,
-by a named exception list; the five thread actions share their twins' icons
-because a submenu entry always carries text, and the test asserts none of them
-is on the toolbar so the exemption cannot be abused.
+must be keyboard-reachable), the icon table (every action must carry one), and
+a MENU. The no-duplicate-icons rule is narrowed to actions that can reach the
+toolbar, by a named exception list; the five thread actions share their twins'
+icons because a submenu entry always carries text, and the test asserts none of
+them is on the toolbar so the exemption cannot be abused.
+
+**The menu was the fifth place, and this document said four until item 103.**
+Nothing enforced it, so `restore` shipped on the trash branch reachable by
+`Ctrl+R` and by nothing a user could see or discover. The three existing
+coverage tests each assert a different property and all three pass against an
+action that appears nowhere in the interface.
+`everyActionIsReachableFromAMenu()` closes it, walking every menu and submenu
+from the menu bar; it found three more of the same the moment it was written
+(`open_thread`, `clear_pane`, `clear_selection`). The toolbar is deliberately
+NOT the test's instrument: it is a small chosen subset and always will be. An
+action owning a submenu is not itself counted as reachable, since Qt emits no
+`triggered` for it.
 
 **A toggle must read the state of what the row STANDS FOR, not of its thread.**
 `MainWindow::everySelectedRowHasTag()` is the one question `delete` and

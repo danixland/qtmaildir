@@ -214,7 +214,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
             // Degrade to a warning rather than offering a sync that cannot run.
             const auto answer = QMessageBox::warning(
                 this, tr("Unsynced changes"),
-                tr("%n tag change(s) have not been synced, and no sync command "
+                tr("%n change(s) have not been synced, and no sync command "
                    "is configured. Quit anyway?", "", pendingEditCount()),
                 QMessageBox::Discard | QMessageBox::Cancel,
                 QMessageBox::Cancel);
@@ -228,7 +228,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
             QMessageBox box(this);
             box.setIcon(QMessageBox::Question);
             box.setWindowTitle(tr("Unsynced changes"));
-            box.setText(tr("%n tag change(s) have not been synced.", "",
+            box.setText(tr("%n change(s) have not been synced.", "",
                            pendingEditCount()));
             box.setInformativeText(tr("Sync before quitting?"));
             QPushButton *sync =
@@ -309,6 +309,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             keyEvent->accept();
             return true;
         }
+        // Delete needs NO entry here, and that is worth stating because the
+        // reasoning that says it does is nearly right. It is bound bare to
+        // `delete`, and Qt's protection for editable widgets covers plain
+        // LETTERS only, so by the same argument that made Return a problem it
+        // should trigger the action while the user edits a query.
+        //
+        // It does not, because QLineEdit accepts the ShortcutOverride for
+        // Delete itself: Delete is one of its own editing keys, which Return
+        // is not. Measured both ways, with this branch present and absent:
+        // the action fires 0 times either way and the text is edited either
+        // way. Adding a guard here would be dead code carrying a test that
+        // cannot fail.
     }
 
     return QMainWindow::eventFilter(watched, event);
@@ -841,10 +853,23 @@ void MainWindow::registerActions()
         // is about reading a message at all.
         const bool allDeleted = everySelectedRowHasTag(QStringLiteral("deleted"));
 
+        // Item 103. A MOVE now, not only a tag: Delete used to add `deleted`
+        // and leave the file exactly where it was, so deleted mail sat in the
+        // inbox indefinitely and only the chip said otherwise.
         if (allDeleted)
-            tagSelected({}, { QStringLiteral("deleted") }, tr("Undelete"));
+            restoreSelected();
         else
-            tagSelected({ QStringLiteral("deleted") }, {}, tr("Delete"));
+            trashSelected();
+    });
+    addAction(QStringLiteral("restore"), tr("&Restore from trash"),
+              tr("Move the selected messages out of the trash"), [this]() {
+        restoreSelectedFromTrash();
+    });
+    addAction(QStringLiteral("cleanup_stranded"),
+              tr("Find &stranded deleted mail"),
+              tr("Show mail tagged deleted that is not in a trash folder"),
+              [this]() {
+        showStrandedDeletedMail();
     });
     addAction(QStringLiteral("spam"), tr("Mark &spam"),
               tr("Add spam and remove inbox"), [this]() {
@@ -930,12 +955,19 @@ void MainWindow::registerActions()
     });
     addAction(QStringLiteral("delete_thread"), tr("&Delete thread"),
               tr("Add or remove the deleted tag on whole threads"), [this]() {
+        // A MOVE now, like its message-scoped twin. It tagged and moved
+        // nothing until item 103's follow-up, so "Delete thread" left a whole
+        // conversation sitting in the inbox wearing a `deleted` chip: exactly
+        // the half-deleted state Delete stopped producing.
+        //
+        // The direction is read per MESSAGE, not from the thread's tag union.
+        // A thread whose root was deleted on its own carries `deleted` in the
+        // union while its replies do not, and asking the union there ran
+        // Delete a second time on messages already in the trash.
         if (everySelectedRowHasTag(QStringLiteral("deleted"), TagScope::Thread)) {
-            tagSelected({}, { QStringLiteral("deleted") },
-                        tr("Undelete thread"), TagScope::Thread);
+            restoreSelectedThreads();
         } else {
-            tagSelected({ QStringLiteral("deleted") }, {}, tr("Delete thread"),
-                        TagScope::Thread);
+            trashSelectedThreads();
         }
     });
     addAction(QStringLiteral("spam_thread"), tr("Mark thread as &spam"),
@@ -1126,6 +1158,11 @@ void MainWindow::buildMenus()
     auto *messageMenu = menuBar()->addMenu(tr("&Message"));
     messageMenu->addAction(m_actions.value(QStringLiteral("archive")));
     messageMenu->addAction(m_actions.value(QStringLiteral("delete")));
+    // Beside Delete, whose inverse it is. Greyed outside the trash view
+    // rather than hidden: an action that vanishes teaches nothing, while a
+    // disabled entry with its shortcut beside it says both that it exists and
+    // where it applies.
+    messageMenu->addAction(m_actions.value(QStringLiteral("restore")));
     messageMenu->addAction(m_actions.value(QStringLiteral("spam")));
     messageMenu->addSeparator();
     messageMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
@@ -1137,11 +1174,23 @@ void MainWindow::buildMenus()
     // Separated from the entries above: those act on the selection, this edits
     // a rule store shared with mailctl and changes nothing that is on screen.
     messageMenu->addSeparator();
+    // A MENU entry and nothing else, at the user's request: "the cleanup
+    // should be a menu entry only, not to be confused with the filter Trash".
+    // It replaces the whole view like a filter does, so a sixth button beside
+    // the five filters would read as one of them.
+    messageMenu->addAction(m_actions.value(QStringLiteral("cleanup_stranded")));
     messageMenu->addAction(m_actions.value(QStringLiteral("tag_rules")));
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(m_actions.value(QStringLiteral("prev_thread")));
     viewMenu->addAction(m_actions.value(QStringLiteral("next_thread")));
+    viewMenu->addAction(m_actions.value(QStringLiteral("open_thread")));
+    viewMenu->addSeparator();
+    // The two clears. Both shipped keyboard-only, which is what
+    // everyActionIsReachableFromAMenu() exists to stop: an action reachable
+    // only by a chord is an action nobody discovers.
+    viewMenu->addAction(m_actions.value(QStringLiteral("clear_pane")));
+    viewMenu->addAction(m_actions.value(QStringLiteral("clear_selection")));
     viewMenu->addSeparator();
     viewMenu->addAction(m_actions.value(QStringLiteral("toggle_html")));
     viewMenu->addAction(m_actions.value(QStringLiteral("load_remote")));
@@ -1183,6 +1232,13 @@ void MainWindow::buildMenus()
         // control: two buttons with different consequences looked identical.
         { QStringLiteral("archive"), QStringLiteral("mail-archive") },
         { QStringLiteral("delete"),  QStringLiteral("edit-delete") },
+        // The inverse of delete, and the theme's own name for it: the icon
+        // every desktop uses for taking something back out of the wastebasket.
+        { QStringLiteral("restore"), QStringLiteral("edit-undelete") },
+        // A SEARCH, not a delete. The action reports what it finds and moves
+        // nothing, so an icon from the delete family would promise the one
+        // thing it deliberately does not do.
+        { QStringLiteral("cleanup_stranded"), QStringLiteral("system-search") },
         { QStringLiteral("undo"),    QStringLiteral("edit-undo") },
         { QStringLiteral("spam"),    QStringLiteral("mail-mark-junk") },
         { QStringLiteral("flag"),    QStringLiteral("mail-mark-important") },
@@ -1249,6 +1305,7 @@ void MainWindow::buildMenus()
     m_threadContextMenu->setObjectName(QStringLiteral("threadContextMenu"));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("archive")));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("delete")));
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("restore")));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("spam")));
     m_threadContextMenu->addSeparator();
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
@@ -1604,6 +1661,15 @@ void MainWindow::wireWorker()
     connect(m_worker, &NotmuchWorker::tagsApplied,
             this, &MainWindow::onTagsApplied);
 
+    // messagesMovedFrom rather than messagesMoved: the tags a move carries can
+    // only be resolved once the origins are known, and that signal is the one
+    // that reports them.
+    connect(m_worker, &NotmuchWorker::messagesMovedFrom,
+            this, &MainWindow::onMessagesMoved);
+
+    connect(m_worker, &NotmuchWorker::threadMessagesResolved,
+            this, &MainWindow::onThreadMessagesResolved);
+
     m_workerThread.start();
 
     // Queued behind the thread start, so the completer has real tags as soon
@@ -1893,6 +1959,7 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
             { QStringLiteral("inbox"),   QStringLiteral("mail-inbox") },
             { QStringLiteral("flagged"), QStringLiteral("starred") },
             { QStringLiteral("sent"),    QStringLiteral("mail-folder-sent") },
+            { QStringLiteral("trash"),   QStringLiteral("user-trash") },
         };
         button->setIcon(
             QIcon::fromTheme(filterIcons.value(filter.generated)));
@@ -2439,8 +2506,40 @@ void MainWindow::onQueryFinished(int total, quint64 generation)
     applyPendingRecovery();
 }
 
+bool MainWindow::isShowingTrash() const
+{
+    // Compared against the trash GENERATOR's query, not against the word
+    // "trash" or against a tag. The trash view is path-based so that mail
+    // trashed by another client shows up in it; deciding this from
+    // `tag:deleted` instead would disable Restore on exactly the messages
+    // that most need it, which is the case Restore's fallback exists for.
+    //
+    // Both scopes, because the view composes with the account dropdown like
+    // every other filter: one account's trash, or all of them.
+    const QString query = m_lastQuery.trimmed();
+    if (query.isEmpty())
+        return false;
+
+    const QString all = m_config.allTrashQuery().trimmed();
+    if (!all.isEmpty() && query == all)
+        return true;
+
+    for (const Account &account : m_config.accounts()) {
+        const QString trash = account.trashQuery().trimmed();
+        if (!trash.isEmpty() && query == trash)
+            return true;
+    }
+    return false;
+}
+
 void MainWindow::updateViewWideActions()
 {
+    // Only meaningful on mail that is actually in a trash folder. An enabled
+    // action that does nothing is worse than an absent one, and Restore
+    // outside the trash has nothing to restore from.
+    if (QAction *action = m_actions.value(QStringLiteral("restore")))
+        action->setEnabled(isShowingTrash());
+
     // Threads arrive in batches of kBatchSize, so before the query reports its
     // total the model holds only what has landed. An action that says "all"
     // must not run against a partial set and silently skip the rest, and a
@@ -2921,6 +3020,21 @@ bool MainWindow::aSyncHoldsTheWriteLock() const
 
 void MainWindow::flushHeldEdits()
 {
+    // Moves first, and they are flushed even when no tag edit is waiting: the
+    // early return below used to be the whole guard, so a held move with an
+    // empty edit queue would never have been sent at all. That is item 106's
+    // data loss with a worse shape, since a dropped move leaves the file where
+    // the user asked it not to be.
+    if (!m_heldMoves.isEmpty()) {
+        const QVector<HeldMove> moves = m_heldMoves;
+        m_heldMoves.clear();
+        for (const HeldMove &move : moves) {
+            sendMove(move.messageIds, move.destFolder, move.add, move.remove,
+                     move.description, move.fromUndo);
+        }
+        updatePendingIndicator();
+    }
+
     if (m_heldEdits.isEmpty())
         return;
 
@@ -3731,7 +3845,15 @@ int MainWindow::pendingEditCount() const
     // Each held edit counts as one whatever its size, since it carries thread
     // ids rather than message ids and cannot be netted against the map.
     const int held = int(m_heldEdits.size());
-    return m_pendingTagEdits.size() + m_unnettablePendingEdits + held;
+    // Held MOVES count for exactly the same reason, and were missed. With no
+    // tag edit queued the count was 0, so the indicator stayed hidden and
+    // closeEvent()'s `pendingEditCount() > 0` guard never fired: a Delete
+    // pressed during a sync was discarded on quit with no prompt at all. That
+    // is item 106's data loss, and worse here, because a dropped move leaves
+    // the file in the folder the user asked it out of.
+    const int heldMoves = int(m_heldMoves.size());
+    return m_pendingTagEdits.size() + m_unnettablePendingEdits + held
+           + heldMoves;
 }
 
 void MainWindow::updatePendingIndicator()
@@ -3746,7 +3868,7 @@ void MainWindow::updatePendingIndicator()
     // they did, not the writes it became.
     m_pendingLabel->setText(tr("%n unsynced change(s)", "", pending));
     m_pendingLabel->setToolTip(
-        tr("Tag changes made here that a sync has not yet carried to the mail "
+        tr("Changes made here that a sync has not yet carried to the mail "
            "store. An external notmuch run can clear them without this count "
            "noticing."));
     m_pendingLabel->show();
@@ -3870,22 +3992,43 @@ bool MainWindow::everySelectedRowHasTag(const QString &tag,
         } else if (m_model->isMessageRow(index)) {
             tags = m_model->messageAt(index).tags;
         } else {
-            // The thread's summary, and this is a KNOWN approximation rather
-            // than an oversight. A thread row acts on the message its card
-            // displays, but that message's own tags are never in the model:
-            // setThreadMessages drops depth 0 because the root row stands for
-            // it, so there is no node to read and messageById() cannot find
-            // one. The summary is a union over the thread, so it answers
-            // "unread" while ANY message is.
+            // A thread row answers about the MESSAGE ITS CARD DISPLAYS, which
+            // is what it acts on. threadFor() already substitutes that
+            // message's own tags for the thread's union when they are known
+            // (item 110), so this reads the row's real state rather than a
+            // union over messages it does not stand for.
             //
-            // The consequence is bounded and only affects the DIRECTION a
-            // toggle picks, never what it writes: on a thread whose first
-            // message is read while a later one is not, Toggle unread reads
-            // the thread as unread and marks the first message read again, a
-            // no-op. Fixing it properly needs per-message state in
-            // ThreadSummary, which is the same thing item 87 needs; leave it
-            // for that item rather than guessing here.
-            tags = m_model->threadFor(index).tags;
+            // This used to read the union deliberately, with a comment
+            // calling the imprecision bounded because no per-message tags
+            // existed in the model. They do now: ThreadSummary carries
+            // firstMessageTags from the query, so an UNEXPANDED row already
+            // knows its own tags, and the comment outlived the fact.
+            //
+            // The cost of the union was not bounded once Delete became a
+            // MOVE. Deleting the root of a three-message thread left the two
+            // replies undeleted, so the union carried no `deleted`, so a
+            // second press read the row as not-deleted and deleted it AGAIN:
+            // the message was moved trash-to-trash and came out carrying
+            // `deleted`, `deleted-from:inbox` and `deleted-from:Trash` at
+            // once, with no way back. A tag toggle merely re-applied a tag it
+            // already had; a move re-applies the MOVE.
+            //
+            // Resolved through messageById() on the row's own message, which
+            // is the id messageScopeFor() will act on. Asking the same
+            // question the write asks is what keeps the direction and the
+            // write from disagreeing; the union answered a question about a
+            // conversation when the row stands for one message.
+            const ThreadSummary summary = m_model->threadFor(index);
+            const MessageNode own =
+                m_model->messageById(summary.firstMessageId);
+            // messageById() and NOT summary.firstMessageTags, which is the
+            // value the QUERY delivered and is not refreshed by an optimistic
+            // update: applyMessageTagChange() writes the row's node, so after
+            // a delete the node reads `deleted, deleted-from:inbox` while the
+            // summary still reads `inbox, unread`. Measured, and preferring
+            // the summary left this defect exactly as it was.
+            tags = own.messageId.isEmpty() ? summary.firstMessageTags
+                                           : own.tags;
         }
         if (!tags.contains(tag))
             return false;
@@ -4079,6 +4222,798 @@ void MainWindow::sendMessageTagChange(const QStringList &messageIds,
 
     QMetaObject::invokeMethod(m_worker, "applyTags", Qt::QueuedConnection,
                               Q_ARG(TagChange, m_pendingChange));
+}
+
+const QString &MainWindow::kOriginTagPlaceholder()
+{
+    // Not wrapped in tr(). It is never displayed: onMessagesMoved() replaces
+    // it with a real tag before anything reaches the worker, and a translated
+    // placeholder would stop matching in the one locale that translated it,
+    // which is the trap CLAUDE.md records for startup_query.
+    static const QString placeholder =
+        QStringLiteral("\x01qtmaildir-origin-placeholder");
+    return placeholder;
+}
+
+Account MainWindow::accountForMessagePath(const QString &path) const
+{
+    // From the PATH, not from the thread's account tag. The tag is optional
+    // config, so resolving through it would silently disable Delete for an
+    // account that never set one; a message's maildir prefix is what makes it
+    // belong to an account at all.
+    //
+    // Longest maildir wins, so nested account maildirs (`mail` and
+    // `mail/work`) resolve to the more specific one rather than to whichever
+    // happens to be listed first.
+    //
+    // BOTH path shapes are accepted, and that is not defensive coding. A
+    // thread row's path comes from ThreadSummary::firstMessagePath and is
+    // database-RELATIVE; a reply row's comes from MessageNode::filePath and is
+    // ABSOLUTE, because MimeParser has to open it. Matching only the relative
+    // form resolved every reply to no account, so Delete on a reply reported
+    // "no trash folder configured" and moved nothing, which is exactly the
+    // thread-row/reply-row asymmetry this file has been bitten by before.
+    //
+    // A `/` is required after the maildir in both cases, so `acctX` cannot
+    // match an account whose maildir is `acct`.
+    Account best;
+    int bestLength = -1;
+    for (const Account &account : m_config.accounts()) {
+        if (account.maildir.isEmpty())
+            continue;
+        const QString segment = QLatin1Char('/') + account.maildir
+                                + QLatin1Char('/');
+        const bool matches =
+            path.startsWith(account.maildir + QLatin1Char('/'))
+            || path.contains(segment);
+        if (!matches)
+            continue;
+        if (account.maildir.length() > bestLength) {
+            best = account;
+            bestLength = account.maildir.length();
+        }
+    }
+    return best;
+}
+
+void MainWindow::trashSelected()
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return;
+
+    // Message scope, exactly as tagSelected() uses by default: a thread row
+    // stands for the ONE message its card displays. Escalating to the thread
+    // would move a whole conversation into the trash because the user deleted
+    // one reply.
+    const ActionScope scope = m_model->messageScopeFor(rows);
+    if (scope.messageIds.isEmpty())
+        return;
+
+    QHash<QString, QString> pathById;
+    for (const QString &messageId : scope.messageIds)
+        pathById.insert(messageId, m_model->messageById(messageId).filePath);
+
+    trashMessages(scope.messageIds, pathById, scope.messageCount);
+}
+
+void MainWindow::trashMessages(const QStringList &messageIds,
+                               const QHash<QString, QString> &pathById,
+                               int messageCount,
+                               const QStringList &wholeThreadIds)
+{
+    if (messageIds.isEmpty())
+        return;
+
+    // Grouped by destination, because moveMessages() takes one folder per call
+    // and a selection can span accounts with different trash folders.
+    //
+    // Paths are passed IN rather than read from the model, because the thread
+    // path arrives with messages the model has never seen: a thread the user
+    // never expanded holds no node for its replies, so a lookup there returns
+    // nothing and every message resolves to no account.
+    QHash<QString, QStringList> byTrash;
+    QStringList unconfigured;
+    for (const QString &messageId : messageIds) {
+        const Account account =
+            accountForMessagePath(pathById.value(messageId));
+        if (account.trash.isEmpty()) {
+            unconfigured.append(messageId);
+            continue;
+        }
+        byTrash[account.maildir + QLatin1Char('/') + account.trash]
+            .append(messageId);
+    }
+
+    // Task 2 warns at config load; this is the second line of defence, for a
+    // user who never fixed it. Reported rather than silently doing nothing,
+    // and NOT tagged either: a `deleted` tag on a file still in the inbox is
+    // precisely the half-done state this item removes.
+    if (!unconfigured.isEmpty()) {
+        m_statusLabel->setText(
+            tr("%n message(s) could not be deleted: no trash folder is "
+               "configured for their account.", "", int(unconfigured.size())));
+    }
+
+    if (byTrash.isEmpty())
+        return;
+
+    for (auto it = byTrash.cbegin(); it != byTrash.cend(); ++it) {
+        sendMove(it.value(), it.key(),
+                 { QStringLiteral("deleted"), kOriginTagPlaceholder() }, {},
+                 tr("Delete"), false, wholeThreadIds);
+    }
+
+    showTransientStatus(
+        tr("%1: %n message(s)", "", messageCount).arg(tr("Delete")));
+}
+
+QString MainWindow::originTagFor(const QString &dbRelativeFolder) const
+{
+    // `acct/inbox` becomes `deleted-from:inbox`. The tag stores the folder
+    // relative to the ACCOUNT, never to the database: the account prefix is
+    // recomposed from the message's own path when it is read back, so storing
+    // it would duplicate it and would go stale the day the user renames a
+    // maildir.
+    //
+    // Shared by the two sites that need the tag, rather than derived twice.
+    // They disagreed once already: onMessagesMoved() resolved a placeholder
+    // from the folder the worker reported, which on a RESTORE is the trash
+    // rather than the origin, so the restore stripped `deleted-from:Trash`
+    // and left the real tag in place.
+    const Account account =
+        accountForMessagePath(dbRelativeFolder + QLatin1Char('/'));
+    QString accountRelative = dbRelativeFolder;
+    if (!account.maildir.isEmpty()
+        && dbRelativeFolder.startsWith(account.maildir + QLatin1Char('/'))) {
+        accountRelative = dbRelativeFolder.mid(account.maildir.length() + 1);
+    }
+    if (accountRelative.isEmpty())
+        return QString();
+    return QStringLiteral("deleted-from:%1").arg(accountRelative);
+}
+
+QStringList MainWindow::selectedThreadIds() const
+{
+    // A THREAD action on a reply row means that reply's conversation.
+    //
+    // scopeFor() reports a reply under messageIds and leaves threadIds empty,
+    // which is right for the mixed selections it was built for and wrong as
+    // the only input to a thread-scoped action: the early return on an empty
+    // threadIds made Delete thread do nothing at all when the selected row
+    // happened to be a reply. threadFor() resolves either kind of row.
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    QStringList threadIds;
+    for (const QModelIndex &index : rows) {
+        const QString threadId = m_model->threadFor(index).threadId;
+        if (!threadId.isEmpty() && !threadIds.contains(threadId))
+            threadIds.append(threadId);
+    }
+    return threadIds;
+}
+
+void MainWindow::trashSelectedThreads()
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return;
+
+    const QStringList threadIds = selectedThreadIds();
+    if (threadIds.isEmpty())
+        return;
+
+    // Asked of the WORKER rather than resolved here. A thread the user never
+    // expanded has no nodes in the model for its replies, so the ids and the
+    // paths a move needs exist only in the database. applyTagsToThreads()
+    // solves the same problem the same way, for the same reason.
+    //
+    // Repainted HERE, synchronously, before the worker is asked.
+    //
+    // The move needs message ids and paths that only the database holds for an
+    // unexpanded thread, so the move itself is asynchronous. The DISPLAY must
+    // not wait for that round trip: the card is what the user watches, and
+    // holding it back is what made a deleted thread sit unchanged until it was
+    // clicked. It also keeps the toggle's direction readable immediately, so a
+    // second press restores rather than deleting again.
+    for (const QString &threadId : threadIds)
+        m_model->applyTagChange(threadId, { QStringLiteral("deleted") }, {});
+
+    m_pendingThreadScope = threadIds;
+    QMetaObject::invokeMethod(m_worker, "resolveThreadMessages",
+                              Qt::QueuedConnection,
+                              Q_ARG(QStringList, threadIds),
+                              Q_ARG(QString, QStringLiteral("delete_thread")));
+}
+
+void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
+                                          const QStringList &paths,
+                                          const QStringList &tags,
+                                          const QString &requestTag)
+{
+    if (messageIds.size() != paths.size() || messageIds.size() != tags.size())
+        return;
+
+    QHash<QString, QString> pathById;
+    for (int i = 0; i < messageIds.size(); ++i)
+        pathById.insert(messageIds.at(i), paths.at(i));
+
+    const QStringList threadScope = m_pendingThreadScope;
+    m_pendingThreadScope.clear();
+
+    if (requestTag == QStringLiteral("delete_thread")) {
+        trashMessages(messageIds, pathById, messageIds.size(), threadScope);
+        return;
+    }
+
+    if (requestTag == QStringLiteral("restore_messages")) {
+        restoreResolvedMessages(messageIds, paths, tags);
+        return;
+    }
+
+    if (requestTag != QStringLiteral("undelete_thread"))
+        return;
+
+    // Restore, resolved per message: each one goes back to the folder its own
+    // `deleted-from:` tag names, so a thread whose messages were deleted from
+    // different folders reassembles correctly rather than collapsing into one.
+    const QString prefix = QStringLiteral("deleted-from:");
+    QHash<QString, QStringList> byOrigin;
+    QStringList unknown;
+    for (int i = 0; i < messageIds.size(); ++i) {
+        // Split on TAB, matching resolveThreadMessages(). A space is not a
+        // safe separator: a folder name containing one produces a tag
+        // containing one, and splitting there silently truncates the origin
+        // to its first word.
+        const QStringList messageTags =
+            tags.at(i).split(QLatin1Char('\t'), Qt::SkipEmptyParts);
+        QString origin;
+        for (const QString &tag : messageTags) {
+            if (tag.startsWith(prefix)) {
+                origin = tag.mid(prefix.length());
+                break;
+            }
+        }
+        // A message with no `deleted` tag is not in the trash and has nothing
+        // to come back from. A thread-scoped restore reaches every message,
+        // including ones the user never deleted, and moving those would drag
+        // untouched mail out of whatever folder it legitimately sits in.
+        if (!messageTags.contains(QStringLiteral("deleted")))
+            continue;
+        const Account account =
+            accountForMessagePath(paths.at(i));
+        if (origin.isEmpty() || account.maildir.isEmpty()) {
+            unknown.append(messageIds.at(i));
+            continue;
+        }
+        byOrigin[account.maildir + QLatin1Char('/') + origin]
+            .append(messageIds.at(i));
+    }
+
+    if (!unknown.isEmpty()) {
+        // No origin recorded: deleted by an older version or tagged by hand.
+        // The tag comes off so the row stops claiming to be deleted, but no
+        // file moves, since guessing a folder would put the message somewhere
+        // the user never had it.
+        sendMessageTagChange(unknown, {}, { QStringLiteral("deleted") },
+                             tr("Undelete thread"));
+        m_undoStack.push(new MessageTagCommand(this, unknown, {},
+                                               { QStringLiteral("deleted") },
+                                               tr("Undelete thread")));
+    }
+
+    for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
+        // The origin tag is named here, not left as the placeholder: on a
+        // restore the placeholder would resolve to the folder the message is
+        // coming FROM, which is the trash, and strip a tag never written.
+        const QString origin = originTagFor(it.key());
+        QStringList remove{ QStringLiteral("deleted") };
+        if (!origin.isEmpty())
+            remove.append(origin);
+        sendMove(it.value(), it.key(), {}, remove, tr("Undelete thread"),
+                 false, threadScope);
+    }
+
+    showTransientStatus(tr("%1: %n message(s)", "", messageIds.size())
+                            .arg(tr("Undelete thread")));
+}
+
+void MainWindow::restoreSelectedThreads()
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return;
+
+    const QStringList threadIds = selectedThreadIds();
+    if (threadIds.isEmpty())
+        return;
+
+    // Repainted synchronously, as the delete direction is.
+    for (const QString &threadId : threadIds)
+        m_model->applyTagChange(threadId, {}, { QStringLiteral("deleted") });
+
+    m_pendingThreadScope = threadIds;
+    QMetaObject::invokeMethod(
+        m_worker, "resolveThreadMessages", Qt::QueuedConnection,
+        Q_ARG(QStringList, threadIds),
+        Q_ARG(QString, QStringLiteral("undelete_thread")));
+}
+
+QString MainWindow::inboxFolderFor(const Account &account) const
+{
+    // Discovered from the account's OWN inbox query, never hardcoded.
+    //
+    // The casing is not ours to assume: the real Maildir has `Inbox` and a
+    // test fixture has `inbox`, and picking either would create a SECOND
+    // folder beside the real one on whichever side disagreed. That is exactly
+    // the failure a truncated origin folder caused on real mail this morning,
+    // and under mbsync's `Create Both` such a folder can reach the server.
+    //
+    // The inbox query is a generated `path:"<maildir>/<folder>/**"`, so the
+    // folder name is the part between the account prefix and the glob.
+    const QString query = account.inboxQuery();
+    const QString prefix =
+        QStringLiteral("path:\"") + account.maildir + QLatin1Char('/');
+    const QString suffix = QStringLiteral("/**\"");
+    if (query.startsWith(prefix) && query.endsWith(suffix)) {
+        const int from = prefix.length();
+        const int length = query.length() - from - suffix.length();
+        if (length > 0)
+            return query.mid(from, length);
+    }
+
+    // No inbox configured for this account. `Inbox` is the Maildir
+    // convention and is what mbsync's own `Inbox` directive defaults to.
+    return QStringLiteral("Inbox");
+}
+
+void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
+                                         const QStringList &paths,
+                                         const QStringList &tags)
+{
+    if (messageIds.size() != paths.size() || messageIds.size() != tags.size())
+        return;
+
+    const QString prefix = QStringLiteral("deleted-from:");
+    QHash<QString, QStringList> byOrigin;
+    QHash<QString, QStringList> byInbox;
+    QStringList stranded;
+
+    for (int i = 0; i < messageIds.size(); ++i) {
+        const QStringList messageTags =
+            tags.at(i).split(QLatin1Char('\t'), Qt::SkipEmptyParts);
+        QString origin;
+        for (const QString &tag : messageTags) {
+            if (tag.startsWith(prefix)) {
+                origin = tag.mid(prefix.length());
+                break;
+            }
+        }
+
+        const Account account = accountForMessagePath(paths.at(i));
+        if (account.maildir.isEmpty()) {
+            stranded.append(messageIds.at(i));
+            continue;
+        }
+
+        if (origin.isEmpty()) {
+            // Trashed by another client, so there is no record of where it
+            // belongs. Inbox is the documented fallback, and it is reported:
+            // a guess the user is not told about is worse than the guess.
+            byInbox[account.maildir + QLatin1Char('/')
+                    + account.inboxFolder()]
+                .append(messageIds.at(i));
+            continue;
+        }
+        byOrigin[account.maildir + QLatin1Char('/') + origin]
+            .append(messageIds.at(i));
+    }
+
+    for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
+        // The origin tag is named here rather than left as the placeholder,
+        // which onMessagesMoved() would resolve to the folder the message is
+        // coming FROM, namely the trash.
+        const QString origin = originTagFor(it.key());
+        QStringList remove{ QStringLiteral("deleted") };
+        if (!origin.isEmpty())
+            remove.append(origin);
+        sendMove(it.value(), it.key(), {}, remove, tr("Restore"));
+    }
+
+    for (auto it = byInbox.cbegin(); it != byInbox.cend(); ++it) {
+        sendMove(it.value(), it.key(), {}, { QStringLiteral("deleted") },
+                 tr("Restore"));
+    }
+
+    if (!byInbox.isEmpty()) {
+        m_statusLabel->setText(
+            tr("%n message(s) had no record of where they came from and were "
+               "moved to the inbox.", "", int(byInbox.size())));
+    }
+    if (!stranded.isEmpty()) {
+        m_statusLabel->setText(
+            tr("%n message(s) could not be restored: they belong to no "
+               "configured account.", "", int(stranded.size())));
+    }
+}
+
+void MainWindow::restoreSelectedFromTrash()
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return;
+
+    const ActionScope scope = m_model->messageScopeFor(rows);
+    if (scope.messageIds.isEmpty())
+        return;
+
+    // Resolved by the WORKER, not read from the model.
+    //
+    // The model's tags come from the QUERY, and a row whose delete has not yet
+    // been re-queried still carries its pre-delete tags: measured
+    // `[inbox,unread]` on a message already in the trash, one run in three.
+    // The origin tag is then not found, the message falls into the
+    // no-origin branch, and Restore sends it to the INBOX instead of the
+    // folder it came from, silently and irreversibly.
+    //
+    // A restore has to be right about the destination or it is worse than
+    // doing nothing, so it asks the database rather than trusting a view that
+    // may be a moment behind. restoreSelectedThreads() already worked this
+    // way; this is the same reasoning applied to the message-scoped path.
+    m_pendingRestoreIds = scope.messageIds;
+    QMetaObject::invokeMethod(
+        m_worker, "resolveMessages", Qt::QueuedConnection,
+        Q_ARG(QStringList, scope.messageIds),
+        Q_ARG(QString, QStringLiteral("restore_messages")));
+}
+
+void MainWindow::showStrandedDeletedMail()
+{
+    // Not scoped to the selected account, deliberately. The stranded mail is
+    // an artefact of an old version rather than a view of anything, and the
+    // user wants to see all of it at once; the account dropdown is still there
+    // to narrow it by hand afterwards.
+    const QString trash = m_config.allTrashQuery();
+
+    // No account configures a trash folder: everything tagged `deleted` is by
+    // definition stranded, since there is nowhere for it to have gone. An
+    // empty exclusion must never be written as `not ()`, which notmuch parses
+    // without complaint and matches nothing, reporting a clean database.
+    const QString query =
+        trash.isEmpty()
+            ? QStringLiteral("tag:deleted")
+            : QStringLiteral("tag:deleted and not (%1)").arg(trash);
+
+    // Into the bar, like a filter: what ran is visible and editable, and
+    // AlreadyScoped stops runQuery() wrapping it in the selected account's
+    // path, which would hide every other account's stranded mail.
+    m_queryEdit->setText(query);
+    runQuery(FlatResult::No, AccountScope::AlreadyScoped);
+
+    // After runQuery(), which sets "Searching...": set before it, this would
+    // be overwritten and the user would be told nothing about what they are
+    // looking at.
+    m_statusLabel->setText(tr("Mail tagged deleted but not in a trash folder. "
+                              "Select what should go and press Delete."));
+}
+
+void MainWindow::restoreSelected(bool fallbackToInbox)
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return;
+
+    const ActionScope scope = m_model->messageScopeFor(rows);
+    if (scope.messageIds.isEmpty())
+        return;
+
+    // Where each message came from, read back off its own tag. This is what
+    // the tag exists for: the file has moved, so nothing on disk and nothing
+    // in notmuch still records the original folder.
+    const QString prefix = QStringLiteral("deleted-from:");
+    QHash<QString, QStringList> byOrigin;
+    QStringList unknown;
+    for (const QString &messageId : scope.messageIds) {
+        const MessageNode node = m_model->messageById(messageId);
+        QString origin;
+        for (const QString &tag : node.tags) {
+            if (tag.startsWith(prefix)) {
+                origin = tag.mid(prefix.length());
+                break;
+            }
+        }
+        // An account prefix is needed to name a folder to the worker, which
+        // works in database-relative paths. The origin tag stores the folder
+        // relative to the ACCOUNT, so the two are recomposed here.
+        const Account account = accountForMessagePath(node.filePath);
+        if (origin.isEmpty() || account.maildir.isEmpty()) {
+            unknown.append(messageId);
+            continue;
+        }
+        byOrigin[account.maildir + QLatin1Char('/') + origin].append(messageId);
+    }
+
+    if (!unknown.isEmpty()) {
+        // No origin recorded. Two quite different situations reach here and
+        // they want opposite things, which is what `fallbackToInbox` selects.
+        //
+        // From the TRASH VIEW the message is demonstrably in the trash, put
+        // there by another client, and refusing to move it leaves the user
+        // looking at a message they cannot get out. Inbox is the documented
+        // fallback, and it is reported, because a guess the user is not told
+        // about is worse than the guess itself.
+        //
+        // From a second press of Delete the message is NOT in the trash: it is
+        // sitting wherever it always was, wearing a stale `deleted` tag from
+        // an older version or from a hand-written notmuch command. Moving it
+        // to the inbox there would relocate mail the user never asked to move.
+        // The tag comes off and the file stays put.
+        if (fallbackToInbox) {
+            QHash<QString, QStringList> byInbox;
+            QStringList stranded;
+            for (const QString &messageId : unknown) {
+                const Account account =
+                    accountForMessagePath(m_model->messageById(messageId).filePath);
+                if (account.maildir.isEmpty()) {
+                    stranded.append(messageId);
+                    continue;
+                }
+                byInbox[account.maildir + QLatin1Char('/')
+                        + inboxFolderFor(account)]
+                    .append(messageId);
+            }
+
+            for (auto it = byInbox.cbegin(); it != byInbox.cend(); ++it) {
+                sendMove(it.value(), it.key(), {},
+                         { QStringLiteral("deleted") }, tr("Restore"));
+            }
+
+            if (!byInbox.isEmpty()) {
+                m_statusLabel->setText(
+                    tr("%n message(s) had no record of where they came from "
+                       "and were moved to the inbox.", "",
+                       int(unknown.size() - stranded.size())));
+            }
+            if (!stranded.isEmpty()) {
+                m_statusLabel->setText(
+                    tr("%n message(s) could not be restored: they belong to no "
+                       "configured account.", "", int(stranded.size())));
+            }
+        } else {
+            sendMessageTagChange(unknown, {}, { QStringLiteral("deleted") },
+                                 tr("Undelete"));
+            m_undoStack.push(new MessageTagCommand(
+                this, unknown, {}, { QStringLiteral("deleted") },
+                tr("Undelete")));
+        }
+    }
+
+    for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
+        // The origin tag is named HERE, not left as the placeholder.
+        //
+        // onMessagesMoved() resolves the placeholder from the origin the
+        // WORKER reports, which is where the message is coming FROM. On a
+        // delete that is the inbox and correct; on a restore it is the trash,
+        // so the placeholder resolved to `deleted-from:Trash` and asked to
+        // remove a tag that never existed, while the real `deleted-from:inbox`
+        // was never named. The message came home still claiming to have been
+        // deleted from somewhere, which then made Restore offer to move a
+        // message that was already back.
+        //
+        // A restore does not need the placeholder at all: the origin was just
+        // read off the message's own tag to decide where to send it, so the
+        // exact tag to strip is already known. Recomposed from the same
+        // account-relative form it was stored in.
+        const QString origin = originTagFor(it.key());
+        QStringList remove{ QStringLiteral("deleted") };
+        if (!origin.isEmpty())
+            remove.append(origin);
+        sendMove(it.value(), it.key(), {}, remove, tr("Undelete"));
+    }
+
+    showTransientStatus(
+        tr("%1: %n message(s)", "", scope.messageCount).arg(tr("Undelete")));
+}
+
+void MainWindow::sendMove(const QStringList &messageIds,
+                          const QString &destFolder, const QStringList &add,
+                          const QStringList &remove,
+                          const QString &description, bool fromUndo,
+                          const QStringList &wholeThreadIds)
+{
+    if (messageIds.isEmpty() || destFolder.isEmpty())
+        return;
+
+    // Held during a sync for the same reason every tag write is: the worker's
+    // read-write open BLOCKS on notmuch's exclusive lock rather than failing,
+    // so sending now would freeze the worker for the rest of the run.
+    //
+    // A move is held as the MOVE it is, not decomposed into a tag edit. The
+    // held-edit queue carries tag changes only, so a move pushed through it
+    // would apply the tags and never move the file, which is worse than
+    // waiting: the message would read as deleted and still be in the inbox.
+    if (aSyncHoldsTheWriteLock()) {
+        m_heldMoves.append(HeldMove{ messageIds, destFolder, add, remove,
+                                     description, fromUndo });
+        m_statusLabel->setText(
+            tr("A sync is running; your change will be applied when it "
+               "finishes."));
+        updatePendingIndicator();
+        return;
+    }
+
+    // Repainted NOW, before the worker is asked.
+    //
+    // The write itself waits for the move to be confirmed, and must: tagging
+    // the database first would leave a message marked deleted in a folder it
+    // never left if the rename failed. The DISPLAY has no such constraint, and
+    // holding it back until the round trip finished is what made a deleted row
+    // sit there unchanged until the user clicked it. The reply rows repainted
+    // and the root did not, because the replies were separately tagged while
+    // the root's card reads its thread's summary.
+    //
+    // Reverted by revertPendingTagChange() if the write is rejected, exactly
+    // as the tag path's optimistic update is.
+    //
+    // The placeholder is dropped rather than displayed: the real origin is not
+    // known until the worker answers, and a chip reading the placeholder's
+    // literal name would be worse than one chip arriving a moment late.
+    QStringList displayAdd;
+    for (const QString &tag : add) {
+        if (tag != kOriginTagPlaceholder())
+            displayAdd.append(tag);
+    }
+    QStringList displayRemove;
+    for (const QString &tag : remove) {
+        if (tag != kOriginTagPlaceholder())
+            displayRemove.append(tag);
+    }
+    // A thread-scoped move already repainted its rows in
+    // trashSelectedThreads() / restoreSelectedThreads(), synchronously, before
+    // the worker was asked to resolve the threads at all. Repeating it here
+    // would be harmless but redundant; more importantly the caller there needs
+    // the repaint to happen WITHOUT a worker round trip, which is the whole
+    // reason it is not done from this function.
+    //
+    // applyTagChange() is what those callers use, and applyMessageTagChange()
+    // is what this one uses, and the difference is not a style choice: the
+    // former moves the thread's SUMMARY, which a thread row's card draws from,
+    // while the latter deliberately leaves a multi-message thread's summary
+    // alone because one message's edit does not describe the conversation.
+    if (wholeThreadIds.isEmpty()) {
+        for (const QString &messageId : messageIds)
+            m_model->applyMessageTagChange(messageId, displayAdd, displayRemove);
+    }
+
+    // What to tag once the move is CONFIRMED. Tagging now would leave a
+    // message marked deleted in a folder it never left if the rename failed.
+    //
+    // A QUEUE, not a map keyed on the destination: two Deletes in the same
+    // account before the first confirmation arrives both name `acct/Trash`,
+    // so the second insert overwrote the first and the second confirmation
+    // took an empty PendingMove. That file landed in the trash carrying
+    // neither `deleted` nor `deleted-from:`, which makes it unrestorable and
+    // invisible to a `tag:deleted` query. The worker handles one move at a
+    // time on its own thread and emits in the order it was asked, so a plain
+    // FIFO matches confirmations to requests without needing a key at all.
+    m_pendingMoves.enqueue(PendingMove{ add, remove, description, fromUndo });
+
+    QMetaObject::invokeMethod(m_worker, "moveMessages", Qt::QueuedConnection,
+                              Q_ARG(QStringList, messageIds),
+                              Q_ARG(QString, destFolder));
+}
+
+void MainWindow::onMessagesMoved(const QMap<QString, QString> &originByMessageId,
+                                 const QString &destFolder)
+{
+    if (m_pendingMoves.isEmpty())
+        return;
+    const PendingMove pending = m_pendingMoves.dequeue();
+    if (originByMessageId.isEmpty())
+        return;
+
+    // The origin differs per message, so the tags do too: two messages deleted
+    // from different folders get different `deleted-from:` tags out of one
+    // gesture. Grouped by the resolved tag list so identical ones still travel
+    // as a single write.
+    QHash<QString, QStringList> byOrigin;
+    for (auto it = originByMessageId.cbegin(); it != originByMessageId.cend();
+         ++it) {
+        byOrigin[it.value()].append(it.key());
+    }
+
+    for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
+        // The origin tag names the folder relative to the ACCOUNT, not to the
+        // database: `inbox`, never `acct/inbox`. Restore recomposes the
+        // account prefix from the message's own path, so storing it here would
+        // duplicate it, and a stored account prefix would go stale the day the
+        // user renames a maildir.
+        //
+        // The worker reports `acct/inbox`; the account's own maildir is
+        // `acct`, so the stored tag is `inbox`. Resolved through the first
+        // message's path, which is still the account's whichever folder it
+        // sits in now.
+        const QString originTag = originTagFor(it.key());
+
+        auto resolve = [&](const QStringList &tags) {
+            QStringList out;
+            for (const QString &tag : tags) {
+                if (tag != kOriginTagPlaceholder()) {
+                    out.append(tag);
+                    continue;
+                }
+                if (!originTag.isEmpty())
+                    out.append(originTag);
+            }
+            return out;
+        };
+
+        const QStringList resolvedAdd = resolve(pending.add);
+        const QStringList resolvedRemove = resolve(pending.remove);
+        sendMessageTagChange(it.value(), resolvedAdd, resolvedRemove,
+                             pending.description);
+
+        // The undo entry carries the RESOLVED tags, and is pushed per origin
+        // group rather than once for the batch.
+        //
+        // It used to be handed pending.add straight, which still holds the
+        // unresolved placeholder: undo then asked to remove a tag by that
+        // literal name, which no message carries, so the removal was a silent
+        // no-op and `deleted-from:inbox` survived the undo. The file came home
+        // still claiming to have been deleted from somewhere. Same defect as
+        // the one the second-Delete path had, reached through Ctrl+Z instead.
+        //
+        // Per group because the placeholder resolves to a DIFFERENT tag per
+        // origin: one command for a batch spanning two folders could only
+        // carry one of them, so the other would be the wrong tag rather than
+        // merely an unresolved one.
+        if (!pending.fromUndo) {
+            QMap<QString, QString> groupOrigins;
+            for (const QString &messageId : it.value())
+                groupOrigins.insert(messageId, originByMessageId.value(messageId));
+            m_undoStack.push(new MoveCommand(this, groupOrigins, destFolder,
+                                             resolvedAdd, resolvedRemove,
+                                             pending.description));
+        }
+    }
+
+    // A restore out of the TRASH VIEW leaves the row it came from showing a
+    // message that is no longer there, and only a refresh can say so.
+    //
+    // Reported from a hand test: the move was correct and the row sat in the
+    // list until the Trash filter was clicked again. The trash view is PATH
+    // based, so a restored message stops matching the query the list was built
+    // from, which is a state no tag change can express. Nothing else here
+    // removes a row, deliberately: in an ordinary view a deleted message's
+    // card should stay put, since one deleted reply does not doom the
+    // conversation.
+    //
+    // refreshCurrentQuery() rather than runCurrentQuery(): it clears nothing,
+    // so the selection, the expanded threads, the undo stack and the message
+    // being read all survive. Re-running the query outright would destroy the
+    // undo entry this function just pushed, which is the one thing a restore
+    // must leave intact.
+    //
+    // Gated on isShowingTrash() and not on the destination: a Delete is a move
+    // too and reaches this same slot, and refreshing after every delete would
+    // make a row vanish from under the user in every other view.
+    if (isShowingTrash())
+        refreshCurrentQuery();
+
+    // The undo entries are pushed inside the loop above, one per origin
+    // group, because the placeholder resolves per origin. Nothing is pushed
+    // for a move the undo stack itself started: a MoveCommand is confirmed
+    // through this same slot, so pushing unconditionally left the undo of a
+    // Delete putting a fresh command on the stack instead of consuming the
+    // one it undid, and a second press of undo re-deleted the message. The
+    // flag rides on PendingMove because the answer has to survive the queued
+    // round trip; a window-wide "am I undoing" flag would long since have
+    // been cleared by the time the worker replies.
 }
 
 void MainWindow::sendThreadTagChange(const QStringList &threadIds,

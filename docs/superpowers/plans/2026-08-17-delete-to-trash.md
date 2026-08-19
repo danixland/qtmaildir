@@ -52,7 +52,7 @@ No new files. Every change lands in a file that already owns that responsibility
 - Modify: `src/config.cpp` (`Account::trashQuery()` beside `sentQuery()` at line 130, and the account parser)
 - Test: `tests/test_config.cpp`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `tests/test_config.cpp`, and declare both slots in the `private slots:` block:
 
@@ -94,7 +94,7 @@ void TestConfig::aBracketedTrashFolderIsQuoted()
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 cmake --build build 2>&1 | tail -5
@@ -102,7 +102,7 @@ cmake --build build 2>&1 | tail -5
 
 Expected: FAIL to compile, `'trash' is not a member of 'Account'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/config.h`, add to `Account` immediately after the `sent` member:
 
@@ -143,7 +143,7 @@ Then find where the account parser reads `sent` (search for `QStringLiteral("sen
         account.trash = settings.value(QStringLiteral("trash")).toString();
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_config
@@ -151,7 +151,7 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_config
 
 Expected: PASS, all tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/config.h src/config.cpp tests/test_config.cpp
@@ -170,7 +170,7 @@ First read how warnings are currently raised: search `src/config.cpp` for
 `m_warnings` and copy the surrounding form exactly. Do not invent a new
 mechanism.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 void TestConfig::anAccountWithoutATrashFolderWarns()
@@ -204,7 +204,7 @@ void TestConfig::anAccountWithoutATrashFolderWarns()
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_config -functions | grep -i trash
@@ -213,7 +213,7 @@ QT_QPA_PLATFORM=offscreen ./build/tests/test_config anAccountWithoutATrashFolder
 
 Expected: FAIL, `warnings` is empty.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In the account-loading loop in `src/config.cpp`, after the account is parsed and
 before it is appended:
@@ -232,7 +232,7 @@ before it is appended:
         }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_config
@@ -240,7 +240,7 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_config
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/config.cpp tests/test_config.cpp
@@ -256,7 +256,7 @@ git commit -m "feat(config): warn when an account configures no trash folder"
 - Modify: `src/config.cpp` (`kQueryGenerators` line 60, `builtinFilter()` line 757, `resolvedQuery()` line 790, `allTrashQuery()` beside line 140)
 - Test: `tests/test_config.cpp`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 void TestConfig::theTrashFilterComposesPerAccount()
@@ -307,7 +307,7 @@ void TestConfig::theTrashFilterMatchesNothingWithoutAFolder()
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_config theTrashFilterComposesPerAccount
@@ -315,7 +315,7 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_config theTr
 
 Expected: FAIL, `trash.isGenerated()` is false because the generator is unknown.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/config.cpp`, add to `kQueryGenerators` at line 60, last so it sits
 rightmost on the query row:
@@ -377,7 +377,7 @@ And in the per-account branch, beside the `sent` case:
     }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_config
@@ -385,13 +385,13 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_config
 
 Expected: PASS.
 
-- [ ] **Step 5: Verify the mutation fails**
+- [x] **Step 5: Verify the mutation fails**
 
 Temporarily change the per-account branch to `return allTrashQuery();` and
 rebuild. `theTrashFilterComposesPerAccount` must FAIL on the `QCOMPARE`. Revert
 the mutation. This proves the test asserts on the string rather than on rows.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/config.h src/config.cpp tests/test_config.cpp
@@ -412,7 +412,7 @@ This is the first mutation in the project that is not a notmuch tag. Read
 uses is required, not stylistic, because notmuch permits one open handle per
 process.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `tests/test_notmuchworker.cpp`, declaring each slot in `private slots:`:
 
@@ -536,7 +536,7 @@ void TestNotmuchWorker::moveMessagesReportsOnlyWhatMoved()
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 cmake --build build 2>&1 | tail -5
@@ -544,7 +544,7 @@ cmake --build build 2>&1 | tail -5
 
 Expected: FAIL to compile, `'moveMessages' is not a member of 'NotmuchWorker'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/notmuchworker.h`, beside `applyTags()`:
 
@@ -675,7 +675,7 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_notmuchworker
@@ -683,7 +683,7 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_notmuchworke
 
 Expected: PASS, all tests.
 
-- [ ] **Step 5: Verify the ordering mutation fails**
+- [x] **Step 5: Verify the ordering mutation fails**
 
 Move the `notmuch_database_remove_message` call to immediately BEFORE the
 `notmuch_database_index_file` call and rebuild.
@@ -691,7 +691,7 @@ Move the `notmuch_database_remove_message` call to immediately BEFORE the
 the mutation. This is the single most important check in the task: the wrong
 order silently destroys user tags and every other test still passes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/notmuchworker.h src/notmuchworker.cpp tests/test_notmuchworker.cpp
@@ -716,7 +716,7 @@ selection, resolved through `everySelectedRowHasTag()`, and `CLAUDE.md` records
 two separate bugs that lived in those three lines. Preserve the toggle: Delete
 twice still means "put it back".
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 void TestMainWindow::deleteMovesTheMessageToTrash()
@@ -793,7 +793,7 @@ whichever helpers are missing, following the form of the ones already there.
 observable state with `QTRY_VERIFY_WITH_TIMEOUT` and never on worker signals or
 a fixed `qWait(n)`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow deleteMovesTheMessageToTrash
@@ -801,7 +801,7 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow d
 
 Expected: FAIL, the message is still in Inbox because Delete only tags.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add a `MoveCommand` in `src/mainwindow.h`, beside `MessageTagCommand` around
 line 1176, following its shape exactly:
@@ -888,7 +888,7 @@ the current path, and pushes one `MoveCommand` carrying
 `deleted` and `deleted-from:<origin>`. An account with no `trash` key contributes
 nothing and reports through `statusMessage`, since Task 2 already warned at load.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow
@@ -896,7 +896,7 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow
 
 Expected: PASS, all tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mainwindow.h src/mainwindow.cpp tests/test_mainwindow.cpp
@@ -918,7 +918,7 @@ are enforced by tests that fail confusingly: `KeyMap::knownActions()` (a
 `defaultBindings()` (every action must be keyboard-reachable), and the icon
 table (every action must carry one).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 void TestMainWindow::restoreIsOnlyEnabledInTheTrashView()
@@ -985,7 +985,7 @@ void TestMainWindow::restoreFallsBackToInboxWithoutAnOriginTag()
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow restoreIsOnlyEnabledInTheTrashView
@@ -993,7 +993,7 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow r
 
 Expected: FAIL, there is no `restore` action.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Add `"restore"` to `KeyMap::knownActions()` and give it a binding in
 `defaultBindings()`. Check what is free first:
@@ -1030,7 +1030,7 @@ generator's, for the current account selection.
 `restoreSelected()` reads each row's `deleted-from:` tag for its destination and
 falls back to `Inbox`, reporting which through `statusMessage`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow
@@ -1040,7 +1040,7 @@ ctest --test-dir build --output-on-failure
 Expected: PASS, 24 of 24. The keymap and icon-table tests fail loudly if a
 place was missed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mainwindow.h src/mainwindow.cpp src/keymap.cpp tests/test_mainwindow.cpp
@@ -1059,7 +1059,7 @@ git commit -m "feat: restore mail from the trash view"
 The user's constraint, verbatim: "the cleanup should be a menu entry only, not
 to be confused with the filter Trash". Do not add a sixth button.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```cpp
 void TestMainWindow::theCleanupQueryFindsStrandedMail()
@@ -1109,7 +1109,7 @@ void TestMainWindow::theCleanupQueryExcludesMailAlreadyInTrash()
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow theCleanupQueryFindsStrandedMail
@@ -1117,7 +1117,7 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow t
 
 Expected: FAIL, there is no `cleanup_stranded` action.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Register the action in `knownActions()`, `defaultBindings()` and the icon table
 as in Task 6, then:
@@ -1141,7 +1141,7 @@ as in Task 6, then:
 Add it to a menu, not to the query row. Find where the other menu entries are
 built and follow that form.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow
@@ -1149,7 +1149,7 @@ cmake --build build && QT_QPA_PLATFORM=offscreen ./build/tests/test_mainwindow
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mainwindow.h src/mainwindow.cpp src/keymap.cpp tests/test_mainwindow.cpp
@@ -1168,7 +1168,7 @@ Every user-facing string added above needs a translation, and `lrelease`
 silently DROPS an unfinished string and ships it as English inside an otherwise
 Italian UI. Item 108 shipped fifteen strings that way.
 
-- [ ] **Step 1: Refresh the translation source**
+- [x] **Step 1: Refresh the translation source**
 
 ```bash
 lupdate-qt6 src/ -ts translations/qtmaildir_it_IT.ts -no-obsolete -locations none
@@ -1178,7 +1178,7 @@ Expected: a clean run reporting zero context warnings. A "tr() cannot be called
 without context" warning means a literal needs `QT_TRANSLATE_NOOP("TheClass",
 "Text")` rather than `tr()`.
 
-- [ ] **Step 2: Translate every new string**
+- [x] **Step 2: Translate every new string**
 
 Open `translations/qtmaildir_it_IT.ts` and fill in each `<translation
 type="unfinished">`. The new strings are the Trash filter name, the Restore and
@@ -1188,7 +1188,7 @@ messages.
 Do NOT translate notmuch query syntax. `tag:deleted`, `path:` and
 `deleted-from:` are wire format.
 
-- [ ] **Step 3: Verify nothing is unfinished**
+- [x] **Step 3: Verify nothing is unfinished**
 
 ```bash
 lrelease-qt6 translations/qtmaildir_it_IT.ts
@@ -1197,7 +1197,7 @@ lrelease-qt6 translations/qtmaildir_it_IT.ts
 Expected: "Generated N translation(s) (N finished, 0 unfinished)". A nonzero
 unfinished count means a string will ship as English.
 
-- [ ] **Step 4: Run the translations test**
+- [x] **Step 4: Run the translations test**
 
 ```bash
 ctest --test-dir build -R translations --output-on-failure
@@ -1205,7 +1205,7 @@ ctest --test-dir build -R translations --output-on-failure
 
 Expected: PASS.
 
-- [ ] **Step 5: Write the changelog entry**
+- [x] **Step 5: Write the changelog entry**
 
 Under `## [Unreleased]` in `CHANGELOG.md`, with an `### Upgrading` section,
 since a working config now warns until five keys are added:
@@ -1243,7 +1243,7 @@ Note that Delete's reversibility depends on your provider: a trash folder that
 the provider purges on a timer will eventually remove the mail for good.
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add translations/qtmaildir_it_IT.ts CHANGELOG.md
@@ -1254,7 +1254,7 @@ git commit -m "i18n: translate the trash strings, and document the trash key"
 
 ## Task 9: Full verification
 
-- [ ] **Step 1: Clean build**
+- [x] **Step 1: Clean build**
 
 ```bash
 rm -rf build
@@ -1264,7 +1264,7 @@ cmake --build build
 
 Expected: no warnings from the changed files.
 
-- [ ] **Step 2: Full suite**
+- [x] **Step 2: Full suite**
 
 ```bash
 ctest --test-dir build --output-on-failure
@@ -1272,13 +1272,13 @@ ctest --test-dir build --output-on-failure
 
 Expected: 24 of 24 passing.
 
-- [ ] **Step 3: Confirm the spec's claims hold**
+- [x] **Step 3: Confirm the spec's claims hold**
 
 Re-read `docs/superpowers/specs/2026-08-17-delete-to-trash-design.md` and check
 each testing bullet has a test. The spec lists six; all six are covered by
 Tasks 1, 3, 4, 5, 6 and 7.
 
-- [ ] **Step 4: Hand the build to the user**
+- [x] **Step 4: Hand the build to the user**
 
 Do NOT run `./build/src/qtmaildir`. Report what to look at:
 

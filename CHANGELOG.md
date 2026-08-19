@@ -11,6 +11,13 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-08-19
+
+A bugfix release for one defect in 0.26.0, reported the day it shipped: moving
+a message between folders kept its filename, so mbsync's per-folder UID
+travelled with it and a later sync failed with `Maildir error: duplicate UID`.
+Also moves the copy confirmation added below into the message pane itself.
+
 ### Fixed
 
 - Moving a message between folders now gives its file a fresh Maildir name.
@@ -32,6 +39,14 @@ of each pair and reindex:
 
 mbsync re-derives the UID on the next sync. The code no longer creates this
 state.
+
+An earlier version of the same bug could also create a wrongly named FOLDER,
+which `Create Both` then propagated to the mail server. If you have one, delete
+it on the SERVER first: `Expunge Both` applies to messages, not to mailboxes,
+so removing the folder locally and syncing simply pulls it back. Note that a
+webmail sidebar may not show it while IMAP still lists it, so check with
+`mbsync -l <channel>` rather than by eye, and confirm the messages inside it
+also exist in their correct folder before deleting anything.
 
 ### Added
 

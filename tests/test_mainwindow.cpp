@@ -27,6 +27,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenuBar>
 #include <QMenu>
 #include <QPushButton>
 #include <QProgressBar>
@@ -330,6 +331,7 @@ private slots:
     void aCronSyncDoesNotClearAnEditMadeWhileItRan();
 
     void everyActionCarriesAnIcon();
+    void everyActionIsReachableFromAMenu();
     void theToolbarDoesNotOverrideTheDesktopButtonStyle();
     void theImportantActionIsLabelledImportant();
     void theImportantActionStillWritesTheFlaggedTag();
@@ -383,6 +385,8 @@ private slots:
     void restoreIsOnlyEnabledInTheTrashView();
     void restoreReturnsAMessageToItsOriginFolder();
     void restoreFallsBackToInboxWithoutAnOriginTag();
+    void theCleanupQueryFindsStrandedMail();
+    void theCleanupQueryExcludesMailAlreadyInTrash();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -6384,6 +6388,75 @@ void TestMainWindow::aCronSyncDoesNotClearAnEditMadeWhileItRan()
 
 // Items 56 and 57.
 
+void TestMainWindow::everyActionIsReachableFromAMenu()
+{
+    // The fourth registration site nothing enforced. CLAUDE.md says adding an
+    // action is four places: knownActions(), defaultBindings(), the icon table
+    // and the action itself. It is FIVE, and the fifth is a menu.
+    //
+    // Found the hard way on the trash branch: `restore` shipped keyboard-only,
+    // reachable by a chord and by nothing a user could see or discover, and no
+    // test noticed. The three existing coverage tests each assert a different
+    // property and all three pass against an action that appears nowhere in
+    // the interface.
+    //
+    // The MENU rather than the toolbar, since the toolbar is a small
+    // deliberate subset and always will be. Every menu is walked, submenus
+    // included, because the five whole-thread actions live only in the "Whole
+    // thread" submenu.
+    const Config config;
+    MainWindow window(config);
+
+    auto *bar = window.menuBar();
+    QVERIFY(bar);
+
+    QSet<QAction *> reachable;
+    QList<QMenu *> pending;
+    const auto topLevel = bar->actions();
+    for (QAction *action : topLevel) {
+        if (action->menu())
+            pending.append(action->menu());
+    }
+    QVERIFY2(!pending.isEmpty(), "the menu bar holds no menus");
+
+    while (!pending.isEmpty()) {
+        QMenu *menu = pending.takeFirst();
+        const auto entries = menu->actions();
+        for (QAction *entry : entries) {
+            if (QMenu *sub = entry->menu()) {
+                pending.append(sub);
+                // An action owning a menu emits no `triggered`, so it is the
+                // submenu that makes its children reachable and never the
+                // parent entry itself. Not counted as reachable.
+                continue;
+            }
+            reachable.insert(entry);
+        }
+    }
+
+    // The guard, before anything is asserted about what is missing: a walk
+    // that found nothing would report every action as unreachable and read as
+    // a catastrophic regression rather than as a broken probe.
+    QVERIFY2(reachable.size() > 10,
+             qPrintable(QStringLiteral("the menu walk found only %1 entries")
+                            .arg(reachable.size())));
+
+    QStringList unreachable;
+    for (const QString &name : KeyMap::knownActions()) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
+        if (!reachable.contains(action))
+            unreachable.append(name);
+    }
+
+    QVERIFY2(unreachable.isEmpty(),
+             qPrintable(QStringLiteral("%1 action(s) reach no menu, so they "
+                                       "exist only for whoever already knows "
+                                       "the chord: %2")
+                            .arg(unreachable.size())
+                            .arg(unreachable.join(QStringLiteral(", ")))));
+}
+
 void TestMainWindow::everyActionCarriesAnIcon()
 {
     // Item 56. The complaint was inconsistency, not absence: eight actions had
@@ -8814,6 +8887,22 @@ static int notmuchCount(const QString &configPath, const QString &query)
     return ok ? count : -1;
 }
 
+/// Applies a tag change with the notmuch binary, for the one thing the UI
+/// cannot produce any more: a message tagged `deleted` while its file is still
+/// in the inbox. That is the state the OLD Delete left mail in, and the state
+/// the cleanup action exists to find, so a test for it has to write it
+/// directly rather than through an action that now moves the file too.
+static bool notmuchTag(const QString &configPath, const QStringList &args)
+{
+    QProcess process;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("NOTMUCH_CONFIG"), configPath);
+    process.setProcessEnvironment(env);
+    process.start(QStringLiteral("notmuch"),
+                  QStringList{ QStringLiteral("tag") } + args);
+    return process.waitForFinished(15000) && process.exitCode() == 0;
+}
+
 static bool folderHasMessageFile(const QString &dir, const QString &stem)
 {
     QDir directory(dir);
@@ -10105,6 +10194,123 @@ void TestMainWindow::deleteWithoutATrashFolderSaysSoRatherThanDoingNothing()
                                  QStringLiteral("notrash.example.org"))
             || folderHasMessageFile(mail + QStringLiteral("/acct/inbox/cur"),
                                     QStringLiteral("notrash.example.org")));
+}
+
+void TestMainWindow::theCleanupQueryFindsStrandedMail()
+{
+    // The state 848 real messages are in today: tagged `deleted` by a version
+    // of Delete that only ever tagged, with the file still sitting in the
+    // inbox. Nothing moves them on their own, so the action reports them and
+    // the user decides.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("strand@example.org"),
+        QStringLiteral("Tagged but never moved"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("keep@example.org"),
+        QStringLiteral("Perfectly ordinary mail"),
+        QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    const QString cfg = backed.fixture().configPath();
+    QVERIFY(notmuchTag(cfg, { QStringLiteral("+deleted"),
+                              QStringLiteral("--"),
+                              QStringLiteral("id:strand@example.org") }));
+    // The guard, before anything is asserted about what the action finds: one
+    // message is stranded and one is not, so a query that simply returns
+    // everything cannot pass.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("tag:deleted")), 1);
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *cleanup =
+        window.findChild<QAction *>(QStringLiteral("cleanup_stranded"));
+    QVERIFY(model && queryEdit);
+    QVERIFY2(cleanup, "there is no cleanup_stranded action");
+
+    cleanup->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    // The query lands in the bar, like every other generated query, so what
+    // ran is visible and the user can edit it.
+    QVERIFY2(queryEdit->text().contains(QStringLiteral("tag:deleted")),
+             qPrintable(QStringLiteral("the bar holds '%1'")
+                            .arg(queryEdit->text())));
+    QVERIFY2(queryEdit->text().contains(QStringLiteral("not ")),
+             qPrintable(QStringLiteral("the bar holds '%1'")
+                            .arg(queryEdit->text())));
+
+    // It reports and moves NOTHING. A cleanup that acted on its own would be a
+    // bulk delete with no selection behind it, which is the opposite of what
+    // the user asked for.
+    const QString mail = backed.fixture().maildirPath();
+    QVERIFY(folderHasMessageFile(mail + QStringLiteral("/acct/inbox/new"),
+                                 QStringLiteral("strand.example.org"))
+            || folderHasMessageFile(mail + QStringLiteral("/acct/inbox/cur"),
+                                    QStringLiteral("strand.example.org")));
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("path:\"acct/Trash/**\"")), 0);
+}
+
+void TestMainWindow::theCleanupQueryExcludesMailAlreadyInTrash()
+{
+    // Properly trashed mail carries the tag AND sits in the folder. Without
+    // the exclusion this reports every deleted message ever, which makes the
+    // action useless the moment Delete starts working.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("cln1@example.org"),
+        QStringLiteral("Going to the trash"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString cfg = backed.fixture().configPath();
+    const QString mail = backed.fixture().maildirPath();
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    // Asked of the database, never of the list: rowCount() reads 0 for the
+    // whole interval before the worker answers, so "the cleanup found
+    // nothing" would pass against a delete that never happened.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(mail + QStringLiteral("/acct/Trash/cur"),
+                             QStringLiteral("cln1.example.org")),
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("tag:deleted")) == 1, 15000);
+
+    auto *cleanup =
+        window.findChild<QAction *>(QStringLiteral("cleanup_stranded"));
+    QVERIFY2(cleanup, "there is no cleanup_stranded action");
+    cleanup->trigger();
+
+    // The query the action ran, asked of notmuch directly. The list is the
+    // wrong instrument for an emptiness claim, for the reason above.
+    QTRY_VERIFY_WITH_TIMEOUT(!queryEdit->text().isEmpty(), 15000);
+    QCOMPARE(notmuchCount(cfg, queryEdit->text()), 0);
 }
 
 #include "test_mainwindow.moc"

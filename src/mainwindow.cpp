@@ -865,6 +865,12 @@ void MainWindow::registerActions()
               tr("Move the selected messages out of the trash"), [this]() {
         restoreSelectedFromTrash();
     });
+    addAction(QStringLiteral("cleanup_stranded"),
+              tr("Find &stranded deleted mail"),
+              tr("Show mail tagged deleted that is not in a trash folder"),
+              [this]() {
+        showStrandedDeletedMail();
+    });
     addAction(QStringLiteral("spam"), tr("Mark &spam"),
               tr("Add spam and remove inbox"), [this]() {
         tagSelected({ QStringLiteral("spam") }, { QStringLiteral("inbox") },
@@ -1168,11 +1174,23 @@ void MainWindow::buildMenus()
     // Separated from the entries above: those act on the selection, this edits
     // a rule store shared with mailctl and changes nothing that is on screen.
     messageMenu->addSeparator();
+    // A MENU entry and nothing else, at the user's request: "the cleanup
+    // should be a menu entry only, not to be confused with the filter Trash".
+    // It replaces the whole view like a filter does, so a sixth button beside
+    // the five filters would read as one of them.
+    messageMenu->addAction(m_actions.value(QStringLiteral("cleanup_stranded")));
     messageMenu->addAction(m_actions.value(QStringLiteral("tag_rules")));
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(m_actions.value(QStringLiteral("prev_thread")));
     viewMenu->addAction(m_actions.value(QStringLiteral("next_thread")));
+    viewMenu->addAction(m_actions.value(QStringLiteral("open_thread")));
+    viewMenu->addSeparator();
+    // The two clears. Both shipped keyboard-only, which is what
+    // everyActionIsReachableFromAMenu() exists to stop: an action reachable
+    // only by a chord is an action nobody discovers.
+    viewMenu->addAction(m_actions.value(QStringLiteral("clear_pane")));
+    viewMenu->addAction(m_actions.value(QStringLiteral("clear_selection")));
     viewMenu->addSeparator();
     viewMenu->addAction(m_actions.value(QStringLiteral("toggle_html")));
     viewMenu->addAction(m_actions.value(QStringLiteral("load_remote")));
@@ -1217,6 +1235,10 @@ void MainWindow::buildMenus()
         // The inverse of delete, and the theme's own name for it: the icon
         // every desktop uses for taking something back out of the wastebasket.
         { QStringLiteral("restore"), QStringLiteral("edit-undelete") },
+        // A SEARCH, not a delete. The action reports what it finds and moves
+        // nothing, so an icon from the delete family would promise the one
+        // thing it deliberately does not do.
+        { QStringLiteral("cleanup_stranded"), QStringLiteral("system-search") },
         { QStringLiteral("undo"),    QStringLiteral("edit-undo") },
         { QStringLiteral("spam"),    QStringLiteral("mail-mark-junk") },
         { QStringLiteral("flag"),    QStringLiteral("mail-mark-important") },
@@ -4647,6 +4669,36 @@ void MainWindow::restoreSelectedFromTrash()
         m_worker, "resolveMessages", Qt::QueuedConnection,
         Q_ARG(QStringList, scope.messageIds),
         Q_ARG(QString, QStringLiteral("restore_messages")));
+}
+
+void MainWindow::showStrandedDeletedMail()
+{
+    // Not scoped to the selected account, deliberately. The stranded mail is
+    // an artefact of an old version rather than a view of anything, and the
+    // user wants to see all of it at once; the account dropdown is still there
+    // to narrow it by hand afterwards.
+    const QString trash = m_config.allTrashQuery();
+
+    // No account configures a trash folder: everything tagged `deleted` is by
+    // definition stranded, since there is nowhere for it to have gone. An
+    // empty exclusion must never be written as `not ()`, which notmuch parses
+    // without complaint and matches nothing, reporting a clean database.
+    const QString query =
+        trash.isEmpty()
+            ? QStringLiteral("tag:deleted")
+            : QStringLiteral("tag:deleted and not (%1)").arg(trash);
+
+    // Into the bar, like a filter: what ran is visible and editable, and
+    // AlreadyScoped stops runQuery() wrapping it in the selected account's
+    // path, which would hide every other account's stranded mail.
+    m_queryEdit->setText(query);
+    runQuery(FlatResult::No, AccountScope::AlreadyScoped);
+
+    // After runQuery(), which sets "Searching...": set before it, this would
+    // be overwritten and the user would be told nothing about what they are
+    // looking at.
+    m_statusLabel->setText(tr("Mail tagged deleted but not in a trash folder. "
+                              "Select what should go and press Delete."));
 }
 
 void MainWindow::restoreSelected(bool fallbackToInbox)

@@ -32,6 +32,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("archive"),
         QStringLiteral("delete"),
         QStringLiteral("restore"),
+        QStringLiteral("cleanup_stranded"),
         QStringLiteral("spam"),
         QStringLiteral("toggle_unread"),
         QStringLiteral("mark_all_read"),
@@ -118,6 +119,11 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         // Restore is only enabled in the trash view, so its key is dead
         // elsewhere rather than doing something surprising.
         { QStringLiteral("Ctrl+R"),       QStringLiteral("restore") },
+        // Item 103's cleanup. A chord rather than a plain key: it replaces the
+        // whole view, and it is reached from a menu far more often than from
+        // the keyboard. Ctrl+Shift+D is message_details and Ctrl+Alt+D is
+        // delete_thread, so this takes the T of "trash".
+        { QStringLiteral("Ctrl+Alt+T"),   QStringLiteral("cleanup_stranded") },
         { QStringLiteral("Ctrl+Shift+S"), QStringLiteral("spam") },
         { QStringLiteral("Ctrl+U"),       QStringLiteral("toggle_unread") },
         // Shifted against Ctrl+U, which toggles unread on the selection: this

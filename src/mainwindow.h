@@ -827,6 +827,17 @@ private:
     /// folder it came from, one run in three.
     void restoreSelectedFromTrash();
 
+    /// Runs the query that finds mail tagged `deleted` whose file never left
+    /// its original folder, which is what every version before item 103 left
+    /// behind. It REPORTS and moves nothing: acting on its own would be a bulk
+    /// delete with no selection behind it, and the user asked for something
+    /// they could come back to and review.
+    ///
+    /// Repeatable rather than a one-time startup migration, for the same
+    /// reason: mail reaches this state again whenever another client tags
+    /// without moving.
+    void showStrandedDeletedMail();
+
     /// Moves each resolved message home, using the tags and paths the WORKER
     /// reported rather than anything the model holds.
     void restoreResolvedMessages(const QStringList &messageIds,

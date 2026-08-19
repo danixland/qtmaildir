@@ -388,6 +388,9 @@ private slots:
     void theCleanupQueryFindsStrandedMail();
     void theCleanupQueryExcludesMailAlreadyInTrash();
     void aMoveThatRelocatesNothingWritesNoTag();
+    void restoringFromTheTrashViewRefreshesTheList();
+    void theRefreshAfterARestoreLeavesUndoIntact();
+    void deletingOutsideTheTrashViewLeavesTheRowInPlace();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -10387,6 +10390,178 @@ void TestMainWindow::aMoveThatRelocatesNothingWritesNoTag()
                                  QStringLiteral("nomove.example.org"))
             || folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
                                     QStringLiteral("nomove.example.org")));
+}
+
+void TestMainWindow::restoringFromTheTrashViewRefreshesTheList()
+{
+    // Reported from a hand test: Restore moved the message correctly and the
+    // row it came from sat in the trash list until the Trash filter was
+    // clicked again.
+    //
+    // The trash view is PATH based, so a restored message no longer matches
+    // the query the list was built from. That is a state no tag change can
+    // express: onMessagesMoved() updates tags and the undo stack and never
+    // removes a row, which is right in an ordinary view (a deleted message's
+    // card should stay put) and wrong here, where the row is the one thing
+    // that is now false.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Trash"), QStringLiteral("refr1@example.org"),
+        QStringLiteral("Restore me"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("refr1.example.org");
+
+    // The account's own generated trash query, which is what the Trash filter
+    // puts in the bar.
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("restore"))->trigger();
+
+    // The move really happened, waited on the FILE. Without this the row
+    // assertion below could pass against a restore that never ran.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+
+    // And the list no longer shows it, without the user touching anything.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 0, 15000);
+}
+
+void TestMainWindow::theRefreshAfterARestoreLeavesUndoIntact()
+{
+    // The refresh that fixes the stale trash row runs immediately after the
+    // undo entry is pushed, so it must not be the thing that destroys it.
+    // runCurrentQuery() clears the undo stack outright, which would make
+    // Restore the one mutation in the window with no way back; this asserts
+    // the non-destructive refresh was used and stayed non-destructive.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Trash"), QStringLiteral("undoref@example.org"),
+        QStringLiteral("Restore then undo"),
+        QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("undoref.example.org");
+
+    queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("restore"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    // The refresh has run by now, which is what the row count proves.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 0, 15000);
+
+    // And the undo entry is still there afterwards.
+    auto *undo = window.findChild<QAction *>(QStringLiteral("undo"));
+    QVERIFY(undo);
+    QVERIFY2(undo->isEnabled(),
+             "the refresh after a restore cleared the undo stack");
+
+    undo->trigger();
+
+    // Back in the trash, asserted on the FILE: the undo has to move it, not
+    // merely re-tag it.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
+        15000);
+}
+
+void TestMainWindow::deletingOutsideTheTrashViewLeavesTheRowInPlace()
+{
+    // The other half of the trash-view refresh, and the reason it is gated.
+    //
+    // A Delete is a move too and reaches the same confirmation slot. Refreshing
+    // on every move would make the row vanish from under the user in every
+    // ordinary view, which this project has decided against twice: the card
+    // deliberately stays put, because one deleted message does not doom the
+    // conversation and a row disappearing mid-gesture loses the user's place.
+    //
+    // Nothing asserted this, so a mutation dropping the isShowingTrash() gate
+    // passed the whole suite.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("stay1@example.org"),
+        QStringLiteral("Stay on screen"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("stay1.example.org");
+
+    // An ORDINARY view that the message STOPS MATCHING once the delete lands.
+    // Both halves matter and the first draft of this test had only one: a
+    // `tag:inbox` view looks ordinary but Delete adds `deleted` and the origin
+    // tag and removes nothing, so the message keeps `inbox` and keeps matching.
+    // A refresh there is a no-op, and the mutation dropping the
+    // isShowingTrash() gate passed against it.
+    //
+    // A path query on the inbox folder is the honest instrument: the file
+    // really leaves that folder, so the row survives only because nothing
+    // refreshed.
+    queryEdit->setText(QStringLiteral("path:\"acct/inbox/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    // The delete really happened, waited on the file rather than on the list.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
+        15000);
+
+    // A refresh is a queued round trip, so an immediate read would pass against
+    // one still in flight. Given time to arrive, then asserted not to have
+    // taken the row away.
+    QTest::qWait(1500);
+    QCOMPARE(model->rowCount(QModelIndex()), 1);
 }
 
 #include "test_mainwindow.moc"

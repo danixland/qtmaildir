@@ -33,6 +33,10 @@ point at which they are stable.
 
 - Open thread, Clear message pane and Clear selection appear in the View menu.
   All three existed and were reachable only by their shortcuts.
+- Restoring from the trash view refreshes the list, so the restored message
+  leaves it straight away instead of sitting there until the Trash filter is
+  clicked again. Other views are unaffected: a deleted message's card
+  deliberately stays where it is.
 
 ### Upgrading
 

@@ -4982,6 +4982,29 @@ void MainWindow::onMessagesMoved(const QMap<QString, QString> &originByMessageId
         }
     }
 
+    // A restore out of the TRASH VIEW leaves the row it came from showing a
+    // message that is no longer there, and only a refresh can say so.
+    //
+    // Reported from a hand test: the move was correct and the row sat in the
+    // list until the Trash filter was clicked again. The trash view is PATH
+    // based, so a restored message stops matching the query the list was built
+    // from, which is a state no tag change can express. Nothing else here
+    // removes a row, deliberately: in an ordinary view a deleted message's
+    // card should stay put, since one deleted reply does not doom the
+    // conversation.
+    //
+    // refreshCurrentQuery() rather than runCurrentQuery(): it clears nothing,
+    // so the selection, the expanded threads, the undo stack and the message
+    // being read all survive. Re-running the query outright would destroy the
+    // undo entry this function just pushed, which is the one thing a restore
+    // must leave intact.
+    //
+    // Gated on isShowingTrash() and not on the destination: a Delete is a move
+    // too and reaches this same slot, and refreshing after every delete would
+    // make a row vanish from under the user in every other view.
+    if (isShowingTrash())
+        refreshCurrentQuery();
+
     // The undo entries are pushed inside the loop above, one per origin
     // group, because the placeholder resolves per origin. Nothing is pushed
     // for a move the undo stack itself started: a MoveCommand is confirmed

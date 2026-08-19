@@ -387,6 +387,7 @@ private slots:
     void restoreFallsBackToInboxWithoutAnOriginTag();
     void theCleanupQueryFindsStrandedMail();
     void theCleanupQueryExcludesMailAlreadyInTrash();
+    void aMoveThatRelocatesNothingWritesNoTag();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -10320,6 +10321,72 @@ void TestMainWindow::theCleanupQueryExcludesMailAlreadyInTrash()
     // wrong instrument for an emptiness claim, for the reason above.
     QTRY_VERIFY_WITH_TIMEOUT(!queryEdit->text().isEmpty(), 15000);
     QCOMPARE(notmuchCount(cfg, queryEdit->text()), 0);
+}
+
+void TestMainWindow::aMoveThatRelocatesNothingWritesNoTag()
+{
+    // The spec's ordering bullet, at the UI level: a failed rename must leave
+    // no tag. The worker half is moveMessagesReportsOnlyWhatMoved(); this is
+    // the other half, that the window writes tags only for what the worker
+    // reported as actually moved.
+    //
+    // The failure is provoked by making the destination unwritable, which is
+    // the closest thing to a failed rename that a test can arrange without
+    // stubbing the worker. A tag written anyway would be the exact half-done
+    // state item 103 exists to remove: a message marked deleted, with its file
+    // still in the inbox and its origin tag lying about where it went.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("nomove@example.org"),
+        QStringLiteral("Cannot be moved"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+
+    // The trash as a FILE where the folder must be, so creating the Maildir
+    // subdirectories under it cannot succeed. A read-only directory would be
+    // ignored by a test running as root, which this one must not depend on.
+    QFile blocker(root + QStringLiteral("/acct/Trash"));
+    QVERIFY2(blocker.open(QIODevice::WriteOnly),
+             "could not put a file where the trash folder would go");
+    blocker.close();
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    // The guard, so this cannot pass by the delete never having been
+    // attempted: the message is still there and still findable afterwards.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:nomove@example.org")) == 1, 15000);
+
+    // A tag write is a round trip, so an immediate read would pass against a
+    // write still in flight. Given time to arrive, then asserted absent.
+    QTest::qWait(1500);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:nomove@example.org and "
+                                              "tag:deleted")), 0);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:nomove@example.org and "
+                                              "tag:\"deleted-from:inbox\"")), 0);
+
+    // And the file never left.
+    QVERIFY(folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                 QStringLiteral("nomove.example.org"))
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
+                                    QStringLiteral("nomove.example.org")));
 }
 
 #include "test_mainwindow.moc"

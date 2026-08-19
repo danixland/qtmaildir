@@ -155,8 +155,10 @@ public:
     /// Item 100. The pane is not a browser: every document arrives through
     /// setHtml() with a fixed base URL, so Back, Forward, Reload and Save page
     /// have nothing to act on and the interceptor blocks everything by default
-    /// anyway. Copy and Select all are the reason the standard menu is used at
-    /// all, so the menu is filtered, not rebuilt.
+    /// anyway. Copy and View source are the reason the standard menu is used at
+    /// all, so the menu is filtered, not rebuilt. Select all is NOT among them:
+    /// Chromium's menu here has never offered it, which item 117 measured and
+    /// addPaneActions() supplies.
     ///
     /// View source is NOT filtered, though it was at first. It has a real
     /// document and a real use; item 113 implements it as our own dialog,
@@ -169,6 +171,23 @@ public:
     /// Static and taking the menu so a test can build one and check it
     /// without a rendered document or a shown popup.
     static void removeBrowserActions(QMenu *menu, QWebEnginePage *page);
+
+    /// Adds the entries this pane needs and Chromium's standard menu does not
+    /// supply: Select all, for now.
+    ///
+    /// Item 117. Chromium's menu for this pane has NEVER carried Select all,
+    /// measured by hand with a selection active and against a build with
+    /// removeBrowserActions() reverted. Do not assume the standard menu
+    /// provides it and do not "restore" it by relaxing the filter above, which
+    /// never removed it.
+    ///
+    /// Static and taking the menu for the same reason as removeBrowserActions():
+    /// createStandardContextMenu() returns nothing outside a real context-menu
+    /// event, so the production menu cannot be built in a test at all. A test
+    /// that hand-builds a QMenu proves what THIS function does and nothing
+    /// about what Chromium offers, which is the distinction item 117 records
+    /// after three wrong theories. Keep the two questions separate.
+    static void addPaneActions(QMenu *menu, QWebEnginePage *page);
 
     /// Tells the pane whether the query bar currently holds anything.
     ///

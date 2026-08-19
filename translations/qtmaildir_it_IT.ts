@@ -969,6 +969,22 @@
 <context>
     <name>MessageView</name>
     <message>
+        <source>Copied the selected text</source>
+        <translation>Testo selezionato copiato</translation>
+    </message>
+    <message>
+        <source>Copied the link address</source>
+        <translation>Indirizzo del collegamento copiato</translation>
+    </message>
+    <message>
+        <source>Copied the image</source>
+        <translation>Immagine copiata</translation>
+    </message>
+    <message>
+        <source>Copied the image address</source>
+        <translation>Indirizzo dell'immagine copiato</translation>
+    </message>
+    <message>
         <source>Details...</source>
         <translation>Dettagli...</translation>
     </message>

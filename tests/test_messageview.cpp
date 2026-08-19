@@ -19,6 +19,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QPushButton>
+#include <QSet>
 #include <QSignalSpy>
 #include <QWebEnginePage>
 #include <QWebEngineUrlScheme>
@@ -57,6 +58,8 @@ private slots:
     void headerOffersNothingForAnAbsentField();
     void bodySelectionBecomesAQuotedSearch();
     void theBodyMenuDropsTheBrowsersOwnActions();
+    void theBodyMenuOffersSelectAll();
+    void aCopyFromThePaneReportsWhatWasCopied();
     void aSearchFromTheDetailsDialogClosesIt();
 
 private:
@@ -777,6 +780,96 @@ void TestMessageView::theBodyMenuDropsTheBrowsersOwnActions()
     QVERIFY(!left.isEmpty());
     QVERIFY(!left.constFirst()->isSeparator());
     QVERIFY(!left.constLast()->isSeparator());
+}
+
+void TestMessageView::theBodyMenuOffersSelectAll()
+{
+    // Item 117. Chromium's standard menu for this pane has NEVER carried
+    // Select all: measured by hand with a selection active, and against a
+    // build with removeBrowserActions() reverted, so the filter is not what
+    // removed it. The pane adds it.
+    //
+    // What this test can and cannot prove is the whole point of the item, and
+    // three wrong theories were bought before it was measured. The production
+    // menu comes from createStandardContextMenu(), which returns nothing
+    // outside a real context-menu event, so no test can build it. This
+    // therefore asserts what addPaneActions() does to a menu handed to it, and
+    // says NOTHING about what Chromium offers. Those are separate questions;
+    // conflating them is what item 117 records.
+    //
+    // The limit is worth stating precisely, because it is the second half of
+    // the same trap: this test does NOT cover showBodyContextMenu() CALLING
+    // addPaneActions(). Measured, a mutation deleting that call leaves the
+    // whole suite green. Covering it needs a real context-menu event, which the
+    // offscreen platform cannot deliver, so the call site is a hand test. Do
+    // not add an assertion here that appears to cover it.
+    MessageView view;
+    auto *page = view.findChild<QWebEnginePage *>();
+    QVERIFY2(page, "no page, so this test would assert nothing");
+
+    QMenu menu;
+    auto *selectAll = page->action(QWebEnginePage::SelectAll);
+    QVERIFY2(selectAll, "the page offers no SelectAll action at all");
+
+    // The guard: absent before, so a pass cannot come from the menu already
+    // holding it or from the action being added twice by something else.
+    QVERIFY(!menu.actions().contains(selectAll));
+
+    MessageView::addPaneActions(&menu, page);
+
+    QVERIFY2(menu.actions().contains(selectAll),
+             "the pane's menu does not offer Select all");
+}
+
+void TestMessageView::aCopyFromThePaneReportsWhatWasCopied()
+{
+    // Item 115. Copy link address, Copy image address and Copy image all work
+    // and none of them said so. Chromium does not report success, so the pane
+    // listens to its actions and emits the pane's own status message.
+    //
+    // Unlike item 117's entry, this IS fully testable: the connections are made
+    // to the page's own QActions in the constructor, so triggering one runs the
+    // production path. No context-menu event is involved.
+    MessageView view;
+    auto *page = view.findChild<QWebEnginePage *>();
+    QVERIFY2(page, "no page, so this test would assert nothing");
+
+    QSignalSpy spy(&view, &MessageView::statusMessage);
+    QVERIFY(spy.isValid());
+
+    // Each entry names WHAT was copied. "Copied" alone is worse than nothing
+    // when three entries sit together in one menu, which the item states as a
+    // constraint, so the messages are asserted to differ from each other.
+    const QList<QWebEnginePage::WebAction> copies = {
+        QWebEnginePage::Copy,
+        QWebEnginePage::CopyLinkToClipboard,
+        QWebEnginePage::CopyImageToClipboard,
+        QWebEnginePage::CopyImageUrlToClipboard,
+    };
+
+    QStringList seen;
+    for (const QWebEnginePage::WebAction which : copies) {
+        QAction *action = page->action(which);
+        QVERIFY2(action, "the page offers no action for a copy entry");
+
+        // Enabled explicitly. Chromium disables a copy action when there is
+        // nothing of that kind under the cursor, and trigger() on a disabled
+        // QAction emits nothing at all, so without this the loop would assert
+        // nothing while looking thorough.
+        action->setEnabled(true);
+
+        spy.clear();
+        action->trigger();
+
+        QTRY_VERIFY_WITH_TIMEOUT(spy.count() == 1, 5000);
+        const QString message = spy.takeFirst().at(0).toString();
+        QVERIFY2(!message.isEmpty(), "a copy reported an empty status message");
+        seen.append(message);
+    }
+
+    // Four distinct messages, so no two entries report the same thing.
+    QCOMPARE(seen.size(), copies.size());
+    QCOMPARE(QSet<QString>(seen.cbegin(), seen.cend()).size(), copies.size());
 }
 
 void TestMessageView::aSearchFromTheDetailsDialogClosesIt()

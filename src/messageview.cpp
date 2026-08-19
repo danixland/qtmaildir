@@ -158,6 +158,38 @@ MessageView::MessageView(QWidget *parent)
     connect(m_view, &QWidget::customContextMenuRequested,
             this, &MessageView::showBodyContextMenu);
 
+    // Item 115. Chromium's copy entries all work and none of them says so, so
+    // the pane reports for them. Connected to the page's own QActions, which
+    // are the same instances the standard context menu holds, so this covers
+    // the entry wherever it is triggered from and needs no menu of our own.
+    //
+    // Each message names WHAT was copied. "Copied" alone is worse than nothing
+    // when three of these sit together in one menu.
+    //
+    // The status bar rather than a floating overlay, at the item's insistence:
+    // this is where the application already reports transient results and
+    // where they already expire (item 33). A second mechanism for one job is
+    // what item 45 recorded when two Sync buttons disagreed.
+    static const struct {
+        QWebEnginePage::WebAction action;
+        const char *message;
+    } kCopyReports[] = {
+        { QWebEnginePage::Copy, QT_TR_NOOP("Copied the selected text") },
+        { QWebEnginePage::CopyLinkToClipboard, QT_TR_NOOP("Copied the link address") },
+        { QWebEnginePage::CopyImageToClipboard, QT_TR_NOOP("Copied the image") },
+        { QWebEnginePage::CopyImageUrlToClipboard, QT_TR_NOOP("Copied the image address") },
+    };
+
+    for (const auto &report : kCopyReports) {
+        QAction *action = m_view->page()->action(report.action);
+        if (!action)
+            continue;
+        const QString message = tr(report.message);
+        connect(action, &QAction::triggered, this, [this, message]() {
+            emit statusMessage(message);
+        });
+    }
+
     // Ctrl+wheel zoom. The filter goes on the application rather than on
     // m_view: the wheel event is delivered to an internal QQuickWidget the
     // view creates lazily, so there is no child to filter at this point and a
@@ -660,10 +692,31 @@ void MessageView::removeBrowserActions(QMenu *menu, QWebEnginePage *page)
         menu->removeAction(menu->actions().constLast());
 }
 
+void MessageView::addPaneActions(QMenu *menu, QWebEnginePage *page)
+{
+    if (!menu || !page)
+        return;
+
+    // Item 117. Added explicitly rather than relied upon: Chromium's standard
+    // menu for this pane does not offer Select all and never did, measured by
+    // hand with a selection active and against a build with
+    // removeBrowserActions() reverted. The filter is not what removed it, so
+    // relaxing the filter would not bring it back.
+    //
+    // The action itself already exists and already works; only the entry was
+    // missing.
+    if (QAction *selectAll = page->action(QWebEnginePage::SelectAll))
+        menu->addAction(selectAll);
+}
+
 void MessageView::showBodyContextMenu(const QPoint &pos)
 {
-    // The page's own menu first: copy, select all and the rest stay exactly as
-    // they were. This adds to that menu rather than replacing it.
+    // The page's own menu first: Copy and the rest stay exactly as they were.
+    // This adds to that menu rather than replacing it.
+    //
+    // "and select all" used to be in that sentence and was wrong: Chromium's
+    // menu here has never offered it. Item 117 measured that and addPaneActions()
+    // supplies it below.
     QMenu *menu = m_view->createStandardContextMenu();
     if (!menu)
         menu = new QMenu(this);
@@ -672,6 +725,11 @@ void MessageView::showBodyContextMenu(const QPoint &pos)
     // ...minus the browser's own navigation and page actions, which cannot
     // apply here. Item 100.
     removeBrowserActions(menu, m_view->page());
+
+    // ...plus the ones it needs and Chromium does not supply. Item 117.
+    // Before the search entries, so it sits with Copy rather than after a
+    // separator at the bottom.
+    addPaneActions(menu, m_view->page());
 
     // selectedText() reads the selection out of the render process with no
     // script injection. JavaScript is disabled in this profile and stays so.

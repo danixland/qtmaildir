@@ -4787,6 +4787,21 @@ replace.
 - Modify: `docs/superpowers/plans/2026-08-03-post-0.1.0-usability.md`
 - Modify: `docs/superpowers/specs/2026-08-20-compose-and-send-design.md`
 
+- [ ] **Step 0: Document the new keys in the README**
+
+Found during Task 2's code review and assigned here rather than there. The
+README's sample config at `README.md:150-215` documents EVERY other
+configuration key, including recently added ones, and has nothing for
+`send_command` or the `[compose]` section. Without this the keys ship
+undiscoverable: a user has no way to learn that sending exists.
+
+Take the block from the spec at
+`docs/superpowers/specs/2026-08-20-compose-and-send-design.md:552-560` and
+adapt it to the README's existing commented style, showing `send_command` in
+an account section and every `[compose]` key with its default. Say plainly
+that an account without `send_command` is receive-only, since that is the
+part no reader would guess.
+
 - [ ] **Step 1: Add the changelog entry**
 
 Under `## [Unreleased]`, in the existing `### Added` section or a new one:

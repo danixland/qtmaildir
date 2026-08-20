@@ -92,6 +92,10 @@ private slots:
     void moveMessagesReportsOnlyWhatMoved();
     void moveMessagesGivesTheFileAFreshMaildirName();
     void moveMessagesKeepsTheMaildirFlags();
+
+    void aSplitIndexStillResolvesTheMailRoot();
+    void aSplitIndexMovesIntoTheMaildirNotTheIndex();
+    void aSplitIndexListsTheMaildirsFolders();
     void twoMessagesMovedTogetherGetDistinctNames();
 
 private:
@@ -101,7 +105,8 @@ private:
     bool addMovableMessage(const QString &folder, const QString &messageId);
     /// The single file backing `messageId`, or an empty string when the
     /// database does not know the id.
-    QString fileOf(const QString &messageId);
+    QString fileOf(const QString &messageId,
+                   const QString &configPath = QString());
 
     /// Tags of one message, read back through a fresh worker query.
     QStringList tagsOf(const QString &messageId);
@@ -210,9 +215,10 @@ bool TestNotmuchWorker::addMovableMessage(const QString &folder,
     return m_fixture.index();
 }
 
-QString TestNotmuchWorker::fileOf(const QString &messageId)
+QString TestNotmuchWorker::fileOf(const QString &messageId,
+                                 const QString &configPath)
 {
-    NotmuchWorker worker(m_fixture.configPath());
+    NotmuchWorker worker(configPath.isEmpty() ? m_fixture.configPath() : configPath);
     QSignalSpy loaded(&worker, &NotmuchWorker::threadLoaded);
     worker.loadThread(QStringLiteral("{id:%1}").arg(messageId), QString(), 1);
     if (loaded.isEmpty())
@@ -1375,6 +1381,127 @@ void TestNotmuchWorker::moveMessagesReportsOnlyWhatMoved()
     const QVector<ThreadSummary> inTrash =
         runQuery(QStringLiteral("path:\"trash/**\" and id:%1").arg(id));
     QCOMPARE(inTrash.size(), 1);
+}
+
+
+// Item 124. notmuch can put the Xapian index outside the mail root
+// (`mail_root` + `path`), which is how the index moves to faster storage while
+// the mail stays put. Under that layout `notmuch_database_get_path()` returns
+// the INDEX directory, so any code treating it as the mail root composes paths
+// into the wrong tree entirely.
+//
+// These three need `splitIndex()`, and that is the whole point: in the
+// ordinary layout the index lives inside the mail root and both accessors
+// return the same string, so a test written against it passes whichever one
+// the code uses and a mutation stays green.
+
+void TestNotmuchWorker::aSplitIndexStillResolvesTheMailRoot()
+{
+    NotmuchFixture fixture;
+    QVERIFY(fixture.isValid());
+    fixture.splitIndex();
+    QVERIFY(fixture.addMessage(QStringLiteral("work/INBOX"),
+                               QStringLiteral("split1@example.org"),
+                               QStringLiteral("Something"),
+                               QStringLiteral("Alice <alice@example.org>"),
+                               QStringLiteral("Mon, 1 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body"), false));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    // The fixture really did split them, or the rest proves nothing.
+    QVERIFY2(!fixture.indexPath().startsWith(fixture.maildirPath()),
+             "the fixture did not put the index outside the mail root");
+    QVERIFY(QDir(fixture.indexPath() + QStringLiteral("/xapian")).exists());
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy ready(&worker, &NotmuchWorker::threadsReady);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.runQuery(QStringLiteral("*"), 1, NotmuchWorker::NewestFirst, false);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(ready.size(), 1);
+
+    const auto threads = ready.first().at(0).value<QVector<ThreadSummary>>();
+    QCOMPARE(threads.size(), 1);
+
+    // The path is stored relative to the MAIL ROOT. Resolved against the index
+    // directory it comes back as a "../.." escape, which matches no account
+    // prefix and leaves every row belonging to no account at all.
+    const QString path = threads.first().firstMessagePath;
+    QVERIFY2(!path.startsWith(QStringLiteral("..")),
+             qPrintable(QStringLiteral("path escaped the mail root: %1").arg(path)));
+    QVERIFY2(path.startsWith(QStringLiteral("work/INBOX/")),
+             qPrintable(QStringLiteral("expected a work/INBOX path, got: %1").arg(path)));
+}
+
+void TestNotmuchWorker::aSplitIndexMovesIntoTheMaildirNotTheIndex()
+{
+    NotmuchFixture fixture;
+    QVERIFY(fixture.isValid());
+    fixture.splitIndex();
+    QVERIFY(fixture.addMessage(QStringLiteral("work/INBOX"),
+                               QStringLiteral("split2@example.org"),
+                               QStringLiteral("Doomed"),
+                               QStringLiteral("Alice <alice@example.org>"),
+                               QStringLiteral("Mon, 1 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body"), false));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy moved(&worker, &NotmuchWorker::messagesMoved);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.moveMessages({ QStringLiteral("split2@example.org") },
+                        QStringLiteral("work/Trash"));
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(moved.size(), 1);
+
+    // The file must land in the MAILDIR's trash. Composed against the index
+    // directory it lands inside the Xapian tree instead: outside the Maildir,
+    // invisible to mbsync, and gone from every other client. That is item
+    // 103's stranded mail with a new cause, which is why this assertion names
+    // the index directory explicitly rather than only checking the good path.
+    const QString expected =
+        fixture.maildirPath() + QStringLiteral("/work/Trash/cur");
+    QVERIFY2(!QDir(fixture.indexPath() + QStringLiteral("/work")).exists(),
+             "the move created a folder inside the INDEX directory");
+
+    const QString after =
+        fileOf(QStringLiteral("split2@example.org"), fixture.configPath());
+    QVERIFY2(!after.isEmpty(), "the message is not in the database after the move");
+    QCOMPARE(QFileInfo(after).absolutePath(), expected);
+    QVERIFY2(QFile::exists(after), qPrintable(after));
+}
+
+void TestNotmuchWorker::aSplitIndexListsTheMaildirsFolders()
+{
+    NotmuchFixture fixture;
+    QVERIFY(fixture.isValid());
+    fixture.splitIndex();
+    QVERIFY(fixture.addMessage(QStringLiteral("work/INBOX"),
+                               QStringLiteral("split3@example.org"),
+                               QStringLiteral("Something"),
+                               QStringLiteral("Alice <alice@example.org>"),
+                               QStringLiteral("Mon, 1 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body"), false));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy folders(&worker, &NotmuchWorker::foldersReady);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.requestFolders();
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(folders.size(), 1);
+
+    // Scanned from the mail root. Scanned from the index directory the list is
+    // empty, or worse, names Xapian's own subdirectories as mail folders.
+    const QStringList found = folders.first().at(0).toStringList();
+    QVERIFY2(found.contains(QStringLiteral("work/INBOX")),
+             qPrintable(QStringLiteral("expected work/INBOX, got: %1")
+                            .arg(found.join(QStringLiteral(", ")))));
+    QVERIFY2(!found.contains(QStringLiteral("xapian")),
+             "the index's own directory was listed as a mail folder");
 }
 
 QTEST_MAIN(TestNotmuchWorker)

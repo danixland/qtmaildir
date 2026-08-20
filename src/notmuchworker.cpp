@@ -35,6 +35,28 @@
 
 namespace {
 
+/// Where the MAIL lives, which is not always where the index lives.
+///
+/// Item 124. notmuch can be configured with `mail_root` and `path` as separate
+/// keys, which is how the Xapian index moves to faster storage while the
+/// Maildir stays put. Under that layout `notmuch_database_get_path()` returns
+/// the INDEX directory, so every path composed from it lands in the wrong tree:
+/// message paths resolve to `../..` escapes that match no account, and a move
+/// writes into the index instead of the Maildir, where mbsync never sees it.
+///
+/// `NOTMUCH_CONFIG_MAIL_ROOT` is correct under BOTH layouts. With only `path`
+/// set it returns that same directory, so this is not a special case for split
+/// configurations but the right question to ask in every one. Measured against
+/// notmuch 0.39: legacy config, `get_path()` and `MAIL_ROOT` agree; split
+/// config, only `MAIL_ROOT` names the Maildir.
+///
+/// The string is owned by notmuch and must not be freed (notmuch.h:2585).
+QString mailRootOf(notmuch_database_t *db)
+{
+    const char *root = notmuch_config_get(db, NOTMUCH_CONFIG_MAIL_ROOT);
+    return root ? QString::fromUtf8(root) : QString();
+}
+
 QStringList tagsOf(notmuch_message_t *message)
 {
     QStringList result;
@@ -295,7 +317,7 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
     // database-relative prefix: comparing the two never matched and left every
     // row resolving to no account at all.
     const QString dbRoot =
-        QDir(QString::fromUtf8(notmuch_database_get_path(m_db))).absolutePath();
+        QDir(mailRootOf(m_db)).absolutePath();
 
     QVector<ThreadSummary> batch;
     batch.reserve(kBatchSize);
@@ -752,7 +774,7 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
         return;
     }
 
-    const QString root = QString::fromUtf8(notmuch_database_get_path(db));
+    const QString root = mailRootOf(db);
     const QString destDir =
         root + QLatin1Char('/') + destFolder + QStringLiteral("/cur");
 
@@ -898,7 +920,7 @@ void NotmuchWorker::resolveQuery(const QString &query,
     // ThreadSummary::firstMessagePath: the UI knows accounts only by their
     // maildir, itself a database-relative prefix.
     const QString dbRoot =
-        QDir(QString::fromUtf8(notmuch_database_get_path(m_db))).absolutePath();
+        QDir(mailRootOf(m_db)).absolutePath();
 
     QStringList messageIds;
     QStringList paths;
@@ -1059,7 +1081,7 @@ void NotmuchWorker::requestFolders()
     if (!openReadOnly())
         return;
 
-    const QString root = QString::fromUtf8(notmuch_database_get_path(m_db));
+    const QString root = mailRootOf(m_db);
     if (root.isEmpty()) {
         emit errorOccurred(
             QStringLiteral("notmuch reports no database path."));

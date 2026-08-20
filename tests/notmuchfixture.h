@@ -44,6 +44,23 @@ public:
     QString configPath() const { return m_dir.filePath(QStringLiteral("config")); }
     QString maildirPath() const { return m_dir.filePath(QStringLiteral("mail")); }
 
+    /// Where the Xapian index lives. Equal to maildirPath()/.notmuch in the
+    /// ordinary layout; a directory of its own once splitIndex() is called.
+    QString indexPath() const
+    {
+        return m_splitIndex ? m_dir.filePath(QStringLiteral("index"))
+                            : maildirPath() + QStringLiteral("/.notmuch");
+    }
+
+    /// Puts the index OUTSIDE the mail root, as notmuch's `mail_root`/`path`
+    /// split does (item 124).
+    ///
+    /// This is opt-in because it is the only layout that can tell
+    /// `notmuch_database_get_path()` apart from the mail root: in the ordinary
+    /// layout the two return the same string, so a test written against it
+    /// passes whichever accessor the code uses. Call before index().
+    void splitIndex() { m_splitIndex = true; }
+
     /// Writes one message into <folder>/cur (or new/ when unread).
     ///
     /// Returns false if the file could not be written. Call index() afterwards.
@@ -103,9 +120,18 @@ public:
             return false;
         }
         QTextStream out(&config);
-        out << "[database]\n"
-            << "path=" << maildirPath() << "\n"
-            << "[new]\n"
+        out << "[database]\n";
+        if (m_splitIndex) {
+            // Two keys: the mail stays put and only the index moves. notmuch
+            // reads `path` as the database directory ITSELF here, not as a
+            // parent to create `.notmuch` in.
+            QDir().mkpath(indexPath());
+            out << "mail_root=" << maildirPath() << "\n"
+                << "path=" << indexPath() << "\n";
+        } else {
+            out << "path=" << maildirPath() << "\n";
+        }
+        out << "[new]\n"
             << "tags=unread;inbox;\n";
         out.flush();
         config.close();
@@ -132,4 +158,5 @@ public:
 private:
     QTemporaryDir m_dir;
     QString m_error;
+    bool m_splitIndex = false;
 };

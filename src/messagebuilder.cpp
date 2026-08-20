@@ -76,16 +76,44 @@ GMimePart *makeTextPart(const char *subtype, const QString &text)
 }
 
 /// Sets \p header on \p message to \p addresses, RFC 2047 encoded as utf-8.
+/// Returns false and names the offending entry in \p badEntry if any of them
+/// could not be parsed as an address.
 ///
 /// Each entry is passed through internet_address_list_parse() rather than
 /// treated as a bare address, because the composer's fields hold whatever the
 /// user typed and "Name <addr@example.org>" is the ordinary form. Parsing per
 /// entry rather than joining first keeps a comma inside a quoted display name
 /// from splitting one recipient into two.
-void setAddressHeader(GMimeMessage *message, const char *header, const QStringList &addresses)
+///
+/// An entry that does not parse is a FAILURE, never a skip. The previous
+/// version returned void, `continue`d past anything unparseable, and then only
+/// wrote the header if the assembled list came out non-empty, so
+/// `to = {"not an address at all ((("}` built a message with NO To: header at
+/// all and reported success. With `msmtp -t` the recipients come FROM the
+/// headers, so that is a message handed to the send command with nobody to
+/// deliver to, and a copy filed in Sent that looks sent and reached no one.
+/// Dropping one bad entry of several is the same defect wearing a smaller hat:
+/// the others are delivered and nothing says which was not.
+///
+/// Both the NULL and the zero-length results are treated as failure. Measured
+/// 2026-08-20 on GMime 3.2 with a standalone probe, every garbage input tried
+/// (`not an address at all (((`, `((((`, `a b c`, `,`, `;`, `()`, `<>`, `` )
+/// returned NULL, and no input was found that produced a non-null empty list.
+/// The length check is therefore defensive rather than a path with a fixture
+/// behind it: it is kept because the failure it would cover is a silently
+/// unaddressed message, and it costs one comparison. Do not read it as
+/// documenting observed behaviour, and do not expect a mutation on it to be
+/// killed by the suite.
+///
+/// Worth knowing for anything built on top of this: GMime is LENIENT, not
+/// strict. `garbage` and `""` both parse to a one-entry list. This function
+/// rejects what GMime cannot parse at all; it is not an address validator, and
+/// a typo that happens to be parseable still goes out.
+bool setAddressHeader(GMimeMessage *message, const char *header, const QStringList &addresses,
+                      QString *badEntry)
 {
     if (addresses.isEmpty())
-        return;
+        return true;
 
     InternetAddressList *list = internet_address_list_new();
     for (const QString &entry : addresses) {
@@ -94,8 +122,14 @@ void setAddressHeader(GMimeMessage *message, const char *header, const QStringLi
             continue;
         const QByteArray utf8 = trimmed.toUtf8();
         InternetAddressList *parsed = internet_address_list_parse(nullptr, utf8.constData());
-        if (!parsed)
-            continue;
+        const bool parsedNothing = !parsed || internet_address_list_length(parsed) == 0;
+        if (parsedNothing) {
+            if (parsed)
+                g_object_unref(parsed);
+            g_object_unref(list);
+            *badEntry = trimmed;
+            return false;
+        }
         internet_address_list_append(list, parsed);
         g_object_unref(parsed);
     }
@@ -109,6 +143,7 @@ void setAddressHeader(GMimeMessage *message, const char *header, const QStringLi
         }
     }
     g_object_unref(list);
+    return true;
 }
 
 }  // namespace
@@ -125,8 +160,9 @@ Result build(const OutgoingMessage &message, const Account &account)
     // Building from it would produce a message with an empty From: silently
     // malformed mail handed to the send command as though it were fine.
     if (account.address.trimmed().isEmpty()) {
-        result.error = QObject::tr("The account has no address configured, so no message "
-                                   "can be sent from it.");
+        result.error = QObject::tr("The account %1 has no address configured, so no message "
+                                   "can be sent from it.")
+                           .arg(account.key);
         return result;
     }
 
@@ -134,9 +170,19 @@ Result build(const OutgoingMessage &message, const Account &account)
     // file can vanish in between, and a message missing the thing it was
     // written to carry must never reach the send command. Checked before
     // anything is allocated, so the failure path frees nothing.
+    //
+    // isFile() is load-bearing and not tidiness. A DIRECTORY reports
+    // exists=1 and isReadable=1, opening one read-only is legal, and GMime's
+    // base64 encoder then loops on a read() returning EISDIR without ever
+    // advancing or erroring: measured 2026-08-20 with strace at 2,169,821
+    // failed reads in twenty seconds and still going, so build() never
+    // returns. It runs synchronously from autosave on the GUI thread, so
+    // dragging a folder into a composer froze the whole application with the
+    // draft unrecoverable. Device nodes and FIFOs block or read forever the
+    // same way, and isFile() excludes those too.
     for (const QString &path : message.attachments) {
         const QFileInfo info(path);
-        if (!info.exists() || !info.isReadable()) {
+        if (!info.exists() || !info.isFile() || !info.isReadable()) {
             result.error = QObject::tr("The attachment %1 is missing or unreadable.")
                                .arg(info.fileName().isEmpty() ? path : info.fileName());
             return result;
@@ -153,14 +199,39 @@ Result build(const OutgoingMessage &message, const Account &account)
                                account.name.isEmpty() ? nullptr : fromName.constData(),
                                fromAddress.constData());
 
-    setAddressHeader(mime, "To", message.to);
-    setAddressHeader(mime, "Cc", message.cc);
-    // Bcc is written into the bytes deliberately. The documented send command
-    // is `msmtp -t`, which reads its recipients FROM the headers and strips Bcc
-    // itself before transmission; omitting it here would mean blind recipients
-    // never receive the message at all, silently. If sending ever passes
-    // recipients as arguments instead, this line must go with it.
-    setAddressHeader(mime, "Bcc", message.bcc);
+    // A recipient the user typed and this cannot understand STOPS the send,
+    // exactly as a missing attachment does, rather than quietly not being
+    // written. See setAddressHeader for what the silent version cost.
+    const struct { const char *header; const QStringList &values; } fields[] = {
+        {"To", message.to},
+        {"Cc", message.cc},
+        // Bcc is written into the bytes deliberately, and this is two separate
+        // decisions rather than one.
+        //
+        // On transmission: the documented send command is `msmtp -t`, which
+        // reads its recipients FROM the headers and strips Bcc itself before
+        // sending, so recipients never see the list. Omitting it here would
+        // mean blind recipients never receive the message at all, silently. If
+        // sending ever passes recipients as arguments instead, this entry must
+        // go with it.
+        //
+        // At rest: one built message serves three consumers, so the SENT COPY
+        // and any autosaved DRAFT are stored in the Maildir with the Bcc list
+        // in plaintext, and mbsync syncs those to the IMAP server where they
+        // are visible to anyone with account access. That is a separate
+        // exposure from transmission and it is accepted knowingly, not
+        // overlooked. Do not "fix" it by stripping Bcc here: that breaks blind
+        // delivery silently, which is worse.
+        {"Bcc", message.bcc},
+    };
+    for (const auto &field : fields) {
+        QString badEntry;
+        if (!setAddressHeader(mime, field.header, field.values, &badEntry)) {
+            g_object_unref(mime);
+            result.error = QObject::tr("%1 is not an address this can send to.").arg(badEntry);
+            return result;
+        }
+    }
 
     // The explicit "utf-8". Measured 2026-08-20: with NULL here GMime encodes
     // the subject as iso-8859-1 (=?iso-8859-1?B?...?=).
@@ -185,10 +256,15 @@ Result build(const OutgoingMessage &message, const Account &account)
 
     const QString domain = account.address.section(QLatin1Char('@'), 1);
     const QByteArray domainUtf8 = (domain.isEmpty() ? QStringLiteral("localhost") : domain).toUtf8();
+    // Held locally rather than written into `result` here. Every failure below
+    // would otherwise have to remember to clear it, which is a two-place
+    // invariant the next early return forgets; it is assigned once, beside the
+    // bytes, on the one path that succeeds.
+    QString messageId;
     char *generatedId = g_mime_utils_generate_message_id(domainUtf8.constData());
     if (generatedId) {
         g_mime_message_set_message_id(mime, generatedId);
-        result.messageId = QString::fromUtf8(generatedId);
+        messageId = QString::fromUtf8(generatedId);
         g_free(generatedId);
     }
 
@@ -243,8 +319,6 @@ Result build(const OutgoingMessage &message, const Account &account)
                 g_object_unref(part);
                 g_object_unref(mixed);
                 g_object_unref(mime);
-                result.bytes.clear();
-                result.messageId.clear();
                 result.error = QObject::tr("The attachment %1 could not be read.")
                                    .arg(info.fileName());
                 return result;
@@ -273,10 +347,10 @@ Result build(const OutgoingMessage &message, const Account &account)
     char *rendered = g_mime_object_to_string(GMIME_OBJECT(mime), format);
     if (rendered) {
         result.bytes = QByteArray(rendered);
+        result.messageId = messageId;
         g_free(rendered);
     } else {
         result.error = QObject::tr("The message could not be assembled.");
-        result.messageId.clear();
     }
 
     g_object_unref(mime);

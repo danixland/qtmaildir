@@ -18,10 +18,14 @@
 
 #include <QDir>
 #include <QFile>
+#include <QThread>
 #include <QObject>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
+
+#include <atomic>
+#include <memory>
 
 #include "config.h"
 #include "messagebuilder.h"
@@ -47,6 +51,8 @@ private slots:
     void inReplyToAndReferencesAreCarried();
     void attachmentsProduceMultipartMixed();
     void aMissingAttachmentFailsTheBuild();
+    void aDirectoryAttachmentFailsRatherThanHangingTheProcess();
+    void anUnparseableRecipientFailsRatherThanVanishing();
     void everyMessageCarriesADateAndMessageId();
     void recipientsAppearInTheirOwnHeaders();
     void anAccountWithNoAddressFailsRatherThanBuildingHeaderlessMail();
@@ -257,6 +263,111 @@ void TestMessageBuilder::aMissingAttachmentFailsTheBuild()
     QVERIFY(!r.ok());
     QVERIFY(r.bytes.isEmpty());
     QVERIFY2(r.error.contains(QStringLiteral("report.pdf")), qPrintable(r.error));
+}
+
+/// A directory is not a file that can be attached, and accepting one does not
+/// produce a bad message, it produces NO message ever: QFileInfo reports a
+/// directory as existing and readable, opening one read-only is legal, and
+/// GMime's base64 encoder then loops on a read() returning EISDIR without
+/// advancing. Measured 2026-08-20 with strace at 2,169,821 failed reads in
+/// twenty seconds and still going. build() runs synchronously from autosave on
+/// the GUI thread, so this froze the whole application with the draft
+/// unrecoverable.
+///
+/// The TIMEOUT is deliberate and is the point of the test's shape. A regression
+/// here hangs the binary rather than failing it, and CLAUDE.md already records
+/// a hung test binary as a misleading failure mode that costs a session. The
+/// build runs on a worker thread so this test can outlive it and report a
+/// FAILURE instead of blocking ctest until its own timeout.
+///
+/// Two details are what make that actually work, and the first draft of this
+/// test had neither. It must NOT join the worker: a thread stuck in the defect
+/// never returns, so a wait() after the timeout hangs exactly as the bug does
+/// and the recorded failure is never printed. Verified by reverting the fix:
+/// with the join the binary had to be killed at 150s with no verdict, without
+/// it the run reports a FAIL and finishes. The worker is therefore deliberately
+/// leaked on the failing path, which is correct for a test binary about to exit
+/// and is the only way this reports rather than hangs. The result is read
+/// through a shared_ptr for the same reason: a leaked thread must not write
+/// into a stack frame that has returned.
+void TestMessageBuilder::aDirectoryAttachmentFailsRatherThanHangingTheProcess()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString subdir = dir.filePath(QStringLiteral("a-folder"));
+    QVERIFY(QDir().mkpath(subdir));
+
+    // The guard this protects: a directory looks like a perfectly good
+    // attachment to the checks that were there before.
+    const QFileInfo info(subdir);
+    QVERIFY(info.exists());
+    QVERIFY(info.isReadable());
+    QVERIFY(!info.isFile());
+
+    OutgoingMessage m = baseMessage();
+    m.attachments = QStringList{subdir};
+
+    // Shared with the worker rather than captured by reference, so a thread
+    // still spinning after this function returns cannot write into a dead
+    // frame.
+    struct Shared
+    {
+        std::atomic_bool finished{false};
+        MessageBuilder::Result result;
+    };
+    auto shared = std::make_shared<Shared>();
+    const OutgoingMessage msg = m;
+    const Account account = m_account;
+
+    QThread *worker = QThread::create([shared, msg, account] {
+        shared->result = MessageBuilder::build(msg, account);
+        shared->finished = true;
+    });
+    worker->start();
+
+    // Five seconds against a defect measured at twenty seconds and unbounded.
+    // No join: see the note above, waiting on the stuck thread reproduces the
+    // hang instead of reporting it.
+    QTRY_VERIFY_WITH_TIMEOUT(shared->finished.load(), 5000);
+    if (!shared->finished.load())
+        QFAIL("build() did not return for a directory attachment: it is looping on read()");
+
+    worker->wait();
+    delete worker;
+
+    QVERIFY(!shared->result.ok());
+    QVERIFY(shared->result.bytes.isEmpty());
+    QVERIFY2(shared->result.error.contains(QStringLiteral("a-folder")),
+             qPrintable(shared->result.error));
+}
+
+/// A recipient the builder cannot parse must STOP the send, never be dropped.
+/// Measured 2026-08-20: internet_address_list_parse returns a ZERO-LENGTH list
+/// rather than NULL for garbage, so a guard on the assembled list's length
+/// built a message with no To: header at all and reported success. With
+/// `msmtp -t` the recipients come FROM the headers, so that message reaches the
+/// send command with nobody to deliver to, and the sent copy is filed in Sent
+/// looking sent and having reached no one.
+///
+/// Asserts on the error naming the offending entry, because with several
+/// recipients the user cannot otherwise tell which one to fix.
+void TestMessageBuilder::anUnparseableRecipientFailsRatherThanVanishing()
+{
+    OutgoingMessage m = baseMessage();
+    m.to = QStringList{QStringLiteral("not an address at all ((("),
+                       QStringLiteral("good@example.org")};
+
+    const MessageBuilder::Result r = MessageBuilder::build(m, m_account);
+    QVERIFY2(!r.ok(), "an unparseable recipient must fail the build");
+    QVERIFY(r.bytes.isEmpty());
+    QVERIFY2(r.error.contains(QStringLiteral("not an address at all")), qPrintable(r.error));
+
+    // The other half of the same defect: with several recipients, the old code
+    // delivered the good ones and dropped the bad one without a word, so the
+    // user had no way to learn which recipient never received the message. A
+    // valid entry beside the bad one must not rescue the build.
+    QVERIFY2(!r.bytes.contains("good@example.org"),
+             "a valid recipient must not smuggle the message past a bad one");
 }
 
 /// Measured 2026-08-20: GMime generates neither header unless asked. A message

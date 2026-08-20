@@ -1235,12 +1235,16 @@
         <translation>Regola &apos;%1&apos;: non aggiunge né rimuove nulla; scartata</translation>
     </message>
     <message>
-        <source>The account has no address configured, so no message can be sent from it.</source>
-        <translation>L&apos;account non ha un indirizzo configurato, quindi non è possibile inviare messaggi da esso.</translation>
+        <source>The account %1 has no address configured, so no message can be sent from it.</source>
+        <translation>L&apos;account %1 non ha un indirizzo configurato, quindi non è possibile inviare messaggi da esso.</translation>
     </message>
     <message>
         <source>The attachment %1 is missing or unreadable.</source>
         <translation>L&apos;allegato %1 è mancante o non leggibile.</translation>
+    </message>
+    <message>
+        <source>%1 is not an address this can send to.</source>
+        <translation>%1 non è un indirizzo a cui sia possibile inviare.</translation>
     </message>
     <message>
         <source>The attachment %1 could not be read.</source>

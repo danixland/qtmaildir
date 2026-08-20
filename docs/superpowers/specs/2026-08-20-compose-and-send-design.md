@@ -277,13 +277,18 @@ Filing sent copy...   DraftStore writing to the account's sent folder
 Removing draft...     the draft revision is unlinked
 ```
 
-The indicator is an **indeterminate `QProgressBar`** (`setRange(0, 0)`), built
-inline in the composer, which is exactly what `MainWindow` already does for the
-sync indicator (`m_syncProgress`) and for the same reason: neither operation has
-measurable progress. It is deliberately not factored into a shared widget class.
-This codebase builds small UI inline (the query row and the message-pane header
-are both built that way and `CLAUDE.md` records that they are not classes), and
-two `QProgressBar`s in two windows do not justify a third name.
+The indicator is an **indeterminate `QProgressBar`** (`setRange(0, 0)`) beside a
+status label, which is what `MainWindow` already does for the sync indicator
+(`m_syncProgress`) and for the same reason: neither operation has measurable
+progress.
+
+**This is the second instance of that pairing, so it becomes a widget class**
+rather than a second inline build. Item 134 covers extracting it and converting
+`MainWindow` to use it. Building the same thing twice is where a class earns
+itself, and "this codebase builds small UI inline" describes what the code does
+rather than justifying repeating it. Whether 134 lands before or after this
+work, the composer uses the shared widget: if it has not happened yet, this work
+creates the class and converts `MainWindow` as part of the same change.
 
 Exit 0 closes the window. Non-zero re-enables it with everything intact and
 shows the command's stderr.
@@ -506,6 +511,19 @@ markdown dialect.
 
 ## Error handling
 
+**The surface is chosen by consequence, not by convenience.** A warning the user
+does not see is the same defect as an indicator that lies, and the status bar
+does not catch the eye. The rule for this design:
+
+| Consequence | Surface |
+|---|---|
+| Silent divergence the user would not otherwise discover | modal dialog |
+| Something needing attention while they are mid-task | persistent banner, does not fade |
+| Routine, self-correcting, or already visible | status bar, or nothing |
+
+The status bar is for what is already obvious. Nothing whose failure the user
+would learn about months later belongs there.
+
 **Send failed** (non-zero exit). Composer re-enabled intact, stderr shown in a
 pane below the body, in the shape `MailSync`'s log pane already has. The draft
 stays. No retry loop.
@@ -519,8 +537,11 @@ paths are not later "harmonised".
 **Command missing or unrunnable** (`QProcess::FailedToStart`). Reported as a
 failure naming the command, since a typo'd path is the likely cause.
 
-**Draft write failed.** A warning in the composer's status area, not a modal. It
-must not interrupt typing and must not silently succeed.
+**Draft write failed.** A **persistent banner** in the composer, not a modal and
+not a status-bar line that fades. A modal mid-sentence is hostile while the user
+is typing, but the warning must survive until it is dealt with, because the quit
+path's honesty depends on it: case 3 below escalates exactly this state to a
+dialog on the way out.
 
 **Sent copy write failed after a successful send.** A warning saying exactly
 that. Never a send failure, never an offer to resend.
@@ -529,8 +550,15 @@ The staged progress display makes this visible rather than confusing: the
 failure arrives while the status bar reads "Filing sent copy...", so the user
 can see the send stage already passed. The composer still **closes**, because
 the message went and holding a composer open for a message already sent invites
-sending it twice. The warning goes to the main window's status bar, which
-outlives the composer.
+sending it twice.
+
+**It is reported with a modal dialog, not a status-bar line.** This is the one
+failure in the whole design that produces a silent divergence between what the
+recipient received and what the local archive shows, and a status bar does not
+catch the eye. Nobody discovers a missing sent copy by noticing a line that
+appeared for a few seconds; they discover it months later by looking for a
+message that is not there. The dialog names the account and the folder it could
+not write to.
 
 **An attachment vanished between attaching and sending.** Send is refused before
 the command runs, naming the file. Checked at build time, not at attach time.

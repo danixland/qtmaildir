@@ -52,11 +52,11 @@ class QPushButton;
 class QComboBox;
 class QPlainTextEdit;
 class QSplitter;
-class QProgressBar;
 class QTimer;
 class QToolButton;
 class QVBoxLayout;
 
+class BusyIndicator;
 class ThreadListModel;
 class MessageView;
 class MailSync;
@@ -1074,7 +1074,7 @@ private:
     QLabel *m_pendingLabel = nullptr;
 
     /// Indeterminate, shown only while a sync runs. See setSyncBusy().
-    QProgressBar *m_syncProgress = nullptr;
+    BusyIndicator *m_syncProgress = nullptr;
 
     /// The last counts the worker answered, one per placeholderLines() entry.
     /// Empty until the first reply, which renders the pane without its helper

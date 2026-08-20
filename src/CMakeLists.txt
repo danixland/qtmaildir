@@ -6,6 +6,7 @@ add_library(qtmaildir_lib STATIC
     htmlbuilder.cpp
     cidschemehandler.cpp
     cardlayout.cpp
+    busyindicator.cpp
     marks.cpp
     carddelegate.cpp
     notmuchworker.cpp

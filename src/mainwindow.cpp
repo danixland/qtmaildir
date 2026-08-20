@@ -36,7 +36,6 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
-#include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
@@ -54,6 +53,7 @@
 #include "notmuchworker.h"
 #include "querycompleter.h"
 #include "carddelegate.h"
+#include "busyindicator.h"
 #include "cardlayout.h"
 #include "searchterm.h"
 #include "tagchip.h"
@@ -504,16 +504,14 @@ void MainWindow::buildUi()
     m_pendingLabel->hide();
     statusBar()->addPermanentWidget(m_pendingLabel);
 
-    // Indeterminate: setRange(0, 0). A sync has no measurable progress, since
-    // mbsync reports no percentage and the script's output is unstructured, so
-    // a bar filling left to right would be inventing a fraction. This one
-    // animates to say "working, duration unknown".
-    m_syncProgress = new QProgressBar(this);
+    // Indeterminate, which BusyIndicator starts in: a sync has no measurable
+    // progress, since mbsync reports no percentage and the script's output is
+    // unstructured, so a bar filling left to right would be inventing a
+    // fraction. This one animates to say "working, duration unknown". The
+    // determinate half of the widget is the composer's, not this one's.
+    m_syncProgress = new BusyIndicator(this);
     m_syncProgress->setObjectName(QStringLiteral("syncProgress"));
-    m_syncProgress->setRange(0, 0);
-    m_syncProgress->setTextVisible(false);
     m_syncProgress->setMaximumWidth(120);
-    m_syncProgress->hide();
     statusBar()->addPermanentWidget(m_syncProgress);
 
     // Query row.
@@ -3677,7 +3675,7 @@ void MainWindow::updateSyncControls()
     // local run ending would re-enable it while cron still holds the lock.
     const bool busy = m_localSyncBusy || m_externalSyncBusy;
 
-    m_syncProgress->setVisible(busy);
+    m_syncProgress->setBusy(busy);
 
     // Disabled rather than left clickable: MailSync::start() already refuses a
     // second run and the script exits 75 when another holds the lock, but a

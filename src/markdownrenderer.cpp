@@ -34,8 +34,8 @@ namespace {
 ///
 /// `table` is absent deliberately, not by oversight: tables render badly
 /// across mail clients regardless of who generates them. `tagfilter` is absent
-/// because CMARK_OPT_SAFE already suppresses raw HTML wholesale, which is the
-/// stronger measure.
+/// because safe mode (see below) already suppresses raw HTML wholesale, which
+/// is the stronger measure.
 const char *const kExtensions[] = { "autolink", "strikethrough", "tasklist" };
 
 }  // namespace
@@ -51,8 +51,21 @@ QString MarkdownRenderer::toHtml(const QString &markdown)
     // after the first call.
     cmark_gfm_core_extensions_ensure_registered();
 
-    // SAFE suppresses raw HTML in the INPUT. It does not escape the output,
-    // which is markup by definition.
+    // CMARK_OPT_DEFAULT is 0, and CMARK_OPT_SAFE is a NO-OP in cmark-gfm 0.29:
+    // safe mode has been the default since that release, and the flag is kept
+    // only for API compatibility with code written against older versions.
+    // The real requirement is that CMARK_OPT_UNSAFE must never be set. Under
+    // safe mode a raw <script> block is replaced with an HTML comment
+    // placeholder, and a link whose scheme is not in the allowed set
+    // (javascript:, vbscript:, file:, and data: except a few safe image
+    // types) is replaced with an empty href. Measured against
+    // cmark-gfm-0.29.0.gfm.13 on 2026-08-20: rendering the same script tag and
+    // a javascript: link under OPT_DEFAULT alone, under OPT_DEFAULT|OPT_SAFE,
+    // and under OPT_UNSAFE shows the first two behave identically and
+    // suppress both, while OPT_UNSAFE leaks both verbatim into the output.
+    // OPT_SAFE is kept anyway, both as a statement of intent and in case a
+    // future cmark-gfm release makes it meaningful again; do not read its
+    // presence as the mechanism actually doing the suppressing.
     const int options = CMARK_OPT_DEFAULT | CMARK_OPT_SAFE;
 
     cmark_parser *parser = cmark_parser_new(options);

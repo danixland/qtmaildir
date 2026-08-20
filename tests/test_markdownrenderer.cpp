@@ -35,6 +35,7 @@ private slots:
     void tasklistRenders();
     void tablesAreNotEnabled();
     void rawHtmlIsSuppressed();
+    void unsafeLinksAreStripped();
     void accentedTextSurvivesAsUtf8();
     void emptyInputProducesEmptyOutput();
 };
@@ -90,13 +91,35 @@ void TestMarkdownRenderer::tablesAreNotEnabled()
 
 void TestMarkdownRenderer::rawHtmlIsSuppressed()
 {
-    // CMARK_OPT_SAFE. The body is the user's own text, but a body that can
-    // inject markup into its own generated HTML part is a sharp edge with no
-    // upside.
+    // Safe mode (the cmark-gfm 0.29 default, not CMARK_OPT_SAFE, which is a
+    // no-op in this version, see markdownrenderer.cpp). The body is the
+    // user's own text, but a body that can inject markup into its own
+    // generated HTML part is a sharp edge with no upside.
+    //
+    // Asserted on the actual placeholder rather than only "no <script>",
+    // because the weaker assertion would still pass with CMARK_OPT_UNSAFE
+    // set by mistake, as long as something ELSE in the string also matched
+    // "not <script>" and "contains after" (measured: it does not distinguish
+    // safe from unsafe mode on its own). "raw HTML omitted" is what safe mode
+    // actually emits in place of the tag.
     const QString html = MarkdownRenderer::toHtml(
         QStringLiteral("<script>alert(1)</script>\n\nafter"));
     QVERIFY2(!html.contains(QStringLiteral("<script>")), qPrintable(html));
+    QVERIFY2(html.contains(QStringLiteral("raw HTML omitted")), qPrintable(html));
     QVERIFY2(html.contains(QStringLiteral("after")), qPrintable(html));
+}
+
+void TestMarkdownRenderer::unsafeLinksAreStripped()
+{
+    // A protection this gets for free from safe mode, and previously
+    // asserted nothing about: a javascript: link is replaced with an empty
+    // href rather than passed through. The body is the user's own text, but
+    // it is rendered into an HTML part sent to other people, so a
+    // javascript: link surviving into that part would be a real defect, not
+    // a cosmetic one.
+    const QString html = MarkdownRenderer::toHtml(
+        QStringLiteral("[click](javascript:alert(1))"));
+    QVERIFY2(!html.contains(QStringLiteral("javascript:")), qPrintable(html));
 }
 
 void TestMarkdownRenderer::accentedTextSurvivesAsUtf8()

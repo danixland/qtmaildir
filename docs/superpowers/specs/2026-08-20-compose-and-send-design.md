@@ -256,29 +256,59 @@ The include-order rule applies to every new file that touches GMime: gmime
 headers before any Qt header in the same translation unit, because glib
 declares a struct field named `signals`.
 
-### Sending blocks, visibly, and does not queue
+### Sending runs behind a cancellable delay, and does not queue
 
-Send disables the composer and shows progress **in the composer's own status
-bar**, not in a popup. A modal over a window that is already disabled adds a
-second thing to look at and a dialog that can be dismissed while the operation
-continues, which is the ambiguity items 18, 19, 28 and 54 each closed once.
-
-The composer is the indicator: disabled, showing a stage, and closing itself
-when the whole operation succeeded. Success needs no message, because the window
-closing is the message.
-
-The stages are shown as they happen, since the operation is genuinely several
-and a failure in the second or third means something different from a failure in
-the first:
+**Send opens a popup that owns the whole operation**, from a cancellable
+countdown through to completion. It is modelled on Gmail's undo-send, and it is
+what settles what "cancel" can mean here.
 
 ```
-Sending...            send_command is running
-Filing sent copy...   DraftStore writing to the account's sent folder
-Removing draft...     the draft revision is unlinked
+Sending in 5...        [ Undo ]     countdown running, Undo live
+Sending...             [ Undo ]     send_command running, Undo disabled
+Filing sent copy...                 DraftStore writing to the sent folder
+Removing draft...                   the draft revision is unlinked
+                                    popup and composer both close
 ```
 
-The indicator is an **indeterminate `QProgressBar`** (`setRange(0, 0)`) beside a
-status label, which is what `MainWindow` already does for the sync indicator
+**The delay is where cancelling is safe, and it is the only place it is.**
+Nothing has reached a server during the countdown, so Undo means genuinely
+nothing happened. Killing `send_command` once it is running does not: the
+message may have been handed to the server in full before the kill, so the
+result is an *unknown* send, which is worse than either clean outcome. Undo
+therefore disables itself the moment the command starts, and there is no cancel
+after that.
+
+This is what the delay buys in practice, and it is the case the user named:
+pressing Send and immediately noticing the missing attachment. Undo returns the
+composer exactly as it was, editable, popup gone, nothing sent.
+
+**In a popup rather than the composer's status bar.** A countdown nobody notices
+is a countdown that does not work, and the objection to status bars is precisely
+that they do not catch the eye. The same reasoning that puts a failed sent copy
+in a modal puts the undo window in one.
+
+**The popup owns the progress too**, rather than handing over to the status bar
+once the countdown elapses: one widget changing state in one place, instead of a
+popup vanishing and something else appearing somewhere else.
+
+Two properties it must have:
+
+- **Modal to the composer, not to the application.** Sending from one composer
+  must not freeze a second composer or the main window.
+- **No close button and no Escape dismiss.** During the countdown a dismissal is
+  ambiguous, since it could mean cancel or send now. During the send there is
+  nothing to dismiss. Undo is the only control and it disables itself.
+
+The composer's inputs are disabled for the whole operation, countdown included:
+body, recipient fields, subject, attachment controls, formatting toolbar and
+Send. The message must not change between the user pressing Send and the bytes
+being built. Undo re-enables all of it.
+
+`[compose] send_delay_ms` sets the countdown, default 5000. **Zero skips it**
+and sends at once, for anyone who finds it irritating.
+
+The progress element is an **indeterminate `QProgressBar`** (`setRange(0, 0)`)
+beside a label, which is what `MainWindow` already does for the sync indicator
 (`m_syncProgress`) and for the same reason: neither operation has measurable
 progress.
 
@@ -290,8 +320,8 @@ rather than justifying repeating it. Whether 134 lands before or after this
 work, the composer uses the shared widget: if it has not happened yet, this work
 creates the class and converts `MainWindow` as part of the same change.
 
-Exit 0 closes the window. Non-zero re-enables it with everything intact and
-shows the command's stderr.
+Exit 0 closes the popup and the composer. Non-zero closes the popup and
+re-enables the composer with everything intact, showing the command's stderr.
 
 **There is no outbox in this design**, and the reason it is not simply
 "deferred" is that it needs its own indicator story. This project has four
@@ -490,6 +520,7 @@ send_command = msmtp -a work -t
 quote_position = above          ; above | below
 send_html = true                ; seeds New and Forward; Reply seeds from the original
 autosave_interval_ms = 30000
+send_delay_ms = 5000            ; the undo window before sending; 0 sends at once
 default_account = work
 attachment_warn_bytes = 26214400
 ```
@@ -600,6 +631,16 @@ non-ASCII subject and display name; quoted-printable for an accented body;
 exiting non-zero with stderr, one that does not exist. The stub writes stdin to
 a file the test reads back, proving the message arrived intact. Asserts exactly
 two outcomes.
+
+**The send delay needs its own test, and the property that matters is a
+negative one**: that Undo during the countdown leaves the stub command **never
+run at all**. A test asserting only that the composer reopened would pass
+against a design that ran the command and threw the result away, which is the
+whole failure the delay exists to prevent. Assert the stub wrote no file.
+
+Also: `send_delay_ms = 0` skips the countdown, and Undo is disabled the instant
+the command starts. Drive the countdown with a short delay rather than waiting
+five seconds in a test.
 
 **`test_draftstore`**: Maildir filename validity and uniqueness, the previous
 revision unlinked, the dirty check skipping a write, and an unwritable directory

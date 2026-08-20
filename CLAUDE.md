@@ -222,6 +222,27 @@ confirmation dialogs for tag mutations. All actions funnel through one `applyTag
 multi-row selections go through `applyTagsToThreads`, which resolves every thread in ONE
 combined `thread:a or thread:b` query rather than one query per thread.
 
+**`notmuch_database_get_path()` is not the mail root, and assuming it is
+moves mail somewhere mbsync cannot see.** notmuch can split the index from the
+mail with `mail_root` and `path` as separate keys, which is how the Xapian
+index goes on faster storage while the Maildir stays put. Under that layout
+`get_path()` returns the INDEX directory. `mailRootOf()` in `notmuchworker.cpp`
+wraps `notmuch_config_get(NOTMUCH_CONFIG_MAIL_ROOT)`, which is correct under
+BOTH layouts, so there is no conditional and no reason to reach for the old
+accessor again. Item 124, and the developer's own index has run split since
+2026-08-20, so this is live rather than hypothetical.
+
+The consequences were asymmetric, which is why it is worth remembering: a wrong
+root made message paths resolve to `../..` escapes that match no account, a
+display defect, but `moveMessages` composes its destination from the same root,
+so Delete would have written into the Xapian tree. Two related traps sit outside
+the code. `database.hook_dir` defaults to `<database.path>/.notmuch/hooks`, so a
+split config silently stops running `post-new` while `notmuch new` still reports
+success; it must be set explicitly. And a test cannot see any of this in the
+ordinary fixture layout, where the index lives inside the mail root and both
+accessors return the same string: `NotmuchFixture::splitIndex()` exists for
+that, and a test without it passes whichever accessor the code uses.
+
 **The Maildir path is deliberately not configurable.** notmuch stores it as
 `database.path` and libnotmuch reads it; duplicating it would create two sources of truth.
 The only escape hatch is `general/notmuch_config`, pointing at an alternate notmuch config.

@@ -74,7 +74,10 @@ void TestMarkdownRenderer::tasklistRenders()
     const QString html = MarkdownRenderer::toHtml(
         QStringLiteral("- [ ] todo\n- [x] done"));
     QVERIFY2(html.contains(QStringLiteral("type=\"checkbox\"")), qPrintable(html));
-    QVERIFY2(html.contains(QStringLiteral("checked")), qPrintable(html));
+    // Not a bare "checked": that is a common English word ordinary prose
+    // would satisfy on its own. The attribute is what proves [x] differs
+    // from [ ].
+    QVERIFY2(html.contains(QStringLiteral("checked=\"\"")), qPrintable(html));
 }
 
 void TestMarkdownRenderer::tablesAreNotEnabled()
@@ -127,7 +130,11 @@ void TestMarkdownRenderer::accentedTextSurvivesAsUtf8()
     // This user writes Italian, so accented text is every message rather
     // than an edge case, and a UTF-8 round trip through a C library is
     // exactly where it would be lost.
-    const QString source = QString::fromUtf8("perch\xC3\xA9 \xC3\xA8 cos\xC3\xAC");
+    //
+    // Includes a character outside latin-1, so a symmetric toLatin1/fromLatin1
+    // substitution cannot round-trip it and cancel itself out. Measured: with
+    // accented latin-1 text alone, mutating both sides together passes.
+    const QString source = QString::fromUtf8("perch\xC3\xA9 \xC3\xA8 cos\xC3\xAC \xE2\x82\xAC");
     const QString html = MarkdownRenderer::toHtml(source);
     QVERIFY2(html.contains(source), qPrintable(html));
 }

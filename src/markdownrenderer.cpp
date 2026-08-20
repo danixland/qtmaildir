@@ -45,11 +45,16 @@ QString MarkdownRenderer::toHtml(const QString &markdown)
     if (markdown.isEmpty())
         return {};
 
-    // Idempotent and required before cmark_find_syntax_extension() can resolve
-    // any name. Calling it per render rather than once at startup keeps this
-    // function free of initialisation order concerns; it is a hash lookup
-    // after the first call.
-    cmark_gfm_core_extensions_ensure_registered();
+    // Idempotent, and a hash lookup after the first call. The function-local
+    // static makes the FIRST call thread-safe: cmark-gfm's registry carries no
+    // once-guard of its own, so two threads racing the first call would tear
+    // it. Today's only caller is on the UI thread; this costs nothing and
+    // removes the trap before a worker-thread caller finds it.
+    static const bool registered = [] {
+        cmark_gfm_core_extensions_ensure_registered();
+        return true;
+    }();
+    Q_UNUSED(registered)
 
     // CMARK_OPT_DEFAULT is 0, and CMARK_OPT_SAFE is a NO-OP in cmark-gfm 0.29:
     // safe mode has been the default since that release, and the flag is kept

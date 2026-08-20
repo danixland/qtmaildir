@@ -32,7 +32,9 @@ namespace MarkdownRenderer {
 ///
 /// Three extensions are enabled (autolink, strikethrough, tasklist) and
 /// tables are deliberately not. Raw HTML in the input is suppressed by
-/// CMARK_OPT_SAFE.
+/// cmark-gfm's safe mode, which is the DEFAULT in 0.29 and is not the
+/// CMARK_OPT_SAFE flag (a no-op); see markdownrenderer.cpp for the
+/// measurement. The requirement is that CMARK_OPT_UNSAFE is never set.
 QString toHtml(const QString &markdown);
 
 }  // namespace MarkdownRenderer

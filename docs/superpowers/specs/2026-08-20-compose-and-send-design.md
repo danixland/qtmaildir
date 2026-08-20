@@ -151,6 +151,14 @@ Known ceiling: a tasklist renders as `<input type="checkbox" disabled>`, which
 many mail clients strip, so those recipients see the list item with no marker.
 The plain part still shows `- [ ]` correctly, so nothing is lost.
 
+**It is the only new dependency, and it is cheap.** `cmark-gfm` ships in stock
+Slackware (`cmark-gfm-0.29.0.gfm.13-x86_64-3`, verified 2026-08-20) with a
+pkg-config file, so it is a `pkg_check_modules` line beside the one GMime
+already has, and the SlackBuild needs no `REQUIRES` entry, which lists only
+non-stock dependencies. Note the version: cmark-gfm tracks an older CommonMark
+base than plain cmark (0.31.2 here), which is a real if small staleness cost
+accepted in exchange for autolink.
+
 Neither Qt's `QTextDocument::setMarkdown` nor plain cmark was chosen. Qt's
 markdown is a display facility whose `toHtml()` emits markup styled for
 `QTextEdit`, which would need unpicking before it is fit to send: the same

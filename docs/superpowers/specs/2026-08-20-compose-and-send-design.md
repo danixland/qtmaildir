@@ -258,8 +258,34 @@ declares a struct field named `signals`.
 
 ### Sending blocks, visibly, and does not queue
 
-Send disables the composer and shows progress. Exit 0 closes it, files the sent
-copy and deletes the draft. Non-zero re-enables it with everything intact and
+Send disables the composer and shows progress **in the composer's own status
+bar**, not in a popup. A modal over a window that is already disabled adds a
+second thing to look at and a dialog that can be dismissed while the operation
+continues, which is the ambiguity items 18, 19, 28 and 54 each closed once.
+
+The composer is the indicator: disabled, showing a stage, and closing itself
+when the whole operation succeeded. Success needs no message, because the window
+closing is the message.
+
+The stages are shown as they happen, since the operation is genuinely several
+and a failure in the second or third means something different from a failure in
+the first:
+
+```
+Sending...            send_command is running
+Filing sent copy...   DraftStore writing to the account's sent folder
+Removing draft...     the draft revision is unlinked
+```
+
+The indicator is an **indeterminate `QProgressBar`** (`setRange(0, 0)`), built
+inline in the composer, which is exactly what `MainWindow` already does for the
+sync indicator (`m_syncProgress`) and for the same reason: neither operation has
+measurable progress. It is deliberately not factored into a shared widget class.
+This codebase builds small UI inline (the query row and the message-pane header
+are both built that way and `CLAUDE.md` records that they are not classes), and
+two `QProgressBar`s in two windows do not justify a third name.
+
+Exit 0 closes the window. Non-zero re-enables it with everything intact and
 shows the command's stderr.
 
 **There is no outbox in this design**, and the reason it is not simply
@@ -498,6 +524,13 @@ must not interrupt typing and must not silently succeed.
 
 **Sent copy write failed after a successful send.** A warning saying exactly
 that. Never a send failure, never an offer to resend.
+
+The staged progress display makes this visible rather than confusing: the
+failure arrives while the status bar reads "Filing sent copy...", so the user
+can see the send stage already passed. The composer still **closes**, because
+the message went and holding a composer open for a message already sent invites
+sending it twice. The warning goes to the main window's status bar, which
+outlives the composer.
 
 **An attachment vanished between attaching and sending.** Send is refused before
 the command runs, naming the file. Checked at build time, not at attach time.

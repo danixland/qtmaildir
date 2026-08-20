@@ -178,7 +178,6 @@ private slots:
     void noTestCanSeeTheRealLockTable();
     void everyKnownActionIsRegistered();
     void everyRegisteredActionIsKnown();
-    void everyActionHasAShortcut();
     void configuredBindingReachesTheAction();
     void cidPrefixesAreBangFree();
     void cidPrefixesAreDistinctPerMessage();
@@ -486,22 +485,6 @@ void TestMainWindow::everyRegisteredActionIsKnown()
         QVERIFY2(known.contains(action),
                  qPrintable(QStringLiteral("registered action '%1' is not in "
                                            "KeyMap::knownActions()").arg(action)));
-    }
-}
-
-void TestMainWindow::everyActionHasAShortcut()
-{
-    // An action with no binding is unreachable from the keyboard. Every one
-    // of them carries a default, so an empty shortcut means the default table
-    // and the action list have drifted apart.
-    const Config config;
-    MainWindow window(config);
-
-    for (const QString &name : window.registeredActionNames()) {
-        const QAction *action = window.findChild<QAction *>(name);
-        QVERIFY2(action, qPrintable(QStringLiteral("no QAction named '%1'").arg(name)));
-        QVERIFY2(!action->shortcut().isEmpty(),
-                 qPrintable(QStringLiteral("action '%1' has no shortcut").arg(name)));
     }
 }
 

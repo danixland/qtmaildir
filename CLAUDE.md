@@ -626,11 +626,13 @@ a union over the conversation, so it can arm for a thread whose displayed
 message is already read. The write is still scoped to that message, so the cost
 is a no-op rather than a wrong write.
 
-**Adding an action is FIVE places, and four of them are enforced by tests that
+**Adding an action is FIVE places, and three of them are enforced by tests that
 fail in confusing ways.** `KeyMap::knownActions()` (a `Q_ASSERT` in the
 constructor fires otherwise, and it surfaces in whichever suite happens to build
-a `MainWindow` first — `test_tagrules` did), `defaultBindings()` (every action
-must be keyboard-reachable), the icon table (every action must carry one), and
+a `MainWindow` first — `test_tagrules` did), `defaultBindings()` (OPTIONAL
+since item 132: a shortcut is a chosen subset, not a requirement, so an action
+nobody would press a chord for simply gets no entry and the shortcut reference
+prints it as `(unbound)`), the icon table (every action must carry one), and
 a MENU. The no-duplicate-icons rule is narrowed to actions that can reach the
 toolbar, by a named exception list; the five thread actions share their twins'
 icons because a submenu entry always carries text, and the test asserts none of

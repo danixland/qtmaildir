@@ -69,6 +69,7 @@ add_qtmaildir_test(busyindicator)
 add_qtmaildir_test(tagstrip)
 add_qtmaildir_test(messagedetailsdialog)
 add_qtmaildir_test(markdownrenderer)
+add_qtmaildir_test(messagebuilder)
 add_qtmaildir_test(maildirname)
 add_qtmaildir_test(translations)
 # Asserts on the tracked .ts rather than the generated .qm: an untranslated

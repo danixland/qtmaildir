@@ -1234,6 +1234,22 @@
         <source>Rule &apos;%1&apos;: adds and removes nothing; dropped</source>
         <translation>Regola &apos;%1&apos;: non aggiunge né rimuove nulla; scartata</translation>
     </message>
+    <message>
+        <source>The account has no address configured, so no message can be sent from it.</source>
+        <translation>L&apos;account non ha un indirizzo configurato, quindi non è possibile inviare messaggi da esso.</translation>
+    </message>
+    <message>
+        <source>The attachment %1 is missing or unreadable.</source>
+        <translation>L&apos;allegato %1 è mancante o non leggibile.</translation>
+    </message>
+    <message>
+        <source>The attachment %1 could not be read.</source>
+        <translation>Non è stato possibile leggere l&apos;allegato %1.</translation>
+    </message>
+    <message>
+        <source>The message could not be assembled.</source>
+        <translation>Non è stato possibile comporre il messaggio.</translation>
+    </message>
 </context>
 <context>
     <name>QueryCompleter</name>

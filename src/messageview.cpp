@@ -825,6 +825,26 @@ void MessageView::removeBrowserActions(QMenu *menu, QWebEnginePage *page)
         QWebEnginePage::OpenLinkInNewTab,
         QWebEnginePage::OpenLinkInNewWindow,
         QWebEnginePage::OpenLinkInThisWindow,
+        // Save link, and this one is a SECURITY decision rather than tidying.
+        //
+        // It is inert today, since no downloadRequested handler exists
+        // anywhere, which is why it was first deferred to item 114 alongside
+        // Save image. That was wrong: the two are not the same question.
+        //
+        // Save image is content the message already carries, and item 114 is
+        // about making it work. Save link fetches a REMOTE URL chosen by the
+        // sender, through this pane's profile, which is the one profile in the
+        // application that must never fetch remote content: that is what
+        // m_allowRemote and the whole interceptor exist to prevent. Answering
+        // it with a download handler would put a network fetch of
+        // attacker-controlled content behind a single context-menu entry, and
+        // the request would carry whatever the profile holds.
+        //
+        // Saving what the user actually wants already has a path that does not
+        // touch the network: saveAttachment(), which writes a MIME part
+        // already parsed into memory and sanitises the filename. Do not
+        // "restore" this entry by implementing downloadRequested for it.
+        QWebEnginePage::DownloadLinkToDisk,
     };
 
     for (const QWebEnginePage::WebAction which : kUnwanted) {

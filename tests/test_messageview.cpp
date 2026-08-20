@@ -1129,6 +1129,12 @@ void TestMessageView::theLinkMenuDropsTheOpenInWindowActions()
         QWebEnginePage::OpenLinkInNewTab,
         QWebEnginePage::OpenLinkInNewWindow,
         QWebEnginePage::OpenLinkInThisWindow,
+        // Save link. Asserted here rather than left to item 114, because it is
+        // not the same question as Save image: it fetches a sender-chosen
+        // remote URL through the one profile that must never fetch remote
+        // content. A download handler added for Save image must NOT make this
+        // reachable again, and this assertion is what would catch that.
+        QWebEnginePage::DownloadLinkToDisk,
     };
     const QList<QWebEnginePage::WebAction> wanted = {
         QWebEnginePage::CopyLinkToClipboard,

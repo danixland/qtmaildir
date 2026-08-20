@@ -20,9 +20,13 @@ point at which they are stable.
   was discarded. Plain links, as in most text mail, were unaffected and already
   worked, which is what made this look like "HTML mail is broken".
 - The context menu on a link no longer offers Open in new tab, Open in new
-  window or Open in this window. None can work: the pane has no tabs and must
-  never open a window or navigate away from the message. Copy link address is
-  kept.
+  window, Open in this window or Save link. The first three cannot work: the
+  pane has no tabs and must never open a window or navigate away from the
+  message. Save link is removed for a stronger reason: it would fetch a
+  sender-chosen remote URL through the message pane, which never fetches remote
+  content by design. Copy link address is kept, and attachments are still saved
+  from the attachment bar, which reads what the message already carries rather
+  than the network.
 
 ## [0.26.1] - 2026-08-19
 

@@ -126,6 +126,11 @@ private slots:
     void aZeroSendDelayIsHonouredRatherThanTreatedAsUnset();
     void aDefaultAccountThatCannotSendIsWarnedAbout();
     void anInstallationWhereNoAccountCanSendIsNotWarnedAbout();
+    void garbageAutosaveIntervalIsRejectedNotZero();
+    void garbageSendDelayIsRejectedNotZero();
+    void garbageAttachmentWarnBytesIsRejectedNotZero();
+    void zeroOrNegativeAutosaveIntervalIsClamped();
+    void unrecognisedQuotePositionWarnsAndFallsBackToAbove();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -2416,6 +2421,92 @@ void TestConfig::anInstallationWhereNoAccountCanSendIsNotWarnedAbout()
                  qPrintable(QStringLiteral("unexpected sending-related warning: %1")
                                 .arg(warning)));
     }
+}
+
+void TestConfig::garbageAutosaveIntervalIsRejectedNotZero()
+{
+    // toInt() alone returns 0 on a parse failure, not the default, and 0
+    // reaches a QTimer restarted on every keystroke: a typo here would have
+    // turned the debounce into a write per keystroke, uploaded by mbsync.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "autosave_interval_ms=oops\n")));
+
+    QCOMPARE(config.compose().autosaveIntervalMs, 30000);
+    QVERIFY2(!config.problems().isEmpty(),
+             "a garbage autosave_interval_ms was accepted silently");
+}
+
+void TestConfig::garbageSendDelayIsRejectedNotZero()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "send_delay_ms=soon\n")));
+
+    QCOMPARE(config.compose().sendDelayMs, 5000);
+    QVERIFY2(!config.problems().isEmpty(),
+             "a garbage send_delay_ms was accepted silently");
+}
+
+void TestConfig::garbageAttachmentWarnBytesIsRejectedNotZero()
+{
+    // Verified against the actual defect: attachment_warn_bytes=banana gave 0
+    // via a bare toLongLong(), which would have warned about every attachment
+    // no matter how small.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "attachment_warn_bytes=banana\n")));
+
+    QCOMPARE(config.compose().attachmentWarnBytes, qint64(26214400));
+    QVERIFY2(!config.problems().isEmpty(),
+             "a garbage attachment_warn_bytes was accepted silently");
+}
+
+void TestConfig::zeroOrNegativeAutosaveIntervalIsClamped()
+{
+    // Independent of the parse fix: a value that parses fine but is zero or
+    // negative must still not reach setInterval(), since nothing assigns a
+    // meaning to one, unlike mark_read_delay_ms's documented negative-means-off.
+    QTemporaryDir dir;
+    Config zero;
+    zero.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "autosave_interval_ms=0\n")));
+    QVERIFY2(zero.compose().autosaveIntervalMs >= 1000,
+             qPrintable(QStringLiteral("zero autosave interval was not clamped: %1")
+                            .arg(zero.compose().autosaveIntervalMs)));
+
+    QTemporaryDir dir2;
+    Config negative;
+    negative.load(writeIni(dir2, QStringLiteral(
+        "[compose]\n"
+        "autosave_interval_ms=-500\n")));
+    QVERIFY2(negative.compose().autosaveIntervalMs >= 1000,
+             qPrintable(QStringLiteral("negative autosave interval was not clamped: %1")
+                            .arg(negative.compose().autosaveIntervalMs)));
+}
+
+void TestConfig::unrecognisedQuotePositionWarnsAndFallsBackToAbove()
+{
+    // Matches the precedent set by sync_on_exit, language and date_format:
+    // the only silent fallbacks in this file are for ABSENT keys, never for
+    // malformed ones.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "quote_position=abov\n")));
+
+    QVERIFY2(config.compose().quotePosition == ComposeSettings::QuotePosition::Above,
+             "an unrecognised quote_position must still fall back to Above");
+    QVERIFY2(!config.problems().isEmpty(),
+             "an unrecognised quote_position was accepted silently");
 }
 
 QTEST_MAIN(TestConfig)

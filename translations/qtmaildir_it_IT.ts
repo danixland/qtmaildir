@@ -48,6 +48,22 @@
         <translation>L&apos;account &apos;%1&apos; non ha un cestino configurato; aggiungere una chiave &apos;trash&apos; alla sua sezione. L&apos;eliminazione non funzionerà per questo account finché non verrà fatto.</translation>
     </message>
     <message>
+        <source>[compose] quote_position &apos;%1&apos; is not recognised; expected above or below. Using above.</source>
+        <translation>[compose] quote_position &apos;%1&apos; non è riconosciuto; atteso above o below. Verrà usato above.</translation>
+    </message>
+    <message>
+        <source>[compose] autosave_interval_ms &apos;%1&apos; is not a number; using %2.</source>
+        <translation>[compose] autosave_interval_ms &apos;%1&apos; non è un numero; verrà usato %2.</translation>
+    </message>
+    <message>
+        <source>[compose] send_delay_ms &apos;%1&apos; is not a number; using %2.</source>
+        <translation>[compose] send_delay_ms &apos;%1&apos; non è un numero; verrà usato %2.</translation>
+    </message>
+    <message>
+        <source>[compose] attachment_warn_bytes &apos;%1&apos; is not a number; using %2.</source>
+        <translation>[compose] attachment_warn_bytes &apos;%1&apos; non è un numero; verrà usato %2.</translation>
+    </message>
+    <message>
         <source>Startup account &apos;%1&apos; is not a configured account; starting on all accounts.</source>
         <translation>L&apos;account iniziale &apos;%1&apos; non è un account configurato; si parte da tutti gli account.</translation>
     </message>

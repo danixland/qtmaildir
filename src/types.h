@@ -249,7 +249,7 @@ struct ComposeContext
 {
     enum class Kind { New, Reply, ReplyAll, Forward };
 
-    QString accountKey;          ///< Which account sends. Resolved by ComposeContext's rules.
+    QString accountKey;          ///< Which account sends. Plain data here; the resolution rules live with whatever builds this context.
     Kind kind = Kind::New;
     QString originalPath;        ///< The .eml being replied to or forwarded. Empty for New.
     QString inReplyTo;           ///< Message-ID of the original.

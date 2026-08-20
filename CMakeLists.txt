@@ -34,6 +34,23 @@ message(STATUS "Found notmuch: ${NOTMUCH_LIBRARY}")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GMIME REQUIRED IMPORTED_TARGET gmime-3.0)
 
+# cmark-gfm renders the composer's markdown body into the HTML part.
+#
+# TWO lookups, not one, and this is the trap: only the CORE library ships a
+# pkg-config file. `libcmark-gfm-extensions` has none (verified 2026-08-20 on
+# Slackware, cmark-gfm-0.29.0.gfm.13), so it is located by hand exactly as
+# notmuch is. The extensions library is not optional here: autolink,
+# strikethrough and tasklist all live in it, and without it a bare URL in a
+# mail body is not a link.
+pkg_check_modules(CMARK_GFM REQUIRED IMPORTED_TARGET libcmark-gfm)
+find_library(CMARK_GFM_EXTENSIONS_LIBRARY NAMES cmark-gfm-extensions)
+if(NOT CMARK_GFM_EXTENSIONS_LIBRARY)
+    message(FATAL_ERROR
+        "libcmark-gfm-extensions not found. It ships with cmark-gfm but has "
+        "no pkg-config file; it provides autolink, strikethrough and tasklist.")
+endif()
+message(STATUS "Found cmark-gfm extensions: ${CMARK_GFM_EXTENSIONS_LIBRARY}")
+
 # The version lives only in the project() call above; version.h is generated
 # from it so no source file repeats the literal.
 configure_file(

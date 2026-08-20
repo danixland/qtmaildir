@@ -74,3 +74,4 @@ add_qtmaildir_test(translations)
 # only as English in a running Italian UI.
 target_compile_definitions(test_translations PRIVATE
     TRANSLATIONS_DIR="${CMAKE_SOURCE_DIR}/translations")
+add_qtmaildir_test(markdownrenderer)

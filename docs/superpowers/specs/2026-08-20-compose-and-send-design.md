@@ -262,13 +262,48 @@ declares a struct field named `signals`.
 countdown through to completion. It is modelled on Gmail's undo-send, and it is
 what settles what "cancel" can mean here.
 
+Three rows, the same three in every state, so nothing reflows and the window
+never jumps:
+
 ```
-Sending in 5...        [ Undo ]     countdown running, Undo live
-Sending...             [ Undo ]     send_command running, Undo disabled
-Filing sent copy...                 DraftStore writing to the sent folder
-Removing draft...                   the draft revision is unlinked
-                                    popup and composer both close
++-----------------------------------------+
+|  Sending in 5...                        |   status label
+|  ##################.................    |   bar, DETERMINATE, draining
+|                              [ Undo ]   |   enabled
++-----------------------------------------+
+
++-----------------------------------------+
+|  Sending...                             |   then: Filing sent copy...
+|  #######################################|   bar, INDETERMINATE
+|                              [ Undo ]   |   visible, disabled
++-----------------------------------------+
 ```
+
+**The bar changes mode, it does not change place.** During the countdown it is
+determinate and drains as the seconds pass, because a countdown has measurable
+progress. It becomes indeterminate (`setRange(0, 0)`) when `send_command`
+starts, because a send does not. This is why item 134's widget class must expose
+both modes rather than hardcoding the indeterminate one.
+
+**Undo stays visible after it disables**, rather than disappearing. A control
+that vanishes re-lays out the popup mid-operation, and a greyed Undo says why
+cancelling is no longer possible where an absent one only looks like it was
+never offered.
+
+The stages, in order:
+
+```
+Sending in N...       the countdown, Undo live
+Sending...            send_command running, Undo disabled
+Filing sent copy...   DraftStore writing to the account's sent folder
+Removing draft...     the draft revision is unlinked
+                      popup and composer both close
+```
+
+**The status label takes its width from the longest string it can hold, in the
+current language, not from its content.** Italian "Rimozione della bozza..." is
+longer than "Removing draft...", so a label sized to content resizes the popup
+between stages, which is the jumping the fixed layout exists to avoid.
 
 **The delay is where cancelling is safe, and it is the only place it is.**
 Nothing has reached a server during the countdown, so Undo means genuinely

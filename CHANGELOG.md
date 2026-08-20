@@ -11,6 +11,19 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Fixed
+
+- Clicking a link in a message opens it in the system browser. Links carrying
+  `target="_blank"`, which is most links in HTML mail, did nothing at all: no
+  error, nothing on screen. Chromium routes those to a new-window request
+  rather than to the navigation handler, and nothing answered it, so the click
+  was discarded. Plain links, as in most text mail, were unaffected and already
+  worked, which is what made this look like "HTML mail is broken".
+- The context menu on a link no longer offers Open in new tab, Open in new
+  window or Open in this window. None can work: the pane has no tabs and must
+  never open a window or navigate away from the message. Copy link address is
+  kept.
+
 ## [0.26.1] - 2026-08-19
 
 A bugfix release for one defect in 0.26.0, reported the day it shipped: moving

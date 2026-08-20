@@ -63,6 +63,9 @@ private slots:
     void theCopyToastAppearsOverThePaneAndFades();
     void theCopyToastStaysAnchoredWhenThePaneResizes();
     void aSearchFromTheDetailsDialogClosesIt();
+    void aPlainLinkOpensExternally();
+    void aTargetBlankLinkOpensExternally();
+    void theLinkMenuDropsTheOpenInWindowActions();
 
 private:
     QWebEngineView *webViewOf(MessageView *view) const
@@ -1033,6 +1036,127 @@ void TestMessageView::aSearchFromTheDetailsDialogClosesIt()
     // rather than waiting for the user to dismiss it.
     QVERIFY(!view.findChild<MessageDetailsDialog *>()
             || !view.findChild<MessageDetailsDialog *>()->isVisible());
+}
+
+
+// Item 126. A clicked link must leave the pane, and the two kinds of anchor
+// reach the outside world by DIFFERENT routes through Qt. Both are asserted,
+// because the working one is what disproved the first diagnosis: a plain-text
+// mail's links already opened while an HTML newsletter's did nothing, so a
+// test covering one route says nothing about the other.
+//
+// MessageView::setLinkOpener() is the seam. The real call ends in
+// QDesktopServices::openUrl(), which would launch a browser; what is under
+// test is WHICH clicks arrive there, never what openUrl does with them.
+
+void TestMessageView::aPlainLinkOpensExternally()
+{
+    // The route that already worked. Asserted so that fixing the other one
+    // cannot quietly break it, which is the plausible regression: both end at
+    // the same handler now.
+    QList<QUrl> opened;
+    MessageView::setLinkOpener([&opened](const QUrl &u) { opened.append(u); });
+
+    MessageView view;
+
+    // A link click as acceptNavigationRequest sees it. Driven through the page
+    // rather than synthesised: JavaScript is off in this profile, so
+    // element.click() does nothing (verified, runJavaScript returns an invalid
+    // QVariant), and a synthetic mouse press would have to land on the
+    // anchor's rect, which depends on the desktop's fonts.
+    const QUrl target(QStringLiteral("https://example.org/plain"));
+    QVERIFY2(!view.clickLinkForTest(target),
+             "a link click must be REFUSED as a navigation: the pane may "
+             "never follow a link");
+
+    QTRY_VERIFY_WITH_TIMEOUT(!opened.isEmpty(), 5000);
+    QCOMPARE(opened.size(), 1);
+    QCOMPARE(opened.first(), target);
+
+    MessageView::setLinkOpener({});
+}
+
+void TestMessageView::aTargetBlankLinkOpensExternally()
+{
+    // The defect. An anchor carrying target="_blank" never reaches
+    // acceptNavigationRequest: Chromium asks for a new window instead, and the
+    // base createWindow() returns nullptr, so the click was discarded with
+    // nothing on screen and no error anywhere. Marketing HTML sets _blank on
+    // practically every anchor, which is what made "HTML mail" look broken
+    // while a plain-text mail's links worked.
+    QList<QUrl> opened;
+    MessageView::setLinkOpener([&opened](const QUrl &u) { opened.append(u); });
+
+    MessageView view;
+    const QUrl target(QStringLiteral("https://example.org/blank"));
+
+    // Drives the real createWindow() override on the real page, then navigates
+    // what it returns, which is Chromium's own sequence. Before item 126 the
+    // page returned nothing and this is false.
+    QVERIFY2(view.relayBlankTargetForTest(target),
+             "the page provided no window for a target=\"_blank\" click, so "
+             "the URL was discarded");
+
+    QTRY_VERIFY_WITH_TIMEOUT(!opened.isEmpty(), 5000);
+    QCOMPARE(opened.size(), 1);
+    QCOMPARE(opened.first(), target);
+
+    // No second view may exist for it. The pane renders a list into ONE
+    // QWebEngineView deliberately: a view per message is a Chromium render
+    // process per message.
+    QCOMPARE(view.findChildren<QWebEngineView *>().size(), 1);
+
+    MessageView::setLinkOpener({});
+}
+
+void TestMessageView::theLinkMenuDropsTheOpenInWindowActions()
+{
+    // Item 127. Chromium adds these only when the menu is raised over a LINK,
+    // so item 100's filter never saw them: its list is the page actions, and
+    // it was tested by right-clicking the page.
+    //
+    // They are not uniform, which is why this asserts in both directions.
+    // Open in new tab and Open in new window cannot be honoured: there are no
+    // tabs and the pane must never open a window. Copy link works, and is the
+    // whole workaround a user has for any link that will not open, so removing
+    // it would take away the fallback.
+    MessageView view;
+    auto *page = view.findChild<QWebEnginePage *>();
+    QVERIFY2(page, "no page, so this test would assert nothing");
+
+    QMenu menu;
+    const QList<QWebEnginePage::WebAction> unwanted = {
+        QWebEnginePage::OpenLinkInNewTab,
+        QWebEnginePage::OpenLinkInNewWindow,
+        QWebEnginePage::OpenLinkInThisWindow,
+    };
+    const QList<QWebEnginePage::WebAction> wanted = {
+        QWebEnginePage::CopyLinkToClipboard,
+    };
+
+    for (const QWebEnginePage::WebAction which : unwanted)
+        menu.addAction(page->action(which));
+    menu.addSeparator();
+    for (const QWebEnginePage::WebAction which : wanted)
+        menu.addAction(page->action(which));
+
+    // The guard: prove the menu holds what the assertions are about, so a
+    // filter that removed everything cannot pass by accident.
+    QCOMPARE(menu.actions().size(), unwanted.size() + wanted.size() + 1);
+
+    MessageView::removeBrowserActions(&menu, page);
+
+    const QList<QAction *> left = menu.actions();
+    for (const QWebEnginePage::WebAction which : unwanted) {
+        QVERIFY2(!left.contains(page->action(which)),
+                 qPrintable(QStringLiteral("a link action survived: %1")
+                                .arg(page->action(which)->text())));
+    }
+    for (const QWebEnginePage::WebAction which : wanted) {
+        QVERIFY2(left.contains(page->action(which)),
+                 qPrintable(QStringLiteral("a wanted action was removed: %1")
+                                .arg(page->action(which)->text())));
+    }
 }
 
 QTEST_MAIN(TestMessageView)

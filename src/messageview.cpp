@@ -58,6 +58,29 @@
 
 namespace {
 
+} // namespace
+
+MessageView::LinkOpener &linkOpenerRef()
+{
+    static MessageView::LinkOpener opener;
+    return opener;
+}
+
+void MessageView::setLinkOpener(LinkOpener opener)
+{
+    linkOpenerRef() = std::move(opener);
+}
+
+void MessageView::openExternally(const QUrl &url)
+{
+    if (const LinkOpener &opener = linkOpenerRef())
+        opener(url);
+    else
+        QDesktopServices::openUrl(url);
+}
+
+namespace {
+
 /// Intercepts link clicks so a message can never navigate the pane.
 class MessagePage : public QWebEnginePage
 {
@@ -105,7 +128,7 @@ protected:
                 return false;
             }
 
-            QDesktopServices::openUrl(url);
+            MessageView::openExternally(url);
             return false;
         }
 
@@ -114,11 +137,102 @@ protected:
         return !isMainFrame;
     }
 
+    /// Item 126. An anchor carrying target="_blank" never reaches
+    /// acceptNavigationRequest: Chromium asks for a new window instead, and
+    /// the base implementation returns nullptr, so the click is discarded with
+    /// no error and nothing on screen. Marketing HTML sets _blank on
+    /// practically every link, which is what made "HTML mail" look broken
+    /// while a plain-text mail's links worked.
+    ///
+    /// The obvious override cannot work: createWindow() is handed a
+    /// WebWindowType and NO url. The target arrives afterwards, as a
+    /// navigation on whatever page is returned, so returning nullptr throws it
+    /// away before it can be read.
+    ///
+    /// So return a page whose only job is to receive that navigation. It
+    /// reuses the same handler the plain-link path uses rather than sourcing
+    /// the URL a second way, which is what keeps the two kinds of link from
+    /// drifting apart. No view is ever created and nothing is ever fetched:
+    /// the page refuses the navigation, and deleteLater() disposes of it once
+    /// the URL has been handed on.
+    QWebEnginePage *createWindow(WebWindowType type) override
+    {
+        return makeRelay(type);
+    }
+
+public:
+    /// The same call Chromium makes, reachable from a test. See
+    /// MessageView::relayBlankTargetForTest().
+    QWebEnginePage *createWindowForTest(WebWindowType type)
+    {
+        return makeRelay(type);
+    }
+
+    /// The same call Chromium makes for a clicked anchor. See
+    /// MessageView::clickLinkForTest().
+    bool clickLinkForTest(const QUrl &url)
+    {
+        return acceptNavigationRequest(url, NavigationTypeLinkClicked, true);
+    }
+
+protected:
+
 private:
+    QWebEnginePage *makeRelay(WebWindowType)
+    {
+        return new LinkRelayPage(profile(), this);
+    }
+
+    /// Receives the navigation createWindow() could not see, hands the URL to
+    /// the external browser, and refuses. Never shown, never given a view.
+    class LinkRelayPage : public QWebEnginePage
+    {
+    public:
+        LinkRelayPage(QWebEngineProfile *profile, QObject *parent)
+            : QWebEnginePage(profile, parent) {}
+
+    protected:
+        bool acceptNavigationRequest(const QUrl &url, NavigationType,
+                                     bool) override
+        {
+            // Whatever the type, this page exists for exactly one URL and is
+            // finished the moment it has it.
+            if (url.isValid() && !url.scheme().isEmpty())
+                MessageView::openExternally(url);
+            deleteLater();
+            return false;
+        }
+    };
+
     QueryHandler m_onQuery;
 };
 
 } // namespace
+
+bool MessageView::clickLinkForTest(const QUrl &url)
+{
+    auto *page = static_cast<MessagePage *>(m_view->page());
+    if (!page)
+        return false;
+    return page->clickLinkForTest(url);
+}
+
+bool MessageView::relayBlankTargetForTest(const QUrl &url)
+{
+    // static_cast, not qobject_cast: MessagePage carries no Q_OBJECT, and the
+    // page is one this class constructed itself, so the type is not in doubt.
+    auto *page = static_cast<MessagePage *>(m_view->page());
+    if (!page)
+        return false;
+    // Chromium's own sequence: ask for the window, then navigate it. The type
+    // is what a target="_blank" anchor produces.
+    QWebEnginePage *relay = page->createWindowForTest(
+        QWebEnginePage::WebBrowserTab);
+    if (!relay)
+        return false;
+    relay->setUrl(url);
+    return true;
+}
 
 MessageView::MessageView(QWidget *parent)
     : QWidget(parent)
@@ -691,6 +805,26 @@ void MessageView::removeBrowserActions(QMenu *menu, QWebEnginePage *page)
         QWebEnginePage::Forward,
         QWebEnginePage::Reload,
         QWebEnginePage::SavePage,
+        // Item 127. Chromium adds these only when the menu is raised over a
+        // LINK, so the four above, which are page actions, were the whole list
+        // until now and this was tested by right-clicking the page.
+        //
+        // None of the three can be honoured. There are no tabs, and a window
+        // means a second QWebEngineView, which the pane deliberately never
+        // creates: one view per message is one Chromium render process per
+        // message. "In this window" would navigate the pane away from the
+        // message, which no message may do.
+        //
+        // They became MORE dangerous with item 126, not less: that fix gives
+        // the page a real createWindow(), so an entry that used to be merely
+        // dead would now do something, and what it would do is open a link the
+        // user asked to open in a tab that does not exist.
+        //
+        // CopyLinkToClipboard is deliberately NOT here. It works, and it is
+        // the fallback for any link that still will not open.
+        QWebEnginePage::OpenLinkInNewTab,
+        QWebEnginePage::OpenLinkInNewWindow,
+        QWebEnginePage::OpenLinkInThisWindow,
     };
 
     for (const QWebEnginePage::WebAction which : kUnwanted) {

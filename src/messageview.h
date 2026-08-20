@@ -20,6 +20,8 @@
 
 #include <QList>
 #include <QUrl>
+
+#include <functional>
 #include <QTimer>
 #include <QWidget>
 
@@ -56,6 +58,46 @@ public:
     /// setDocumentUrl() cannot drift apart: if they ever disagree, the
     /// interceptor fails closed and the pane renders nothing at all.
     static QUrl documentUrl() { return QUrl(QStringLiteral("qtmaildir://message")); }
+
+    /// How a clicked link reaches the outside world.
+    ///
+    /// A seam, because the alternative is untestable: the call sits inside
+    /// MessagePage, ends in QDesktopServices::openUrl(), and a passing test
+    /// would have to launch a real browser. Item 126's regression is about
+    /// WHICH clicks arrive here, not about what openUrl does, so a test
+    /// substitutes a recorder and asserts on the URLs it collects.
+    ///
+    /// Production never sets this; the default opens the system browser.
+    using LinkOpener = std::function<void(const QUrl &)>;
+    static void setLinkOpener(LinkOpener opener);
+    static void openExternally(const QUrl &url);
+
+    /// Asks the pane's page for the window a target="_blank" click wants, and
+    /// drives the returned page with `url` exactly as Chromium would.
+    ///
+    /// A test hook, and it exists because the alternative proves nothing.
+    /// MessagePage lives in an anonymous namespace so createWindow() cannot be
+    /// called directly, and the click itself cannot be synthesised: JavaScript
+    /// is off in this profile (verified, runJavaScript returns an invalid
+    /// QVariant), so `element.click()` does nothing, and a synthetic mouse
+    /// press would have to land on the anchor's rect, which depends on the
+    /// desktop's fonts. This drives the real override on the real page.
+    ///
+    /// Returns false when the page declined to provide one at all, which is
+    /// the pre-item-126 behaviour and the regression worth catching.
+    bool relayBlankTargetForTest(const QUrl &url);
+
+    /// Drives the pane's page with a link click, as
+    /// acceptNavigationRequest() sees one.
+    ///
+    /// The same reasoning as relayBlankTargetForTest(): the click cannot be
+    /// synthesised. setUrl() is no substitute, because it arrives as
+    /// NavigationTypeTyped and takes the branch that accepts our own document
+    /// load, never the link branch.
+    ///
+    /// Returns what the page decided: false means the navigation was refused,
+    /// which is what a link click must always produce here.
+    bool clickLinkForTest(const QUrl &url);
 
     /// Renders a whole thread, oldest first. Items whose expanded flag is
     /// false collapse to a one-line stub.

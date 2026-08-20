@@ -11,6 +11,7 @@ add_library(qtmaildir_lib STATIC
     marks.cpp
     carddelegate.cpp
     notmuchworker.cpp
+    maildirname.cpp
     tagchip.cpp
     tagcolors.cpp
     savequerydialog.cpp

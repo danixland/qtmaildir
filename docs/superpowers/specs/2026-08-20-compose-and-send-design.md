@@ -125,9 +125,14 @@ knowing what is actually on disk.
 
 ### The body is markdown, rendered by cmark-gfm
 
-The editor is plain text. What is typed is markdown, and it is what the
-`text/plain` part carries, unmodified. The `text/html` part is generated from
-it.
+The editor holds plain text and what is typed is markdown. That source is what
+the `text/plain` part carries, unmodified; the `text/html` part is generated
+from it.
+
+**Plain-text storage does not mean a bare text box.** The two are separate
+decisions and it is worth stating the second explicitly, because "the editor is
+plain text" reads as "you are on your own with the syntax". The composer carries
+a formatting toolbar with `Ctrl+B`-style shortcuts, described below.
 
 **cmark-gfm, not a hand-written parser for a limited set.** A three-rule parser
 and a real markdown parser share no code, so the first is deleted entirely when
@@ -163,6 +168,39 @@ Neither Qt's `QTextDocument::setMarkdown` nor plain cmark was chosen. Qt's
 markdown is a display facility whose `toHtml()` emits markup styled for
 `QTextEdit`, which would need unpicking before it is fit to send: the same
 throwaway problem one level up.
+
+### The composer has a formatting toolbar
+
+Each button is a **text transformation over the markdown source**, not
+rich-text editing. Nothing about the buffer changes: it stays markdown that the
+user can also type by hand.
+
+| Button | Wraps in | Shortcut |
+|---|---|---|
+| Bold | `**` | `Ctrl+B` |
+| Italic | `*` | `Ctrl+I` |
+| Code | `` ` `` | `Ctrl+`` ` `` |
+| Strikethrough | `~~` | none |
+| Link | `[text](url)` | `Ctrl+K` |
+| Quote | `> ` per line | none |
+
+**Selection-aware.** With a selection, the tokens wrap it and the selection is
+preserved. With none, the pair is inserted with the cursor between them, so
+typing continues inside. Quote is line-based rather than a wrap, applying to
+every line the selection touches.
+
+**These shortcuts do not touch `KeyMap`.** They belong to the composer window,
+which is a separate shortcut scope, so `Ctrl+B` here does not consume `Ctrl+B`
+from the main window's map and does not participate in the
+every-action-has-a-shortcut rule. Keeping the two namespaces apart matters for
+item 132.
+
+**No live syntax highlighting** in this design. A `QSyntaxHighlighter` colouring
+`**bold**` in the editor is standard Qt and needs no dependency, but it has to
+agree with the markdown grammar about nesting and about code spans suppressing
+what is inside them, which is the sort of thing that looks nearly right and
+stays annoying for years. It is a follow-up, better judged after living with the
+toolbar.
 
 ### Whether the HTML part is sent is per-message
 
@@ -511,6 +549,12 @@ and it is pure logic, so it is tested apart from the window. All five of the
 user's addresses stripped from a reply-all; every account-resolution rule
 including the multi-maildir ambiguity; subject prefixing.
 
+**The formatting toolbar** is tested through its transformations, not through
+the widget: wrap with a selection, insert with none, quote applying per line,
+and the cursor landing between the tokens in the empty-selection case. That last
+one is the property a user notices immediately when it is wrong, and it is
+invisible to a test that only compares the resulting text.
+
 **In `test_mainwindow`**: action enablement against a receive-only account, the
 ribbon appearing, and `everyActionIsReachableFromAMenu()` covering the six new
 actions for free. `WorkerBackedWindow` gains a knob for writing an account
@@ -536,6 +580,11 @@ Deliberately out of scope here, each worth its own backlog entry.
   `save_message` exists from the first commit.
 - **Configurable markdown dialect and extensions**, in the shape Hugo's
   configuration uses.
+- **Live markdown syntax highlighting in the composer.** A
+  `QSyntaxHighlighter` over the editor, so `**bold**` reads as bold while the
+  buffer stays plain markdown. Deliberately after the toolbar: the grammar
+  agreement it needs is the expensive part, and the toolbar is what makes the
+  feature usable.
 - **Review "every action has a shortcut".** `everyActionHasAShortcut` was
   written when the action list was short. Six more actions takes the count past
   the point where a chord for everything is useful, and each new action consumes

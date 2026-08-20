@@ -67,6 +67,24 @@ struct Account
     /// reports a missing key through the warnings path.
     QString trash;
 
+    /// The command that sends mail from this account, receiving the complete
+    /// RFC822 message on stdin. Optional, and its ABSENCE is meaningful:
+    /// an account without one is receive-only by construction.
+    ///
+    /// Not a separate `receive_only` key. The capability IS this command's
+    /// presence, so there is nothing to keep in step and nothing to
+    /// contradict. One real account is receive-only on purpose and gains no
+    /// configuration at all, which is the point.
+    ///
+    /// Split with QProcess::splitCommand and run WITHOUT a shell, exactly as
+    /// [sync] command is, so nothing in a message body, a recipient address or
+    /// a display name can reach sh. No message content is ever placed in an
+    /// argument: recipients come from the message's own headers.
+    QString sendCommand;
+
+    /// Whether this account can send at all.
+    bool canSend() const { return !sendCommand.isEmpty(); }
+
     /// The account's inbox folder, relative to maildir. Optional.
     ///
     /// Only Restore reads it, as the destination for a message that carries no
@@ -186,6 +204,35 @@ struct SavedQuery
     QJsonObject unknown;
 };
 
+/// The [compose] section. Every key is optional with the default shown.
+struct ComposeSettings
+{
+    /// Where the quote goes in a reply. Whether to quote AT ALL is not here:
+    /// that is decided by which action was invoked (reply quotes,
+    /// reply_no_quote does not).
+    enum class QuotePosition { Above, Below };
+
+    QuotePosition quotePosition = QuotePosition::Above;
+
+    /// Seeds the per-message toggle for New and Forward only. Reply and
+    /// Reply-all seed from whether the original carried a text/html part,
+    /// ignoring this value: an HTML part in the original is a fact about the
+    /// sender's software, not a guess about their taste.
+    bool sendHtml = true;
+
+    int autosaveIntervalMs = 30000;
+
+    /// The undo window before sending. Zero skips the countdown entirely and
+    /// sends at once, for anyone who finds it irritating.
+    int sendDelayMs = 5000;
+
+    /// Preferred account for a New message when the dropdown is on All
+    /// accounts. Falls through when it names an account that cannot send.
+    QString defaultAccount;
+
+    qint64 attachmentWarnBytes = 26214400;
+};
+
 /// Reads ~/.config/qtmaildir/qtmaildir.conf.
 ///
 /// The Maildir path is deliberately NOT configurable here: notmuch already
@@ -206,6 +253,14 @@ public:
 
     QList<Account> accounts() const { return m_accounts; }
     Account account(const QString &key) const;
+
+    ComposeSettings compose() const { return m_compose; }
+
+    /// Every account with a send_command, in configuration order.
+    ///
+    /// Empty is a valid read-only installation, NOT a misconfiguration: the
+    /// compose actions are simply disabled and nothing is warned about.
+    QList<Account> sendingAccounts() const;
 
     /// In document order, which IS the display order. Never sort this.
     QList<SavedQuery> savedQueries() const { return m_savedQueries; }
@@ -443,6 +498,7 @@ private:
 
     QList<Account> m_accounts;
     QList<SavedQuery> m_savedQueries;
+    ComposeSettings m_compose;
 
     /// Where saveSavedQueries() writes, remembered from load().
     QString m_queriesPath;

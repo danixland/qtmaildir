@@ -23,6 +23,8 @@
 // so this reports the same numbers rather than keeping a second copy.
 #include "messageview.h"
 
+#include <algorithm>
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -469,6 +471,12 @@ void Config::load(const QString &path)
         account.inbox =
             settings.value(QStringLiteral("inbox")).toString().trimmed();
 
+        // Optional, and its absence IS the receive-only state: see the field
+        // comment in config.h. Run without a shell, so trimming here is only
+        // whitespace hygiene, never a quoting concern.
+        account.sendCommand =
+            settings.value(QStringLiteral("send_command")).toString().trimmed();
+
         // Both optional, and both describe this account's chip in the thread
         // list. An account tag is a different taxonomy from a functional one,
         // saying which mailbox a thread arrived in rather than what state it
@@ -516,6 +524,29 @@ void Config::load(const QString &path)
         m_accounts.append(account);
     }
 
+    settings.beginGroup(QStringLiteral("compose"));
+    // value(key, default) throughout rather than testing contains(): an
+    // absent key and a key set to its default must behave identically, and
+    // send_delay_ms = 0 is a REAL setting meaning "send at once" that a
+    // zero-test would mistake for unset.
+    m_compose.quotePosition =
+        settings.value(QStringLiteral("quote_position"), QStringLiteral("above"))
+                    .toString().compare(QStringLiteral("below"), Qt::CaseInsensitive) == 0
+            ? ComposeSettings::QuotePosition::Below
+            : ComposeSettings::QuotePosition::Above;
+    m_compose.sendHtml =
+        settings.value(QStringLiteral("send_html"), true).toBool();
+    m_compose.autosaveIntervalMs =
+        settings.value(QStringLiteral("autosave_interval_ms"), 30000).toInt();
+    m_compose.sendDelayMs =
+        settings.value(QStringLiteral("send_delay_ms"), 5000).toInt();
+    m_compose.defaultAccount =
+        settings.value(QStringLiteral("default_account")).toString().trimmed();
+    m_compose.attachmentWarnBytes =
+        settings.value(QStringLiteral("attachment_warn_bytes"), qint64(26214400))
+            .toLongLong();
+    settings.endGroup();
+
     loadSavedQueries(path, settings);
 
     // Checked here rather than where startup_query is read: the saved queries
@@ -532,6 +563,48 @@ void Config::load(const QString &path)
                                   "account; starting on all accounts.")
                        .arg(m_startupAccount));
         m_startupAccount.clear();
+    }
+
+    // default_account is validated here, once the accounts are parsed. A
+    // named account that cannot send is reported: the user named an account
+    // and expects mail to come from it, unlike an installation where no
+    // account can send at all, which is a valid read-only setup and not
+    // warned about below.
+    if (!m_compose.defaultAccount.isEmpty()) {
+        const auto named = std::find_if(
+            m_accounts.cbegin(), m_accounts.cend(),
+            [this](const Account &a) { return a.key == m_compose.defaultAccount; });
+
+        if (named == m_accounts.cend()) {
+            addProblem(
+                tr("[compose] default_account names '%1', which is not a "
+                   "configured account. A new message will pick a sending "
+                   "account by the usual rules.")
+                    .arg(m_compose.defaultAccount));
+        } else if (!named->canSend()) {
+            addProblem(
+                tr("[compose] default_account names '%1', which has no "
+                   "send_command and cannot send. A new message will pick a "
+                   "sending account by the usual rules.")
+                    .arg(m_compose.defaultAccount));
+        }
+    }
+
+    for (const Account &account : m_accounts) {
+        if (!account.canSend())
+            continue;
+        if (account.sent.isEmpty()) {
+            addProblem(
+                tr("Account '%1' can send but configures no `sent` folder, so "
+                   "no local copy of sent mail is filed.")
+                    .arg(account.key));
+        }
+        if (account.drafts.isEmpty()) {
+            addProblem(
+                tr("Account '%1' can send but configures no `drafts` folder, "
+                   "so the composer runs without draft protection.")
+                    .arg(account.key));
+        }
     }
 
     // Asks whether the resolved query matched on EITHER a name or a generator,
@@ -946,6 +1019,16 @@ SavedQuery Config::startupSavedQuery() const
     //
     // Still not worth a warning: the default is a name the user never wrote.
     return builtinFilter(QStringLiteral("unread"));
+}
+
+QList<Account> Config::sendingAccounts() const
+{
+    QList<Account> sending;
+    for (const Account &account : m_accounts) {
+        if (account.canSend())
+            sending.append(account);
+    }
+    return sending;
 }
 
 Account Config::account(const QString &key) const

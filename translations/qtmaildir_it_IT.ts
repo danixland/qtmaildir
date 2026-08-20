@@ -52,6 +52,22 @@
         <translation>L&apos;account iniziale &apos;%1&apos; non è un account configurato; si parte da tutti gli account.</translation>
     </message>
     <message>
+        <source>[compose] default_account names &apos;%1&apos;, which is not a configured account. A new message will pick a sending account by the usual rules.</source>
+        <translation>[compose] default_account indica &apos;%1&apos;, che non è un account configurato. Un nuovo messaggio sceglierà un account di invio secondo le regole abituali.</translation>
+    </message>
+    <message>
+        <source>[compose] default_account names &apos;%1&apos;, which has no send_command and cannot send. A new message will pick a sending account by the usual rules.</source>
+        <translation>[compose] default_account indica &apos;%1&apos;, che non ha un send_command e non può inviare. Un nuovo messaggio sceglierà un account di invio secondo le regole abituali.</translation>
+    </message>
+    <message>
+        <source>Account &apos;%1&apos; can send but configures no `sent` folder, so no local copy of sent mail is filed.</source>
+        <translation>L&apos;account &apos;%1&apos; può inviare ma non configura una cartella &apos;sent&apos;, quindi non viene archiviata alcuna copia locale della posta inviata.</translation>
+    </message>
+    <message>
+        <source>Account &apos;%1&apos; can send but configures no `drafts` folder, so the composer runs without draft protection.</source>
+        <translation>L&apos;account &apos;%1&apos; può inviare ma non configura una cartella &apos;drafts&apos;, quindi il compositore funziona senza protezione delle bozze.</translation>
+    </message>
+    <message>
         <source>Startup query &apos;%1&apos; is not a saved query; opening &apos;%2&apos; instead.</source>
         <translation>La ricerca iniziale &apos;%1&apos; non è una ricerca salvata; verrà aperta &apos;%2&apos;.</translation>
     </message>

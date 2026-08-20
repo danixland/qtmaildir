@@ -121,6 +121,11 @@ private slots:
     void anAccountWithoutATrashFolderWarns();
     void theTrashFilterComposesPerAccount();
     void theTrashFilterMatchesNothingWithoutAFolder();
+    void anAccountWithoutASendCommandIsReceiveOnly();
+    void composeSettingsDefaultWhenTheSectionIsAbsent();
+    void aZeroSendDelayIsHonouredRatherThanTreatedAsUnset();
+    void aDefaultAccountThatCannotSendIsWarnedAbout();
+    void anInstallationWhereNoAccountCanSendIsNotWarnedAbout();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -2311,6 +2316,106 @@ void TestConfig::aGeneratedEntryWritesNoRedundantKeys()
     QVERIFY(reloaded.savedQueries().at(0).isGenerated());
     QVERIFY2(reloaded.savedQueries().at(0).flat,
              "flat must come back from the generator, not from the file");
+}
+
+void TestConfig::anAccountWithoutASendCommandIsReceiveOnly()
+{
+    // The capability IS the command's presence, and nothing else expresses
+    // it: not a receive_only flag, not an empty-string special case.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n"
+        "trash=Trash\n"
+        "send_command=msmtp -a work -t\n"
+        "\n"
+        "[account.listsonly]\n"
+        "maildir=listsonly\n"
+        "trash=Trash\n")));
+
+    const Account work = config.account(QStringLiteral("work"));
+    const Account listsonly = config.account(QStringLiteral("listsonly"));
+    QVERIFY2(work.canSend(), "an account with send_command must be able to send");
+    QVERIFY2(!listsonly.canSend(),
+             "an account with no send_command must not report it can send");
+
+    const QList<Account> sending = config.sendingAccounts();
+    QCOMPARE(sending.size(), 1);
+    QCOMPARE(sending.first().key, QStringLiteral("work"));
+}
+
+void TestConfig::composeSettingsDefaultWhenTheSectionIsAbsent()
+{
+    // A config that has never heard of this feature must produce working
+    // defaults rather than zeros.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n")));
+
+    const ComposeSettings compose = config.compose();
+    QVERIFY2(compose.quotePosition == ComposeSettings::QuotePosition::Above,
+             "default quote position must be Above");
+    QVERIFY2(compose.sendHtml, "default send_html must be true");
+    QCOMPARE(compose.autosaveIntervalMs, 30000);
+    QCOMPARE(compose.sendDelayMs, 5000);
+    QCOMPARE(compose.attachmentWarnBytes, qint64(26214400));
+    QVERIFY(compose.defaultAccount.isEmpty());
+}
+
+void TestConfig::aZeroSendDelayIsHonouredRatherThanTreatedAsUnset()
+{
+    // Zero is a real setting meaning "send at once", and it is exactly the
+    // value an absent key would produce if the default were applied by
+    // testing for zero.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "send_delay_ms=0\n")));
+
+    QCOMPARE(config.compose().sendDelayMs, 0);
+    QVERIFY2(config.compose().sendDelayMs != 5000,
+             "zero send_delay_ms was replaced by the default");
+}
+
+void TestConfig::aDefaultAccountThatCannotSendIsWarnedAbout()
+{
+    // Follows the pattern that already warns about an unresolvable
+    // startup_query: the setting is not silently corrected because a user
+    // who named an account expects mail to come from it.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "default_account=listsonly\n"
+        "\n"
+        "[account.listsonly]\n"
+        "maildir=listsonly\n"
+        "trash=Trash\n")));
+
+    const QString joined = config.warnings().join(QLatin1Char('\n'));
+    QVERIFY2(joined.contains(QStringLiteral("listsonly")),
+             qPrintable(QStringLiteral("no warning named listsonly: %1").arg(joined)));
+}
+
+void TestConfig::anInstallationWhereNoAccountCanSendIsNotWarnedAbout()
+{
+    // A read-only installation is VALID; warning about it would train the
+    // user to ignore warnings.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n"
+        "trash=Trash\n")));
+
+    QVERIFY(config.sendingAccounts().isEmpty());
+    for (const QString &warning : config.warnings()) {
+        QVERIFY2(!warning.contains(QStringLiteral("send"), Qt::CaseInsensitive),
+                 qPrintable(QStringLiteral("unexpected sending-related warning: %1")
+                                .arg(warning)));
+    }
 }
 
 QTEST_MAIN(TestConfig)

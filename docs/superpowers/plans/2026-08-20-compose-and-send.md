@@ -3871,6 +3871,16 @@ popup between stages."
 
 ### Task 11: ComposeWindow
 
+**Found during Task 4's code review, and it lands here.** `MessageBuilder::build()`
+is SYNCHRONOUS and can block: a large attachment is read and base64-encoded on
+the calling thread. Autosave calls it on a timer, on the GUI thread, so a
+30-second debounce that hits a 25MB attachment stalls typing. The directory
+hang that review found is fixed in `MessageBuilder`, but the blocking read
+remains by design. Do not move it to a thread as part of this task, since
+nothing here crosses the worker boundary and adding a second threading model
+for one call is worse than the stall. Note it in a comment at the autosave call
+site so the next person measuring a freeze knows where to look.
+
 The only unit here that owns widgets, and the one that composes the other four.
 It contains no MIME and no process logic: a composer bug and a MIME bug are
 found in different files.

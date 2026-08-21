@@ -110,6 +110,35 @@ GMimePart *makeTextPart(const char *subtype, const QString &text)
 /// rejects what GMime cannot parse at all; it is not an address validator, and
 /// a typo that happens to be parseable still goes out.
 bool setAddressHeader(GMimeMessage *message, const char *header, const QStringList &addresses,
+                      QString *badEntry);
+
+/// A message-id in the angle brackets the wire format requires, added if the
+/// caller did not supply them.
+///
+/// **The brackets are syntax, not decoration, and GMime enforces it by writing
+/// an EMPTY HEADER for a bare addr-spec rather than by complaining.** Measured
+/// 2026-08-21: `In-Reply-To: current@example.org` emits `In-Reply-To:` with no
+/// value, so the reply arrives as an orphan thread in the recipient's client
+/// while nothing looks wrong locally.
+///
+/// Bracketing lives HERE, in the one function that composes these headers,
+/// rather than in each caller. Every source of a message-id in this application
+/// hands over a bare one: GMime strips the brackets when MimeParser reads
+/// `Message-ID`, and `ComposeContextBuilder::referencesForReply` strips them
+/// again from the References chain so the two agree. A convention spread across
+/// callers is one a later caller gets wrong, and the failure is invisible
+/// without inspecting a sent message.
+QString bracketed(const QString &messageId)
+{
+    const QString id = messageId.trimmed();
+    if (id.isEmpty())
+        return {};
+    if (id.startsWith(QLatin1Char('<')) && id.endsWith(QLatin1Char('>')))
+        return id;
+    return QLatin1Char('<') + id + QLatin1Char('>');
+}
+
+bool setAddressHeader(GMimeMessage *message, const char *header, const QStringList &addresses,
                       QString *badEntry)
 {
     if (addresses.isEmpty())
@@ -238,12 +267,30 @@ Result build(const OutgoingMessage &message, const Account &account)
     const QByteArray subject = message.subject.toUtf8();
     g_mime_message_set_subject(mime, subject.constData(), "utf-8");
 
-    if (!message.inReplyTo.trimmed().isEmpty()) {
-        const QByteArray value = message.inReplyTo.trimmed().toUtf8();
+    // Both headers are bracketed HERE rather than by the caller. See bracketed()
+    // for why, and for what a bare id costs.
+    const QString inReplyTo = bracketed(message.inReplyTo);
+    if (!inReplyTo.isEmpty()) {
+        const QByteArray value = inReplyTo.toUtf8();
         g_mime_object_set_header(GMIME_OBJECT(mime), "In-Reply-To", value.constData(), "utf-8");
     }
-    if (!message.references.isEmpty()) {
-        const QByteArray value = message.references.join(QLatin1Char(' ')).toUtf8();
+    QStringList references;
+    for (const QString &id : message.references) {
+        const QString bracketedId = bracketed(id);
+        // An empty entry contributes nothing rather than a stray "<>": the
+        // References header is a run of ids, and one malformed entry is enough
+        // for a strict parser to discard the whole chain.
+        //
+        // Defensive rather than a path with a fixture behind it, like the
+        // length check in setAddressHeader above: referencesForReply() already
+        // drops empty ids, so a mutation on this line SURVIVES the suite.
+        // Measured 2026-08-21. Kept because it costs one comparison and the
+        // failure it covers is a silently broken thread.
+        if (!bracketedId.isEmpty())
+            references.append(bracketedId);
+    }
+    if (!references.isEmpty()) {
+        const QByteArray value = references.join(QLatin1Char(' ')).toUtf8();
         g_mime_object_set_header(GMIME_OBJECT(mime), "References", value.constData(), "utf-8");
     }
 

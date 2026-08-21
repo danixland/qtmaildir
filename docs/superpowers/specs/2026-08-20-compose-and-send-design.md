@@ -430,7 +430,7 @@ Two structs cross boundaries, in `types.h` beside the existing ones.
 | `originalPath` | the `.eml` being replied to or forwarded; empty for New |
 | `inReplyTo` | Message-ID of the original |
 | `references` | the original's References plus its Message-ID |
-| `to`, `cc` | pre-filled recipients, the user's own addresses already stripped |
+| `to`, `cc` | pre-filled recipients, the user's own addresses already stripped; a reply to the user's OWN message is addressed to that message's recipients instead of back to the user, mirroring its To/Cc split (see Replying to oneself) |
 | `subject` | `Re:` / `Fwd:` prefixed, an existing prefix not doubled |
 | `quotedBody` | the `>`-prefixed original; empty when the action does not quote |
 | `seedHtml` | did the original carry a `text/html` part |
@@ -446,6 +446,13 @@ Two structs cross boundaries, in `types.h` beside the existing ones.
 | `sendHtml` | the composer's per-message toggle |
 | `attachments` | local paths |
 | `inReplyTo`, `references` | carried through unchanged |
+
+Message-ids are carried BARE, without angle brackets, matching what GMime hands
+back when `MimeParser` reads a `Message-ID`. `MessageBuilder` adds the brackets
+when it writes the header, in one place rather than in each caller: they are wire
+syntax, and GMime writes an EMPTY header for a bare addr-spec rather than
+complaining, so a caller that forgets them ships a reply that threads nowhere
+while nothing looks wrong locally.
 
 `In-Reply-To` and `References` are not optional. Without them a reply appears as
 an orphan thread in the sender's own client.
@@ -505,14 +512,37 @@ Six, each needing the five places `CLAUDE.md` enumerates: `knownActions()`,
 | Action | Meaning | Scope |
 |---|---|---|
 | `compose` | New message | none needed |
-| `reply` | Reply to the displayed message, quoted | sender only |
+| `reply` | Reply to the displayed message, quoted | sender only, except when the sender is the user (see below) |
 | `reply_all` | Reply to all, quoted | sender + To + Cc, own addresses removed |
-| `reply_no_quote` | Reply with an empty body | sender only |
+| `reply_no_quote` | Reply with an empty body | sender only, same exception |
 | `forward` | Forward, body quoted inline, attachments carried | none |
 | `save_message` | Write the raw `.eml` to a chosen path | any message |
 
 `reply_all_no_quote` is deliberately absent. Six actions is already a large
 menu and the combination is reached by deleting the quote.
+
+### Replying to oneself
+
+A reply whose sender is entirely the user's own addresses is addressed to that
+message's **original recipients** rather than to the sender. A plain reply takes
+its To and Cc together, having no Cc field of its own to mirror into. A
+reply-all MIRRORS THE SPLIT: the original's To becomes To and its Cc becomes Cc,
+because To means "addressed to you" and Cc "for information", and promoting a
+Cc'd party to To is a change every recipient can see.
+This is an ordinary gesture rather than an edge case: it is reached from the
+Sent view, from a follow-up on mail that went unanswered, and from any thread
+whose selected row is the user's own message. Addressing the sender there
+addresses the user, so the reply reaches nobody it was meant for.
+
+"Own" means EVERY parsed sender address is the user's. A message the user sent
+together with somebody else is still a reply to that co-sender, and takes the
+ordinary sender-only path.
+
+Mail the user sent to THEMSELVES alone leaves nothing after own addresses are
+removed, and there the sender is restored: the user is the correct recipient of
+their own note. The rejected alternative was to strip the sender and leave To
+empty, which silently drops every recipient while the message still looks
+sendable.
 
 **Every action acts on the displayed message**, resolved with
 `messageScopeFor()` semantics: a thread row means the one message its card
@@ -660,7 +690,8 @@ Cases: `multipart/alternative` when `sendHtml` is on and `text/plain` alone when
 off; `multipart/mixed` nesting with attachments; each enabled extension
 rendering, and tables and raw HTML **not** rendering; RFC 2047 encoding of a
 non-ASCII subject and display name; quoted-printable for an accented body;
-`In-Reply-To` and `References` carried; `Re:` and `Fwd:` not doubling.
+`In-Reply-To` and `References` carried; `Re:` and `Fwd:` not doubling, in the
+non-English spellings and counted forms as well as the English ones.
 
 **`test_messagesender`** uses stub commands, not msmtp: one exiting 0, one
 exiting non-zero with stderr, one that does not exist. The stub writes stdin to

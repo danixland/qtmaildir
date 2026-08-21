@@ -49,6 +49,7 @@ private slots:
     void anAccentedBodyIsUtf8QuotedPrintable();
     void anAccentedSubjectIsRfc2047Utf8();
     void inReplyToAndReferencesAreCarried();
+    void bareMessageIdsAreBracketedRatherThanEmittedEmpty();
     void attachmentsProduceMultipartMixed();
     void aMissingAttachmentFailsTheBuild();
     void aDirectoryAttachmentFailsRatherThanHangingTheProcess();
@@ -216,6 +217,38 @@ void TestMessageBuilder::inReplyToAndReferencesAreCarried()
     QVERIFY2(text.contains(QStringLiteral("In-Reply-To: <orig@example.org>")), qPrintable(text));
     QVERIFY2(text.contains(QStringLiteral("References:")), qPrintable(text));
     QVERIFY2(text.contains(QStringLiteral("<older@example.org>")), qPrintable(text));
+}
+
+/// **The brackets are syntax, and a bare id ships an EMPTY header rather than a
+/// malformed one.** This is what every real caller supplies: GMime strips the
+/// brackets when MimeParser reads Message-ID, and
+/// ComposeContextBuilder::referencesForReply strips them from the References
+/// chain so the two agree, so both values arrive here bare.
+///
+/// Measured 2026-08-21: handed `orig@example.org`, GMime wrote `In-Reply-To:`
+/// with no value at all and did not complain. Every reply would have arrived as
+/// an orphan thread in the recipient's client, with nothing wrong to see
+/// locally. Asserted on the FULL header line, since a test for the id alone
+/// passes against an empty header that merely contains the name.
+void TestMessageBuilder::bareMessageIdsAreBracketedRatherThanEmittedEmpty()
+{
+    OutgoingMessage m = baseMessage();
+    m.inReplyTo = QStringLiteral("orig@example.org");
+    m.references = QStringList{QStringLiteral("older@example.org"),
+                               QStringLiteral("orig@example.org")};
+
+    const MessageBuilder::Result r = MessageBuilder::build(m, m_account);
+    QVERIFY2(r.ok(), qPrintable(r.error));
+
+    const QString text = QString::fromUtf8(r.bytes);
+    QVERIFY2(text.contains(QStringLiteral("In-Reply-To: <orig@example.org>")), qPrintable(text));
+    QVERIFY2(text.contains(
+                 QStringLiteral("References: <older@example.org> <orig@example.org>")),
+             qPrintable(text));
+    // The failure this exists for: the header present and empty.
+    QVERIFY2(!text.contains(QStringLiteral("In-Reply-To:\r\n"))
+                 && !text.contains(QStringLiteral("In-Reply-To:\n")),
+             qPrintable(text));
 }
 
 /// The attachment wrapper must NEST the body, not sit beside it: multipart/mixed

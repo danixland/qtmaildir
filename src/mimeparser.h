@@ -119,10 +119,26 @@ struct ParsedMessage
 
     QString subject;
     QString from;
+
+    /// Where the author asked for replies to go, raw and undecoded-into-parts.
+    ///
+    /// Takes precedence over `from` when building a reply (RFC 5322 3.6.2).
+    /// Empty on the great majority of mail; a mailing list is the common case
+    /// that sets it, and honouring it is what keeps a list reply on the list
+    /// rather than on a person who never asked to be written to directly.
+    QString replyTo;
+
     QString to;
     QString cc;
     QString date;
     QString messageId;
+
+    /// The raw References header, a whitespace-separated run of <message-ids>.
+    ///
+    /// Carried so a reply can extend the chain. Without it the reply appears
+    /// as an orphan thread in the recipient's client, which is the whole
+    /// reason the header exists.
+    QString references;
 
     QString plainBody;
     QString htmlBody;

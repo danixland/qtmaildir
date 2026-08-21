@@ -999,6 +999,21 @@
     </message>
 </context>
 <context>
+    <name>MessageSender</name>
+    <message>
+        <source>The send command crashed.</source>
+        <translation>Il comando di invio si è arrestato in modo anomalo.</translation>
+    </message>
+    <message>
+        <source>The send command exited with status %1 and said nothing.</source>
+        <translation>Il comando di invio è terminato con stato %1 senza fornire spiegazioni.</translation>
+    </message>
+    <message>
+        <source>The send command &apos;%1&apos; could not be started. Check that the path is correct and the file is executable.</source>
+        <translation>Impossibile avviare il comando di invio &apos;%1&apos;. Verifica che il percorso sia corretto e che il file sia eseguibile.</translation>
+    </message>
+</context>
+<context>
     <name>MessageView</name>
     <message>
         <source>Copied the selected text</source>
@@ -1253,6 +1268,18 @@
     <message>
         <source>The message could not be assembled.</source>
         <translation>Non è stato possibile comporre il messaggio.</translation>
+    </message>
+    <message>
+        <source>No folder was configured to write to.</source>
+        <translation>Nessuna cartella configurata per la scrittura.</translation>
+    </message>
+    <message>
+        <source>Cannot create the folder %1.</source>
+        <translation>Impossibile creare la cartella %1.</translation>
+    </message>
+    <message>
+        <source>Cannot write to %1: %2</source>
+        <translation>Impossibile scrivere su %1: %2</translation>
     </message>
 </context>
 <context>

@@ -4008,6 +4008,20 @@ private:
 `src/composewindow.cpp`. The full file is long; these are the parts that carry
 decisions, and the rest is ordinary widget assembly.
 
+**One thing in this block is load-bearing and easy to drop while retyping it:
+the `Qt::SingleShotConnection` on the `MessageSender::finished` connect inside
+the `committed` handler.** `m_sender` is a long-lived member, so a plain
+`connect()` beside a `send()` call leaks a receiver per send and the second
+result runs every earlier lambda, each still holding an earlier message's bytes
+by value: a sent copy of the wrong message, and `accept()` on a destroyed
+dialog. `MessageSender`'s own once-only guard cannot help, because that guards
+the emit and this is one emit reaching many receivers. The header for
+`MessageSender::finished` states the rule and
+`test_messagesender.cpp::aPerSendConnectionMustBeSingleShot` measures it (3
+deliveries for 2 sends without the flag, 2 with it). Noted here because the
+plan's code blocks are drafts and this is the line whose absence still
+compiles, still runs, and is wrong only on the second send.
+
 ```cpp
 #include "composewindow.h"
 
@@ -4169,6 +4183,20 @@ void ComposeWindow::send()
     connect(dialog, &SendDialog::committed, this, [this, dialog, built, account]() {
         m_sender->send(account.sendCommand, built.bytes);
 
+        // Qt::SingleShotConnection IS REQUIRED HERE, and this line is the
+        // correction of a defect that was in this plan's draft (found while
+        // building Task 6, 2026-08-21). m_sender is a long-lived member, so a
+        // bare connect() beside each send() accumulates a permanent receiver
+        // per send. Send, fail, correct the recipient, send again, and the
+        // second result runs BOTH lambdas: the first still holds the FIRST
+        // message's `built` and `account` by value, so it files a sent copy of
+        // the wrong message and calls accept() on a dialog it already
+        // deleteLater()'d. MessageSender's m_reported guard cannot prevent
+        // this: it collapses two QProcess signals into one emit, and this is
+        // one emit reaching many receivers. Measured in
+        // test_messagesender.cpp::aPerSendConnectionMustBeSingleShot, where
+        // the bare shape delivers 3 results for 2 sends and the single-shot
+        // shape delivers 2.
         connect(m_sender, &MessageSender::finished, this,
                 [this, dialog, built, account](bool sent, const QString &error) {
             if (!sent) {

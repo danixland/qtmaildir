@@ -14,6 +14,7 @@ add_library(qtmaildir_lib STATIC
     notmuchworker.cpp
     maildirname.cpp
     draftstore.cpp
+    messagesender.cpp
     tagchip.cpp
     tagcolors.cpp
     savequerydialog.cpp

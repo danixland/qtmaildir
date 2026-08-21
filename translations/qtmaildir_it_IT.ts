@@ -1381,6 +1381,37 @@
     </message>
 </context>
 <context>
+    <name>SendDialog</name>
+    <message>
+        <source>Sending</source>
+        <translation>Invio in corso</translation>
+    </message>
+    <message>
+        <source>Sending in %1...</source>
+        <translation>Invio tra %1...</translation>
+    </message>
+    <message>
+        <source>Sending...</source>
+        <translation>Invio in corso...</translation>
+    </message>
+    <message>
+        <source>Filing sent copy...</source>
+        <translation>Archiviazione della copia inviata...</translation>
+    </message>
+    <message>
+        <source>Removing draft...</source>
+        <translation>Rimozione della bozza...</translation>
+    </message>
+    <message>
+        <source>Press Undo to stop sending.</source>
+        <translation>Premi Annulla per fermare l&apos;invio.</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>Annulla</translation>
+    </message>
+</context>
+<context>
     <name>SyncPhaseTracker</name>
     <message>
         <source>Reindexing (notmuch)...</source>

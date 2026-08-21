@@ -16,6 +16,7 @@ add_library(qtmaildir_lib STATIC
     draftstore.cpp
     messagesender.cpp
     composecontext.cpp
+    formattoolbar.cpp
     tagchip.cpp
     tagcolors.cpp
     savequerydialog.cpp

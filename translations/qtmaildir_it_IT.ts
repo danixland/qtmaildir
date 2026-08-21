@@ -281,6 +281,22 @@
         <translation>Aggiunge o rimuove l&apos;etichetta deleted</translation>
     </message>
     <message>
+        <source>Re&amp;ply</source>
+        <translation>Ris&amp;pondi</translation>
+    </message>
+    <message>
+        <source>Reply to a&amp;ll</source>
+        <translation>Rispondi a t&amp;utti</translation>
+    </message>
+    <message>
+        <source>Reply without &amp;quoting</source>
+        <translation>Rispon&amp;di senza citare</translation>
+    </message>
+    <message>
+        <source>Sa&amp;ve message as...</source>
+        <translation>Sal&amp;va messaggio con nome...</translation>
+    </message>
+    <message>
         <source>Changes made here that a sync has not yet carried to the mail store. An external notmuch run can clear them without this count noticing.</source>
         <translation>Modifiche fatte qui che nessuna sincronizzazione ha ancora trasferito all&apos;archivio di posta. Un&apos;esecuzione esterna di notmuch può azzerarle senza che questo conteggio se ne accorga.</translation>
     </message>
@@ -590,6 +606,38 @@
     <message>
         <source>Quit qtmaildir</source>
         <translation>Esce da qtmaildir</translation>
+    </message>
+    <message>
+        <source>&amp;New message</source>
+        <translation>Nuovo &amp;messaggio</translation>
+    </message>
+    <message>
+        <source>Compose a new message</source>
+        <translation>Componi un nuovo messaggio</translation>
+    </message>
+    <message>
+        <source>Reply to the displayed message</source>
+        <translation>Rispondi al messaggio visualizzato</translation>
+    </message>
+    <message>
+        <source>Reply to the sender and every other recipient</source>
+        <translation>Rispondi al mittente e a ogni altro destinatario</translation>
+    </message>
+    <message>
+        <source>Reply with an empty body</source>
+        <translation>Rispondi con un corpo vuoto</translation>
+    </message>
+    <message>
+        <source>&amp;Forward</source>
+        <translation>In&amp;oltra</translation>
+    </message>
+    <message>
+        <source>Forward the displayed message</source>
+        <translation>Inoltra il messaggio visualizzato</translation>
+    </message>
+    <message>
+        <source>Write the raw message to a file</source>
+        <translation>Scrive il messaggio grezzo su un file</translation>
     </message>
     <message>
         <source>&amp;File</source>

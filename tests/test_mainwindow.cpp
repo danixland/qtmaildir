@@ -331,6 +331,7 @@ private slots:
 
     void everyActionCarriesAnIcon();
     void everyActionIsReachableFromAMenu();
+    void noMenuHasTwoEntriesSharingAMnemonic();
     void theToolbarDoesNotOverrideTheDesktopButtonStyle();
     void theImportantActionIsLabelledImportant();
     void theImportantActionStillWritesTheFlaggedTag();
@@ -6444,6 +6445,185 @@ void TestMainWindow::everyActionIsReachableFromAMenu()
                             .arg(unreachable.join(QStringLiteral(", ")))));
 }
 
+void TestMainWindow::noMenuHasTwoEntriesSharingAMnemonic()
+{
+    // The sibling of everyActionIsReachableFromAMenu(), and it exists because
+    // the rule it enforces had lived only in prose and in one other test's
+    // COMMENT, and was duly broken the first time a batch of entries was added
+    // to a menu (item 123: `&Reply` against the pre-existing `&Restore from
+    // trash`, both Alt+R).
+    //
+    // Qt does not error on a duplicate mnemonic. It CYCLES between the
+    // colliding entries instead of activating either, so the key silently
+    // stops working and merely moves a highlight. That is worse than it
+    // sounds in the Message menu, where `restore` is deliberately greyed
+    // outside the trash view: the ordinary case was pressing Alt+R and landing
+    // on a disabled entry.
+    //
+    // Item 57 already decided this is a property rather than a taste. It
+    // rejected the label "Starred" for `flag` precisely because it would have
+    // collided with `Mark &spam`, and theImportantActionIsLabelledImportant()
+    // pins the surviving label with that reasoning in its comment. A decision
+    // recorded only in prose is one nobody re-derives.
+    //
+    // Scoped PER MENU, which is what the collision actually is: a mnemonic is
+    // resolved among the entries of the menu that is open, so the same letter
+    // in File and in View is not a conflict.
+    const Config config;
+    MainWindow window(config);
+
+    auto *bar = window.menuBar();
+    QVERIFY(bar);
+
+    // The menu bar's own top-level titles are one such scope too, so the walk
+    // starts by treating the bar as a menu and then descends.
+    QList<QPair<QString, QList<QAction *>>> scopes;
+    scopes.append({ QStringLiteral("the menu bar"), bar->actions() });
+
+    QList<QMenu *> pending;
+    const auto topLevel = bar->actions();
+    for (QAction *action : topLevel) {
+        if (action->menu())
+            pending.append(action->menu());
+    }
+    QVERIFY2(!pending.isEmpty(), "the menu bar holds no menus");
+
+    while (!pending.isEmpty()) {
+        QMenu *menu = pending.takeFirst();
+        const auto entries = menu->actions();
+        scopes.append({ menu->title(), entries });
+        for (QAction *entry : entries) {
+            if (QMenu *sub = entry->menu())
+                pending.append(sub);
+        }
+    }
+
+    // The four collisions that PREDATE this test, measured by running it
+    // against the tree before item 123 touched any label. They are listed
+    // rather than fixed, and rather than being hidden by narrowing the test,
+    // because renaming a shipped menu entry is the user's call and not a
+    // test's: three of them are in menus a user has had in their fingers
+    // since 0.1.0.
+    //
+    // Listed as exact pairs, not as "ignore Alt+R", so this is a freeze and
+    // not an amnesty: a NEW entry colliding on any of these same keys still
+    // fails, because its pair is not on this list. Fixing one is then a
+    // one-line deletion here, which is the point of writing them out.
+    // Written as the FULL GROUP of labels sharing one key in one menu, not as
+    // a pair. A pair is keyed on which entry the walk happened to see first,
+    // so adding a colliding entry ABOVE a frozen one silently re-pairs it and
+    // the new defect gets reported as "a frozen collision no longer happens",
+    // which names the wrong thing entirely. Measured: reinstating `&Reply`
+    // did exactly that before this was changed. A group is order-independent,
+    // so a new entry grows the group and fails as a new collision.
+    static const QStringList knownPreExistingCollisions = {
+        QStringLiteral("&Message: Alt+R shared by \"&Restore from trash\", \"Mark all &read\", \"Tagging &rules...\""),
+        QStringLiteral("&Message: Alt+S shared by \"Mark &spam\", \"Find &stranded deleted mail\""),
+        QStringLiteral("&View: Alt+O shared by \"&Open thread\", \"Zoom &out\""),
+    };
+
+    QStringList collisions;
+    int compared = 0;
+
+    for (const auto &scope : scopes) {
+        // Keyed on the mnemonic Qt itself derives, not on a hand-parsed '&'.
+        // The question is which key Qt will dispatch, and only Qt answers it:
+        // "&&" is a literal ampersand and carries no mnemonic at all.
+        //
+        // A QMap rather than a QHash so the groups come out in a stable key
+        // order, which is what lets the frozen list above be written once and
+        // stay matching.
+        QMap<QString, QStringList> byMnemonic;
+        for (QAction *entry : scope.second) {
+            if (entry->isSeparator())
+                continue;
+            const QKeySequence mnemonic = QKeySequence::mnemonic(entry->text());
+            if (mnemonic.isEmpty())
+                continue;
+            ++compared;
+            byMnemonic[mnemonic.toString(QKeySequence::NativeText)]
+                .append(QStringLiteral("\"%1\"").arg(entry->text()));
+        }
+
+        for (auto it = byMnemonic.cbegin(); it != byMnemonic.cend(); ++it) {
+            if (it.value().size() < 2)
+                continue;
+            // Names the menu, the key and EVERY label in the group, so a
+            // future failure says what to rename without anyone going looking.
+            collisions.append(QStringLiteral("%1: %2 shared by %3")
+                                  .arg(scope.first, it.key(),
+                                       it.value().join(QStringLiteral(", "))));
+        }
+    }
+
+    // The guard, and it is not ceremonial: every assertion below is a loop
+    // that reports success when it runs zero times. A walk that found no
+    // mnemonics at all would pass this test against any label whatsoever.
+    QVERIFY2(compared > 20,
+             qPrintable(QStringLiteral("only %1 menu entries carried a "
+                                       "mnemonic, so this probe measured "
+                                       "almost nothing")
+                            .arg(compared)));
+
+    // Matched on the menu and key only, with the labels compared separately
+    // below. Comparing whole strings made a GROWING group read as a frozen one
+    // disappearing: adding `&Reply` took Alt+R from three labels to four, the
+    // frozen three-label string stopped matching, and the failure said "this
+    // collision no longer happens" about the very key that had just got worse.
+    // Measured twice, once per attempt, which is why the two questions are
+    // asked separately.
+    const auto scopeAndKey = [](const QString &collision) {
+        return collision.left(collision.indexOf(QStringLiteral(" shared by ")));
+    };
+
+    QHash<QString, QString> frozen;
+    for (const QString &known : knownPreExistingCollisions)
+        frozen.insert(scopeAndKey(known), known);
+
+    QStringList unexpected;
+    QSet<QString> stillPresent;
+    for (const QString &collision : collisions) {
+        const QString key = scopeAndKey(collision);
+        const auto known = frozen.constFind(key);
+        if (known == frozen.constEnd()) {
+            // A collision on a key nothing froze: entirely new.
+            unexpected.append(collision);
+            continue;
+        }
+        stillPresent.insert(key);
+        if (*known != collision) {
+            // The key was already colliding, but the CAST has changed, which
+            // for a frozen entry means an entry joined it. Reported as the
+            // new collision it is, naming both what was frozen and what is
+            // there now.
+            unexpected.append(
+                QStringLiteral("%1 (frozen as [%2], now [%3])")
+                    .arg(key, *known, collision));
+        }
+    }
+
+    // A frozen entry that has since been FIXED must not stay on the list
+    // silently, or the list becomes a place stale claims accumulate.
+    QStringList stale;
+    for (const QString &known : knownPreExistingCollisions) {
+        if (!stillPresent.contains(scopeAndKey(known)))
+            stale.append(known);
+    }
+    QVERIFY2(stale.isEmpty(),
+             qPrintable(QStringLiteral("%1 frozen collision(s) no longer "
+                                       "happen, so delete them from "
+                                       "knownPreExistingCollisions: %2")
+                            .arg(stale.size())
+                            .arg(stale.join(QStringLiteral("; ")))));
+
+    QVERIFY2(unexpected.isEmpty(),
+             qPrintable(QStringLiteral("%1 menu mnemonic collision(s), where "
+                                       "Qt cycles the highlight instead of "
+                                       "activating: %2")
+                            .arg(unexpected.size())
+                            .arg(unexpected.join(QStringLiteral("; ")))));
+}
+
 void TestMainWindow::everyActionCarriesAnIcon()
 {
     // Item 56. The complaint was inconsistency, not absence: eight actions had
@@ -6967,15 +7147,22 @@ void TestMainWindow::noTwoActionsShareAnIcon()
     // the words saying which. Giving them five invented shapes would be less
     // clear than the pairing.
     //
+    // reply_no_quote joined them in item 123 for exactly the same reason: it
+    // shares reply's icon, it is a menu entry that always carries its text,
+    // and it is not on the toolbar. The list is therefore no longer only the
+    // thread tier, which is why it is named for the PROPERTY that earns the
+    // exemption rather than for the tier that first needed it.
+    //
     // Named as an exception list rather than by asking the toolbar what it
     // holds, so that PUTTING one of these on the toolbar fails this test
     // rather than silently passing it.
-    static const QStringList menuOnlyThreadActions = {
+    static const QStringList menuOnlySharedIconActions = {
         QStringLiteral("archive_thread"),
         QStringLiteral("delete_thread"),
         QStringLiteral("spam_thread"),
         QStringLiteral("toggle_unread_thread"),
         QStringLiteral("flag_thread"),
+        QStringLiteral("reply_no_quote"),
     };
 
     const Config config;
@@ -6986,7 +7173,7 @@ void TestMainWindow::noTwoActionsShareAnIcon()
     // may sit on the toolbar.
     auto *toolBar = window.findChild<QToolBar *>();
     QVERIFY(toolBar);
-    for (const QString &name : menuOnlyThreadActions) {
+    for (const QString &name : menuOnlySharedIconActions) {
         auto *action = window.findChild<QAction *>(name);
         QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
         QVERIFY2(!toolBar->actions().contains(action),
@@ -7006,7 +7193,7 @@ void TestMainWindow::noTwoActionsShareAnIcon()
         QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
         if (!action->icon().isNull())
             ++withIcons;
-        if (menuOnlyThreadActions.contains(name))
+        if (menuOnlySharedIconActions.contains(name))
             continue;
         if (action->icon().isNull())
             continue;
@@ -7033,7 +7220,7 @@ void TestMainWindow::noTwoActionsShareAnIcon()
 
     // And the exception list did not swallow the comparison itself.
     QCOMPARE(compared, KeyMap::knownActions().size()
-                           - menuOnlyThreadActions.size());
+                           - menuOnlySharedIconActions.size());
 
     QVERIFY2(collisions.isEmpty(),
              qPrintable(QStringLiteral("actions sharing one icon: %1")

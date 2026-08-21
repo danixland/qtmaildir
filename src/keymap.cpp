@@ -54,6 +54,16 @@ QStringList KeyMap::knownActions()
         QStringLiteral("spam_thread"),
         QStringLiteral("toggle_unread_thread"),
         QStringLiteral("flag_thread"),
+        // Compose and send (item 123). save_message deliberately carries no
+        // default chord: since item 132 a shortcut is a chosen subset rather
+        // than a requirement, and writing the raw message to a file is the
+        // rarely-used escape hatch. Menu reachability is the rule that holds.
+        QStringLiteral("compose"),
+        QStringLiteral("reply"),
+        QStringLiteral("reply_all"),
+        QStringLiteral("reply_no_quote"),
+        QStringLiteral("forward"),
+        QStringLiteral("save_message"),
         QStringLiteral("focus_query"),
         QStringLiteral("complete_query"),
         QStringLiteral("save_query"),
@@ -98,6 +108,29 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Alt+Down"),      QStringLiteral("next_thread") },
         { QStringLiteral("Alt+Up"),        QStringLiteral("prev_thread") },
         { QStringLiteral("Return"),       QStringLiteral("open_thread") },
+        // Compose and send (item 123), listed where the Message menu presents
+        // them: composing sits above organising.
+        //
+        // PROVISIONAL. The user intends to rework the bindings, and
+        // Ctrl+Alt+R for reply_no_quote is an imperfect fit: the Ctrl+Alt tier
+        // elsewhere means a WIDER SCOPE (the five whole-thread actions), not a
+        // variant of the same scope.
+        //
+        // Each was checked against every sequence in this table, not merely
+        // against the lines above it: these sit near the top, so most of the
+        // table is BELOW them, Ctrl+Shift+U and Ctrl+Shift+S among it.
+        // Checking only upwards would miss exactly those. The near misses:
+        // Ctrl+R is restore, Ctrl+A is select_all and Ctrl+Alt+S is
+        // spam_thread, so none of these five is a reuse.
+        //
+        // save_message gets none. Item 132 made a chord a chosen subset rather
+        // than a requirement, and this is the escape hatch nobody presses a
+        // key for.
+        { QStringLiteral("Ctrl+N"),       QStringLiteral("compose") },
+        { QStringLiteral("Ctrl+Shift+R"), QStringLiteral("reply") },
+        { QStringLiteral("Ctrl+Shift+A"), QStringLiteral("reply_all") },
+        { QStringLiteral("Ctrl+Alt+R"),   QStringLiteral("reply_no_quote") },
+        { QStringLiteral("Ctrl+Shift+F"), QStringLiteral("forward") },
         { QStringLiteral("Ctrl+E"),       QStringLiteral("archive") },
         // Del FIRST, and the order matters twice over. defaultSequenceFor()
         // returns the first match, and sequenceFor() prefers any binding that

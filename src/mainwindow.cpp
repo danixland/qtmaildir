@@ -758,6 +758,27 @@ void MainWindow::buildUi()
     setWindowTitle(QStringLiteral("qtmaildir %1").arg(QTMAILDIR_VERSION));
 }
 
+// The six compose handlers, empty until the composer exists (item 123).
+//
+// Deliberately empty rather than absent. Registering the actions first means
+// everyKnownActionIsRegistered, everyActionCarriesAnIcon and
+// everyActionIsReachableFromAMenu cover them while the composer is being
+// built; a menu entry that does nothing yet is a smaller defect than an action
+// nobody can reach, which is what those tests exist to catch.
+void MainWindow::composeNew()
+{
+}
+
+void MainWindow::composeReply(ComposeContext::Kind kind, bool quote)
+{
+    Q_UNUSED(kind);
+    Q_UNUSED(quote);
+}
+
+void MainWindow::saveDisplayedMessage()
+{
+}
+
 QAction *MainWindow::addAction(const QString &name, const QString &text,
                                const QString &description,
                                const std::function<void()> &handler)
@@ -1124,6 +1145,34 @@ void MainWindow::registerActions()
     addAction(QStringLiteral("quit"), tr("&Quit"),
               tr("Quit qtmaildir"), [this]() { close(); });
 
+    // Compose and send (item 123). The handlers are empty: this is the
+    // registration, so the three coverage tests
+    // (everyKnownActionIsRegistered, everyActionCarriesAnIcon and
+    // everyActionIsReachableFromAMenu) cover the composer from the first
+    // commit rather than being satisfied once it is finished.
+    //
+    // Reply and reply-without-quoting are the same Kind with and without a
+    // seeded body, which is why the quoting is a parameter rather than a
+    // fourth Kind: the recipients, the subject prefix and the threading
+    // headers are identical, and only the body differs.
+    addAction(QStringLiteral("compose"), tr("&New message"),
+              tr("Compose a new message"), [this]() { composeNew(); });
+    addAction(QStringLiteral("reply"), tr("Re&ply"),
+              tr("Reply to the displayed message"),
+              [this]() { composeReply(ComposeContext::Kind::Reply, true); });
+    addAction(QStringLiteral("reply_all"), tr("Reply to a&ll"),
+              tr("Reply to the sender and every other recipient"),
+              [this]() { composeReply(ComposeContext::Kind::ReplyAll, true); });
+    addAction(QStringLiteral("reply_no_quote"), tr("Reply without &quoting"),
+              tr("Reply with an empty body"),
+              [this]() { composeReply(ComposeContext::Kind::Reply, false); });
+    addAction(QStringLiteral("forward"), tr("&Forward"),
+              tr("Forward the displayed message"),
+              [this]() { composeReply(ComposeContext::Kind::Forward, true); });
+    addAction(QStringLiteral("save_message"), tr("Sa&ve message as..."),
+              tr("Write the raw message to a file"),
+              [this]() { saveDisplayedMessage(); });
+
     // A binding the user wrote for an action that does not exist would be
     // silently dead. KeyMap warns about unknown names, but only a check here
     // catches the reverse: a known action nothing implements.
@@ -1154,6 +1203,18 @@ void MainWindow::buildMenus()
     editMenu->addAction(m_actions.value(QStringLiteral("select_all")));
 
     auto *messageMenu = menuBar()->addMenu(tr("&Message"));
+    // Composing sits above organising (item 123). The spec called for a new
+    // top-level Message menu and this one already existed, so the six join it:
+    // two menus named Message would be a defect.
+    messageMenu->addAction(m_actions.value(QStringLiteral("compose")));
+    messageMenu->addSeparator();
+    messageMenu->addAction(m_actions.value(QStringLiteral("reply")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("reply_all")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("reply_no_quote")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("forward")));
+    messageMenu->addSeparator();
+    messageMenu->addAction(m_actions.value(QStringLiteral("save_message")));
+    messageMenu->addSeparator();
     messageMenu->addAction(m_actions.value(QStringLiteral("archive")));
     messageMenu->addAction(m_actions.value(QStringLiteral("delete")));
     // Beside Delete, whose inverse it is. Greyed outside the trash view
@@ -1282,6 +1343,22 @@ void MainWindow::buildMenus()
         { QStringLiteral("spam_thread"),          QStringLiteral("mail-mark-junk") },
         { QStringLiteral("toggle_unread_thread"), QStringLiteral("mail-mark-unread") },
         { QStringLiteral("flag_thread"),          QStringLiteral("mail-mark-important") },
+
+        // Compose and send (item 123). reply_no_quote SHARES reply's icon for
+        // the same reason the five above share theirs: it never reaches the
+        // toolbar, it is a menu entry that always carries its text, and
+        // "Reply without quoting" beside the reply icon is the honest pairing.
+        // It is named in the exception list in noTwoActionsShareAnIcon(), so
+        // putting it on the toolbar fails that test rather than passing
+        // silently.
+        { QStringLiteral("compose"),        QStringLiteral("mail-message-new") },
+        { QStringLiteral("reply"),          QStringLiteral("mail-reply-sender") },
+        { QStringLiteral("reply_all"),      QStringLiteral("mail-reply-all") },
+        { QStringLiteral("reply_no_quote"), QStringLiteral("mail-reply-sender") },
+        { QStringLiteral("forward"),        QStringLiteral("mail-forward") },
+        // NOT bookmark-new, which save_query uses: this really does write a
+        // file the user names, which is exactly what the disk shape means.
+        { QStringLiteral("save_message"),   QStringLiteral("document-save-as") },
     };
     for (auto it = themeIcons.cbegin(); it != themeIcons.cend(); ++it) {
         QAction *action = m_actions.value(it.key());
@@ -1340,6 +1417,16 @@ void MainWindow::buildMenus()
     // anything this code can see.
     const int iconSize = m_config.toolbarIconSize();
     toolBar->setIconSize(QSize(iconSize, iconSize));
+
+    // First, because composing and replying are what a user reaches for most
+    // (item 123). These TWO only: the other four are menu-and-key, which is
+    // what keeps the no-duplicate-icons rule satisfiable, since reply_no_quote
+    // shares reply's icon and an icon-only toolbar would make the two buttons
+    // indistinguishable.
+    toolBar->addAction(m_actions.value(QStringLiteral("compose")));
+    toolBar->addAction(m_actions.value(QStringLiteral("reply")));
+    toolBar->addSeparator();
+
     QAction *syncAction = m_actions.value(QStringLiteral("sync"));
     // Carried over from the QPushButton this replaced: with no command
     // configured the control is disabled, and the tooltip is the only thing

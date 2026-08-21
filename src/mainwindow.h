@@ -594,6 +594,27 @@ private:
     /// that populates.
     void showMaildirOverview();
 
+    /// Opens a composer on a blank message (item 123).
+    ///
+    /// Empty for now. This is the registration commit: the six actions exist,
+    /// carry icons, sit in the Message menu and are covered by the three
+    /// coverage tests, so those tests guard the composer while it is built
+    /// rather than being satisfied once at the end. ComposeWindow does not
+    /// exist yet.
+    void composeNew();
+
+    /// Opens a composer seeded from the displayed message (item 123).
+    ///
+    /// `kind` chooses reply, reply-all or forward; `quote` is what separates
+    /// reply from reply-without-quoting, which are the same kind with and
+    /// without a seeded body. Empty for now, as above.
+    void composeReply(ComposeContext::Kind kind, bool quote);
+
+    /// Writes the displayed message's raw file somewhere the user chooses.
+    ///
+    /// Empty for now, as above.
+    void saveDisplayedMessage();
+
     /// Creates a QAction, binds it to the sequence KeyMap holds for `name`,
     /// and registers it. `name` is the action name used in [keys].
     QAction *addAction(const QString &name, const QString &text,

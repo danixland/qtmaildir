@@ -20,6 +20,7 @@ add_library(qtmaildir_lib STATIC
     tagchip.cpp
     tagcolors.cpp
     senddialog.cpp
+    composewindow.cpp
     savequerydialog.cpp
     tagdialog.cpp
     tagrules.cpp

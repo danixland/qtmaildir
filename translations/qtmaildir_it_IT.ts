@@ -2,6 +2,137 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="it_IT">
 <context>
+    <name>ComposeWindow</name>
+    <message>
+        <source>Compose</source>
+        <translation>Componi</translation>
+    </message>
+    <message>
+        <source>From:</source>
+        <translation>Da:</translation>
+    </message>
+    <message>
+        <source>To:</source>
+        <translation>A:</translation>
+    </message>
+    <message>
+        <source>Cc:</source>
+        <translation>Cc:</translation>
+    </message>
+    <message>
+        <source>Bcc:</source>
+        <translation>Ccn:</translation>
+    </message>
+    <message>
+        <source>Subject:</source>
+        <translation>Oggetto:</translation>
+    </message>
+    <message>
+        <source>Also send a formatted copy</source>
+        <translation>Invia anche una copia formattata</translation>
+    </message>
+    <message>
+        <source>Sends the message as plain text with a formatted version alongside it. The plain text is what you typed.</source>
+        <translation>Invia il messaggio come testo semplice con accanto una versione formattata. Il testo semplice è quello che hai scritto.</translation>
+    </message>
+    <message>
+        <source>Send output</source>
+        <translation>Output dell’invio</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Chiudi</translation>
+    </message>
+    <message>
+        <source>Formatting</source>
+        <translation>Formattazione</translation>
+    </message>
+    <message>
+        <source>Bold</source>
+        <translation>Grassetto</translation>
+    </message>
+    <message>
+        <source>Italic</source>
+        <translation>Corsivo</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>Codice</translation>
+    </message>
+    <message>
+        <source>Strikethrough</source>
+        <translation>Barrato</translation>
+    </message>
+    <message>
+        <source>Link</source>
+        <translation>Collegamento</translation>
+    </message>
+    <message>
+        <source>Quote</source>
+        <translation>Citazione</translation>
+    </message>
+    <message>
+        <source>Attach...</source>
+        <translation>Allega...</translation>
+    </message>
+    <message>
+        <source>Attach files</source>
+        <translation>Allega file</translation>
+    </message>
+    <message>
+        <source>Remove attachment</source>
+        <translation>Rimuovi allegato</translation>
+    </message>
+    <message>
+        <source>Send</source>
+        <translation>Invia</translation>
+    </message>
+    <message>
+        <source>Large attachment</source>
+        <translation>Allegato di grandi dimensioni</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is %2. Many mail servers refuse messages above about %3. Attach it anyway?</source>
+        <translation>&apos;%1&apos; occupa %2. Molti server di posta rifiutano messaggi oltre i %3 circa. Allegarlo comunque?</translation>
+    </message>
+    <message>
+        <source>The draft could not be saved: %1</source>
+        <translation>Non è stato possibile salvare la bozza: %1</translation>
+    </message>
+    <message>
+        <source>The send command reported no output.</source>
+        <translation>Il comando di invio non ha prodotto alcun output.</translation>
+    </message>
+    <message>
+        <source>Cannot send</source>
+        <translation>Impossibile inviare</translation>
+    </message>
+    <message>
+        <source>The account &apos;%1&apos; has no send command configured.</source>
+        <translation>L’account &apos;%1&apos; non ha un comando di invio configurato.</translation>
+    </message>
+    <message>
+        <source>Sent, but not filed</source>
+        <translation>Inviato, ma non archiviato</translation>
+    </message>
+    <message>
+        <source>The message was sent, but the copy could not be written to &apos;%1&apos; for account &apos;%2&apos;:
+
+%3
+
+The message HAS been sent. Do not send it again.</source>
+        <translation>Il messaggio è stato inviato, ma non è stato possibile scrivere la copia in &apos;%1&apos; per l’account &apos;%2&apos;:
+
+%3
+
+Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
+    </message>
+    <message>
+        <source>The send command could not be started.</source>
+        <translation>Non è stato possibile avviare il comando di invio.</translation>
+    </message>
+</context>
+<context>
     <name>Config</name>
     <message>
         <source>Language &apos;%1&apos; is not a locale name; using the system language. Expected something like &apos;it&apos; or &apos;it_IT&apos;.</source>
@@ -1328,6 +1459,18 @@
     <message>
         <source>Cannot write to %1: %2</source>
         <translation>Impossibile scrivere su %1: %2</translation>
+    </message>
+    <message>
+        <source>%1 MB</source>
+        <translation>%1 MB</translation>
+    </message>
+    <message>
+        <source>%1 KB</source>
+        <translation>%1 KB</translation>
+    </message>
+    <message>
+        <source>%1 bytes</source>
+        <translation>%1 byte</translation>
     </message>
 </context>
 <context>

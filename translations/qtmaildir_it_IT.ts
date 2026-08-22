@@ -571,6 +571,68 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Segna conversazione come &amp;spam</translation>
     </message>
     <message>
+        <source>A draft could not be saved</source>
+        <translation>Impossibile salvare una bozza</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) could not be saved to the drafts folder. Quitting now loses that text.</source>
+        <translation>
+            <numerusform>Impossibile salvare %n messaggio nella cartella delle bozze. Uscendo ora quel testo va perso.</numerusform>
+            <numerusform>Impossibile salvare %n messaggi nella cartella delle bozze. Uscendo ora quel testo va perso.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Messages still being composed</source>
+        <translation>Messaggi ancora in composizione</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) are still being composed. Drafts already saved stay in the drafts folder either way.</source>
+        <translation>
+            <numerusform>%n messaggio è ancora in composizione. Le bozze già salvate restano comunque nella cartella delle bozze.</numerusform>
+            <numerusform>%n messaggi sono ancora in composizione. Le bozze già salvate restano comunque nella cartella delle bozze.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No account is configured to send mail</source>
+        <translation>Nessun account configurato per inviare posta</translation>
+    </message>
+    <message>
+        <source>No message is selected</source>
+        <translation>Nessun messaggio selezionato</translation>
+    </message>
+    <message>
+        <source>That message could not be read</source>
+        <translation>Impossibile leggere quel messaggio</translation>
+    </message>
+    <message>
+        <source>That message arrived at an account that cannot send</source>
+        <translation>Quel messaggio è arrivato a un account che non può inviare</translation>
+    </message>
+    <message>
+        <source>The Maildir root is not known yet</source>
+        <translation>La radice della Maildir non è ancora nota</translation>
+    </message>
+    <message>
+        <source>That message&apos;s file could not be found</source>
+        <translation>Impossibile trovare il file di quel messaggio</translation>
+    </message>
+    <message>
+        <source>Save message to</source>
+        <translation>Salva il messaggio in</translation>
+    </message>
+    <message>
+        <source>Refusing to write outside %1</source>
+        <translation>Rifiuto di scrivere fuori da %1</translation>
+    </message>
+    <message>
+        <source>Could not write %1</source>
+        <translation>Impossibile scrivere %1</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>Salvato %1</translation>
+    </message>
+    <message>
         <source>&amp;Restore from trash</source>
         <translation>&amp;Ripristina dal cestino</translation>
     </message>
@@ -1360,6 +1422,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Saved %1</source>
         <translation>Salvato %1</translation>
+    </message>
+    <message>
+        <source>This account is receive-only. Add send_command to [account.%1] to send from it.</source>
+        <translation>Questo account è di sola ricezione. Aggiungi send_command a [account.%1] per inviare da esso.</translation>
     </message>
     <message>
         <source>No message in this thread has an HTML part</source>

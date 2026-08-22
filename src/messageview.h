@@ -128,6 +128,15 @@ public:
     /// Tags of the thread on display, shown as chips along the bottom.
     void setTags(const QStringList &tags);
 
+    /// Shows or hides the receive-only explanation, naming \p accountKey.
+    /// An empty key hides it.
+    ///
+    /// A WIDGET in this layout, never markup inside the web view. Composing
+    /// HTML from configuration into the one document that renders input from
+    /// strangers is the wrong direction, and the header row is already a
+    /// widget for the same reason.
+    void setReceiveOnlyAccount(const QString &accountKey);
+
     /// The full headers of every message in the thread, read-only. Also
     /// reachable from the button beside the header; public so the window's
     /// message_details action can call it.
@@ -391,6 +400,7 @@ private:
 
     QLabel *m_headerLabel = nullptr;
     QLabel *m_blockedLabel = nullptr;
+    QLabel *m_receiveOnlyRibbon = nullptr;
     QPushButton *m_loadRemoteButton = nullptr;
 
     /// The stale-thread notice and the thread it offers to restore.

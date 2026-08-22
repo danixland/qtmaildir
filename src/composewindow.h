@@ -21,6 +21,8 @@
 #include <QMainWindow>
 #include <QStringList>
 
+#include <memory>
+
 #include "config.h"
 #include "formattoolbar.h"  // MarkdownFormat::Edit is used by value below, and
                             // a type nested in a namespace cannot be
@@ -36,6 +38,7 @@ class QListWidget;
 class QPlainTextEdit;
 class QTimer;
 class QToolBar;
+class QTemporaryDir;
 class QWidget;
 
 class MessageSender;
@@ -73,6 +76,12 @@ public:
     /// receives the root from the worker; it passes it here.
     ComposeWindow(const ComposeContext &context, const Config &config,
                   const QString &mailRoot, QWidget *parent = nullptr);
+
+    /// Defined in the .cpp, not defaulted here. m_forwardedParts is a
+    /// unique_ptr to a forward-declared QTemporaryDir, whose deleter needs the
+    /// complete type; an implicit destructor would be generated here, where it
+    /// is still incomplete.
+    ~ComposeWindow() override;
 
     /// True when the buffer has changed since the last successful autosave.
     /// The quit path asks every open composer this.
@@ -139,6 +148,20 @@ private:
     void buildUi();
     void buildFormatToolbar();
     void seedFields();
+
+    /// Extracts a forwarded message's parts into m_forwardedParts and appends
+    /// their paths to m_attachments.
+    ///
+    /// The spec requires Forward to carry attachments, and they have to become
+    /// FILES because MessageBuilder reads every attachment by path. Extraction
+    /// happens here rather than in MainWindow so the files and the directory
+    /// that owns them are created together and die together.
+    ///
+    /// A part that cannot be written is SKIPPED with a banner rather than
+    /// failing the forward: some of the attachments is better than none, and
+    /// MessageBuilder refuses a build naming any path that later vanishes, so
+    /// a silently wrong send is not among the outcomes.
+    void extractForwardedAttachments();
     void seedBody();
     void refreshAttachmentList();
     void setInputsEnabled(bool enabled);
@@ -154,6 +177,27 @@ private:
     Config m_config;
     QString m_mailRoot;
     QStringList m_attachments;
+
+    /// Holds the parts a Forward extracted, for exactly as long as this window.
+    ///
+    /// Owned HERE rather than by MainWindow, because the lifetime that makes
+    /// sense is the composer's: MessageBuilder reads every attachment by PATH
+    /// at build time (messagebuilder.cpp:212), on each autosave and again at
+    /// send, so the files must outlive every build this window performs and
+    /// nothing after it. QTemporaryDir's destructor removes the tree, so
+    /// closing without sending cleans up rather than leaking.
+    ///
+    /// A draft does not depend on it. Autosave writes a COMPLETE MIME message
+    /// with the bytes embedded, so a saved draft stays valid after these files
+    /// are gone; and DraftStore is write-only, with no reopen path anywhere in
+    /// this codebase, so the "reopened next session pointing at a dead temp
+    /// path" hazard cannot arise. Should a reopen path ever be added, it must
+    /// read attachments back out of the draft's own MIME rather than trusting
+    /// a stored path.
+    ///
+    /// Null unless a Forward actually extracted something. unique_ptr because
+    /// QTemporaryDir is neither copyable nor movable.
+    std::unique_ptr<QTemporaryDir> m_forwardedParts;
 
     QLineEdit *m_to = nullptr;
     QLineEdit *m_cc = nullptr;

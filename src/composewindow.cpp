@@ -18,8 +18,11 @@
 
 #include "composewindow.h"
 
+#include <QTemporaryDir>
+
 #include "draftstore.h"
 #include "messagebuilder.h"
+#include "mimeparser.h"
 #include "messagesender.h"
 #include "senddialog.h"
 
@@ -124,6 +127,13 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
     buildFormatToolbar();
     seedFields();
     seedBody();
+
+    // AFTER buildUi(), which creates m_banner, and BEFORE
+    // refreshAttachmentList(), which renders m_attachments: extraction appends
+    // to that list, so listing first would show a Forward with no attachments
+    // on it, which is precisely the defect this fixes.
+    extractForwardedAttachments();
+
     refreshAttachmentList();
 
     // Seeding is not an edit. Every field was just filled from the context, so
@@ -133,6 +143,64 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
     // as the flag cleared, since markDirty() started it.
     m_dirty = false;
     m_autosaveTimer->stop();
+}
+
+
+ComposeWindow::~ComposeWindow() = default;
+
+void ComposeWindow::extractForwardedAttachments()
+{
+    if (m_context.kind != ComposeContext::Kind::Forward
+        || m_context.originalPath.isEmpty()) {
+        return;
+    }
+
+    MimeParser parser;
+    const ParsedMessage original = parser.parse(m_context.originalPath);
+    if (!original.ok || original.attachments.isEmpty())
+        return;
+
+    m_forwardedParts = std::make_unique<QTemporaryDir>();
+    if (!m_forwardedParts->isValid()) {
+        m_forwardedParts.reset();
+        m_banner->setText(
+            tr("The forwarded attachments could not be extracted."));
+        m_banner->show();
+        return;
+    }
+
+    // Not auto-removed on destruction by accident: QTemporaryDir does this by
+    // default, and it is the whole reason the directory rather than the files
+    // is what this window owns.
+    m_forwardedParts->setAutoRemove(true);
+
+    QStringList failed;
+    for (const Attachment &attachment : original.attachments) {
+        QString error;
+        // saveWithoutOverwriting, never saveTo. One message really can carry
+        // two parts with the same filename, and saveTo overwrites: CLAUDE.md
+        // records six of sixteen files lost that way, every write reporting
+        // success. Here it would silently forward fewer files than the
+        // original had.
+        const QString written =
+            attachment.saveWithoutOverwriting(m_forwardedParts->path(), &error);
+        if (written.isEmpty()) {
+            failed.append(attachment.safeFilename());
+            continue;
+        }
+        m_attachments.append(written);
+    }
+
+    if (!failed.isEmpty()) {
+        // Said out loud rather than swallowed. The composer looks entirely
+        // correct with an attachment missing, and the recipient gets a body
+        // quoting a document that is not there.
+        m_banner->setText(
+            tr("%n forwarded attachment(s) could not be extracted: %1", "",
+               failed.size())
+                .arg(failed.join(QStringLiteral(", "))));
+        m_banner->show();
+    }
 }
 
 Account ComposeWindow::currentAccount() const

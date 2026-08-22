@@ -416,6 +416,17 @@ MessageView::MessageView(QWidget *parent)
     staleRow->addStretch();
     m_staleBar->hide();
 
+    // Receive-only ribbon (item 123). Hidden until a message from an account
+    // with no send_command is displayed.
+    m_receiveOnlyRibbon = new QLabel(this);
+    m_receiveOnlyRibbon->setObjectName(QStringLiteral("receiveOnlyRibbon"));
+    // Qt::PlainText explicitly. The account key comes from configuration
+    // rather than from a stranger, but a QLabel guesses under Qt::AutoText and
+    // this is the same protection MessageDetailsDialog states on every value.
+    m_receiveOnlyRibbon->setTextFormat(Qt::PlainText);
+    m_receiveOnlyRibbon->setWordWrap(true);
+    m_receiveOnlyRibbon->hide();
+
     m_attachmentBar = new QWidget(this);
     m_attachmentBar->setObjectName(QStringLiteral("attachmentBar"));
     new QHBoxLayout(m_attachmentBar);
@@ -442,6 +453,7 @@ MessageView::MessageView(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(headerRow);
     layout->addLayout(blockedRow);
+    layout->addWidget(m_receiveOnlyRibbon);
     layout->addWidget(m_staleBar);
     layout->addWidget(m_view, 1);
     layout->addWidget(m_attachmentBar);
@@ -1232,6 +1244,23 @@ void MessageView::saveAttachment(const Attachment &attachment)
     // Reported, not silent: a save with no feedback is the same failure as
     // acting on a thread and seeing nothing change.
     emit statusMessage(tr("Saved %1").arg(written));
+}
+
+void MessageView::setReceiveOnlyAccount(const QString &accountKey)
+{
+    if (accountKey.isEmpty()) {
+        m_receiveOnlyRibbon->hide();
+        return;
+    }
+
+    // Names the account AND the key to add. A ribbon saying only "you cannot
+    // reply" leaves the user with nothing to do about it, and the shape is
+    // expressed by omission, so there is no setting to go and look for.
+    m_receiveOnlyRibbon->setText(
+        tr("This account is receive-only. Add send_command to [account.%1] "
+           "to send from it.")
+            .arg(accountKey));
+    m_receiveOnlyRibbon->show();
 }
 
 void MessageView::setStaleThread(const QString &threadId,

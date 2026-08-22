@@ -540,8 +540,17 @@ void NotmuchWorker::loadThreadTree(const QString &threadId,
 
 void NotmuchWorker::loadMessage(const QString &messageId, quint64 generation)
 {
-    if (!openReadOnly())
+    // Every failure below emits an EMPTY result as well as its error, and that
+    // is a contract rather than tidiness. The bottom of this function already
+    // said so ("emitted even when empty, so the UI's handler runs"), but the
+    // three failure paths returned silently and broke it. A caller that arms
+    // state on this request and disarms it on the reply then waits for ever:
+    // MainWindow's compose path did exactly that, and a request left armed
+    // hijacks a later pane load for the same message.
+    if (!openReadOnly()) {
+        emit messageLoaded({}, generation);
         return;
+    }
 
     // id: is an exact-match prefix, and the id is quoted because a message id
     // can legitimately contain characters notmuch's parser would otherwise read
@@ -551,6 +560,7 @@ void NotmuchWorker::loadMessage(const QString &messageId, quint64 generation)
     if (!nmQuery) {
         emit errorOccurred(
             QStringLiteral("Cannot load message %1").arg(messageId));
+        emit messageLoaded({}, generation);
         return;
     }
 
@@ -559,6 +569,7 @@ void NotmuchWorker::loadMessage(const QString &messageId, quint64 generation)
             != NOTMUCH_STATUS_SUCCESS) {
         emit errorOccurred(
             QStringLiteral("Cannot search message %1").arg(messageId));
+        emit messageLoaded({}, generation);
         return;
     }
     NmMessages messages(rawMessages);
@@ -1016,6 +1027,25 @@ void NotmuchWorker::requestMessageCounts(const QStringList &queries,
     }
 
     emit messageCountsReady(counts, generation);
+}
+
+void NotmuchWorker::requestMailRoot()
+{
+    if (!openReadOnly()) {
+        // Answered anyway, with an empty root. A consumer waiting for this
+        // signal to enable something would otherwise wait for ever on a
+        // database that cannot be opened, which is the same silent stall
+        // loadMessage() emits an empty result to avoid.
+        emit mailRootReady(QString());
+        return;
+    }
+
+    // mailRootOf(), never notmuch_database_get_path(). Item 124: under a split
+    // config the latter names the INDEX directory, and a draft or a sent copy
+    // composed from it is written into the Xapian tree.
+    const QString root = mailRootOf(m_db);
+    emit mailRootReady(root.isEmpty() ? QString()
+                                      : QDir(root).absolutePath());
 }
 
 void NotmuchWorker::requestFolders()

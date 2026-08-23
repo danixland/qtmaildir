@@ -267,6 +267,7 @@ private slots:
     void savingAMessageWithAHostileSubjectStaysInTheDirectory();
     void aStuckComposeRequestDoesNotHijackTheNextPaneLoad();
     void theSaveLoopToleratesAComposerClosedUnderTheDialog();
+    void quittingClosesEveryComposerRatherThanOrphaningIt();
     void forwardingCarriesTheOriginalsAttachments();
     void forwardSeedsHtmlFromTheConfigNotTheOriginal();
     void aStartupAccountScopesTheStartupQuery();
@@ -8831,6 +8832,43 @@ void TestMainWindow::aStuckComposeRequestDoesNotHijackTheNextPaneLoad()
     QVERIFY(pane);
     QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
     QCOMPARE(window.openComposerCount(), 0);
+}
+
+void TestMainWindow::quittingClosesEveryComposerRatherThanOrphaningIt()
+{
+    // A composer is a parentless top-level window, deliberately: it must appear
+    // in the task switcher and be usable while the main window is. The cost is
+    // that closing the main window does NOT take it down, so quitting left a
+    // composer on screen with no application behind it, and Qt kept the process
+    // alive for it. Reported from a hand test: the main window closed, the
+    // orphan stayed, and its own close then raised the unsaved-edits dialog for
+    // a session the user had already ended.
+    //
+    // The quit path already ASKS about those edits and saves them; what it
+    // never did was close the windows afterwards.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.mailRootForTesting().isEmpty(), 15000);
+
+    // Two, so the fix cannot be "close the last one" and pass.
+    QVERIFY2(window.openComposerForTest(), "no composer opened");
+    QVERIFY2(window.openComposerForTest(), "no second composer opened");
+    QCOMPARE(window.openComposerCount(), 2);
+
+    // Clean composers: the point here is the CLOSE, not the unsaved-edits
+    // dialog, which has its own tests and would block this one on a modal.
+    window.show();
+    window.close();
+
+    // deleteLater() is how a composer goes away, so the count settles on the
+    // next event-loop pass rather than synchronously.
+    QTRY_COMPARE_WITH_TIMEOUT(window.openComposerCount(), 0, 5000);
 }
 
 void TestMainWindow::theSaveLoopToleratesAComposerClosedUnderTheDialog()

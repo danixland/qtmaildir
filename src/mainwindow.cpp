@@ -422,6 +422,33 @@ void MainWindow::closeEvent(QCloseEvent *event)
         }
     }
 
+    // Every composer goes with the window, and this is the LAST thing before
+    // the close is accepted: every route that turns back (Cancel, a failed
+    // sync, a refused save) has already returned above, so reaching here means
+    // the application really is quitting.
+    //
+    // A composer is deliberately parentless, so that it appears in the task
+    // switcher and stays usable while the main window is. Qt therefore does not
+    // take it down with this window, and it kept the process alive: the main
+    // window vanished, the composer stayed on screen with nothing behind it,
+    // and closing it then raised the unsaved-edits dialog for a session that
+    // had already ended.
+    //
+    // Closing rather than deleting. WA_DeleteOnClose is set on every composer,
+    // so close() is what frees them, and it lets ComposeWindow::closeEvent()
+    // run its own draft handling on the way out. The drafts have already been
+    // saved by the dialogs above, so that pass has nothing left to do; going
+    // through it anyway keeps ONE exit path rather than a second one that has
+    // to be kept in step.
+    //
+    // Iterating a COPY: closing a composer runs the `closed` handler, which
+    // mutates m_composers, and mutating a container mid-iteration is undefined.
+    const QList<QPointer<ComposeWindow>> composers = m_composers;
+    for (const QPointer<ComposeWindow> &composer : composers) {
+        if (composer)
+            composer->close();
+    }
+
     saveUiState();
     QMainWindow::closeEvent(event);
 }

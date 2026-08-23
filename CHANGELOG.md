@@ -11,7 +11,85 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- **Composing and sending.** Ctrl+N opens a composer; Reply, Reply all, Reply
+  without quoting and Forward start one from the selected message. Each is a
+  window in its own right, so several can be open at once and the main window
+  stays usable behind them.
+- The body is markdown, sent as plain text exactly as typed. "Also send a
+  formatted copy" renders an HTML part from the same source and sends both in
+  a `multipart/alternative`; `[compose] send_html` sets the default, and a
+  reply follows what the message being answered used.
+- Drafts autosave to the account's `drafts` folder as ordinary Maildir files,
+  so mbsync carries them to the server and another client can pick one up.
+  Closing a composer with unsaved edits asks first, and so does quitting with
+  one open.
+- Sending goes to a per-account `send_command` on stdin, so any sendmail
+  compatible program works (msmtp, ssmtp, sendmail) and the credentials stay
+  in that program's own store. The application still speaks no network
+  protocol of its own. An account with no `send_command` is receive-only, and
+  the composer says so rather than failing at the end.
+- A send counts down before it runs, and Undo during that window stops it and
+  returns you to the composer with everything intact. Nothing reaches the
+  network until the countdown ends. `[compose] send_delay_ms` sets the length;
+  0 removes it.
+- A copy of every sent message is filed in the account's `sent` folder.
+- The notmuch hooks that auto-tag incoming mail now live in this repository,
+  under `assets/hooks/`. They moved from the companion `mailctl` project,
+  which is being retired.
+
 ### Fixed
+
+- Sent mail and drafts no longer appear in the inbox. notmuch tags every newly
+  indexed file with `inbox`, including the copy this application files after a
+  send and the drafts it autosaves, so both turned up in the Inbox view and in
+  any `tag:inbox` search. The `post-new` hook now removes it from mail inside a
+  configured `sent` or `drafts` folder, which is mail that never arrived. Only
+  `inbox` is touched, and trash is deliberately left alone so Restore can still
+  find where a message came from.
+- Quitting with a composer open no longer leaves it behind. A composer is a
+  top-level window with no parent, so closing the main window did not take it
+  down and the process stayed alive for it: the main window vanished, the
+  composer stayed on screen, and closing it then asked about unsaved edits for
+  a session that had already ended.
+
+### Upgrading
+
+**To send, an account needs a `send_command`.** Without one it is
+receive-only: it still reads, tags and syncs exactly as before, and the
+compose actions are simply disabled for it. Nothing breaks by doing nothing.
+
+```ini
+[account.work]
+send_command = /usr/bin/msmtp -a work -t
+```
+
+The command receives the finished message on stdin and is run **without a
+shell**, so pipes and redirections do not work; give an absolute path and
+plain arguments. Credentials belong to that program, not to this one.
+
+An account that sends should also name `drafts` and `sent`, both relative to
+its `maildir`. Without `drafts` a composer cannot autosave and says so; without
+`sent` no copy of what you sent is kept locally.
+
+**If you run the auto-tagging hook, redeploy it.** It moved here from the
+`mailctl` project and gained the sent-and-drafts carve-out described above.
+Copy `assets/hooks/post-new`, `mailrules.py` and `qtmaildirconf.py` into
+`<database.path>/.notmuch/hooks/`, all three together: `post-new` imports the
+other two, and the new one reads your `qtmaildir.conf` to learn which folders
+are yours rather than arrivals. The rules file itself is unchanged, and
+`mailctl` can still read it.
+
+**Existing sent mail and drafts keep their `inbox` tag**, since the hook only
+sees newly indexed mail. To clear the backlog in one pass:
+
+```sh
+notmuch tag -inbox -- 'tag:inbox and (path:"work/Sent/**" or path:"work/Drafts/**")'
+```
+
+naming your own folders. This is a tag change only: no file moves, nothing
+reaches the server, and re-adding `inbox` to the same query undoes it.
 
 - Clicking a link in a message opens it in the system browser. Links carrying
   `target="_blank"`, which is most links in HTML mail, did nothing at all: no

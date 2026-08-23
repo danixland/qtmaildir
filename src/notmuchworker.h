@@ -223,6 +223,20 @@ public slots:
     /// source of truth the design refuses.
     void requestFolders();
 
+    /// The Maildir root, for whatever has to compose a path under it.
+    ///
+    /// This class owns the only database handle, and the root is a property of
+    /// the DATABASE rather than of config: notmuch can split the index from
+    /// the mail with `mail_root` and `path` as separate keys, so there is no
+    /// config key the UI could read instead. Item 124 records what the wrong
+    /// accessor costs. `notmuch_database_get_path()` returns the INDEX
+    /// directory under that layout, and a destination composed from it writes
+    /// into the Xapian tree.
+    ///
+    /// Requested at startup beside requestAllTags(), and answered once. The
+    /// root does not change while the application runs.
+    void requestMailRoot();
+
 signals:
     void threadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void queryFinished(int totalThreads, quint64 generation);
@@ -287,6 +301,12 @@ signals:
     /// the tree on disk does not change under a query, and the one consumer
     /// asks once when its dialog opens.
     void foldersReady(const QStringList &folders);
+
+    /// The Maildir root, absolute. No generation: it is a property of the
+    /// database rather than of any query, so a late answer is still the right
+    /// one. Empty when the database could not be opened, which a consumer must
+    /// treat as "cannot compose a path yet" rather than as the root being "".
+    void mailRootReady(const QString &mailRoot);
 
     void errorOccurred(const QString &message);
 

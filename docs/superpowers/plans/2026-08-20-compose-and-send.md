@@ -3871,6 +3871,16 @@ popup between stages."
 
 ### Task 11: ComposeWindow
 
+**Found during Task 4's code review, and it lands here.** `MessageBuilder::build()`
+is SYNCHRONOUS and can block: a large attachment is read and base64-encoded on
+the calling thread. Autosave calls it on a timer, on the GUI thread, so a
+30-second debounce that hits a 25MB attachment stalls typing. The directory
+hang that review found is fixed in `MessageBuilder`, but the blocking read
+remains by design. Do not move it to a thread as part of this task, since
+nothing here crosses the worker boundary and adding a second threading model
+for one call is worse than the stall. Note it in a comment at the autosave call
+site so the next person measuring a freeze knows where to look.
+
 The only unit here that owns widgets, and the one that composes the other four.
 It contains no MIME and no process logic: a composer bug and a MIME bug are
 found in different files.
@@ -3997,6 +4007,20 @@ private:
 
 `src/composewindow.cpp`. The full file is long; these are the parts that carry
 decisions, and the rest is ordinary widget assembly.
+
+**One thing in this block is load-bearing and easy to drop while retyping it:
+the `Qt::SingleShotConnection` on the `MessageSender::finished` connect inside
+the `committed` handler.** `m_sender` is a long-lived member, so a plain
+`connect()` beside a `send()` call leaks a receiver per send and the second
+result runs every earlier lambda, each still holding an earlier message's bytes
+by value: a sent copy of the wrong message, and `accept()` on a destroyed
+dialog. `MessageSender`'s own once-only guard cannot help, because that guards
+the emit and this is one emit reaching many receivers. The header for
+`MessageSender::finished` states the rule and
+`test_messagesender.cpp::aPerSendConnectionMustBeSingleShot` measures it (3
+deliveries for 2 sends without the flag, 2 with it). Noted here because the
+plan's code blocks are drafts and this is the line whose absence still
+compiles, still runs, and is wrong only on the second send.
 
 ```cpp
 #include "composewindow.h"
@@ -4159,6 +4183,20 @@ void ComposeWindow::send()
     connect(dialog, &SendDialog::committed, this, [this, dialog, built, account]() {
         m_sender->send(account.sendCommand, built.bytes);
 
+        // Qt::SingleShotConnection IS REQUIRED HERE, and this line is the
+        // correction of a defect that was in this plan's draft (found while
+        // building Task 6, 2026-08-21). m_sender is a long-lived member, so a
+        // bare connect() beside each send() accumulates a permanent receiver
+        // per send. Send, fail, correct the recipient, send again, and the
+        // second result runs BOTH lambdas: the first still holds the FIRST
+        // message's `built` and `account` by value, so it files a sent copy of
+        // the wrong message and calls accept() on a dialog it already
+        // deleteLater()'d. MessageSender's m_reported guard cannot prevent
+        // this: it collapses two QProcess signals into one emit, and this is
+        // one emit reaching many receivers. Measured in
+        // test_messagesender.cpp::aPerSendConnectionMustBeSingleShot, where
+        // the bare shape delivers 3 results for 2 sends and the single-shot
+        // shape delivers 2.
         connect(m_sender, &MessageSender::finished, this,
                 [this, dialog, built, account](bool sent, const QString &error) {
             if (!sent) {
@@ -4786,6 +4824,21 @@ replace.
 - Modify: `CLAUDE.md`
 - Modify: `docs/superpowers/plans/2026-08-03-post-0.1.0-usability.md`
 - Modify: `docs/superpowers/specs/2026-08-20-compose-and-send-design.md`
+
+- [ ] **Step 0: Document the new keys in the README**
+
+Found during Task 2's code review and assigned here rather than there. The
+README's sample config at `README.md:150-215` documents EVERY other
+configuration key, including recently added ones, and has nothing for
+`send_command` or the `[compose]` section. Without this the keys ship
+undiscoverable: a user has no way to learn that sending exists.
+
+Take the block from the spec at
+`docs/superpowers/specs/2026-08-20-compose-and-send-design.md:552-560` and
+adapt it to the README's existing commented style, showing `send_command` in
+an account section and every `[compose]` key with its default. Say plainly
+that an account without `send_command` is receive-only, since that is the
+part no reader would guess.
 
 - [ ] **Step 1: Add the changelog entry**
 

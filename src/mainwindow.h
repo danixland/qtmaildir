@@ -63,6 +63,7 @@ class MailSync;
 class NotmuchWorker;
 class QueryCompleter;
 class TagRulesDialog;
+class ComposeWindow;
 
 class MainWindow : public QMainWindow
 {
@@ -310,6 +311,102 @@ public:
         onRulePreviewRequested(query);
     }
 
+    /// The open composers with unsaved edits, which the quit path asks about.
+    ///
+    /// PRODUCTION code, not a test accessor: closeEvent() reads it. Skips a
+    /// null QPointer, which is a composer the user already closed and whose
+    /// closed() signal has not compacted the list yet.
+    ///
+    /// Returns QPointers rather than raw pointers, and that is a SAFETY
+    /// property rather than a style. The quit path holds this list across
+    /// QMessageBox::exec(), and a nested event loop PROCESSES deleteLater():
+    /// measured in a standalone Qt program, a parentless WA_DeleteOnClose
+    /// window closed while a modal is up is destroyed BEFORE exec() returns.
+    /// The dialog is window-modal to this window only, so the composers stay
+    /// interactive and the user really can close one from under it. A raw list
+    /// dangles there, and it dangles at the exact moment the application
+    /// promised to preserve their text.
+    QList<QPointer<ComposeWindow>> composersBlockingQuit() const;
+
+    /// Opens a composer on a blank message from the first account that can
+    /// send, for a test that needs one open without a modal file dialog or a
+    /// selected row. Returns nullptr when no account can send.
+    ComposeWindow *openComposerForTest();
+
+    /// How many composers the registry currently holds, counting only entries
+    /// that are still alive.
+    ///
+    /// A nulled QPointer is NOT counted, so this cannot by itself distinguish
+    /// "the entry was removed" from "the entry is still there but nulled".
+    /// That distinction is what closingAComposerCompactsTheRegistry() exists
+    /// to make, and it makes it by asserting this reaches zero after a close:
+    /// only compaction can empty the list, since a nulled entry would leave
+    /// m_composers non-empty while this still reported zero.
+    int openComposerCount() const;
+
+    /// Types a character into every open composer, which is what makes it
+    /// dirty. A test seam over the real edit path rather than a flag setter:
+    /// setting m_dirty directly would pass against a composer that never
+    /// notices an edit at all.
+    void markComposersDirtyForTest();
+
+    /// The Maildir root as the worker reported it, for the split-index test.
+    QString mailRootForTesting() const { return m_mailRoot; }
+
+    /// Runs save_message into \p directory instead of asking for one.
+    ///
+    /// The file dialog is a modal the offscreen platform cannot click, and the
+    /// containment check is the only line guarding the write, so without this
+    /// seam no test can reach the guard it is named after.
+    void saveDisplayedMessageForTest(const QString &directory)
+    {
+        saveDisplayedMessage(directory);
+    }
+
+    /// Builds a compose context from \p ref and opens the composer, which is
+    /// the production line openComposerFor() runs. A test that builds a
+    /// ComposeContext by hand instead proves only that ComposeWindow honours
+    /// what it is given, and cannot see which SOURCE a field came from.
+    void openComposerForTest(const MessageRef &ref, ComposeContext::Kind kind,
+                             bool quote)
+    {
+        openComposerFor(ref, kind, quote);
+    }
+
+    /// Arms a compose request without a selected row, so a test can request
+    /// one for an id the database does not hold.
+    void requestMessageForComposeForTest(const QString &messageId,
+                                         ComposeContext::Kind kind, bool quote)
+    {
+        requestMessageForCompose(messageId, kind, quote);
+    }
+
+    /// Whether a compose request is still waiting for its message.
+    ///
+    /// A request that never disarms is the defect this exposes: it stays armed
+    /// with a message id and hijacks the next pane load for that message.
+    bool composeRequestPendingForTest() const { return m_pendingCompose.active; }
+
+    /// The live composers, for a test that needs to close them.
+    ///
+    /// Defined in the .cpp: dereferencing a QPointer needs the complete type,
+    /// and ComposeWindow is only forward-declared here.
+    QList<ComposeWindow *> openComposersForTest() const;
+
+    /// A default filename for a saved message, derived from its subject.
+    ///
+    /// Public and static so a test can assert on it with a hostile subject.
+    /// It was a file-local helper unreachable from any test, and the test
+    /// named after its defences asserted on Attachment's helpers directly
+    /// instead: three separate mutations left that test green. CLAUDE.md's
+    /// "a probe can be correct and still measure nothing, by being pointed at
+    /// the wrong object".
+    ///
+    /// The subject is UNTRUSTED, so this produces a CANDIDATE rather than a
+    /// safe name: the caller passes it through Attachment::safeFilename(),
+    /// which reduces it to a plain basename.
+    static QString defaultMessageFilename(const QString &subject);
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
@@ -481,6 +578,11 @@ private slots:
     void onTagsApplied(const TagChange &change);
     void onAllTagsReady(const QStringList &tags);
 
+    /// The Maildir root, answered once at startup. Enables nothing on its own:
+    /// the composer needs it, and the reply family is gated on the account's
+    /// send_command rather than on this having arrived.
+    void onMailRootReady(const QString &mailRoot);
+
     /// Thread counts for the placeholder's helper lines, in the order
     /// requestPlaceholderCounts() asked for them.
     void onCountsReady(const QVector<int> &counts, quint64 generation);
@@ -593,6 +695,63 @@ private:
     /// free on a large database and a dialog that hangs first is worse than one
     /// that populates.
     void showMaildirOverview();
+
+    /// Opens a composer on a blank message (item 123).
+    void composeNew();
+
+    /// Opens a composer seeded from the displayed message (item 123).
+    ///
+    /// `kind` chooses reply, reply-all or forward; `quote` is what separates
+    /// reply from reply-without-quoting, which are the same kind with and
+    /// without a seeded body.
+    ///
+    /// Resolves through ThreadListModel::messageScopeFor(), NOT threadFor(): a
+    /// thread row means the one message its card shows. Replying to a thread
+    /// is meaningless, a reply answers a message.
+    void composeReply(ComposeContext::Kind kind, bool quote);
+
+    /// Asks the worker for \p messageId's current file, then opens a composer.
+    ///
+    /// The round trip is the point. The context is built from the DATABASE and
+    /// never from the model, which is the rule Restore already follows: the
+    /// model's paths and tags come from the query, so a row that has not been
+    /// re-queried carries stale values and a reply built from one would go to
+    /// the wrong recipients.
+    void requestMessageForCompose(const QString &messageId,
+                                  ComposeContext::Kind kind, bool quote);
+
+    /// Builds the context from a parsed message and shows the composer.
+    /// Called from onMessageLoaded() when a compose request is outstanding.
+    void openComposerFor(const MessageRef &ref, ComposeContext::Kind kind,
+                         bool quote);
+
+    /// Constructs a ComposeWindow, registers it and shows it.
+    void openComposer(const ComposeContext &context);
+
+    /// Writes the displayed message's raw file somewhere the user chooses.
+    ///
+    /// Never disabled, including on a receive-only account: it is the escape
+    /// hatch for exactly that case, writing the raw message to a file that can
+    /// be attached to a new message from an account that can send.
+    ///
+    /// \p directory defaults to empty, which raises the file dialog. A test
+    /// passes one instead, via saveDisplayedMessageForTest(): the modal cannot
+    /// be driven under the offscreen platform, and the containment check below
+    /// it is the only line actually guarding the write, so with the dialog
+    /// inline no test could reach that line at all.
+    void saveDisplayedMessage(const QString &directory = QString());
+
+    /// The account a reply to the displayed message would send from, or empty
+    /// when there is no displayed message or no account owns its file.
+    ///
+    /// Read by the enablement pass, which is why it must not need a worker
+    /// round trip: it answers from the model's path, which is good enough to
+    /// decide whether a control is live. The context that actually opens a
+    /// composer resolves the account again from the database.
+    QString accountForCurrentMessage() const;
+
+    /// Puts the reply family and compose into their real enabled state.
+    void updateComposeActions();
 
     /// Creates a QAction, binds it to the sequence KeyMap holds for `name`,
     /// and registers it. `name` is the action name used in [keys].
@@ -1225,6 +1384,40 @@ private:
     /// The selection count last written to the status bar, so it can be taken
     /// back without clobbering a message some other action put there.
     QString m_selectionMessage;
+
+    /// The Maildir root, from the worker (item 124, and this window has no
+    /// other way to know it).
+    ///
+    /// There is no Config::maildirPath() by design: notmuch owns the path and
+    /// duplicating it into config would create a second source of truth. It
+    /// arrives on mailRootReady() shortly after startup, so anything composing
+    /// a path under it has to cope with it being empty for the first moments.
+    QString m_mailRoot;
+
+    /// A compose request waiting for its message to come back from the worker.
+    ///
+    /// The reply family cannot open a composer synchronously: the context is
+    /// built from the database rather than from the model, so the file path
+    /// has to be fetched first. This records what to do with the answer.
+    struct PendingCompose
+    {
+        QString messageId;
+        ComposeContext::Kind kind = ComposeContext::Kind::Reply;
+        bool quote = true;
+        bool active = false;
+    };
+    PendingCompose m_pendingCompose;
+
+    /// Every open composer, so the quit path can see them.
+    ///
+    /// The QPointer and the closed() signal do DIFFERENT jobs and neither is
+    /// removable. A composer is WA_DeleteOnClose and deletes itself, so the
+    /// QPointer is what keeps composersBlockingQuit() from dereferencing a
+    /// destroyed window: it nulls on destruction. The signal is what lets this
+    /// list be COMPACTED, since a QPointer that nulled is still an entry and
+    /// the list would otherwise grow for the session's lifetime. Removing the
+    /// signal leaks entries; removing the QPointer crashes.
+    QList<QPointer<ComposeWindow>> m_composers;
 
     /// Confirmed tag mutations not yet known to have reached the mail store.
     ///

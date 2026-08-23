@@ -2,6 +2,137 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="it_IT">
 <context>
+    <name>ComposeWindow</name>
+    <message>
+        <source>Compose</source>
+        <translation>Componi</translation>
+    </message>
+    <message>
+        <source>From:</source>
+        <translation>Da:</translation>
+    </message>
+    <message>
+        <source>To:</source>
+        <translation>A:</translation>
+    </message>
+    <message>
+        <source>Cc:</source>
+        <translation>Cc:</translation>
+    </message>
+    <message>
+        <source>Bcc:</source>
+        <translation>Ccn:</translation>
+    </message>
+    <message>
+        <source>Subject:</source>
+        <translation>Oggetto:</translation>
+    </message>
+    <message>
+        <source>Also send a formatted copy</source>
+        <translation>Invia anche una copia formattata</translation>
+    </message>
+    <message>
+        <source>Sends the message as plain text with a formatted version alongside it. The plain text is what you typed.</source>
+        <translation>Invia il messaggio come testo semplice con accanto una versione formattata. Il testo semplice è quello che hai scritto.</translation>
+    </message>
+    <message>
+        <source>Send output</source>
+        <translation>Output dell’invio</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Chiudi</translation>
+    </message>
+    <message>
+        <source>Formatting</source>
+        <translation>Formattazione</translation>
+    </message>
+    <message>
+        <source>Bold</source>
+        <translation>Grassetto</translation>
+    </message>
+    <message>
+        <source>Italic</source>
+        <translation>Corsivo</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>Codice</translation>
+    </message>
+    <message>
+        <source>Strikethrough</source>
+        <translation>Barrato</translation>
+    </message>
+    <message>
+        <source>Link</source>
+        <translation>Collegamento</translation>
+    </message>
+    <message>
+        <source>Quote</source>
+        <translation>Citazione</translation>
+    </message>
+    <message>
+        <source>Attach...</source>
+        <translation>Allega...</translation>
+    </message>
+    <message>
+        <source>Attach files</source>
+        <translation>Allega file</translation>
+    </message>
+    <message>
+        <source>Remove attachment</source>
+        <translation>Rimuovi allegato</translation>
+    </message>
+    <message>
+        <source>Send</source>
+        <translation>Invia</translation>
+    </message>
+    <message>
+        <source>Large attachment</source>
+        <translation>Allegato di grandi dimensioni</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is %2. Many mail servers refuse messages above about %3. Attach it anyway?</source>
+        <translation>&apos;%1&apos; occupa %2. Molti server di posta rifiutano messaggi oltre i %3 circa. Allegarlo comunque?</translation>
+    </message>
+    <message>
+        <source>The draft could not be saved: %1</source>
+        <translation>Non è stato possibile salvare la bozza: %1</translation>
+    </message>
+    <message>
+        <source>The send command reported no output.</source>
+        <translation>Il comando di invio non ha prodotto alcun output.</translation>
+    </message>
+    <message>
+        <source>Cannot send</source>
+        <translation>Impossibile inviare</translation>
+    </message>
+    <message>
+        <source>The account &apos;%1&apos; has no send command configured.</source>
+        <translation>L’account &apos;%1&apos; non ha un comando di invio configurato.</translation>
+    </message>
+    <message>
+        <source>Sent, but not filed</source>
+        <translation>Inviato, ma non archiviato</translation>
+    </message>
+    <message>
+        <source>The message was sent, but the copy could not be written to &apos;%1&apos; for account &apos;%2&apos;:
+
+%3
+
+The message HAS been sent. Do not send it again.</source>
+        <translation>Il messaggio è stato inviato, ma non è stato possibile scrivere la copia in &apos;%1&apos; per l’account &apos;%2&apos;:
+
+%3
+
+Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
+    </message>
+    <message>
+        <source>The send command could not be started.</source>
+        <translation>Non è stato possibile avviare il comando di invio.</translation>
+    </message>
+</context>
+<context>
     <name>Config</name>
     <message>
         <source>Language &apos;%1&apos; is not a locale name; using the system language. Expected something like &apos;it&apos; or &apos;it_IT&apos;.</source>
@@ -48,8 +179,40 @@
         <translation>L&apos;account &apos;%1&apos; non ha un cestino configurato; aggiungere una chiave &apos;trash&apos; alla sua sezione. L&apos;eliminazione non funzionerà per questo account finché non verrà fatto.</translation>
     </message>
     <message>
+        <source>[compose] quote_position &apos;%1&apos; is not recognised; expected above or below. Using above.</source>
+        <translation>[compose] quote_position &apos;%1&apos; non è riconosciuto; atteso above o below. Verrà usato above.</translation>
+    </message>
+    <message>
+        <source>[compose] autosave_interval_ms &apos;%1&apos; is not a number; using %2.</source>
+        <translation>[compose] autosave_interval_ms &apos;%1&apos; non è un numero; verrà usato %2.</translation>
+    </message>
+    <message>
+        <source>[compose] send_delay_ms &apos;%1&apos; is not a number; using %2.</source>
+        <translation>[compose] send_delay_ms &apos;%1&apos; non è un numero; verrà usato %2.</translation>
+    </message>
+    <message>
+        <source>[compose] attachment_warn_bytes &apos;%1&apos; is not a number; using %2.</source>
+        <translation>[compose] attachment_warn_bytes &apos;%1&apos; non è un numero; verrà usato %2.</translation>
+    </message>
+    <message>
         <source>Startup account &apos;%1&apos; is not a configured account; starting on all accounts.</source>
         <translation>L&apos;account iniziale &apos;%1&apos; non è un account configurato; si parte da tutti gli account.</translation>
+    </message>
+    <message>
+        <source>[compose] default_account names &apos;%1&apos;, which is not a configured account. A new message will pick a sending account by the usual rules.</source>
+        <translation>[compose] default_account indica &apos;%1&apos;, che non è un account configurato. Un nuovo messaggio sceglierà un account di invio secondo le regole abituali.</translation>
+    </message>
+    <message>
+        <source>[compose] default_account names &apos;%1&apos;, which has no send_command and cannot send. A new message will pick a sending account by the usual rules.</source>
+        <translation>[compose] default_account indica &apos;%1&apos;, che non ha un send_command e non può inviare. Un nuovo messaggio sceglierà un account di invio secondo le regole abituali.</translation>
+    </message>
+    <message>
+        <source>Account &apos;%1&apos; can send but configures no `sent` folder, so no local copy of sent mail is filed.</source>
+        <translation>L&apos;account &apos;%1&apos; può inviare ma non configura una cartella &apos;sent&apos;, quindi non viene archiviata alcuna copia locale della posta inviata.</translation>
+    </message>
+    <message>
+        <source>Account &apos;%1&apos; can send but configures no `drafts` folder, so the composer runs without draft protection.</source>
+        <translation>L&apos;account &apos;%1&apos; può inviare ma non configura una cartella &apos;drafts&apos;, quindi il compositore funziona senza protezione delle bozze.</translation>
     </message>
     <message>
         <source>Startup query &apos;%1&apos; is not a saved query; opening &apos;%2&apos; instead.</source>
@@ -249,6 +412,22 @@
         <translation>Aggiunge o rimuove l&apos;etichetta deleted</translation>
     </message>
     <message>
+        <source>Re&amp;ply</source>
+        <translation>Ris&amp;pondi</translation>
+    </message>
+    <message>
+        <source>Reply to a&amp;ll</source>
+        <translation>Rispondi a t&amp;utti</translation>
+    </message>
+    <message>
+        <source>Reply without &amp;quoting</source>
+        <translation>Rispon&amp;di senza citare</translation>
+    </message>
+    <message>
+        <source>Sa&amp;ve message as...</source>
+        <translation>Sal&amp;va messaggio con nome...</translation>
+    </message>
+    <message>
         <source>Changes made here that a sync has not yet carried to the mail store. An external notmuch run can clear them without this count noticing.</source>
         <translation>Modifiche fatte qui che nessuna sincronizzazione ha ancora trasferito all&apos;archivio di posta. Un&apos;esecuzione esterna di notmuch può azzerarle senza che questo conteggio se ne accorga.</translation>
     </message>
@@ -390,6 +569,68 @@
     <message>
         <source>Mark thread as &amp;spam</source>
         <translation>Segna conversazione come &amp;spam</translation>
+    </message>
+    <message>
+        <source>A draft could not be saved</source>
+        <translation>Impossibile salvare una bozza</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) could not be saved to the drafts folder. Quitting now loses that text.</source>
+        <translation>
+            <numerusform>Impossibile salvare %n messaggio nella cartella delle bozze. Uscendo ora quel testo va perso.</numerusform>
+            <numerusform>Impossibile salvare %n messaggi nella cartella delle bozze. Uscendo ora quel testo va perso.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Messages still being composed</source>
+        <translation>Messaggi ancora in composizione</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) are still being composed. Drafts already saved stay in the drafts folder either way.</source>
+        <translation>
+            <numerusform>%n messaggio è ancora in composizione. Le bozze già salvate restano comunque nella cartella delle bozze.</numerusform>
+            <numerusform>%n messaggi sono ancora in composizione. Le bozze già salvate restano comunque nella cartella delle bozze.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No account is configured to send mail</source>
+        <translation>Nessun account configurato per inviare posta</translation>
+    </message>
+    <message>
+        <source>No message is selected</source>
+        <translation>Nessun messaggio selezionato</translation>
+    </message>
+    <message>
+        <source>That message could not be read</source>
+        <translation>Impossibile leggere quel messaggio</translation>
+    </message>
+    <message>
+        <source>That message arrived at an account that cannot send</source>
+        <translation>Quel messaggio è arrivato a un account che non può inviare</translation>
+    </message>
+    <message>
+        <source>The Maildir root is not known yet</source>
+        <translation>La radice della Maildir non è ancora nota</translation>
+    </message>
+    <message>
+        <source>That message&apos;s file could not be found</source>
+        <translation>Impossibile trovare il file di quel messaggio</translation>
+    </message>
+    <message>
+        <source>Save message to</source>
+        <translation>Salva il messaggio in</translation>
+    </message>
+    <message>
+        <source>Refusing to write outside %1</source>
+        <translation>Rifiuto di scrivere fuori da %1</translation>
+    </message>
+    <message>
+        <source>Could not write %1</source>
+        <translation>Impossibile scrivere %1</translation>
+    </message>
+    <message>
+        <source>Saved %1</source>
+        <translation>Salvato %1</translation>
     </message>
     <message>
         <source>&amp;Restore from trash</source>
@@ -558,6 +799,38 @@
     <message>
         <source>Quit qtmaildir</source>
         <translation>Esce da qtmaildir</translation>
+    </message>
+    <message>
+        <source>&amp;New message</source>
+        <translation>Nuovo &amp;messaggio</translation>
+    </message>
+    <message>
+        <source>Compose a new message</source>
+        <translation>Componi un nuovo messaggio</translation>
+    </message>
+    <message>
+        <source>Reply to the displayed message</source>
+        <translation>Rispondi al messaggio visualizzato</translation>
+    </message>
+    <message>
+        <source>Reply to the sender and every other recipient</source>
+        <translation>Rispondi al mittente e a ogni altro destinatario</translation>
+    </message>
+    <message>
+        <source>Reply with an empty body</source>
+        <translation>Rispondi con un corpo vuoto</translation>
+    </message>
+    <message>
+        <source>&amp;Forward</source>
+        <translation>In&amp;oltra</translation>
+    </message>
+    <message>
+        <source>Forward the displayed message</source>
+        <translation>Inoltra il messaggio visualizzato</translation>
+    </message>
+    <message>
+        <source>Write the raw message to a file</source>
+        <translation>Scrive il messaggio grezzo su un file</translation>
     </message>
     <message>
         <source>&amp;File</source>
@@ -967,6 +1240,21 @@
     </message>
 </context>
 <context>
+    <name>MessageSender</name>
+    <message>
+        <source>The send command crashed.</source>
+        <translation>Il comando di invio si è arrestato in modo anomalo.</translation>
+    </message>
+    <message>
+        <source>The send command exited with status %1 and said nothing.</source>
+        <translation>Il comando di invio è terminato con stato %1 senza fornire spiegazioni.</translation>
+    </message>
+    <message>
+        <source>The send command &apos;%1&apos; could not be started. Check that the path is correct and the file is executable.</source>
+        <translation>Impossibile avviare il comando di invio &apos;%1&apos;. Verifica che il percorso sia corretto e che il file sia eseguibile.</translation>
+    </message>
+</context>
+<context>
     <name>MessageView</name>
     <message>
         <source>Copied the selected text</source>
@@ -1136,6 +1424,10 @@
         <translation>Salvato %1</translation>
     </message>
     <message>
+        <source>This account is receive-only. Add send_command to [account.%1] to send from it.</source>
+        <translation>Questo account è di sola ricezione. Aggiungi send_command a [account.%1] per inviare da esso.</translation>
+    </message>
+    <message>
         <source>No message in this thread has an HTML part</source>
         <translation>Nessun messaggio di questa conversazione ha una parte HTML</translation>
     </message>
@@ -1202,6 +1494,50 @@
         <source>Rule &apos;%1&apos;: adds and removes nothing; dropped</source>
         <translation>Regola &apos;%1&apos;: non aggiunge né rimuove nulla; scartata</translation>
     </message>
+    <message>
+        <source>The account %1 has no address configured, so no message can be sent from it.</source>
+        <translation>L&apos;account %1 non ha un indirizzo configurato, quindi non è possibile inviare messaggi da esso.</translation>
+    </message>
+    <message>
+        <source>The attachment %1 is missing or unreadable.</source>
+        <translation>L&apos;allegato %1 è mancante o non leggibile.</translation>
+    </message>
+    <message>
+        <source>%1 is not an address this can send to.</source>
+        <translation>%1 non è un indirizzo a cui sia possibile inviare.</translation>
+    </message>
+    <message>
+        <source>The attachment %1 could not be read.</source>
+        <translation>Non è stato possibile leggere l&apos;allegato %1.</translation>
+    </message>
+    <message>
+        <source>The message could not be assembled.</source>
+        <translation>Non è stato possibile comporre il messaggio.</translation>
+    </message>
+    <message>
+        <source>No folder was configured to write to.</source>
+        <translation>Nessuna cartella configurata per la scrittura.</translation>
+    </message>
+    <message>
+        <source>Cannot create the folder %1.</source>
+        <translation>Impossibile creare la cartella %1.</translation>
+    </message>
+    <message>
+        <source>Cannot write to %1: %2</source>
+        <translation>Impossibile scrivere su %1: %2</translation>
+    </message>
+    <message>
+        <source>%1 MB</source>
+        <translation>%1 MB</translation>
+    </message>
+    <message>
+        <source>%1 KB</source>
+        <translation>%1 KB</translation>
+    </message>
+    <message>
+        <source>%1 bytes</source>
+        <translation>%1 byte</translation>
+    </message>
 </context>
 <context>
     <name>QueryCompleter</name>
@@ -1251,6 +1587,37 @@
     <message>
         <source>A saved query named &apos;%1&apos; already exists and will be replaced.</source>
         <translation>Esiste già una ricerca salvata di nome &apos;%1&apos; e verrà sostituita.</translation>
+    </message>
+</context>
+<context>
+    <name>SendDialog</name>
+    <message>
+        <source>Sending</source>
+        <translation>Invio in corso</translation>
+    </message>
+    <message>
+        <source>Sending in %1...</source>
+        <translation>Invio tra %1...</translation>
+    </message>
+    <message>
+        <source>Sending...</source>
+        <translation>Invio in corso...</translation>
+    </message>
+    <message>
+        <source>Filing sent copy...</source>
+        <translation>Archiviazione della copia inviata...</translation>
+    </message>
+    <message>
+        <source>Removing draft...</source>
+        <translation>Rimozione della bozza...</translation>
+    </message>
+    <message>
+        <source>Press Undo to stop sending.</source>
+        <translation>Premi Annulla per fermare l&apos;invio.</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>Annulla</translation>
     </message>
 </context>
 <context>

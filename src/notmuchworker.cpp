@@ -20,16 +20,15 @@
 
 #include <notmuch.h>
 
-#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
-#include <QHostInfo>
 #include <QSet>
 
 #include <cstdlib>
 
+#include "maildirname.h"
 #include "mimeparser.h"
 #include "nmraii.h"
 
@@ -541,8 +540,17 @@ void NotmuchWorker::loadThreadTree(const QString &threadId,
 
 void NotmuchWorker::loadMessage(const QString &messageId, quint64 generation)
 {
-    if (!openReadOnly())
+    // Every failure below emits an EMPTY result as well as its error, and that
+    // is a contract rather than tidiness. The bottom of this function already
+    // said so ("emitted even when empty, so the UI's handler runs"), but the
+    // three failure paths returned silently and broke it. A caller that arms
+    // state on this request and disarms it on the reply then waits for ever:
+    // MainWindow's compose path did exactly that, and a request left armed
+    // hijacks a later pane load for the same message.
+    if (!openReadOnly()) {
+        emit messageLoaded({}, generation);
         return;
+    }
 
     // id: is an exact-match prefix, and the id is quoted because a message id
     // can legitimately contain characters notmuch's parser would otherwise read
@@ -552,6 +560,7 @@ void NotmuchWorker::loadMessage(const QString &messageId, quint64 generation)
     if (!nmQuery) {
         emit errorOccurred(
             QStringLiteral("Cannot load message %1").arg(messageId));
+        emit messageLoaded({}, generation);
         return;
     }
 
@@ -560,6 +569,7 @@ void NotmuchWorker::loadMessage(const QString &messageId, quint64 generation)
             != NOTMUCH_STATUS_SUCCESS) {
         emit errorOccurred(
             QStringLiteral("Cannot search message %1").arg(messageId));
+        emit messageLoaded({}, generation);
         return;
     }
     NmMessages messages(rawMessages);
@@ -687,63 +697,6 @@ void NotmuchWorker::applyTags(const TagChange &change)
     emit tagsApplied(change);
 }
 
-namespace {
-
-/// A fresh Maildir filename for a message being moved between folders,
-/// preserving only its `:2,<flags>` suffix.
-///
-/// mbsync's manual is explicit about why this exists, under "the more
-/// efficient default UID mapping scheme": "it is important that the MUA
-/// renames files when moving them between Maildir folders", and "the general
-/// expectation is that a completely new filename is generated as if the
-/// message was new".
-///
-/// The `,U=<n>` infix mbsync writes is its per-folder IMAP UID. Carrying it
-/// into another folder makes it a claim about a folder the file is no longer
-/// in; moving a message out and back then reinserts a UID the server has
-/// since reassigned, and mbsync refuses the folder with `Maildir error:
-/// duplicate UID`. Measured on real mail, four collisions in one folder from
-/// a single move-and-restore.
-///
-/// The FLAGS are kept, deliberately, and that is not a contradiction of
-/// "as if the message was new". They record seen, flagged and replied, and
-/// `maildir.synchronize_flags` is true, so notmuch reads them back as tags:
-/// dropping them would mark every deleted message unread and lose Important
-/// on the way to the trash. Only the unique part is regenerated.
-QString freshMaildirName(const QString &oldName)
-{
-    // The `:2,` suffix, when there is one. `info` is everything from the
-    // separator on, so an empty-flag `:2,` is preserved as faithfully as
-    // `:2,FS`.
-    QString info;
-    const int sep = oldName.indexOf(QStringLiteral(":2,"));
-    if (sep >= 0)
-        info = oldName.mid(sep);
-
-    // The conventional left-to-right unique part: time, a per-process counter,
-    // the pid, the host. The counter is what makes two messages moved in the
-    // same second distinct, which a timestamp alone does not guarantee.
-    static quint64 counter = 0;
-    const qint64 now = QDateTime::currentSecsSinceEpoch();
-    const QString host = QHostInfo::localHostName().isEmpty()
-                             ? QStringLiteral("localhost")
-                             : QHostInfo::localHostName();
-
-    return QStringLiteral("%1.M%2P%3Q%4.%5%6")
-        .arg(now)
-        .arg(QDateTime::currentMSecsSinceEpoch() % 1000)
-        .arg(QCoreApplication::applicationPid())
-        .arg(++counter)
-        // A `/` or a `:` in a hostname would break the path or the flag
-        // separator. Neither is legal in a hostname, so this is belt and
-        // braces rather than a known case.
-        .arg(QString(host).replace(QLatin1Char('/'), QLatin1Char('_'))
-                 .replace(QLatin1Char(':'), QLatin1Char('_')))
-        .arg(info);
-}
-
-}  // namespace
-
 void NotmuchWorker::moveMessages(const QStringList &messageIds,
                                  const QString &destFolder)
 {
@@ -822,11 +775,11 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
             continue;
         }
 
-        // A FRESH name, never the old one. See freshMaildirName(): carrying
+        // A FRESH name, never the old one. See MaildirName::fresh(): carrying
         // the `,U=` infix across a folder boundary is what produced
         // `Maildir error: duplicate UID` on real mail.
         const QString to = destDir + QLatin1Char('/')
-                           + freshMaildirName(QFileInfo(from).fileName());
+                           + MaildirName::fresh(QFileInfo(from).fileName());
 
         if (!QFile::rename(from, to)) {
             emit errorOccurred(QStringLiteral("Cannot move %1 to %2")
@@ -1074,6 +1027,25 @@ void NotmuchWorker::requestMessageCounts(const QStringList &queries,
     }
 
     emit messageCountsReady(counts, generation);
+}
+
+void NotmuchWorker::requestMailRoot()
+{
+    if (!openReadOnly()) {
+        // Answered anyway, with an empty root. A consumer waiting for this
+        // signal to enable something would otherwise wait for ever on a
+        // database that cannot be opened, which is the same silent stall
+        // loadMessage() emits an empty result to avoid.
+        emit mailRootReady(QString());
+        return;
+    }
+
+    // mailRootOf(), never notmuch_database_get_path(). Item 124: under a split
+    // config the latter names the INDEX directory, and a draft or a sent copy
+    // composed from it is written into the Xapian tree.
+    const QString root = mailRootOf(m_db);
+    emit mailRootReady(root.isEmpty() ? QString()
+                                      : QDir(root).absolutePath());
 }
 
 void NotmuchWorker::requestFolders()

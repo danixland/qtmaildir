@@ -239,6 +239,47 @@ struct DatabaseStats
     int tags = -1;      ///< Distinct tag names in the database.
 };
 
+/// What opens a composer. Built by MainWindow, consumed by ComposeWindow.
+///
+/// Built from the DATABASE, never from the model. The model's data comes from
+/// the query, so a row whose state has not been re-queried carries stale
+/// values, and a reply built from a stale row would carry the wrong
+/// recipients. This is the same rule Restore already follows.
+struct ComposeContext
+{
+    enum class Kind { New, Reply, ReplyAll, Forward };
+
+    QString accountKey;          ///< Which account sends. Plain data here; the resolution rules live with whatever builds this context.
+    Kind kind = Kind::New;
+    QString originalPath;        ///< The .eml being replied to or forwarded. Empty for New.
+    QString inReplyTo;           ///< Message-ID of the original.
+    QStringList references;      ///< The original's References plus its Message-ID.
+    QStringList to;              ///< Pre-filled, the user's own addresses already stripped.
+    QStringList cc;
+    QString subject;             ///< Re:/Fwd: prefixed, an existing prefix not doubled.
+    QString quotedBody;          ///< The >-prefixed original. Empty when the action does not quote.
+    bool seedHtml = false;       ///< Did the original carry a text/html part.
+    QStringList attachments;     ///< Carried forward for Forward, empty otherwise.
+};
+
+/// What the composer produces, consumed by MessageBuilder.
+///
+/// In-Reply-To and References are NOT optional. Without them a reply appears
+/// as an orphan thread in the sender's own client.
+struct OutgoingMessage
+{
+    QString accountKey;
+    QStringList to;
+    QStringList cc;
+    QStringList bcc;
+    QString subject;
+    QString markdownBody;        ///< The source text, exactly as typed.
+    bool sendHtml = false;       ///< The composer's per-message toggle.
+    QStringList attachments;     ///< Local paths, read at build time.
+    QString inReplyTo;
+    QStringList references;
+};
+
 Q_DECLARE_METATYPE(ThreadSummary)
 Q_DECLARE_METATYPE(MessageRef)
 Q_DECLARE_METATYPE(MessageNode)

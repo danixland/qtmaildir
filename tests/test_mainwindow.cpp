@@ -48,8 +48,16 @@
 #include "keymap.h"
 #include "mainwindow.h"
 #include "messageview.h"
+#include "mimeparser.h"
 #include "notmuchworker.h"
 #include "carddelegate.h"
+#include "composewindow.h"
+#include "senddialog.h"
+#include "messagesender.h"
+#include <QCheckBox>
+#include <QPlainTextEdit>
+#include <QPointer>
+#include <QListWidget>
 #include "cardlayout.h"
 
 #include <QImage>
@@ -96,6 +104,35 @@ public:
     /// no trash key either. A caller that names an account and wants Delete to
     /// work has to say where its trash is, which is the same requirement the
     /// real config imposes.
+    /// One [account.<key>] section to write.
+    ///
+    /// `sendCommand` is what makes the account able to send, and its EMPTINESS
+    /// is what makes it receive-only: the capability is the key's presence,
+    /// not a separate flag, so a receive-only account is written by omitting
+    /// it exactly as the real config expresses it.
+    struct AccountSpec
+    {
+        QString key;
+        QString maildir;
+        QString trash;
+        QString sendCommand;
+        QString address;
+    };
+
+    /// Writes several accounts, for the compose cases.
+    ///
+    /// Beside build() rather than replacing it: every existing caller passes
+    /// at most one account and none of them needs a send command, so widening
+    /// the three-argument signature further would make ten call sites carry
+    /// two empty strings each for one test's benefit.
+    bool buildWithAccounts(const QList<AccountSpec> &accounts,
+                           const QString &composeKey = QString())
+    {
+        m_accounts = accounts;
+        m_composeKey = composeKey;
+        return build();
+    }
+
     bool build(const QString &accountKey = QString(),
                const QString &accountMaildir = QString(),
                const QString &accountTrash = QString())
@@ -142,6 +179,21 @@ public:
                 // folder that does not exist would CREATE it.
                 out << "inbox=inbox\n";
             }
+            if (!m_composeKey.isEmpty())
+                out << "\n[compose]\n" << m_composeKey << "\n";
+            for (const AccountSpec &account : m_accounts) {
+                out << "\n[account." << account.key << "]\n"
+                    << "maildir=" << account.maildir << "\n"
+                    << "inbox=inbox\n";
+                if (!account.trash.isEmpty())
+                    out << "trash=" << account.trash << "\n";
+                if (!account.address.isEmpty())
+                    out << "address=" << account.address << "\n";
+                // Written only when non-empty. An account with no
+                // send_command is receive-only, which is the shape under test.
+                if (!account.sendCommand.isEmpty())
+                    out << "send_command=" << account.sendCommand << "\n";
+            }
         }
         file.close();
 
@@ -162,6 +214,8 @@ private:
     QTemporaryDir m_confDir;
     Config m_config;
     QString m_error;
+    QList<AccountSpec> m_accounts;
+    QString m_composeKey;
 };
 
 /// MainWindow is mostly wiring. Cases that need a real database opt into one
@@ -197,6 +251,25 @@ private slots:
     void narrowingAnEmptyQueryBarIsAPlainSearch();
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
+
+    // Compose and send, item 123 task 12.
+    void theMailRootComesFromTheConfigNotTheIndex();
+    void replyIsDisabledOnAReceiveOnlyAccountsMail();
+    void theReceiveOnlyRibbonNamesTheAccount();
+    void replyIsEnabledOnASendingAccountsMail();
+    void composeIsDisabledOnlyWhenNoAccountCanSend();
+    void quittingWithACleanComposerAsksNothing();
+    void quittingWithUnsavedEditsReportsEveryComposer();
+    void closingAComposerCompactsTheRegistry();
+    void savingAMessageRefusesToEscapeTheChosenDirectory();
+    void aHostileSubjectCannotEscapeTheSaveDirectory();
+    void savingTwiceDoesNotOverwriteTheFirstFile();
+    void savingAMessageWithAHostileSubjectStaysInTheDirectory();
+    void aStuckComposeRequestDoesNotHijackTheNextPaneLoad();
+    void theSaveLoopToleratesAComposerClosedUnderTheDialog();
+    void quittingClosesEveryComposerRatherThanOrphaningIt();
+    void forwardingCarriesTheOriginalsAttachments();
+    void forwardSeedsHtmlFromTheConfigNotTheOriginal();
     void aStartupAccountScopesTheStartupQuery();
     void aStartupAccountAlsoScopesASavedStartupQuery();
     void aGeneratedStartupQueryActuallyRuns();
@@ -331,6 +404,7 @@ private slots:
 
     void everyActionCarriesAnIcon();
     void everyActionIsReachableFromAMenu();
+    void noMenuHasTwoEntriesSharingAMnemonic();
     void theToolbarDoesNotOverrideTheDesktopButtonStyle();
     void theImportantActionIsLabelledImportant();
     void theImportantActionStillWritesTheFlaggedTag();
@@ -390,6 +464,37 @@ private slots:
     void restoringFromTheTrashViewRefreshesTheList();
     void theRefreshAfterARestoreLeavesUndoIntact();
     void deletingOutsideTheTrashViewLeavesTheRowInPlace();
+
+    // ComposeWindow, item 123. These need a window but no worker: the composer
+    // never touches NotmuchWorker, it reads its context from the value struct
+    // MainWindow hands it, so a Config written to a temporary INI is the whole
+    // fixture.
+    void aComposerOpensClean();
+    void typingMarksTheComposerDirty();
+    void anAutosaveWritesADraftAndClearsTheDirtyFlag();
+    void anUnwritableDraftsFolderRaisesThePersistentBanner();
+    void aSuccessfulSaveClearsTheBanner();
+    void anAccountWithoutADraftsFolderReportsNoFailure();
+    void aRewrittenDraftUnlinksThePreviousRevision();
+    void theComposerBuildsTheMessageItsWidgetsShow();
+    void theFromDropdownDecidesWhichAccountSends();
+    void aFormatEditPreservesTheUndoStack();
+    void aFormatEditRestoresTheSelectionItAsksFor();
+    void aFormatEditOnAnEmptySelectionLandsBetweenTheTokens();
+    void theAttachmentWarningRespectsTheConfiguredThreshold();
+    void aDisabledAttachmentWarningWarnsAboutNothing();
+    void theQuotePositionDecidesWhereTheQuoteLands();
+    void theSeededQuoteIsNotAnUndoStep();
+    void aReplySeedsTheHtmlToggleFromTheOriginal();
+    void aNewMessageSeedsTheHtmlToggleFromConfig();
+    void disablingInputsCoversEveryFieldAndTheToolbar();
+    void aFailedSendCanBeRetriedWithoutFilingTheWrongCopy();
+    void anUnchangedMessageIsNotWrittenAgain();
+    void closingInsideTheDebounceStillSavesTheDraft();
+    void closingAfterASendWritesNoFurtherDraft();
+    void aCloseDuringTheCountdownIsRefused();
+    void aFailedSendKeepsTheTextThatFailedToGo();
+    void aSmallSizeLimitIsNotDescribedAsZeroMegabytes();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -6444,6 +6549,185 @@ void TestMainWindow::everyActionIsReachableFromAMenu()
                             .arg(unreachable.join(QStringLiteral(", ")))));
 }
 
+void TestMainWindow::noMenuHasTwoEntriesSharingAMnemonic()
+{
+    // The sibling of everyActionIsReachableFromAMenu(), and it exists because
+    // the rule it enforces had lived only in prose and in one other test's
+    // COMMENT, and was duly broken the first time a batch of entries was added
+    // to a menu (item 123: `&Reply` against the pre-existing `&Restore from
+    // trash`, both Alt+R).
+    //
+    // Qt does not error on a duplicate mnemonic. It CYCLES between the
+    // colliding entries instead of activating either, so the key silently
+    // stops working and merely moves a highlight. That is worse than it
+    // sounds in the Message menu, where `restore` is deliberately greyed
+    // outside the trash view: the ordinary case was pressing Alt+R and landing
+    // on a disabled entry.
+    //
+    // Item 57 already decided this is a property rather than a taste. It
+    // rejected the label "Starred" for `flag` precisely because it would have
+    // collided with `Mark &spam`, and theImportantActionIsLabelledImportant()
+    // pins the surviving label with that reasoning in its comment. A decision
+    // recorded only in prose is one nobody re-derives.
+    //
+    // Scoped PER MENU, which is what the collision actually is: a mnemonic is
+    // resolved among the entries of the menu that is open, so the same letter
+    // in File and in View is not a conflict.
+    const Config config;
+    MainWindow window(config);
+
+    auto *bar = window.menuBar();
+    QVERIFY(bar);
+
+    // The menu bar's own top-level titles are one such scope too, so the walk
+    // starts by treating the bar as a menu and then descends.
+    QList<QPair<QString, QList<QAction *>>> scopes;
+    scopes.append({ QStringLiteral("the menu bar"), bar->actions() });
+
+    QList<QMenu *> pending;
+    const auto topLevel = bar->actions();
+    for (QAction *action : topLevel) {
+        if (action->menu())
+            pending.append(action->menu());
+    }
+    QVERIFY2(!pending.isEmpty(), "the menu bar holds no menus");
+
+    while (!pending.isEmpty()) {
+        QMenu *menu = pending.takeFirst();
+        const auto entries = menu->actions();
+        scopes.append({ menu->title(), entries });
+        for (QAction *entry : entries) {
+            if (QMenu *sub = entry->menu())
+                pending.append(sub);
+        }
+    }
+
+    // The four collisions that PREDATE this test, measured by running it
+    // against the tree before item 123 touched any label. They are listed
+    // rather than fixed, and rather than being hidden by narrowing the test,
+    // because renaming a shipped menu entry is the user's call and not a
+    // test's: three of them are in menus a user has had in their fingers
+    // since 0.1.0.
+    //
+    // Listed as exact pairs, not as "ignore Alt+R", so this is a freeze and
+    // not an amnesty: a NEW entry colliding on any of these same keys still
+    // fails, because its pair is not on this list. Fixing one is then a
+    // one-line deletion here, which is the point of writing them out.
+    // Written as the FULL GROUP of labels sharing one key in one menu, not as
+    // a pair. A pair is keyed on which entry the walk happened to see first,
+    // so adding a colliding entry ABOVE a frozen one silently re-pairs it and
+    // the new defect gets reported as "a frozen collision no longer happens",
+    // which names the wrong thing entirely. Measured: reinstating `&Reply`
+    // did exactly that before this was changed. A group is order-independent,
+    // so a new entry grows the group and fails as a new collision.
+    static const QStringList knownPreExistingCollisions = {
+        QStringLiteral("&Message: Alt+R shared by \"&Restore from trash\", \"Mark all &read\", \"Tagging &rules...\""),
+        QStringLiteral("&Message: Alt+S shared by \"Mark &spam\", \"Find &stranded deleted mail\""),
+        QStringLiteral("&View: Alt+O shared by \"&Open thread\", \"Zoom &out\""),
+    };
+
+    QStringList collisions;
+    int compared = 0;
+
+    for (const auto &scope : scopes) {
+        // Keyed on the mnemonic Qt itself derives, not on a hand-parsed '&'.
+        // The question is which key Qt will dispatch, and only Qt answers it:
+        // "&&" is a literal ampersand and carries no mnemonic at all.
+        //
+        // A QMap rather than a QHash so the groups come out in a stable key
+        // order, which is what lets the frozen list above be written once and
+        // stay matching.
+        QMap<QString, QStringList> byMnemonic;
+        for (QAction *entry : scope.second) {
+            if (entry->isSeparator())
+                continue;
+            const QKeySequence mnemonic = QKeySequence::mnemonic(entry->text());
+            if (mnemonic.isEmpty())
+                continue;
+            ++compared;
+            byMnemonic[mnemonic.toString(QKeySequence::NativeText)]
+                .append(QStringLiteral("\"%1\"").arg(entry->text()));
+        }
+
+        for (auto it = byMnemonic.cbegin(); it != byMnemonic.cend(); ++it) {
+            if (it.value().size() < 2)
+                continue;
+            // Names the menu, the key and EVERY label in the group, so a
+            // future failure says what to rename without anyone going looking.
+            collisions.append(QStringLiteral("%1: %2 shared by %3")
+                                  .arg(scope.first, it.key(),
+                                       it.value().join(QStringLiteral(", "))));
+        }
+    }
+
+    // The guard, and it is not ceremonial: every assertion below is a loop
+    // that reports success when it runs zero times. A walk that found no
+    // mnemonics at all would pass this test against any label whatsoever.
+    QVERIFY2(compared > 20,
+             qPrintable(QStringLiteral("only %1 menu entries carried a "
+                                       "mnemonic, so this probe measured "
+                                       "almost nothing")
+                            .arg(compared)));
+
+    // Matched on the menu and key only, with the labels compared separately
+    // below. Comparing whole strings made a GROWING group read as a frozen one
+    // disappearing: adding `&Reply` took Alt+R from three labels to four, the
+    // frozen three-label string stopped matching, and the failure said "this
+    // collision no longer happens" about the very key that had just got worse.
+    // Measured twice, once per attempt, which is why the two questions are
+    // asked separately.
+    const auto scopeAndKey = [](const QString &collision) {
+        return collision.left(collision.indexOf(QStringLiteral(" shared by ")));
+    };
+
+    QHash<QString, QString> frozen;
+    for (const QString &known : knownPreExistingCollisions)
+        frozen.insert(scopeAndKey(known), known);
+
+    QStringList unexpected;
+    QSet<QString> stillPresent;
+    for (const QString &collision : collisions) {
+        const QString key = scopeAndKey(collision);
+        const auto known = frozen.constFind(key);
+        if (known == frozen.constEnd()) {
+            // A collision on a key nothing froze: entirely new.
+            unexpected.append(collision);
+            continue;
+        }
+        stillPresent.insert(key);
+        if (*known != collision) {
+            // The key was already colliding, but the CAST has changed, which
+            // for a frozen entry means an entry joined it. Reported as the
+            // new collision it is, naming both what was frozen and what is
+            // there now.
+            unexpected.append(
+                QStringLiteral("%1 (frozen as [%2], now [%3])")
+                    .arg(key, *known, collision));
+        }
+    }
+
+    // A frozen entry that has since been FIXED must not stay on the list
+    // silently, or the list becomes a place stale claims accumulate.
+    QStringList stale;
+    for (const QString &known : knownPreExistingCollisions) {
+        if (!stillPresent.contains(scopeAndKey(known)))
+            stale.append(known);
+    }
+    QVERIFY2(stale.isEmpty(),
+             qPrintable(QStringLiteral("%1 frozen collision(s) no longer "
+                                       "happen, so delete them from "
+                                       "knownPreExistingCollisions: %2")
+                            .arg(stale.size())
+                            .arg(stale.join(QStringLiteral("; ")))));
+
+    QVERIFY2(unexpected.isEmpty(),
+             qPrintable(QStringLiteral("%1 menu mnemonic collision(s), where "
+                                       "Qt cycles the highlight instead of "
+                                       "activating: %2")
+                            .arg(unexpected.size())
+                            .arg(unexpected.join(QStringLiteral("; ")))));
+}
+
 void TestMainWindow::everyActionCarriesAnIcon()
 {
     // Item 56. The complaint was inconsistency, not absence: eight actions had
@@ -6967,15 +7251,22 @@ void TestMainWindow::noTwoActionsShareAnIcon()
     // the words saying which. Giving them five invented shapes would be less
     // clear than the pairing.
     //
+    // reply_no_quote joined them in item 123 for exactly the same reason: it
+    // shares reply's icon, it is a menu entry that always carries its text,
+    // and it is not on the toolbar. The list is therefore no longer only the
+    // thread tier, which is why it is named for the PROPERTY that earns the
+    // exemption rather than for the tier that first needed it.
+    //
     // Named as an exception list rather than by asking the toolbar what it
     // holds, so that PUTTING one of these on the toolbar fails this test
     // rather than silently passing it.
-    static const QStringList menuOnlyThreadActions = {
+    static const QStringList menuOnlySharedIconActions = {
         QStringLiteral("archive_thread"),
         QStringLiteral("delete_thread"),
         QStringLiteral("spam_thread"),
         QStringLiteral("toggle_unread_thread"),
         QStringLiteral("flag_thread"),
+        QStringLiteral("reply_no_quote"),
     };
 
     const Config config;
@@ -6986,7 +7277,7 @@ void TestMainWindow::noTwoActionsShareAnIcon()
     // may sit on the toolbar.
     auto *toolBar = window.findChild<QToolBar *>();
     QVERIFY(toolBar);
-    for (const QString &name : menuOnlyThreadActions) {
+    for (const QString &name : menuOnlySharedIconActions) {
         auto *action = window.findChild<QAction *>(name);
         QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
         QVERIFY2(!toolBar->actions().contains(action),
@@ -7006,7 +7297,7 @@ void TestMainWindow::noTwoActionsShareAnIcon()
         QVERIFY2(action, qPrintable(QStringLiteral("no action named %1").arg(name)));
         if (!action->icon().isNull())
             ++withIcons;
-        if (menuOnlyThreadActions.contains(name))
+        if (menuOnlySharedIconActions.contains(name))
             continue;
         if (action->icon().isNull())
             continue;
@@ -7033,7 +7324,7 @@ void TestMainWindow::noTwoActionsShareAnIcon()
 
     // And the exception list did not swallow the comparison itself.
     QCOMPARE(compared, KeyMap::knownActions().size()
-                           - menuOnlyThreadActions.size());
+                           - menuOnlySharedIconActions.size());
 
     QVERIFY2(collisions.isEmpty(),
              qPrintable(QStringLiteral("actions sharing one icon: %1")
@@ -7941,6 +8232,933 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
     // thread, so findChild() cannot see it. Observing the window's own state
     // is both the only route and the better assertion.
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+namespace {
+
+/// A worker-backed window with one message in one account's maildir.
+///
+/// The compose cases all need the same three things: a message on disk, an
+/// account owning the folder it landed in, and a selected row. Repeating that
+/// in six tests is how one of them ends up subtly different from the rest.
+struct WorkerComposeFixture
+{
+    WorkerBackedWindow backed;
+
+    /// Writes one message into <accountMaildir>/inbox and indexes it.
+    /// \p composeKey, when given, is written as one line under [compose].
+    bool seed(const QList<WorkerBackedWindow::AccountSpec> &accounts,
+              const QString &folder, const QString &composeKey = QString())
+    {
+        if (!backed.fixture().addMessage(
+                folder, QStringLiteral("compose1@example.org"),
+                QStringLiteral("A subject"),
+                QStringLiteral("sender@example.org"),
+                // Friday, verified with `date -d 2026-08-14 +%A`.
+                QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+                QStringLiteral("Body text."))) {
+            return false;
+        }
+        return backed.buildWithAccounts(accounts, composeKey);
+    }
+
+    /// Runs a query and puts the current index on its one row.
+    ///
+    /// Waits on the MAIL ROOT as well as on the row. The reply family is gated
+    /// on which account owns the message, which needs the root, and that
+    /// arrives on its own queued signal: asserting on an action's enabled
+    /// state before it lands measures the startup race rather than the rule.
+    static bool selectTheMessage(MainWindow &window)
+    {
+        auto *model = window.findChild<ThreadListModel *>();
+        auto *view = window.findChild<ThreadListView *>();
+        auto *queryEdit =
+            window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+        if (!model || !view || !queryEdit)
+            return false;
+
+        queryEdit->setText(QStringLiteral("tag:inbox"));
+        queryEdit->returnPressed();
+
+        bool ready = false;
+        for (int attempt = 0; attempt < 150 && !ready; ++attempt) {
+            ready = model->rowCount(QModelIndex()) == 1
+                    && !window.mailRootForTesting().isEmpty();
+            if (!ready)
+                QTest::qWait(100);
+        }
+        if (!ready)
+            return false;
+
+        view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+        return true;
+    }
+};
+
+}  // namespace
+
+void TestMainWindow::theMailRootComesFromTheConfigNotTheIndex()
+{
+    // Item 124's rule, for the path the composer composes drafts and sent
+    // copies under. splitIndex() is what makes this test able to fail at all:
+    // in the ordinary layout notmuch_database_get_path() and
+    // NOTMUCH_CONFIG_MAIL_ROOT return the SAME string, so a test written
+    // against it passes whichever accessor the code uses.
+    WorkerComposeFixture fixture;
+    fixture.backed.fixture().splitIndex();
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+
+    QTRY_VERIFY_WITH_TIMEOUT(!window.mailRootForTesting().isEmpty(), 15000);
+
+    // The MAIL root, not the index directory. Under the split layout these are
+    // different directories, and a draft composed under the index one is
+    // written into the Xapian tree.
+    QCOMPARE(window.mailRootForTesting(),
+             QDir(fixture.backed.fixture().maildirPath()).absolutePath());
+    QVERIFY2(window.mailRootForTesting()
+                 != QDir(fixture.backed.fixture().indexPath()).absolutePath(),
+             "the window took the index directory for the mail root");
+}
+
+void TestMainWindow::replyIsDisabledOnAReceiveOnlyAccountsMail()
+{
+    // The capability IS the send_command's presence, so this account is
+    // written without one.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("listsonly"),
+                              QStringLiteral("listsonly"), QString(),
+                              /*sendCommand=*/QString(),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("listsonly/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QVERIFY(WorkerComposeFixture::selectTheMessage(window));
+
+    for (const QString &name : { QStringLiteral("reply"),
+                                 QStringLiteral("reply_all"),
+                                 QStringLiteral("reply_no_quote"),
+                                 QStringLiteral("forward") }) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action %1").arg(name)));
+        QVERIFY2(!action->isEnabled(),
+                 qPrintable(QStringLiteral("%1 was live on receive-only mail")
+                                .arg(name)));
+    }
+
+    // save_message is NEVER disabled, including here. It is the escape hatch
+    // for exactly this case: write the raw message out and attach it to a new
+    // message from an account that can send.
+    auto *save = window.findChild<QAction *>(QStringLiteral("save_message"));
+    QVERIFY(save);
+    QVERIFY2(save->isEnabled(),
+             "save_message was disabled, removing the escape hatch");
+}
+
+void TestMainWindow::replyIsEnabledOnASendingAccountsMail()
+{
+    // The guard for the test above. Without it, a bug disabling the reply
+    // family unconditionally would pass every assertion there while removing
+    // the feature entirely.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QVERIFY(WorkerComposeFixture::selectTheMessage(window));
+
+    for (const QString &name : { QStringLiteral("reply"),
+                                 QStringLiteral("reply_all"),
+                                 QStringLiteral("reply_no_quote"),
+                                 QStringLiteral("forward") }) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action %1").arg(name)));
+        QVERIFY2(action->isEnabled(),
+                 qPrintable(QStringLiteral("%1 was disabled on mail from an "
+                                           "account that can send").arg(name)));
+    }
+
+    // And no ribbon: this account can send, so there is nothing to explain.
+    auto *ribbon =
+        window.findChild<QLabel *>(QStringLiteral("receiveOnlyRibbon"));
+    QVERIFY(ribbon);
+    QVERIFY2(ribbon->isHidden(),
+             "the receive-only ribbon showed on an account that can send");
+}
+
+void TestMainWindow::theReceiveOnlyRibbonNamesTheAccount()
+{
+    // The ribbon is a WIDGET in MessageView's layout, not markup inside the
+    // web view. Composing HTML from configuration into the one document that
+    // renders input from strangers is the wrong direction.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("listsonly"),
+                              QStringLiteral("listsonly"), QString(),
+                              QString(), QStringLiteral("you@example.org") } },
+                          QStringLiteral("listsonly/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QVERIFY(WorkerComposeFixture::selectTheMessage(window));
+
+    auto *ribbon =
+        window.findChild<QLabel *>(QStringLiteral("receiveOnlyRibbon"));
+    QVERIFY2(ribbon, "no ribbon widget exists");
+
+    // isHidden() rather than isVisibleTo(): under the offscreen platform an
+    // unshown window's children report not visible whatever the code does, so
+    // isVisibleTo would fail against correct code. What is being asserted is
+    // that the ribbon was not left explicitly hidden.
+    QVERIFY2(!ribbon->isHidden(),
+             "the ribbon did not appear on receive-only mail");
+    QVERIFY2(ribbon->text().contains(QStringLiteral("listsonly")),
+             qPrintable(QStringLiteral("the ribbon does not name the account: %1")
+                            .arg(ribbon->text())));
+
+    // PlainText, not AutoText. A QLabel guesses under AutoText, and this is
+    // the same protection MessageDetailsDialog states on every value.
+    QCOMPARE(ribbon->textFormat(), Qt::PlainText);
+}
+
+void TestMainWindow::composeIsDisabledOnlyWhenNoAccountCanSend()
+{
+    // An installation with no send_command anywhere is a valid read-only
+    // installation and is not warned about; compose is simply unavailable.
+    {
+        WorkerComposeFixture fixture;
+        QVERIFY2(fixture.seed({ { QStringLiteral("listsonly"),
+                                  QStringLiteral("listsonly"), QString(),
+                                  QString(), QStringLiteral("you@example.org") } },
+                              QStringLiteral("listsonly/inbox")),
+                 qPrintable(fixture.backed.error()));
+
+        MainWindow window(fixture.backed.config());
+        auto *compose = window.findChild<QAction *>(QStringLiteral("compose"));
+        QVERIFY(compose);
+        QVERIFY2(!compose->isEnabled(),
+                 "compose was live with no account able to send");
+    }
+    {
+        WorkerComposeFixture fixture;
+        QVERIFY2(fixture.seed(
+                     { { QStringLiteral("listsonly"),
+                         QStringLiteral("listsonly"), QString(), QString(),
+                         QStringLiteral("you@example.org") },
+                       { QStringLiteral("work"), QStringLiteral("work"),
+                         QString(), QStringLiteral("/bin/true"),
+                         QStringLiteral("work@example.org") } },
+                     QStringLiteral("listsonly/inbox")),
+                 qPrintable(fixture.backed.error()));
+
+        MainWindow window(fixture.backed.config());
+        auto *compose = window.findChild<QAction *>(QStringLiteral("compose"));
+        QVERIFY(compose);
+        QVERIFY2(compose->isEnabled(),
+                 "compose was disabled although one account can send");
+    }
+}
+
+void TestMainWindow::quittingWithACleanComposerAsksNothing()
+{
+    // Case 1: every composer clean, quit directly, no dialog. A dialog here
+    // would be the "are you sure" this project deliberately does not do.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.mailRootForTesting().isEmpty(), 15000);
+
+    QVERIFY2(window.openComposerForTest(), "no composer opened");
+    QCOMPARE(window.openComposerCount(), 1);
+
+    QVERIFY2(window.composersBlockingQuit().isEmpty(),
+             "a clean composer was reported as blocking quit");
+
+    // Composers are parentless top-level windows and outlive this MainWindow,
+    // carrying a MessageSender and a running autosave timer into whatever test
+    // runs next. Closed here rather than left for the destructor, which never
+    // touches m_composers.
+    for (ComposeWindow *composer : window.openComposersForTest()) {
+        composer->show();
+        composer->close();
+    }
+}
+
+void TestMainWindow::quittingWithUnsavedEditsReportsEveryComposer()
+{
+    // Case 2: ONE dialog whatever the count, so the quit path has to see BOTH
+    // composers rather than stopping at the first dirty one.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.mailRootForTesting().isEmpty(), 15000);
+
+    QVERIFY(window.openComposerForTest());
+    QVERIFY(window.openComposerForTest());
+    QCOMPARE(window.openComposerCount(), 2);
+
+    // Clean until something is typed, which is the case-1 assertion holding
+    // here too and the guard that this test can distinguish the two states.
+    QVERIFY(window.composersBlockingQuit().isEmpty());
+
+    window.markComposersDirtyForTest();
+    QCOMPARE(window.composersBlockingQuit().size(), 2);
+
+    // Left open, these are parentless top-level windows with a live autosave
+    // timer, surviving into later tests. See the note in the clean-composer
+    // case above.
+    for (ComposeWindow *composer : window.openComposersForTest()) {
+        composer->show();
+        composer->close();
+    }
+}
+
+void TestMainWindow::closingAComposerCompactsTheRegistry()
+{
+    // The closed() signal's ONE job. The QPointer alone would keep
+    // composersBlockingQuit() correct, since it nulls on destruction, but the
+    // entry would stay in the list for the session's lifetime. This asserts
+    // the list is compacted, which only the signal can do.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.mailRootForTesting().isEmpty(), 15000);
+
+    ComposeWindow *composer = window.openComposerForTest();
+    QVERIFY(composer);
+    QCOMPARE(window.openComposerCount(), 1);
+
+    // A composer that was never shown returns early from close() WITHOUT
+    // reaching closeEvent(), so the signal would never fire and this test
+    // would assert nothing at all.
+    composer->show();
+    QVERIFY(composer->close());
+
+    // And the quit path must not see a destroyed window, which is the
+    // QPointer's job rather than the signal's.
+    QCOMPARE(window.openComposerCount(), 0);
+    QVERIFY(window.composersBlockingQuit().isEmpty());
+}
+
+void TestMainWindow::savingAMessageRefusesToEscapeTheChosenDirectory()
+{
+    // A subject is input from a stranger and is what the default filename is
+    // derived from, so it may carry separators and "..". Asserted through
+    // Attachment's own helpers, which is what saveDisplayedMessage() calls:
+    // a second implementation of the check here would prove nothing about the
+    // one that runs.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString directory = dir.path();
+
+    Attachment naming;
+    naming.filename = QStringLiteral("../../etc/passwd");
+    const QString target =
+        QDir(directory).absoluteFilePath(naming.safeFilename());
+
+    QVERIFY2(Attachment::isPathInsideDirectory(directory, target),
+             "a traversing subject escaped the chosen directory");
+    QVERIFY2(!target.contains(QStringLiteral("/etc/passwd")),
+             qPrintable(QStringLiteral("the traversal survived: %1").arg(target)));
+
+    // Compared as PATHS, never with startsWith(): a sibling directory whose
+    // name merely begins with the chosen one's is not inside it.
+    QVERIFY2(!Attachment::isPathInsideDirectory(
+                 directory, directory + QStringLiteral("-evil/message.eml")),
+             "a sibling directory passed the containment check");
+}
+
+void TestMainWindow::aHostileSubjectCannotEscapeTheSaveDirectory()
+{
+    // Asserted through MainWindow::defaultMessageFilename(), which is what
+    // saveDisplayedMessage() actually calls. The previous version of this
+    // check built an Attachment by hand and called safeFilename() directly:
+    // that proves what Attachment does and nothing about whether save_message
+    // asks it anything, and three mutations to the real path left it green.
+    // CLAUDE.md: assert through the function the production path calls, not
+    // through the one it calls INTO.
+    const QString traversal =
+        MainWindow::defaultMessageFilename(QStringLiteral("../../etc/passwd"));
+
+    // No separator survives, so the name cannot address another directory.
+    QVERIFY2(!traversal.contains(QLatin1Char('/')),
+             qPrintable(QStringLiteral("a separator survived: %1").arg(traversal)));
+    // NOT asserting the absence of "..": with every separator replaced, a
+    // literal ".." inside a filename addresses nothing and is a legitimate
+    // part of a name. What matters is that the result is a single path
+    // COMPONENT, which is what makes traversal impossible.
+    QCOMPARE(QFileInfo(traversal).fileName(), traversal);
+    QVERIFY2(traversal != QStringLiteral("..")
+                 && traversal != QStringLiteral("."),
+             qPrintable(QStringLiteral("the name is a directory reference: %1")
+                            .arg(traversal)));
+
+    // And joining it onto a directory really does stay inside.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Attachment naming;
+    naming.filename = traversal;
+    const QString target =
+        QDir(dir.path()).absoluteFilePath(naming.safeFilename());
+    QVERIFY2(Attachment::isPathInsideDirectory(dir.path(), target),
+             qPrintable(QStringLiteral("escaped the directory: %1").arg(target)));
+
+    // A backslash is a separator too, on a name written by Windows software.
+    const QString backslash = MainWindow::defaultMessageFilename(
+        QStringLiteral("..\\..\\Windows\\System32\\config"));
+    QVERIFY2(!backslash.contains(QLatin1Char('\\')),
+             qPrintable(QStringLiteral("a backslash survived: %1").arg(backslash)));
+
+    // A subject with nothing usable still yields a name rather than "" or a
+    // bare extension, which would make the write land on a dotfile.
+    const QString empty = MainWindow::defaultMessageFilename(QString());
+    QVERIFY2(empty.startsWith(QStringLiteral("message")),
+             qPrintable(QStringLiteral("empty subject gave: %1").arg(empty)));
+
+    // The extension survives truncation. Truncating AFTER appending it would
+    // cut ".eml" off a long subject and write an extensionless file.
+    const QString long_ = MainWindow::defaultMessageFilename(
+        QString(400, QLatin1Char('a')));
+    QVERIFY2(long_.endsWith(QStringLiteral(".eml")),
+             qPrintable(QStringLiteral("the extension was truncated away: %1")
+                            .arg(long_.right(20))));
+}
+
+void TestMainWindow::savingTwiceDoesNotOverwriteTheFirstFile()
+{
+    // Two messages very often share a subject, and the filename is derived
+    // from it, so the second save must not destroy the first. Driven through
+    // saveDisplayedMessage() by way of the directory seam, which is the only
+    // way to reach the write guard at all: the file dialog is a modal the
+    // offscreen platform cannot click.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QVERIFY(WorkerComposeFixture::selectTheMessage(window));
+
+    QTemporaryDir out;
+    QVERIFY(out.isValid());
+
+    window.saveDisplayedMessageForTest(out.path());
+    window.saveDisplayedMessageForTest(out.path());
+
+    // Two files, not one overwritten. Asserted on the COUNT rather than on the
+    // second name, so the disambiguation scheme can change without the test
+    // caring what it is called.
+    const QStringList written =
+        QDir(out.path()).entryList(QDir::Files | QDir::NoDotAndDotDot);
+    QCOMPARE(written.size(), 2);
+
+    // And both are real copies rather than one empty placeholder.
+    for (const QString &name : written) {
+        QVERIFY2(QFileInfo(QDir(out.path()).absoluteFilePath(name)).size() > 0,
+                 qPrintable(QStringLiteral("%1 is empty").arg(name)));
+    }
+}
+
+void TestMainWindow::savingAMessageWithAHostileSubjectStaysInTheDirectory()
+{
+    // Driven through saveDisplayedMessage() with a real hostile subject, which
+    // is the only shape that covers the production write path. An earlier
+    // version of this coverage built an Attachment by hand and called
+    // safeFilename() and isPathInsideDirectory() directly, which proves what
+    // Attachment does and nothing about whether save_message asks it anything.
+    //
+    // WHAT THIS CAN AND CANNOT CATCH, measured rather than assumed, because
+    // the numbers are surprising and the next person will otherwise redo the
+    // work. Three independent layers stand between a subject and the write:
+    // defaultMessageFilename() replaces separators, Attachment::safeFilename()
+    // reduces to a basename, and Attachment::isPathInsideDirectory() refuses
+    // the write. EACH ONE ALONE IS SUFFICIENT, so removing any single layer
+    // leaves this test green: measured, all three single-layer mutations pass.
+    // Removing all three fails it. That is real defence-in-depth rather than a
+    // probe pointed at the wrong object, and mimeparser.h:71-77 already says
+    // the same of isPathInsideDirectory, but it does mean this test is a guard
+    // against the DEFENCES COLLECTIVELY disappearing, not a guard on any one
+    // of them. aHostileSubjectCannotEscapeTheSaveDirectory() covers the first
+    // layer on its own, and a single-layer mutation there does fail.
+    //
+    // The subject is ABSOLUTE rather than "../..", and that matters.
+    // QDir::absoluteFilePath() does not resolve ".." (measured: it
+    // concatenates), but the collision loop below can rename a relative
+    // traversal by accident when the target happens to exist, which makes it
+    // the weaker probe. An absolute candidate replaces the directory outright.
+    WorkerComposeFixture fixture;
+    QVERIFY(fixture.backed.fixture().addMessage(
+        QStringLiteral("work/inbox"), QStringLiteral("hostile@example.org"),
+        // The subject is the attacker's input, and it is what the default
+        // filename is derived from.
+        // Absolute, not "../..". QDir::absoluteFilePath() does NOT resolve
+        // ".." (measured: it concatenates, giving "<dir>/../../x"), but an
+        // ABSOLUTE candidate replaces the directory outright, which is the
+        // escape that survives every accident. A relative traversal can be
+        // neutralised by the collision loop renaming it when the target
+        // happens to exist, so it is the weaker probe of the two.
+        QStringLiteral("/tmp/qtmaildir-pwned-probe"),
+        QStringLiteral("sender@example.org"),
+        // Friday, verified with `date -d 2026-08-14 +%A`.
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(fixture.backed.buildWithAccounts(
+                 { { QStringLiteral("work"), QStringLiteral("work"), QString(),
+                     QStringLiteral("/bin/true"),
+                     QStringLiteral("you@example.org") } }),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QVERIFY(WorkerComposeFixture::selectTheMessage(window));
+
+    // A directory INSIDE another, so an escape has somewhere to land that the
+    // test can then look at. Escaping "out" writes into parent/, which is what
+    // the assertions below check is still empty.
+    QTemporaryDir parent;
+    QVERIFY(parent.isValid());
+    const QString out = parent.filePath(QStringLiteral("out"));
+    QVERIFY(QDir().mkpath(out));
+
+    window.saveDisplayedMessageForTest(out);
+
+    // The file landed inside the chosen directory.
+    // NOT QDir::Hidden. A file whose name begins with a dot is hidden on every
+    // Unix desktop, so the write would succeed while the user could not find
+    // what they saved. Listing without Hidden is what makes this assertion
+    // notice that, and it is how the leading-dot case was found: a traversing
+    // subject reduces to "..-..-etc-passwd" once its separators are replaced,
+    // which is a dotfile.
+    const QStringList inside =
+        QDir(out).entryList(QDir::Files | QDir::NoDotAndDotDot);
+    QCOMPARE(inside.size(), 1);
+    QVERIFY2(!inside.first().startsWith(QLatin1Char('.')),
+             qPrintable(QStringLiteral("the saved message is hidden: %1")
+                            .arg(inside.first())));
+
+    // And nothing was written beside it, which is where a traversal would go.
+    const QStringList escaped =
+        QDir(parent.path()).entryList(QDir::Files | QDir::NoDotAndDotDot);
+    QVERIFY2(escaped.isEmpty(),
+             qPrintable(QStringLiteral("a file escaped the directory: %1")
+                            .arg(escaped.join(QLatin1Char(' ')))));
+
+    // The written path really is contained, compared as PATHS rather than with
+    // startsWith(): a sibling directory whose name merely begins with the
+    // chosen one's is not inside it.
+    const QString written = QDir(out).absoluteFilePath(inside.first());
+    QVERIFY2(Attachment::isPathInsideDirectory(out, written),
+             qPrintable(QStringLiteral("escaped: %1").arg(written)));
+    QVERIFY2(QFileInfo(written).size() > 0, "the saved message is empty");
+}
+
+void TestMainWindow::aStuckComposeRequestDoesNotHijackTheNextPaneLoad()
+{
+    // A compose request for a message that is not in the index used to stay
+    // armed for ever, because it was cleared only on the branch that FOUND the
+    // id. The delayed symptom is the bad one: the pane's own loads are the
+    // traffic being matched against, so merely selecting that message later
+    // matched, opened a composer nobody asked for, and returned before
+    // renderMessages() leaving the pane blank on the row just clicked.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QVERIFY(WorkerComposeFixture::selectTheMessage(window));
+
+    // Arm a request for an id the database does not hold. loadMessage() emits
+    // an empty result for it, which is what must disarm the request.
+    window.requestMessageForComposeForTest(
+        QStringLiteral("nosuchmessage@example.org"),
+        ComposeContext::Kind::Reply, true);
+
+    // No composer, and the request stops being armed.
+    QTRY_VERIFY_WITH_TIMEOUT(!window.composeRequestPendingForTest(), 15000);
+    QCOMPARE(window.openComposerCount(), 0);
+
+    // Now the delayed half. Select the real message: the pane must render it,
+    // and no composer may appear. With the request still armed this failed
+    // only if the ids matched, so the request is re-armed for the REAL id to
+    // make the hijack reachable at all.
+    window.requestMessageForComposeForTest(
+        QStringLiteral("compose1@example.org"), ComposeContext::Kind::Reply,
+        true);
+    QTRY_VERIFY_WITH_TIMEOUT(!window.composeRequestPendingForTest(), 15000);
+
+    // That one DID match, so it opened a composer. Close it and clear the
+    // pane, then re-select and assert the pane renders rather than a second
+    // composer opening.
+    for (ComposeWindow *composer : window.openComposersForTest()) {
+        composer->show();
+        composer->close();
+    }
+    QCOMPARE(window.openComposerCount(), 0);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(model && view);
+    view->setCurrentIndex(QModelIndex());
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
+    QCOMPARE(window.openComposerCount(), 0);
+}
+
+void TestMainWindow::quittingClosesEveryComposerRatherThanOrphaningIt()
+{
+    // A composer is a parentless top-level window, deliberately: it must appear
+    // in the task switcher and be usable while the main window is. The cost is
+    // that closing the main window does NOT take it down, so quitting left a
+    // composer on screen with no application behind it, and Qt kept the process
+    // alive for it. Reported from a hand test: the main window closed, the
+    // orphan stayed, and its own close then raised the unsaved-edits dialog for
+    // a session the user had already ended.
+    //
+    // The quit path already ASKS about those edits and saves them; what it
+    // never did was close the windows afterwards.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.mailRootForTesting().isEmpty(), 15000);
+
+    // Two, so the fix cannot be "close the last one" and pass.
+    QVERIFY2(window.openComposerForTest(), "no composer opened");
+    QVERIFY2(window.openComposerForTest(), "no second composer opened");
+    QCOMPARE(window.openComposerCount(), 2);
+
+    // Clean composers: the point here is the CLOSE, not the unsaved-edits
+    // dialog, which has its own tests and would block this one on a modal.
+    window.show();
+    window.close();
+
+    // deleteLater() is how a composer goes away, so the count settles on the
+    // next event-loop pass rather than synchronously.
+    QTRY_COMPARE_WITH_TIMEOUT(window.openComposerCount(), 0, 5000);
+}
+
+void TestMainWindow::theSaveLoopToleratesAComposerClosedUnderTheDialog()
+{
+    // The regression for a measured use-after-free. composersBlockingQuit()
+    // used to return raw pointers, and the quit path held that list across
+    // QMessageBox::exec(). A nested event loop PROCESSES deleteLater(),
+    // verified in a standalone Qt program: a parentless WA_DeleteOnClose
+    // window closed while a modal is up is destroyed BEFORE exec() returns.
+    // The dialog is window-modal to the main window only, so a user really can
+    // close a composer from under it, and Save then ran on freed memory.
+    //
+    // The modal itself cannot be driven under the offscreen platform, so what
+    // is asserted is the property that makes the loop safe: the list holds
+    // QPointers, and an entry whose window is destroyed reads as null rather
+    // than as a dangling pointer. That is exactly what the null check in the
+    // Save loop consumes. Stated plainly because it is NOT full coverage of
+    // closeEvent(): see the report.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.mailRootForTesting().isEmpty(), 15000);
+
+    QVERIFY(window.openComposerForTest());
+    QVERIFY(window.openComposerForTest());
+    window.markComposersDirtyForTest();
+
+    QList<QPointer<ComposeWindow>> blocking = window.composersBlockingQuit();
+    QCOMPARE(blocking.size(), 2);
+
+    // Destroy one exactly as closing it under the dialog would, including the
+    // deleteLater() a nested exec() would process.
+    ComposeWindow *doomed = blocking.first().data();
+    QVERIFY(doomed);
+    doomed->show();
+    doomed->close();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    // The held list reports it as gone rather than handing back a dangling
+    // pointer. A raw QList<ComposeWindow *> could not express this at all.
+    QVERIFY2(blocking.first().isNull(),
+             "the held entry did not null when its window was destroyed");
+    QVERIFY2(!blocking.last().isNull(),
+             "the surviving composer was lost too");
+
+    // And the loop the quit path runs skips the null and still saves the
+    // survivor, which is the behaviour the crash destroyed: the remaining
+    // drafts were never written because the crash happened mid-loop.
+    int saved = 0;
+    for (const QPointer<ComposeWindow> &composer : blocking) {
+        if (composer) {
+            composer->saveDraftNow();
+            ++saved;
+        }
+    }
+    QCOMPARE(saved, 1);
+}
+
+namespace {
+
+/// Writes a multipart/mixed message with one named attachment part.
+///
+/// Hand-written rather than built with MessageBuilder: this is the INPUT to
+/// the forward path, and generating it with the same library that consumes it
+/// would let an encoding mistake agree with itself.
+bool writeMessageWithAttachment(const QString &path, const QString &attachName,
+                                const QByteArray &attachBody)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return false;
+    QByteArray raw =
+        "From: sender@example.org\n"
+        "To: you@example.org\n"
+        "Subject: Quarterly report\n"
+        "Message-ID: <fwd-1@example.org>\n"
+        // Friday, verified with `date -d 2026-08-14 +%A`. Qt::RFC2822Date
+        // validates the weekday against the date.
+        "Date: Fri, 14 Aug 2026 10:00:00 +0200\n"
+        "MIME-Version: 1.0\n"
+        "Content-Type: multipart/mixed; boundary=\"MIX\"\n"
+        "\n"
+        "--MIX\n"
+        "Content-Type: text/plain; charset=utf-8\n"
+        "\n"
+        "See the attached document.\n"
+        "--MIX\n"
+        "Content-Type: application/octet-stream; name=\"" + attachName.toUtf8() + "\"\n"
+        "Content-Disposition: attachment; filename=\"" + attachName.toUtf8() + "\"\n"
+        "\n" + attachBody + "\n"
+        "--MIX--\n";
+    file.write(raw);
+    file.close();
+    return true;
+}
+
+/// Writes a multipart/alternative message that DOES carry a text/html part.
+bool writeHtmlMessage(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return false;
+    file.write(
+        "From: sender@example.org\n"
+        "To: you@example.org\n"
+        "Subject: Has HTML\n"
+        "Message-ID: <html-1@example.org>\n"
+        "Date: Fri, 14 Aug 2026 10:00:00 +0200\n"
+        "MIME-Version: 1.0\n"
+        "Content-Type: multipart/alternative; boundary=\"ALT\"\n"
+        "\n"
+        "--ALT\n"
+        "Content-Type: text/plain; charset=utf-8\n"
+        "\n"
+        "plain\n"
+        "--ALT\n"
+        "Content-Type: text/html; charset=utf-8\n"
+        "\n"
+        "<p>html</p>\n"
+        "--ALT--\n");
+    file.close();
+    return true;
+}
+
+}  // namespace
+
+void TestMainWindow::forwardingCarriesTheOriginalsAttachments()
+{
+    // The spec requires Forward to carry attachments, twice. The context field
+    // existed and was never assigned, so a Forward opened with an empty
+    // attachment list: the composer looked entirely correct, and the recipient
+    // received a body quoting a document that was not attached, with nothing
+    // erroring anywhere.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString original = dir.filePath(QStringLiteral("original.eml"));
+    QVERIFY(writeMessageWithAttachment(original, QStringLiteral("report.pdf"),
+                                       QByteArray("PDFBYTES")));
+
+    QTemporaryDir confDir;
+    QVERIFY(confDir.isValid());
+    const QString confPath = confDir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QSettings settings(confPath, QSettings::IniFormat);
+        settings.beginGroup(QStringLiteral("account.work"));
+        settings.setValue(QStringLiteral("maildir"), QStringLiteral("work"));
+        settings.setValue(QStringLiteral("address"),
+                          QStringLiteral("you@example.org"));
+        settings.setValue(QStringLiteral("send_command"),
+                          QStringLiteral("/bin/true"));
+        settings.endGroup();
+        settings.sync();
+    }
+    Config config;
+    config.load(confPath);
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::Forward;
+    context.accountKey = QStringLiteral("work");
+    context.originalPath = original;
+    context.subject = QStringLiteral("Fwd: Quarterly report");
+
+    ComposeWindow composer(context, config, dir.path());
+
+    // The attachment is present, and it is a REAL FILE on disk rather than a
+    // remembered name: MessageBuilder reads every attachment by path at build
+    // time and refuses a build naming one that does not exist.
+    const QStringList attached = composer.attachments();
+    QCOMPARE(attached.size(), 1);
+    QVERIFY2(QFileInfo::exists(attached.first()),
+             qPrintable(QStringLiteral("the extracted path does not exist: %1")
+                            .arg(attached.first())));
+    QCOMPARE(QFileInfo(attached.first()).fileName(),
+             QStringLiteral("report.pdf"));
+
+    // And the bytes are the original's, not an empty placeholder.
+    QFile written(attached.first());
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    QCOMPARE(written.readAll(), QByteArray("PDFBYTES"));
+    written.close();
+
+    // A Reply to the same message carries NOTHING. The spec says attachments
+    // are carried "for Forward, empty otherwise", and a reply that re-attached
+    // the original's documents would send them back to their own sender.
+    ComposeContext replyContext = context;
+    replyContext.kind = ComposeContext::Kind::Reply;
+    ComposeWindow replyComposer(replyContext, config, dir.path());
+    QVERIFY2(replyComposer.attachments().isEmpty(),
+             "a reply carried the original's attachments");
+}
+
+void TestMainWindow::forwardSeedsHtmlFromTheConfigNotTheOriginal()
+{
+    // MEASURED, and it revises what the spec review reported. Forward was
+    // NEVER seeding from the original: ComposeWindow::seedFields() already
+    // implements the split itself (composewindow.cpp, `isReply ?
+    // m_context.seedHtml : m_config.compose().sendHtml`), so the context's
+    // value is IGNORED for a forward and the config won regardless. The
+    // openComposerFor() line this test also covers was therefore cosmetic
+    // rather than a live defect: it stopped the context carrying a value that
+    // nothing read, which is worth doing but changed no behaviour.
+    //
+    // The consequence for this test: EITHER layer alone enforces the rule, so
+    // neither single-layer mutation fails it, and only mutating both does.
+    // Verified in both directions rather than assumed.
+    //
+    // The spec splits these: New and Forward seed from [compose] send_html,
+    // Reply and Reply-all from whether the original carried a text/html part.
+    // An HTML part in the original is a fact about the SENDER's software, so
+    // it is the right seed when answering them and says nothing about a
+    // forward, which is a new message to somebody else.
+    //
+    // Asserted on the CONTEXT the window is built from rather than through the
+    // checkbox, because what is under test is which source the value comes
+    // from. The two sources must DISAGREE or the test passes either way: the
+    // config says false while the original is plain text, so reading the
+    // original would give false as well. Hence send_html=true against a plain
+    // original: config true, original false.
+    // The two sources must DISAGREE or the test passes whichever one is read,
+    // and getting that wrong is why an earlier version of this survived every
+    // mutation: config send_html=FALSE against an original that DOES carry a
+    // text/html part. Reading the original gives true, reading the config
+    // gives false, so the assertion below can only be satisfied one way.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("work"), QStringLiteral("work"),
+                              QString(), QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org") } },
+                          QStringLiteral("work/inbox"),
+                          QStringLiteral("send_html=false")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.mailRootForTesting().isEmpty(), 15000);
+    QCOMPARE(fixture.backed.config().compose().sendHtml, false);
+
+    // The original lives inside the account's maildir so accountForReply()
+    // can resolve it; its CONTENT is what matters, not that notmuch indexed it.
+    const QString original =
+        QDir(window.mailRootForTesting())
+            .absoluteFilePath(QStringLiteral("work/inbox/cur/fwd-original"));
+    QVERIFY(writeHtmlMessage(original));
+
+    MimeParser parser;
+    const ParsedMessage parsed = parser.parse(original);
+    QVERIFY(parsed.ok);
+    QCOMPARE(parsed.hasHtml(), true);
+
+    // Through openComposerFor(), which is the production line that chooses
+    // the source. Building the context by hand here and asserting on the
+    // checkbox proved only that ComposeWindow honours what it is given: the
+    // mutation putting `original.hasHtml()` back stayed green, because the
+    // test was setting seedHtml itself.
+    MessageRef ref;
+    ref.messageId = QStringLiteral("html-1@example.org");
+    ref.filePath = original;
+    ref.matched = true;
+
+    window.openComposerForTest(ref, ComposeContext::Kind::Forward, true);
+
+    QList<ComposeWindow *> opened = window.openComposersForTest();
+    QCOMPARE(opened.size(), 1);
+    auto *sendHtml =
+        opened.first()->findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    QVERIFY(sendHtml);
+    QVERIFY2(!sendHtml->isChecked(),
+             "Forward seeded sendHtml from the original's HTML part rather "
+             "than from [compose] send_html");
+
+    // The counterpart, and it is what stops this asserting "always false":
+    // a REPLY to the same message seeds from the original, so it is checked
+    // where the forward is not. Without this half, disabling the checkbox
+    // outright would pass.
+    window.openComposerForTest(ref, ComposeContext::Kind::Reply, true);
+    const QList<ComposeWindow *> both = window.openComposersForTest();
+    QCOMPARE(both.size(), 2);
+    auto *replyHtml =
+        both.last()->findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    QVERIFY(replyHtml);
+    QVERIFY2(replyHtml->isChecked(),
+             "Reply did not seed sendHtml from the original's HTML part");
+
+    for (ComposeWindow *composer : both) {
+        composer->show();
+        composer->close();
+    }
 }
 
 void TestMainWindow::aStartupAccountScopesTheStartupQuery()
@@ -10581,6 +11799,1122 @@ void TestMainWindow::deletingOutsideTheTrashViewLeavesTheRowInPlace()
     // taken the row away.
     QTest::qWait(1500);
     QCOMPARE(model->rowCount(QModelIndex()), 1);
+}
+
+// ---------------------------------------------------------------------------
+// ComposeWindow, item 123.
+//
+// The composer owns widgets and nothing else here does, which is why its cases
+// live in this file. What is asserted is deliberately NOT what it looks like:
+// the autosave dirty check, the banner state, the message its widgets produce,
+// the format edits and the seeding rules, all of which are observable without
+// a painter. CLAUDE.md's "Rendering probes lie" section covers why counting
+// pixels here would prove nothing.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A Config written to a temporary INI, plus a Maildir root to write into.
+///
+/// No notmuch database and no worker: the composer never touches
+/// NotmuchWorker, so building one would only cost every case a `notmuch new`.
+/// The mail root is passed to ComposeWindow explicitly, exactly as MainWindow
+/// passes what the worker reported (item 124: it is NOT database.path).
+class ComposeFixture
+{
+public:
+    /// `drafts` and `sent` are written only when non-empty, so a test can
+    /// build the account-without-a-drafts-folder case by passing an empty
+    /// string rather than by needing a second fixture.
+    /// `secondAccount` writes a SECOND sending account, which is what makes
+    /// the From dropdown have something to choose between. Off by default:
+    /// every other case here wants exactly one, so a two-account fixture
+    /// everywhere would let a test pass by picking the only entry there is.
+    bool build(const QString &drafts = QStringLiteral("Drafts"),
+               const QString &sent = QStringLiteral("Sent"),
+               const QString &extraCompose = QString(),
+               bool secondAccount = false)
+    {
+        if (!m_confDir.isValid() || !m_mailDir.isValid())
+            return false;
+
+        const QString path = m_confDir.filePath(QStringLiteral("qtmaildir.conf"));
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+            return false;
+        {
+            QTextStream out(&file);
+            // QSettings reads `/` in a section name as a group separator, so
+            // the section is [account.acct], never [account/acct].
+            out << "[account.acct]\n"
+                << "name=Test User\n"
+                << "address=user@example.org\n"
+                << "maildir=acct\n"
+                << "trash=Trash\n";
+            if (!drafts.isEmpty())
+                out << "drafts=" << drafts << "\n";
+            if (!sent.isEmpty())
+                out << "sent=" << sent << "\n";
+            // A command that exists and does nothing. canSend() is what the
+            // From dropdown filters on, so an account without this one line
+            // would not appear in it at all.
+            out << "send_command=/bin/true\n";
+            if (secondAccount) {
+                out << "\n[account.other]\n"
+                    << "name=Other User\n"
+                    << "address=other@example.org\n"
+                    << "maildir=other\n"
+                    << "trash=Trash\n"
+                    << "drafts=Drafts\n"
+                    << "sent=Sent\n"
+                    << "send_command=/bin/true\n";
+            }
+            out << "\n[compose]\n";
+            if (!extraCompose.isEmpty())
+                out << extraCompose << "\n";
+        }
+        file.close();
+
+        m_config.load(path);
+        return true;
+    }
+
+    const Config &config() const { return m_config; }
+    QString mailRoot() const { return m_mailDir.path(); }
+
+    /// The account's drafts folder, as the composer will resolve it.
+    QString draftsCur() const
+    {
+        return m_mailDir.path() + QStringLiteral("/acct/Drafts/cur");
+    }
+
+    /// The second account's drafts folder.
+    QString otherDraftsCur() const
+    {
+        return m_mailDir.path() + QStringLiteral("/other/Drafts/cur");
+    }
+
+    /// How many message files sit in the drafts folder.
+    int draftCount() const
+    {
+        return QDir(draftsCur(), {}, QDir::Name, QDir::Files).count();
+    }
+
+private:
+    QTemporaryDir m_confDir;
+    QTemporaryDir m_mailDir;
+    Config m_config;
+};
+
+/// A minimal New-message context for the fixture's one account.
+ComposeContext newContext()
+{
+    ComposeContext context;
+    context.accountKey = QStringLiteral("acct");
+    context.kind = ComposeContext::Kind::New;
+    return context;
+}
+
+}  // namespace
+
+void TestMainWindow::aComposerOpensClean()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+
+    // Seeding fills every field, which emits every field's change signal. A
+    // composer that counted those as edits would autosave a draft nobody
+    // asked for, and would tell the quit path there is unsaved work in a
+    // window the user opened and closed without typing.
+    QVERIFY(!window.hasUnsavedEdits());
+    QVERIFY(!window.lastSaveFailed());
+
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("autosave"));
+    QVERIFY2(timer, "no autosave timer: the window was never built");
+    QVERIFY2(!timer->isActive(),
+             "seeding armed the autosave timer, so a untouched composer writes");
+}
+
+void TestMainWindow::typingMarksTheComposerDirty()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+
+    QVERIFY(!window.hasUnsavedEdits());
+    body->setPlainText(QStringLiteral("Some text."));
+    QVERIFY(window.hasUnsavedEdits());
+
+    // The subject is part of the message as much as the body is: a draft that
+    // saved the body but not the address it was going to would be worse than
+    // none.
+    ComposeWindow second(newContext(), fixture.config(), fixture.mailRoot());
+    auto *subject = second.findChild<QLineEdit *>(QStringLiteral("subject"));
+    QVERIFY(subject);
+    QVERIFY(!second.hasUnsavedEdits());
+    subject->setText(QStringLiteral("A subject"));
+    QVERIFY(second.hasUnsavedEdits());
+}
+
+void TestMainWindow::anAutosaveWritesADraftAndClearsTheDirtyFlag()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("Draft body."));
+    QVERIFY(window.hasUnsavedEdits());
+
+    QVERIFY2(window.saveDraftNow(), "the draft write reported failure");
+
+    QCOMPARE(fixture.draftCount(), 1);
+    QVERIFY2(!window.hasUnsavedEdits(),
+             "the flag survived a successful save, so the quit path would ask");
+    QVERIFY(!window.lastSaveFailed());
+
+    // The bytes really are the message, not an empty file: the draft is
+    // byte-identical to what would be sent, which is the property the one
+    // built message exists for.
+    const QStringList files =
+        QDir(fixture.draftsCur(), {}, QDir::Name, QDir::Files).entryList();
+    QCOMPARE(files.size(), 1);
+    QFile written(fixture.draftsCur() + QLatin1Char('/') + files.first());
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    const QByteArray bytes = written.readAll();
+    QVERIFY2(bytes.contains("Draft body."), "the draft does not carry the body");
+    // Written with the Maildir draft flag, not left bare.
+    QVERIFY2(files.first().endsWith(QStringLiteral(":2,D")),
+             qPrintable(QStringLiteral("wrong maildir flags: ") + files.first()));
+}
+
+void TestMainWindow::anUnwritableDraftsFolderRaisesThePersistentBanner()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("Draft body."));
+
+    // A FILE where the folder must go. mkpath then fails, which is a real
+    // failure mode and needs no permission games that root would defeat.
+    const QString accountDir = fixture.mailRoot() + QStringLiteral("/acct");
+    QVERIFY(QDir().mkpath(accountDir));
+    QFile blocker(accountDir + QStringLiteral("/Drafts"));
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    blocker.write("not a directory");
+    blocker.close();
+
+    QVERIFY2(!window.saveDraftNow(), "an unwritable folder reported success");
+
+    auto *banner = window.findChild<QLabel *>(QStringLiteral("draftBanner"));
+    QVERIFY2(banner, "no banner widget");
+    QVERIFY2(!banner->text().isEmpty(), "the banner says nothing");
+    QVERIFY2(window.lastSaveFailed(),
+             "lastSaveFailed() is false after a failed write, so the quit "
+             "path would let the text go");
+    QVERIFY2(window.hasUnsavedEdits(),
+             "a failed save cleared the dirty flag, which claims the text is "
+             "safe on disk when it is not");
+}
+
+void TestMainWindow::aSuccessfulSaveClearsTheBanner()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("First."));
+
+    const QString accountDir = fixture.mailRoot() + QStringLiteral("/acct");
+    QVERIFY(QDir().mkpath(accountDir));
+    QFile blocker(accountDir + QStringLiteral("/Drafts"));
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    blocker.close();
+
+    QVERIFY(!window.saveDraftNow());
+    QVERIFY(window.lastSaveFailed());
+
+    // Remove the obstruction and save again. The banner must go: a warning
+    // that stays after the thing it warned about is fixed teaches the user to
+    // ignore warnings, which is the second lesson in the TagRules entry.
+    QVERIFY(QFile::remove(accountDir + QStringLiteral("/Drafts")));
+    body->setPlainText(QStringLiteral("Second."));
+
+    QVERIFY2(window.saveDraftNow(), "the retry failed");
+    QVERIFY2(!window.lastSaveFailed(), "lastSaveFailed() stayed set");
+
+    auto *banner = window.findChild<QLabel *>(QStringLiteral("draftBanner"));
+    QVERIFY(banner);
+    QVERIFY2(banner->isHidden(), "the banner is still up after a good save");
+}
+
+void TestMainWindow::anAccountWithoutADraftsFolderReportsNoFailure()
+{
+    ComposeFixture fixture;
+    // No drafts key at all: a real configuration, warned about at startup.
+    QVERIFY(fixture.build(QString()));
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("Nowhere to save this."));
+
+    // Nothing was written and nothing failed. Reporting a failure here would
+    // make the quit path offer a retry for a state no retry can change.
+    QVERIFY2(window.saveDraftNow(),
+             "a missing drafts folder was reported as a save failure");
+    QVERIFY2(!window.lastSaveFailed(), "the banner state was set");
+
+    auto *banner = window.findChild<QLabel *>(QStringLiteral("draftBanner"));
+    QVERIFY(banner);
+    QVERIFY(banner->isHidden());
+}
+
+void TestMainWindow::aRewrittenDraftUnlinksThePreviousRevision()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+
+    body->setPlainText(QStringLiteral("Revision one."));
+    QVERIFY(window.saveDraftNow());
+    QCOMPARE(fixture.draftCount(), 1);
+
+    body->setPlainText(QStringLiteral("Revision two."));
+    QVERIFY(window.saveDraftNow());
+
+    // ONE file, not two. Maildir has no in-place edit, so a draft rewritten
+    // every thirty seconds would otherwise accumulate one file per pause, and
+    // every one of them is a message mbsync uploads.
+    QCOMPARE(fixture.draftCount(), 1);
+
+    const QStringList files =
+        QDir(fixture.draftsCur(), {}, QDir::Name, QDir::Files).entryList();
+    QFile written(fixture.draftsCur() + QLatin1Char('/') + files.first());
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    const QByteArray bytes = written.readAll();
+    QVERIFY2(bytes.contains("Revision two."), "the surviving file is the old one");
+}
+
+void TestMainWindow::theComposerBuildsTheMessageItsWidgetsShow()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeContext context = newContext();
+    context.kind = ComposeContext::Kind::Reply;
+    context.inReplyTo = QStringLiteral("original@example.org");
+    context.references = { QStringLiteral("root@example.org"),
+                           QStringLiteral("original@example.org") };
+    context.to = { QStringLiteral("one@example.org") };
+    context.subject = QStringLiteral("Re: a subject");
+
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+
+    auto *cc = window.findChild<QLineEdit *>(QStringLiteral("cc"));
+    auto *bcc = window.findChild<QLineEdit *>(QStringLiteral("bcc"));
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(cc && bcc && body);
+
+    // A field the user typed, split on commas. That is wrong for a RAW header
+    // and right here: this is the composer's own rendering, which joins with
+    // ", ".
+    cc->setText(QStringLiteral("two@example.org, three@example.org"));
+    bcc->setText(QStringLiteral("  four@example.org  "));
+    body->setPlainText(QStringLiteral("The body."));
+
+    const OutgoingMessage message = window.currentMessage();
+    QCOMPARE(message.accountKey, QStringLiteral("acct"));
+    QCOMPARE(message.to, QStringList{ QStringLiteral("one@example.org") });
+    QCOMPARE(message.cc, (QStringList{ QStringLiteral("two@example.org"),
+                                       QStringLiteral("three@example.org") }));
+    // Trimmed, or the whitespace reaches the wire as part of the address.
+    QCOMPARE(message.bcc, QStringList{ QStringLiteral("four@example.org") });
+    QCOMPARE(message.subject, QStringLiteral("Re: a subject"));
+    QCOMPARE(message.markdownBody, QStringLiteral("The body."));
+
+    // NOT optional. Without them a reply appears as an orphan thread in the
+    // sender's own client, which is invisible locally.
+    QCOMPARE(message.inReplyTo, QStringLiteral("original@example.org"));
+    QCOMPARE(message.references.size(), 2);
+    QCOMPARE(message.references.last(), QStringLiteral("original@example.org"));
+}
+
+void TestMainWindow::theFromDropdownDecidesWhichAccountSends()
+{
+    // TWO sending accounts, because a dropdown with one entry cannot be
+    // changed and a test against it passes whether the code reads the dropdown
+    // or the context. The first revision of this test did exactly that: it
+    // asserted count() == 1 and then re-asserted a property another case
+    // already covers, and a mutation making currentAccount() read
+    // m_context.accountKey survived it.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QString(), /*secondAccount=*/true));
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *from = window.findChild<QComboBox *>(QStringLiteral("from"));
+    QVERIFY2(from, "no From dropdown");
+
+    // Both sending accounts are offered, seeded to the context's.
+    QCOMPARE(from->count(), 2);
+    QCOMPARE(from->currentData().toString(), QStringLiteral("acct"));
+    QCOMPARE(window.currentMessage().accountKey, QStringLiteral("acct"));
+
+    // Now change it. The dropdown is the authority once the window is open:
+    // reading the context here would send from the seeded account while the
+    // interface said otherwise.
+    const int other = from->findData(QStringLiteral("other"));
+    QVERIFY2(other >= 0, "the second account is not in the dropdown");
+    from->setCurrentIndex(other);
+
+    QCOMPARE(window.currentMessage().accountKey, QStringLiteral("other"));
+
+    // And the choice reaches the DRAFT's destination, not just the value:
+    // a draft is written into the sending account's own folder, so a composer
+    // that read the context would file it under the wrong account.
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("From the other account."));
+    QVERIFY(window.saveDraftNow());
+
+    QCOMPARE(QDir(fixture.otherDraftsCur(), {}, QDir::Name, QDir::Files).count(),
+             1u);
+    QCOMPARE(QDir(fixture.draftsCur(), {}, QDir::Name, QDir::Files).count(), 0u);
+}
+
+void TestMainWindow::aFormatEditPreservesTheUndoStack()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+
+    // Typed through a cursor, which is what makes it an undoable edit;
+    // setPlainText() would not be one.
+    QTextCursor typing = body->textCursor();
+    typing.insertText(QStringLiteral("hello"));
+    QVERIFY(body->document()->isUndoAvailable());
+
+    QTextCursor selection = body->textCursor();
+    selection.setPosition(0);
+    selection.setPosition(5, QTextCursor::KeepAnchor);
+    body->setTextCursor(selection);
+
+    auto *bold = window.findChild<QAction *>(QStringLiteral("format_bold"));
+    QVERIFY2(bold, "no bold action");
+    bold->trigger();
+
+    QCOMPARE(body->toPlainText(), QStringLiteral("**hello**"));
+
+    // The property the plan's setPlainText() draft would have lost. Measured
+    // in a standalone probe: setPlainText() takes isUndoAvailable from true to
+    // false, so every toolbar press would throw away everything the user could
+    // undo.
+    QVERIFY2(body->document()->isUndoAvailable(),
+             "the format edit destroyed the undo stack");
+
+    // And it is ONE undo step, not one per character: a whole-document
+    // replacement inside an edit block collapses to a single entry, so one
+    // Ctrl+Z takes the tokens off and leaves the typed word.
+    body->undo();
+    QCOMPARE(body->toPlainText(), QStringLiteral("hello"));
+}
+
+void TestMainWindow::aFormatEditRestoresTheSelectionItAsksFor()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("hello world"));
+
+    // A BACKWARDS selection, anchor after the cursor, which is what a
+    // right-to-left drag produces and an ordinary gesture. Measured against a
+    // real widget: selectionStart()/selectionEnd() come back normalised even
+    // then, so the anchor's side does not reach MarkdownFormat.
+    QTextCursor selection = body->textCursor();
+    selection.setPosition(5);
+    selection.setPosition(0, QTextCursor::KeepAnchor);
+    body->setTextCursor(selection);
+    QCOMPARE(body->textCursor().selectionStart(), 0);
+    QCOMPARE(body->textCursor().selectionEnd(), 5);
+
+    auto *italic = window.findChild<QAction *>(QStringLiteral("format_italic"));
+    QVERIFY(italic);
+    italic->trigger();
+
+    QCOMPARE(body->toPlainText(), QStringLiteral("*hello* world"));
+
+    // The selection is preserved precisely so a second press can apply a
+    // SECOND token to the same words, bold then italic without reselecting.
+    QCOMPARE(body->textCursor().selectedText(), QStringLiteral("hello"));
+
+    auto *bold = window.findChild<QAction *>(QStringLiteral("format_bold"));
+    QVERIFY(bold);
+    bold->trigger();
+    QCOMPARE(body->toPlainText(), QStringLiteral("***hello*** world"));
+}
+
+void TestMainWindow::aFormatEditOnAnEmptySelectionLandsBetweenTheTokens()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("ab"));
+
+    QTextCursor cursor = body->textCursor();
+    cursor.setPosition(1);
+    body->setTextCursor(cursor);
+
+    auto *bold = window.findChild<QAction *>(QStringLiteral("format_bold"));
+    QVERIFY(bold);
+    bold->trigger();
+
+    QCOMPARE(body->toPlainText(), QStringLiteral("a****b"));
+
+    // The property a user notices immediately when it is wrong, and the one
+    // invisible to a test that only compares the resulting text: typing must
+    // continue INSIDE the pair, not after it.
+    QCOMPARE(body->textCursor().position(), 3);
+    QVERIFY(!body->textCursor().hasSelection());
+
+    QTextCursor typing = body->textCursor();
+    typing.insertText(QStringLiteral("x"));
+    QCOMPARE(body->toPlainText(), QStringLiteral("a**x**b"));
+}
+
+void TestMainWindow::theAttachmentWarningRespectsTheConfiguredThreshold()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("attachment_warn_bytes=1000")));
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+
+    // The threshold, not the modal. The question itself needs a user, so what
+    // is asserted is the predicate that decides whether to ask.
+    QVERIFY2(!window.attachmentNeedsWarning(999), "warned below the limit");
+    QVERIFY2(!window.attachmentNeedsWarning(1000),
+             "warned AT the limit, which is not above it");
+    QVERIFY2(window.attachmentNeedsWarning(1001), "did not warn above the limit");
+}
+
+void TestMainWindow::aDisabledAttachmentWarningWarnsAboutNothing()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("attachment_warn_bytes=0")));
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+
+    // Zero means off, not "warn about everything". Read as a threshold it
+    // would question an empty file, which is the opposite of what turning a
+    // warning off means.
+    QVERIFY(!window.attachmentNeedsWarning(0));
+    QVERIFY(!window.attachmentNeedsWarning(1));
+    QVERIFY(!window.attachmentNeedsWarning(100LL * 1024 * 1024));
+}
+
+void TestMainWindow::theQuotePositionDecidesWhereTheQuoteLands()
+{
+    const QString quote = QStringLiteral("> the original");
+
+    {
+        ComposeFixture above;
+        QVERIFY(above.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                            QStringLiteral("quote_position=above")));
+        ComposeContext context = newContext();
+        context.kind = ComposeContext::Kind::Reply;
+        context.quotedBody = quote;
+
+        ComposeWindow window(context, above.config(), above.mailRoot());
+        auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+        QVERIFY(body);
+        QVERIFY2(body->toPlainText().startsWith(quote),
+                 "quote_position=above did not put the quote first");
+    }
+
+    {
+        ComposeFixture below;
+        QVERIFY(below.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                            QStringLiteral("quote_position=below")));
+        ComposeContext context = newContext();
+        context.kind = ComposeContext::Kind::Reply;
+        context.quotedBody = quote;
+
+        ComposeWindow window(context, below.config(), below.mailRoot());
+        auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+        QVERIFY(body);
+        QVERIFY2(body->toPlainText().endsWith(quote),
+                 "quote_position=below did not put the quote last");
+        QVERIFY2(!body->toPlainText().startsWith(quote),
+                 "the quote is at the top under quote_position=below");
+    }
+}
+
+void TestMainWindow::theSeededQuoteIsNotAnUndoStep()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeContext context = newContext();
+    context.kind = ComposeContext::Kind::Reply;
+    context.quotedBody = QStringLiteral("> the original");
+
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    QVERIFY(!body->toPlainText().isEmpty());
+
+    // The seeded quote is not an edit the user made. One Ctrl+Z on a fresh
+    // composer must not wipe it, which reads as the buffer losing its content.
+    //
+    // Worth knowing before judging this test dead weight: removing
+    // clearUndoRedoStacks() alone leaves it GREEN, because setPlainText()
+    // already leaves undo unavailable. The line it guards becomes load-bearing
+    // the moment seedBody() stops using setPlainText, which is a change with
+    // reasons to happen: applyEdit() switched to a QTextCursor replacement for
+    // exactly the undo-stack property this asserts, and a later revision
+    // seeding the quote the same way would put it on the stack. The combined
+    // mutation (seed through a cursor AND drop the clear) does kill this.
+    QVERIFY2(!body->document()->isUndoAvailable(),
+             "the seeded quote is on the undo stack");
+}
+
+void TestMainWindow::aReplySeedsTheHtmlToggleFromTheOriginal()
+{
+    ComposeFixture fixture;
+    // Config says yes; the original says no. The original wins for a reply:
+    // an HTML part in it is a fact about the sender's software, not a guess
+    // about their taste.
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_html=true")));
+
+    ComposeContext context = newContext();
+    context.kind = ComposeContext::Kind::Reply;
+    context.seedHtml = false;
+
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+    auto *toggle = window.findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    QVERIFY2(toggle, "no send-html toggle");
+    QVERIFY2(!toggle->isChecked(),
+             "a reply seeded from config rather than from the original");
+
+    // And the other way round, so the test cannot pass by always reading
+    // false: a plain-text config with an HTML original still offers HTML.
+    ComposeFixture plain;
+    QVERIFY(plain.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                        QStringLiteral("send_html=false")));
+    ComposeContext htmlReply = newContext();
+    htmlReply.kind = ComposeContext::Kind::ReplyAll;
+    htmlReply.seedHtml = true;
+
+    ComposeWindow second(htmlReply, plain.config(), plain.mailRoot());
+    auto *secondToggle =
+        second.findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    QVERIFY(secondToggle);
+    QVERIFY2(secondToggle->isChecked(),
+             "a reply-all ignored an HTML original");
+}
+
+void TestMainWindow::aNewMessageSeedsTheHtmlToggleFromConfig()
+{
+    ComposeFixture off;
+    QVERIFY(off.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                      QStringLiteral("send_html=false")));
+
+    // seedHtml is deliberately TRUE here and must be ignored: a New message
+    // has no original to take evidence from, so a composer reading it would be
+    // reading a field nothing filled in.
+    ComposeContext context = newContext();
+    context.seedHtml = true;
+
+    ComposeWindow window(context, off.config(), off.mailRoot());
+    auto *toggle = window.findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    QVERIFY(toggle);
+    QVERIFY2(!toggle->isChecked(), "a New message ignored [compose] send_html");
+
+    ComposeFixture on;
+    QVERIFY(on.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                     QStringLiteral("send_html=true")));
+    ComposeContext forward = newContext();
+    forward.kind = ComposeContext::Kind::Forward;
+    forward.seedHtml = false;
+
+    ComposeWindow second(forward, on.config(), on.mailRoot());
+    auto *secondToggle =
+        second.findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    QVERIFY(secondToggle);
+    QVERIFY2(secondToggle->isChecked(),
+             "a Forward seeded from the original rather than from config");
+}
+
+void TestMainWindow::disablingInputsCoversEveryFieldAndTheToolbar()
+{
+    ComposeFixture fixture;
+    // Zero delay: the countdown is skipped and the send commits at once, which
+    // is the state the inputs must already be disabled in.
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=0")));
+
+    ComposeContext context = newContext();
+    context.to = { QStringLiteral("someone@example.org") };
+
+    // Heap-allocated and tracked with a QPointer, because ComposeWindow sets
+    // WA_DeleteOnClose and this case really does complete a send: the window
+    // deletes itself on the way out, so a stack instance would be destroyed
+    // twice. Every other case here stays on the stack, since none of them
+    // closes.
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, fixture.config(), fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("Text."));
+
+    auto *toolbar = window->findChild<QToolBar *>(QStringLiteral("formatToolbar"));
+    auto *to = window->findChild<QLineEdit *>(QStringLiteral("to"));
+    auto *subject = window->findChild<QLineEdit *>(QStringLiteral("subject"));
+    auto *from = window->findChild<QComboBox *>(QStringLiteral("from"));
+    auto *toggle = window->findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    QVERIFY(toolbar && to && subject && from && toggle);
+
+    QVERIFY(to->isEnabled());
+    QVERIFY(!body->isReadOnly());
+
+    auto *sendAction = window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY2(sendAction, "no send action");
+    sendAction->trigger();
+
+    // The message must not change between pressing Send and the bytes being
+    // built, so every input goes down for the WHOLE operation, countdown
+    // included. The body is made read-only rather than disabled, so its text
+    // stays selectable and legible while the send runs.
+    QVERIFY2(!to->isEnabled(), "the To field is still editable during a send");
+    QVERIFY2(!subject->isEnabled(), "the subject is still editable");
+    QVERIFY2(!from->isEnabled(), "the account can still be changed");
+    QVERIFY2(!toggle->isEnabled(), "the HTML toggle can still be flipped");
+    QVERIFY2(body->isReadOnly(), "the body is still writable during a send");
+    QVERIFY2(!toolbar->isEnabled(), "the formatting toolbar is still live");
+    auto *attachments =
+        window->findChild<QListWidget *>(QStringLiteral("attachments"));
+    QVERIFY(attachments);
+    QVERIFY2(!attachments->isEnabled(),
+             "the attachment list is still live during a send");
+
+    // /bin/true is the fixture's send command, so the send succeeds and the
+    // composer closes itself: the message went, and holding a composer open
+    // for a message already sent invites sending it twice. Waited on rather
+    // than asserted immediately, since the process is handed to the event loop
+    // and nothing here blocks on it. WA_DeleteOnClose then destroys the
+    // window, which is what the QPointer observes.
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 15000);
+
+    // And the sent copy really was filed, which is the stage after the send
+    // and the one whose failure the design treats as the worst outcome here.
+    const QString sentCur =
+        fixture.mailRoot() + QStringLiteral("/acct/Sent/cur");
+    QCOMPARE(QDir(sentCur, {}, QDir::Name, QDir::Files).count(), 1u);
+}
+
+void TestMainWindow::aFailedSendCanBeRetriedWithoutFilingTheWrongCopy()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=0")));
+
+    // A stub whose outcome is switched by a sentinel file, so ONE configured
+    // command can fail and then succeed. It appends its stdin to a log, which
+    // is what makes the delivery count observable: the defect this guards
+    // against files a sent copy of the FIRST message when the second finishes,
+    // and a receiver count is the only thing that shows it.
+    QTemporaryDir stubDir;
+    QVERIFY(stubDir.isValid());
+    const QString sentinel = stubDir.filePath(QStringLiteral("succeed"));
+    const QString stub = stubDir.filePath(QStringLiteral("send.sh"));
+    {
+        QFile script(stub);
+        QVERIFY(script.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&script);
+        out << "#!/bin/sh\n"
+            << "cat >> " << stubDir.filePath(QStringLiteral("stdin.log")) << "\n"
+            << "[ -f " << sentinel << " ] || { echo 'refused' >&2; exit 1; }\n"
+            << "exit 0\n";
+    }
+    QVERIFY(QFile::setPermissions(
+        stub, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                  | QFileDevice::ExeOwner));
+
+    // A FRESH Config, not a copy of the fixture's reloaded: Config::load()
+    // does not clear what a previous load put there, so a copy keeps the
+    // fixture's /bin/true and this test would silently exercise a command that
+    // always succeeds. Measured, and it produced a green nothing.
+    Config config;
+    {
+        const QString path = QStringLiteral("%1/retry.conf").arg(stubDir.path());
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&file);
+        out << "[account.acct]\n"
+            << "name=Test User\n"
+            << "address=user@example.org\n"
+            << "maildir=acct\n"
+            << "trash=Trash\n"
+            << "drafts=Drafts\n"
+            << "sent=Sent\n"
+            << "send_command=" << stub << "\n"
+            << "\n[compose]\n"
+            << "send_delay_ms=0\n";
+        file.close();
+        config.load(path);
+    }
+
+    ComposeContext context = newContext();
+    context.to = { QStringLiteral("someone@example.org") };
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, config, fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction = window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(body && sendAction);
+
+    body->setPlainText(QStringLiteral("FIRST attempt."));
+    sendAction->trigger();
+
+    // The failure re-enables the composer intact and shows the stderr; the
+    // window stays open and the draft stays.
+    auto *pane = window->findChild<QWidget *>(QStringLiteral("sendLogPane"));
+    QVERIFY(pane);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->isHidden(), 15000);
+
+    QVERIFY2(!window.isNull(), "a failed send closed the composer");
+    QVERIFY2(body->isEnabled() && !body->isReadOnly(),
+             "a failed send left the composer disabled");
+
+    // Correct the message and send again, this time succeeding. Without
+    // Qt::SingleShotConnection on the per-send connect, the first send's
+    // lambda is still attached: the second result runs BOTH, and the first
+    // still holds the FIRST message's bytes, so it files a sent copy of the
+    // wrong message and acts on a dialog it already destroyed.
+    QFile marker(sentinel);
+    QVERIFY(marker.open(QIODevice::WriteOnly));
+    marker.close();
+
+    body->setPlainText(QStringLiteral("SECOND attempt."));
+    sendAction->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 15000);
+
+    // Exactly ONE sent copy, and it is the second message. Two files, or one
+    // carrying the first attempt, is the accumulated-receiver defect.
+    const QString sentCur = fixture.mailRoot() + QStringLiteral("/acct/Sent/cur");
+    const QStringList filed =
+        QDir(sentCur, {}, QDir::Name, QDir::Files).entryList();
+    QCOMPARE(filed.size(), 1);
+
+    QFile copy(sentCur + QLatin1Char('/') + filed.first());
+    QVERIFY(copy.open(QIODevice::ReadOnly));
+    const QByteArray bytes = copy.readAll();
+    QVERIFY2(bytes.contains("SECOND attempt."),
+             "the filed copy is not the message that was sent");
+    QVERIFY2(!bytes.contains("FIRST attempt."),
+             "the filed copy is the FIRST message, which never went");
+}
+
+void TestMainWindow::anUnchangedMessageIsNotWrittenAgain()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    ComposeWindow window(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+
+    body->setPlainText(QStringLiteral("Once."));
+    QVERIFY(window.saveDraftNow());
+    QCOMPARE(fixture.draftCount(), 1);
+
+    const QStringList first =
+        QDir(fixture.draftsCur(), {}, QDir::Name, QDir::Files).entryList();
+    QCOMPARE(first.size(), 1);
+
+    // Nothing has changed, so nothing is written. Every autosave produces a
+    // Maildir write that mbsync uploads, so this check and the debounce
+    // together are what keep a message to a few revisions rather than dozens.
+    //
+    // The FILENAME is what shows it: DraftStore always generates a fresh name
+    // and unlinks the previous one, so a redundant write leaves exactly one
+    // file too, and a count alone cannot tell a skipped write from a repeated
+    // one. Two runs of this test asserting only on the count would pass
+    // against no check at all.
+    QVERIFY2(window.saveDraftNow(), "the redundant save reported failure");
+    QCOMPARE(fixture.draftCount(), 1);
+    const QStringList second =
+        QDir(fixture.draftsCur(), {}, QDir::Name, QDir::Files).entryList();
+    QCOMPARE(second, first);
+
+    // And a real change still writes: a check that skipped everything would
+    // pass the assertion above and lose the user's text.
+    body->setPlainText(QStringLiteral("Twice."));
+    QVERIFY(window.saveDraftNow());
+    const QStringList third =
+        QDir(fixture.draftsCur(), {}, QDir::Name, QDir::Files).entryList();
+    QCOMPARE(third.size(), 1);
+    QVERIFY2(third != first, "a changed message was not written");
+}
+
+void TestMainWindow::closingInsideTheDebounceStillSavesTheDraft()
+{
+    ComposeFixture fixture;
+    // A debounce far longer than this test, so the timer provably never fires
+    // and the only thing that can write is the close itself.
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("autosave_interval_ms=600000")));
+
+    // Heap-allocated: WA_DeleteOnClose destroys the window on the way out, so
+    // a stack instance would be destroyed twice.
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(newContext(), fixture.config(), fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+
+    body->setPlainText(QStringLiteral("A paragraph typed and not yet saved."));
+    QVERIFY(window->hasUnsavedEdits());
+
+    // The timer has NOT fired. Asserted rather than assumed: if it had, the
+    // draft below would prove nothing about the close path.
+    auto *timer = window->findChild<QTimer *>(QStringLiteral("autosave"));
+    QVERIFY(timer);
+    QVERIFY2(timer->isActive(), "the debounce is not running");
+    QCOMPARE(fixture.draftCount(), 0);
+
+    // The window manager's X button, which is the route that reaches
+    // closeEvent. Typing a paragraph and pressing it inside the debounce
+    // interval must not lose the text.
+    window->close();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 5000);
+
+    QCOMPARE(fixture.draftCount(), 1);
+    const QStringList files =
+        QDir(fixture.draftsCur(), {}, QDir::Name, QDir::Files).entryList();
+    QCOMPARE(files.size(), 1);
+    QFile written(fixture.draftsCur() + QLatin1Char('/') + files.first());
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    QVERIFY2(written.readAll().contains("A paragraph typed and not yet saved."),
+             "the close wrote a draft that is not the text that was typed");
+}
+
+void TestMainWindow::closingAfterASendWritesNoFurtherDraft()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=0")));
+
+    ComposeContext context = newContext();
+    context.to = { QStringLiteral("someone@example.org") };
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, fixture.config(), fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction = window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(body && sendAction);
+
+    body->setPlainText(QStringLiteral("Text that is about to be sent."));
+
+    // A draft on disk first, so the send's removal of it is observable and the
+    // close-path save has something it could wrongly put back.
+    QVERIFY(window->saveDraftNow());
+    QCOMPARE(fixture.draftCount(), 1);
+
+    // Now edit again WITHOUT saving, so m_dirty is true at the moment the
+    // send completes. This is what makes the m_finished guard load-bearing:
+    // without it the close that follows a successful send would write a draft
+    // for a message already sent, restoring the file the send just unlinked.
+    body->setPlainText(QStringLiteral("Text that is about to be sent, edited."));
+    QVERIFY(window->hasUnsavedEdits());
+
+    sendAction->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 15000);
+
+    // The message went, so the drafts folder is EMPTY. A draft left behind is
+    // a message the user sees waiting to be finished when it has already been
+    // delivered.
+    QCOMPARE(fixture.draftCount(), 0);
+
+    // And the sent copy is there, so this is a completed send rather than a
+    // send that never happened leaving nothing behind either way.
+    const QString sentCur = fixture.mailRoot() + QStringLiteral("/acct/Sent/cur");
+    QCOMPARE(QDir(sentCur, {}, QDir::Name, QDir::Files).count(), 1u);
+}
+
+void TestMainWindow::aCloseDuringTheCountdownIsRefused()
+{
+    ComposeFixture fixture;
+    // A countdown long enough to close inside. The default is 5000; this is
+    // the window the guard exists for and it must be provably still open when
+    // the close is attempted.
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=30000")));
+
+    ComposeContext context = newContext();
+    context.to = { QStringLiteral("someone@example.org") };
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, fixture.config(), fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction = window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(body && sendAction);
+    body->setPlainText(QStringLiteral("Sent after a countdown."));
+
+    sendAction->trigger();
+
+    // Still counting down: the popup is up and nothing has been sent. The
+    // sent folder is the evidence, since it is written only after the command
+    // succeeds.
+    auto *dialog = window->findChild<SendDialog *>();
+    QVERIFY2(dialog, "no send popup");
+    QVERIFY2(!dialog->isCommitted(), "the countdown already committed");
+
+    // Close during the countdown. Refused: accepting it would destroy this
+    // window, take the parented SendDialog down with it, and committed() would
+    // never fire. The user pressed Send, watched a countdown, and would
+    // believe the mail went.
+    window->close();
+
+    // Given a moment for a deletion event to be delivered if one was posted,
+    // then asserted still alive. An immediate check would pass against a
+    // deleteLater() already queued.
+    QTest::qWait(300);
+    QVERIFY2(!window.isNull(),
+             "the close was accepted during the countdown, so the send was "
+             "silently abandoned after the user pressed Send");
+    QVERIFY2(window->isVisible() || !window.isNull(), "the window went away");
+
+    // The send never happened, which is the point: nothing was filed.
+    const QString sentCur = fixture.mailRoot() + QStringLiteral("/acct/Sent/cur");
+    QCOMPARE(QDir(sentCur, {}, QDir::Name, QDir::Files).count(), 0u);
+
+    // Cleaned up by hand, since the window refuses to close while the popup is
+    // up and the test must not leak it into the next case.
+    delete window;
+}
+
+void TestMainWindow::aFailedSendKeepsTheTextThatFailedToGo()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=0")));
+
+    QTemporaryDir stubDir;
+    QVERIFY(stubDir.isValid());
+    const QString stub = stubDir.filePath(QStringLiteral("fail.sh"));
+    {
+        QFile script(stub);
+        QVERIFY(script.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&script);
+        out << "#!/bin/sh\ncat > /dev/null\necho 'refused' >&2\nexit 1\n";
+    }
+    QVERIFY(QFile::setPermissions(
+        stub, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                  | QFileDevice::ExeOwner));
+
+    Config config;
+    {
+        const QString path = stubDir.filePath(QStringLiteral("fail.conf"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&file);
+        out << "[account.acct]\n"
+            << "name=Test User\naddress=user@example.org\n"
+            << "maildir=acct\ntrash=Trash\ndrafts=Drafts\nsent=Sent\n"
+            << "send_command=" << stub << "\n"
+            << "\n[compose]\nsend_delay_ms=0\n";
+        file.close();
+        config.load(path);
+    }
+
+    ComposeContext context = newContext();
+    context.to = { QStringLiteral("someone@example.org") };
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, config, fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction = window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(body && sendAction);
+
+    // An OLD revision on disk, then an edit that is not saved. send() builds
+    // from the widgets without saving, so without the fix the file left behind
+    // after the failure is the old text: the user watches their correction be
+    // sent, sees it fail, and gets the uncorrected version back.
+    body->setPlainText(QStringLiteral("The ORIGINAL text."));
+    QVERIFY(window->saveDraftNow());
+    QCOMPARE(fixture.draftCount(), 1);
+
+    body->setPlainText(QStringLiteral("The CORRECTED text."));
+    sendAction->trigger();
+
+    auto *pane = window->findChild<QWidget *>(QStringLiteral("sendLogPane"));
+    QVERIFY(pane);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->isHidden(), 15000);
+    QVERIFY2(!window.isNull(), "a failed send closed the composer");
+
+    // Exactly one draft, and it is the text that was attempted.
+    QCOMPARE(fixture.draftCount(), 1);
+    const QStringList files =
+        QDir(fixture.draftsCur(), {}, QDir::Name, QDir::Files).entryList();
+    QCOMPARE(files.size(), 1);
+    QFile written(fixture.draftsCur() + QLatin1Char('/') + files.first());
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    const QByteArray bytes = written.readAll();
+    QVERIFY2(bytes.contains("The CORRECTED text."),
+             "the draft kept after a failed send is not what was attempted");
+    QVERIFY2(!bytes.contains("The ORIGINAL text."),
+             "the draft kept after a failed send is the PRE-EDIT revision");
+
+    delete window;
+}
+
+void TestMainWindow::aSmallSizeLimitIsNotDescribedAsZeroMegabytes()
+{
+    // Integer MB division made every figure under a megabyte read as "0 MB",
+    // in BOTH halves of the same sentence: "'x' is 0 MB. Many mail servers
+    // refuse messages above about 0 MB."
+    QVERIFY2(!ComposeWindow::humanSize(500 * 1024).contains(QStringLiteral("0 MB")),
+             "half a megabyte is described as 0 MB");
+    QVERIFY2(!ComposeWindow::humanSize(1000).contains(QStringLiteral("0 MB")),
+             "a kilobyte is described as 0 MB");
+
+    // The unit steps down rather than reporting zero of a larger one.
+    QVERIFY(ComposeWindow::humanSize(500 * 1024).contains(QStringLiteral("KB")));
+    QVERIFY(ComposeWindow::humanSize(512).contains(QStringLiteral("bytes")));
+
+    // A decimal while the figure is small enough for it to say something, so
+    // 26 MB and 26.2 MB are not the same string.
+    QVERIFY(ComposeWindow::humanSize(26214400).contains(QStringLiteral("MB")));
+    QVERIFY2(ComposeWindow::humanSize(1024 * 1024 * 3 / 2)
+                 .contains(QStringLiteral(".")),
+             "1.5 MB lost its decimal");
 }
 
 #include "test_mainwindow.moc"

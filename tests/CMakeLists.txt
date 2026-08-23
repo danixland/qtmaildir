@@ -68,9 +68,37 @@ add_qtmaildir_test(searchterm)
 add_qtmaildir_test(busyindicator)
 add_qtmaildir_test(tagstrip)
 add_qtmaildir_test(messagedetailsdialog)
+add_qtmaildir_test(markdownrenderer)
+add_qtmaildir_test(messagebuilder)
+add_qtmaildir_test(maildirname)
+add_qtmaildir_test(draftstore)
+add_qtmaildir_test(messagesender)
+add_qtmaildir_test(composecontext)
+add_qtmaildir_test(formattoolbar)
+add_qtmaildir_test(senddialog)
 add_qtmaildir_test(translations)
 # Asserts on the tracked .ts rather than the generated .qm: an untranslated
 # string is dropped by lrelease, so it is invisible in the .qm and shows up
 # only as English in a running Italian UI.
 target_compile_definitions(test_translations PRIVATE
     TRANSLATIONS_DIR="${CMAKE_SOURCE_DIR}/translations")
+
+# The notmuch hooks (assets/hooks/), which are Python rather than C++ and are
+# therefore registered directly rather than through add_qtmaildir_test().
+#
+# They run against the user's REAL mail on every sync, so they belong in the
+# suite rather than beside it as scripts someone remembers to run. Two of the
+# three need `notmuch` on PATH and build a throwaway database in a temp
+# directory; none of them touches the real one.
+#
+# No QT_QPA_PLATFORM here: nothing Qt is involved.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    foreach(hook_test mailrules post_new qtmaildirconf)
+        add_test(NAME hooks_${hook_test}
+                 COMMAND ${Python3_EXECUTABLE}
+                         ${CMAKE_SOURCE_DIR}/assets/hooks/test_${hook_test}.py)
+    endforeach()
+else()
+    message(STATUS "Python3 not found: the notmuch hook tests will not run")
+endif()

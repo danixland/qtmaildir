@@ -1,8 +1,8 @@
 # qtmaildir
 
-A Qt6 desktop mail client for reading and organizing a local,
-notmuch-indexed Maildir. A GUI counterpart to neomutt for the parts of mail
-handling that are easier with a mouse and a real HTML renderer.
+A Qt6 desktop mail client for reading, organizing and writing mail in a
+local, notmuch-indexed Maildir. A GUI counterpart to neomutt for the parts of
+mail handling that are easier with a mouse and a real HTML renderer.
 
 ## What it does not do
 
@@ -18,8 +18,10 @@ script means joining the `flock` that already serializes it against cron; a
 built-in implementation would sit outside that lock and could run two
 `mbsync` processes over one Maildir, which corrupts UID state.
 
-Sending is not implemented. Compose, reply, forward and send are planned for
-v2 and need a companion send script that does not exist yet.
+Sending follows the same rule. The application builds the message and hands
+it to a command you configure, on stdin; it speaks no SMTP itself. Any sendmail
+compatible program does (msmtp, ssmtp, the real sendmail), which keeps the
+credentials in that program's own store rather than in this one's config.
 
 There is also no dry-run and no "are you sure?" on destructive actions. The
 answer for a human at a GUI is undo, which is implemented, and which is
@@ -225,9 +227,21 @@ identity.
 [account.work]
 name = Your Name
 address = you@example.org
-maildir = work-mail        ; relative to notmuch's database.path
-drafts = Drafts            ; recorded for v2; unused today
-sent = Sent                ; optional; enables the Sent button for this account
+maildir = work-mail        ; relative to notmuch's mail root
+trash = Trash              ; Delete moves the file here. Not optional in
+                           ;   practice: without it the application reports a
+                           ;   config problem and Delete does not work.
+drafts = Drafts            ; optional; where the composer autosaves
+sent = Sent                ; optional; enables the Sent button, and where a
+                           ;   sent copy is filed
+inbox = Inbox              ; optional; where Restore puts a message whose
+                           ;   origin is unknown. Defaults to "Inbox"
+
+; Optional, and its absence is what makes an account receive-only: with no
+; send_command the compose actions are disabled for it. The message is written
+; to the command's stdin. Run WITHOUT a shell, so no pipes or redirections;
+; give an absolute path and plain arguments.
+send_command = /usr/bin/msmtp -a work -t
 label = W                  ; optional chip text; defaults to the key
 color = #2f6fa8            ; optional chip colour; generated when unset
 channel = work             ; optional mbsync channel; defaults to the key
@@ -236,7 +250,37 @@ channel = work             ; optional mbsync channel; defaults to the key
 name = Your Name
 address = you@example.net
 maildir = personal
+trash = Trash
 drafts = Drafts
+
+; Optional, and global rather than per-account. Every key below shows its
+; default, so an omitted [compose] section behaves exactly like this one.
+[compose]
+; Send an HTML part alongside the plain text one. The composer's own checkbox
+; overrides this per message. It seeds New and Forward only: a Reply follows
+; whether the message being answered carried an HTML part, which is a fact
+; about the sender's software rather than a guess about their taste.
+send_html = true
+
+; Where the quoted original goes in a reply: above or below.
+quote_position = above
+
+; How long the send popup counts down before the command runs, in
+; milliseconds. This is the window in which Undo can still stop it; 0 skips
+; the countdown and sends at once.
+send_delay_ms = 5000
+
+; How often an open composer autosaves its draft, in milliseconds. Values
+; below 1000 are raised to it.
+autosave_interval_ms = 30000
+
+; Preferred account for a new message while the dropdown is on All accounts.
+; Ignored when it names an account that cannot send.
+; default_account = work
+
+; Warn before attaching a file larger than this, in bytes. 25 MiB by default,
+; which is the limit most providers enforce.
+attachment_warn_bytes = 26214400
 
 [tagcolors]
 ; Optional. Colours resolve by exact tag first, then by top-level prefix, so
@@ -440,6 +484,34 @@ A paperclip in the leftmost column of the thread list marks threads that carry
 an attachment, so it is visible without opening the thread. It comes from the
 `attachment` tag notmuch applies while indexing, not from parsing the message,
 and costs no extra query.
+
+## Composing
+
+**Ctrl+N** opens a composer; Reply, Reply all, Reply without quoting and
+Forward start one from the selected message. Each is a window in its own
+right, so several can be open at once and the main window stays usable behind
+them.
+
+The body is **markdown**. It is sent as plain text, and the markdown is what
+you typed rather than a rendering of it, so a recipient reading plain text
+sees exactly the source. Tick "Also send a formatted copy" and an HTML part is
+rendered from that same source and sent alongside it, in a
+`multipart/alternative`; `[compose] send_html` sets the default.
+
+Drafts autosave to the account's `drafts` folder while you type, as ordinary
+Maildir files, so mbsync carries them to the server like any other message and
+another client can pick one up. Closing a composer with unsaved edits asks
+first, and so does quitting with one open.
+
+Sending goes through the account's `send_command`, which receives the finished
+message on stdin. An account without one is receive-only, and the composer
+says so rather than failing at the end. A copy of what was sent is filed in
+the account's `sent` folder.
+
+**Send waits.** A popup counts down before the command runs, and Undo during
+that window stops it and returns you to the composer with everything intact.
+Nothing has reached the network until the countdown ends;
+`[compose] send_delay_ms` sets how long it lasts, and 0 removes it.
 
 ## Tagging
 

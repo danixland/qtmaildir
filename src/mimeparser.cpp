@@ -412,9 +412,11 @@ ParsedMessage MimeParser::parse(const QString &filePath) const
     out.subject = QString::fromUtf8(
         g_mime_message_get_subject(message) ?: "");
     out.from = headerText(message, "From");
+    out.replyTo = headerText(message, "Reply-To");
     out.to = headerText(message, "To");
     out.cc = headerText(message, "Cc");
     out.date = headerText(message, "Date");
+    out.references = headerText(message, "References");
     out.messageId = QString::fromUtf8(
         g_mime_message_get_message_id(message) ?: "");
 

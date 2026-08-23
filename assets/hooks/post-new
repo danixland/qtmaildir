@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+#
+# Copyright (C) 2026 Danilo M. <danix@danix.xyz>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+"""notmuch post-new hook: auto-tag incoming mail from the shared rule store.
+
+Runs after every `notmuch new`. Reads ~/.config/mailrules/rules.json and
+applies each enabled rule scoped to `tag:new`, in stage order, then consumes
+the `tag:new` marker.
+
+Rules may add any tag and remove most, but this hook REFUSES to remove `unread`
+or `inbox` unattended and skips any rule that asks: see PROTECTED_REMOVALS
+below for why, and for the conditions under which that restriction should be
+lifted. It is expected to be relaxed once there is a story for confirming such
+a rule before it runs.
+
+Requires `new` in [new] tags= in ~/.notmuch-config. Without it every scoped
+query matches nothing and this silently no-ops.
+
+Install: copy to <database.path>/.notmuch/hooks/post-new, with mailrules.py
+importable (same directory, or on PYTHONPATH).
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import mailrules
+import qtmaildirconf
+
+SCOPE = "tag:new"
+
+# Tags this hook refuses to REMOVE, whatever a rule says.
+#
+# maildir.synchronize_flags is true, so `unread` is not just an index entry:
+# removing it rewrites Maildir filenames and propagates to the server on the
+# next mbsync. `inbox` is what keeps mail visible at all. Unattended, on every
+# sync, either one silently reorganizes a mailbox in a way that is tedious to
+# undo and reaches other clients before anyone notices.
+#
+# Adding these tags is untouched, and so is removing anything else: a rule may
+# still strip `promo` or any tag of its own making.
+#
+# DELIBERATELY CONSERVATIVE, AND EXPECTED TO BE RELAXED. The rules in use today
+# only add tags, so this forbids nothing anyone is doing. It exists because the
+# hook runs unattended and a mistake here is expensive, not because removing
+# `unread` is wrong in principle: an "archive anything in notify/* older than
+# 90 days" rule is a reasonable thing to want and would need this list revised.
+# When that day comes, the question to answer first is what confirms the rule
+# before it runs, not whether the guard is annoying.
+# NOT the same list as mailctl.py's PROTECTED_REMOVALS, and the two must not be
+# merged. That one is `{inbox}` and is a GATE: a human can override it with
+# --confirm-destructive. This one is `{unread, inbox}` and is a REFUSAL, because
+# there is no human present to confirm anything when cron runs a sync.
+PROTECTED_REMOVALS = frozenset({"unread", "inbox"})
+
+
+def log(message):
+    print(f"post-new: {message}", file=sys.stderr)
+
+
+def strip_inbox_from_sent(run):
+    """Take `inbox` off mail the user SENT, and nothing else.
+
+    `notmuch new` applies new.tags to every file it indexes, and it cannot
+    tell an arrival from the copy qtmaildir files into a sent folder after a
+    send. The result is sent mail carrying `inbox`, which puts it in an inbox
+    view it never arrived in and in any hand-typed `tag:inbox` search.
+
+    This is NOT a relaxation of PROTECTED_REMOVALS below, and the difference
+    is the whole reason it can run unattended. That guard is about a RULE
+    removing `inbox` from mail whose provenance the hook cannot judge. Here
+    the provenance is the file's own path: a message inside a configured sent
+    folder is one this system sent, and `inbox` was never true of it. Nothing
+    the user could act on is being hidden.
+
+    Only `inbox`. `unread` is untouched, because maildir.synchronize_flags is
+    true and removing it rewrites Maildir filenames, which reaches the server
+    on the next mbsync.
+
+    Scoped to tag:new like every rule, so a sync never rewrites tags across
+    the whole corpus. Mail already indexed keeps whatever it has.
+    """
+    folders = qtmaildirconf.sent_folders()
+    if not folders:
+        # No config, or no account keeping sent mail locally. Nothing to
+        # protect, and this must NOT fall through to an empty query: notmuch
+        # reads that as "match everything", which would strip `inbox` from
+        # every newly indexed message on the system.
+        return True
+
+    query = f"{SCOPE} and ({qtmaildirconf.sent_query(folders)})"
+    if not run(["-inbox"], query):
+        return False
+
+    log(f"sent-folder carve-out applied over {len(folders)} folder(s)")
+    return True
+
+
+def protected_removals(rule):
+    """The protected tags this rule would remove, if any."""
+    return sorted(PROTECTED_REMOVALS.intersection(rule.remove))
+
+
+def run_tag(arguments, query):
+    result = subprocess.run(["notmuch", "tag"] + arguments + ["--", query],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"notmuch tag failed: {result.stderr.strip()}")
+        return False
+    return True
+
+
+def main():
+    store = mailrules.load()
+
+    # A file that will not load must NOT reach the consumer below. If the
+    # marker were cleared while the rules did not run, that mail could never
+    # be tagged by these rules again: the failure is silent, permanent, and
+    # invisible until someone notices a gap months later. Leaving tag:new in
+    # place makes the next successful run catch up instead.
+    if store.failed:
+        for warning in store.warnings:
+            log(warning)
+        log("rules did not load; leaving tag:new in place")
+        return 1
+
+    if store.missing:
+        log("no rules file; nothing to do")
+        return 0
+
+    # A dropped rule is not fatal, but it must be visible: this goes to the
+    # sync log, which is where someone looks when a tag stops appearing.
+    for warning in store.warnings:
+        log(warning)
+
+    applied = 0
+    for rule in mailrules.ordered(store.rules):
+        # Skip the rule, do not abort the run. A single over-reaching rule
+        # must not cost the tagging every other rule would have done, and
+        # aborting here would also leave tag:new set forever: the rule would
+        # be refused again on every subsequent sync and the marker would never
+        # be consumed.
+        refused = protected_removals(rule)
+        if refused:
+            log(f"rule '{rule.id}' would remove {', '.join(refused)}; "
+                f"skipped, this hook does not remove those unattended")
+            continue
+
+        query = mailrules.scoped_query(rule, SCOPE)
+        if not run_tag(mailrules.tag_arguments(rule), query):
+            log(f"rule '{rule.id}' failed; leaving tag:new in place")
+            return 1
+        applied += 1
+
+    # AFTER the rules and BEFORE the marker is consumed. After, so a rule can
+    # still see its own sent mail with `inbox` on it and match the way it
+    # always did; before, because the marker is what scopes this to newly
+    # indexed mail and consuming it first would leave nothing to match.
+    if not strip_inbox_from_sent(run_tag):
+        log("sent-folder carve-out failed; leaving tag:new in place")
+        return 1
+
+    # Only after every rule succeeded. A failure part way through leaves the
+    # marker set, so re-running the hook is safe and finishes the work.
+    if not run_tag(["-new"], SCOPE):
+        return 1
+
+    log(f"applied {applied} rule(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

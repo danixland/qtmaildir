@@ -64,10 +64,19 @@ MainWindow                         NotmuchWorker
  │   ONE column of cards; CardDelegate paints each whole, from CardLayout
  └ MessageView (header QLabel, QWebEngineView, attachment bar, TagStrip)
 
+ComposeWindow (its own top-level window, one per message being written)
+ ├ MarkdownFormat (namespace: what the formatting buttons do to a selection)
+ ├ MarkdownRenderer (namespace, cmark-gfm)   MessageBuilder (namespace, GMime)
+ ├ MessageSender (QProcess, the per-account send_command on stdin)
+ └ SendDialog (the undo countdown)   DraftStore (autosave to the drafts folder)
+
+ComposeContext (a struct: what a Reply or Forward inherits)
+ComposeContextBuilder (namespace: fills one, and picks the account)
 CardLayout (pure geometry, no painting)
 SearchTerm (pure query strings, no widget)
 Config (INI)   KeyMap   MailSync (QProcess)   MimeParser (GMime)
 SyncMonitor (/proc/locks)   TagColors   QueryCompleter   ThreadCidMap
+MaildirName (fresh Maildir filenames)
 ```
 
 The query row and the message-pane header are **built inline in `MainWindow` and
@@ -75,11 +84,20 @@ The query row and the message-pane header are **built inline in `MainWindow` and
 listed `QueryBar`, `SavedQueryBar`, `HeaderWidget` and `AttachmentBar`; none of
 those types have ever existed, and looking for them wastes a search. The widget
 classes that do exist are `MessageView`, `ThreadListView`, `TagStrip`,
-`TagDialog`, `MessageDetailsDialog`, `RowStyleDelegate` and `CardDelegate`;
-`TagChip` is a namespace of painting helpers, not a widget, `SearchTerm` is a
-namespace of query builders, and `ThreadCidMap`, `CardLayout`, `SearchOffer`
-and `HeaderRow` are structs. `SubjectDelegate` existed until item 53 and is
-gone.
+`TagDialog`, `MessageDetailsDialog`, `RowStyleDelegate`, `CardDelegate`,
+`ComposeWindow`, `SendDialog` and `BusyIndicator`; `TagChip` is a namespace of
+painting helpers, not a widget, `SearchTerm` is a namespace of query builders,
+and `ThreadCidMap`, `CardLayout`, `SearchOffer` and `HeaderRow` are structs.
+`SubjectDelegate` existed until item 53 and is gone.
+
+**The compose units are mostly NAMESPACES, and the same warning applies to
+them.** `MarkdownRenderer`, `MarkdownFormat`, `MessageBuilder`,
+`ComposeContextBuilder`, `DraftStore` and `MaildirName` are namespaces of free
+functions over values, deliberately, so the markdown, the MIME assembly and
+the account-picking are all testable without a widget. `MessageSender` IS a
+QObject, because it owns a `QProcess`. There is no `FormatToolbar` class: the
+composer's formatting row is built inline in `ComposeWindow` and asks
+`MarkdownFormat` what each button does to the selection.
 
 **`MessageDetailsDialog` was a `QPlainTextEdit` inside `MessageView` until item
 85.** It is rows now so each value can carry its own context menu, and its
@@ -925,7 +943,12 @@ test" position — it is the only code that writes to a notmuch index.
 Work goes directly on `master`, no PR flow. Commits must be GPG-signed (`git commit -S`).
 `HANDOFF.md` is local-only and gitignored; never stage or commit it.
 
-v1 is read-and-organize only. Compose and send are v2.
+**There is no "v1" and no "v2".** The project follows semver on its
+user-visible surface, and those labels described a scope split that stopped
+being true when compose and send shipped. Reading, organizing and sending are
+all part of the application now. The phrase survives in the older spec and
+plan documents, which are historical records and are not being rewritten; read
+it there as "before compose" and "after compose".
 
 ## Cutting a release
 

@@ -26,6 +26,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -47,6 +48,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "composecontext.h"
+#include "composewindow.h"
 #include "mailsync.h"
 #include "messageview.h"
 #include "mimeparser.h"
@@ -93,7 +96,41 @@ QString MainWindow::uiStatePath()
 namespace {
 /// Overridden only by setLocksPathForTesting(); "/proc/locks" in every real run.
 QString g_locksPath = QStringLiteral("/proc/locks");
+
 } // namespace
+
+/// Doc comment on the declaration. Separators and control characters are
+/// replaced rather than stripped so a subject carrying one yields a readable
+/// name, instead of being truncated to its last segment by the basename
+/// reduction Attachment::safeFilename() performs afterwards.
+QString MainWindow::defaultMessageFilename(const QString &subject)
+{
+    QString name = subject.simplified();
+    for (QChar &c : name) {
+        if (c == QLatin1Char('/') || c == QLatin1Char('\\')
+            || c == QLatin1Char(':') || c.category() == QChar::Other_Control) {
+            c = QLatin1Char('-');
+        }
+    }
+    // Long subjects exist and many filesystems stop at 255 bytes. Truncated
+    // before the extension is added, so the cut cannot eat it.
+    name.truncate(120);
+    name = name.trimmed();
+
+    // A leading dot makes the file HIDDEN on every Unix desktop, and a subject
+    // beginning with one is ordinary ("...and another thing", or a traversal
+    // whose separators were just replaced above, leaving "..-..-etc-passwd").
+    // The write succeeds and the user cannot see the file they just saved.
+    // Measured: QDir::entryList omits it without QDir::Hidden, which is how
+    // this was found.
+    while (name.startsWith(QLatin1Char('.')))
+        name.remove(0, 1);
+    name = name.trimmed();
+
+    if (name.isEmpty())
+        name = QStringLiteral("message");
+    return name + QStringLiteral(".eml");
+}
 
 void MainWindow::setLocksPathForTesting(const QString &path)
 {
@@ -202,6 +239,105 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
 
+    // Case 3 FIRST, because it is the one where saving is what is already not
+    // working: in case 2 nothing is lost by saving, here quitting loses that
+    // text, so the dialog must say so plainly rather than offering a save that
+    // will fail again.
+    QStringList failedSaves;
+    for (const QPointer<ComposeWindow> &composer : m_composers) {
+        if (composer && composer->lastSaveFailed())
+            failedSaves.append(composer->windowTitle());
+    }
+    if (!failedSaves.isEmpty()) {
+        // The titles, not merely the count. The spec requires the dialog to
+        // NAME what could not be saved: "2 messages could not be saved" tells
+        // a user with four composers open nothing about which two to rescue.
+        //
+        // The list is a separate paragraph rather than interpolated into the
+        // sentence. The count and the list combine differently across
+        // languages, and a translator given "%n message(s) ...: %1" has to
+        // keep an English clause order Italian does not share.
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Warning);
+        box.setWindowTitle(tr("A draft could not be saved"));
+        box.setText(tr("%n message(s) could not be saved to the drafts "
+                       "folder. Quitting now loses that text.", "",
+                       failedSaves.size()));
+        box.setInformativeText(failedSaves.join(QLatin1Char('\n')));
+        box.setStandardButtons(QMessageBox::Retry | QMessageBox::Discard
+                               | QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Cancel);
+        const int answer = box.exec();
+
+        if (answer == QMessageBox::Cancel) {
+            event->ignore();
+            return;
+        }
+        if (answer == QMessageBox::Retry) {
+            bool allSaved = true;
+            for (const QPointer<ComposeWindow> &composer : m_composers) {
+                if (composer && composer->lastSaveFailed()
+                    && !composer->saveDraftNow()) {
+                    allSaved = false;
+                }
+            }
+            if (!allSaved) {
+                // Still failing: stay open rather than quitting on a retry
+                // that did not work, which would lose exactly the text the
+                // user pressed Retry to keep.
+                event->ignore();
+                return;
+            }
+        }
+    }
+
+    // Case 2: ONE dialog whatever the count. Three modals in a row is worse
+    // than a coarse answer, so it applies to all of them and there is no
+    // per-draft choice.
+    const QList<QPointer<ComposeWindow>> blocking = composersBlockingQuit();
+    if (!blocking.isEmpty()) {
+        QStringList titles;
+        titles.reserve(blocking.size());
+        for (const QPointer<ComposeWindow> &composer : blocking)
+            titles.append(composer->windowTitle());
+
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(tr("Messages still being composed"));
+        // "Discard" discards UNSAVED EDITS, not drafts: a draft already
+        // autosaved stays in the folder. The wording must not read as
+        // "delete my three messages".
+        box.setText(tr("%n message(s) are still being composed. Drafts "
+                       "already saved stay in the drafts folder either way.",
+                       "", blocking.size()));
+        box.setInformativeText(titles.join(QLatin1Char('\n')));
+        box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard
+                               | QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Save);
+        const int answer = box.exec();
+
+        if (answer == QMessageBox::Cancel) {
+            event->ignore();
+            return;
+        }
+        if (answer == QMessageBox::Save) {
+            // Null-checked per iteration, because `blocking` was computed
+            // BEFORE exec() and a nested event loop processes deleteLater().
+            // The dialog is window-modal to this window only, so a user can
+            // close a composer while it is up; measured in a standalone Qt
+            // program, that composer is destroyed before exec() returns.
+            // Without this check the save runs on freed memory at the exact
+            // moment the application promised to preserve the text, and the
+            // remaining composers' drafts are never written because the crash
+            // happens mid-loop. Case 3's Retry loop above has always had the
+            // equivalent guard; this one had dropped it.
+            for (const QPointer<ComposeWindow> &composer : blocking) {
+                if (composer)
+                    composer->saveDraftNow();
+            }
+        }
+    }
+
     if (!m_closeApproved && pendingEditCount() > 0
         && m_config.syncOnExit() != Config::SyncOnExit::Never) {
 
@@ -284,6 +420,33 @@ void MainWindow::closeEvent(QCloseEvent *event)
             event->ignore();
             return;
         }
+    }
+
+    // Every composer goes with the window, and this is the LAST thing before
+    // the close is accepted: every route that turns back (Cancel, a failed
+    // sync, a refused save) has already returned above, so reaching here means
+    // the application really is quitting.
+    //
+    // A composer is deliberately parentless, so that it appears in the task
+    // switcher and stays usable while the main window is. Qt therefore does not
+    // take it down with this window, and it kept the process alive: the main
+    // window vanished, the composer stayed on screen with nothing behind it,
+    // and closing it then raised the unsaved-edits dialog for a session that
+    // had already ended.
+    //
+    // Closing rather than deleting. WA_DeleteOnClose is set on every composer,
+    // so close() is what frees them, and it lets ComposeWindow::closeEvent()
+    // run its own draft handling on the way out. The drafts have already been
+    // saved by the dialogs above, so that pass has nothing left to do; going
+    // through it anyway keeps ONE exit path rather than a second one that has
+    // to be kept in step.
+    //
+    // Iterating a COPY: closing a composer runs the `closed` handler, which
+    // mutates m_composers, and mutating a container mid-iteration is undefined.
+    const QList<QPointer<ComposeWindow>> composers = m_composers;
+    for (const QPointer<ComposeWindow> &composer : composers) {
+        if (composer)
+            composer->close();
     }
 
     saveUiState();
@@ -758,6 +921,409 @@ void MainWindow::buildUi()
     setWindowTitle(QStringLiteral("qtmaildir %1").arg(QTMAILDIR_VERSION));
 }
 
+void MainWindow::composeNew()
+{
+    // m_accountBox->currentData() is how the selected account is read
+    // everywhere else in this file; there is no currentAccountKey() accessor.
+    // Empty means the All accounts view, which falls through to rule 2.
+    const QString accountKey = ComposeContextBuilder::accountForNew(
+        m_config, m_accountBox->currentData().toString());
+    if (accountKey.isEmpty()) {
+        // Unreachable while the action is disabled, which is the only state
+        // this can be true in. Reported rather than returning silently: an
+        // action that runs and does nothing is the failure mode item 105
+        // records as "the key does nothing".
+        showTransientStatus(tr("No account is configured to send mail"));
+        return;
+    }
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = accountKey;
+    context.seedHtml = m_config.compose().sendHtml;
+
+    openComposer(context);
+}
+
+void MainWindow::composeReply(ComposeContext::Kind kind, bool quote)
+{
+    // messageScopeFor() semantics, NOT threadFor(): a thread row means the one
+    // message its card shows, a reply row means itself. Replying to a thread
+    // is meaningless; a reply answers a message.
+    //
+    // It takes a QModelIndexList, not a single index, so the current index is
+    // wrapped rather than passed bare.
+    const ActionScope scope =
+        m_model->messageScopeFor({ m_threadView->currentIndex() });
+    if (scope.messageIds.isEmpty()) {
+        showTransientStatus(tr("No message is selected"));
+        return;
+    }
+
+    // Built from the DATABASE, never from the model. The model's data comes
+    // from the query, so a row whose state has not been re-queried carries
+    // stale values, and a reply built from a stale row would carry the wrong
+    // recipients. This is the rule Restore already follows.
+    requestMessageForCompose(scope.messageIds.first(), kind, quote);
+}
+
+void MainWindow::requestMessageForCompose(const QString &messageId,
+                                          ComposeContext::Kind kind,
+                                          bool quote)
+{
+    if (messageId.isEmpty())
+        return;
+
+    m_pendingCompose = { messageId, kind, quote, true };
+
+    // The same generation every other worker request carries, so a reply that
+    // arrives after the query moved on is discarded rather than opening a
+    // composer on a message the user is no longer looking at.
+    QMetaObject::invokeMethod(m_worker, "loadMessage", Qt::QueuedConnection,
+                              Q_ARG(QString, messageId),
+                              Q_ARG(quint64, m_generation));
+}
+
+void MainWindow::openComposerFor(const MessageRef &ref,
+                                 ComposeContext::Kind kind, bool quote)
+{
+    MimeParser parser;
+    const ParsedMessage original = parser.parse(ref.filePath);
+    if (!original.ok) {
+        showTransientStatus(tr("That message could not be read"));
+        return;
+    }
+
+    ComposeContext context;
+    context.kind = kind;
+    context.originalPath = ref.filePath;
+
+    const bool replyAll = kind == ComposeContext::Kind::ReplyAll;
+    const bool forwarding = kind == ComposeContext::Kind::Forward;
+
+    if (!forwarding) {
+        ComposeContextBuilder::recipientsForReply(
+            original, replyAll, ComposeContextBuilder::ownAddresses(m_config),
+            &context.to, &context.cc);
+
+        // Threading headers on a reply only. A forward starts a new
+        // conversation: carrying In-Reply-To would file it under the thread it
+        // was forwarded out of, in the RECIPIENT's client.
+        context.inReplyTo = original.messageId;
+        context.references = ComposeContextBuilder::referencesForReply(original);
+    }
+
+    context.subject = forwarding
+                          ? ComposeContextBuilder::forwardSubject(original.subject)
+                          : ComposeContextBuilder::replySubject(original.subject);
+
+    if (quote)
+        context.quotedBody = ComposeContextBuilder::quoteBody(original);
+
+    // Forward seeds from the CONFIG, Reply from the original. The split is
+    // the spec's and Config::ComposeSettings::sendHtml states it too: an HTML
+    // part in the original is a fact about the SENDER's software, so it is the
+    // right seed when answering them and says nothing about a forward, which
+    // is a new message to somebody else. composeNew() already reads the config
+    // for the same reason.
+    context.seedHtml = forwarding ? m_config.compose().sendHtml
+                                  : original.hasHtml();
+
+    // accountForReply() takes messagePaths PLURAL because notmuch can return
+    // several filenames for one id, and it disambiguates between them by
+    // recipient. That disambiguation is INERT here, and the reason is upstream
+    // rather than a decision made at this call site: NotmuchWorker::loadMessage
+    // builds its MessageRef from notmuch_message_get_filename(), the SINGULAR
+    // accessor, so nothing in the pipeline ever carries more than one path and
+    // the list below can never hold more than one element. Backlog item 137
+    // carries the fix (MessageRef gains a filePaths list populated from
+    // notmuch_message_get_filenames()); until then a message that arrived at
+    // two accounts can open its reply from the wrong one.
+    const QStringList recipients = context.to + context.cc;
+    context.accountKey = ComposeContextBuilder::accountForReply(
+        m_config, { ref.filePath }, recipients, m_mailRoot);
+
+    if (context.accountKey.isEmpty()
+        || !m_config.account(context.accountKey).canSend()) {
+        // The enablement pass should already have stopped this, but it answers
+        // from the model's path while this answers from the database's, and
+        // the two can disagree on a row that has not been re-queried.
+        showTransientStatus(
+            tr("That message arrived at an account that cannot send"));
+        return;
+    }
+
+    openComposer(context);
+}
+
+void MainWindow::openComposer(const ComposeContext &context)
+{
+    if (m_mailRoot.isEmpty()) {
+        // Without the root a draft cannot be written anywhere, and a composer
+        // that silently cannot autosave is the state the quit path's honesty
+        // depends on not being in.
+        showTransientStatus(tr("The Maildir root is not known yet"));
+        return;
+    }
+
+    auto *composer = new ComposeWindow(context, m_config, m_mailRoot);
+    composer->setAttribute(Qt::WA_DeleteOnClose);
+    m_composers.append(QPointer<ComposeWindow>(composer));
+
+    // Compaction, and ONLY compaction. The QPointer above is what keeps
+    // composersBlockingQuit() safe against a destroyed window, since it nulls
+    // on destruction; this drops the entry so the list does not accumulate
+    // nulls for the session's lifetime. Neither replaces the other: without
+    // the signal the list leaks entries, without the QPointer it dangles.
+    connect(composer, &ComposeWindow::closed, this,
+            [this](ComposeWindow *which) {
+                m_composers.removeIf([which](const QPointer<ComposeWindow> &p) {
+                    return p.isNull() || p.data() == which;
+                });
+            });
+
+    composer->show();
+}
+
+QList<QPointer<ComposeWindow>> MainWindow::composersBlockingQuit() const
+{
+    QList<QPointer<ComposeWindow>> blocking;
+    for (const QPointer<ComposeWindow> &composer : m_composers) {
+        if (composer && composer->hasUnsavedEdits())
+            blocking.append(composer);
+    }
+    return blocking;
+}
+
+ComposeWindow *MainWindow::openComposerForTest()
+{
+    const QString accountKey =
+        ComposeContextBuilder::accountForNew(m_config, QString());
+    if (accountKey.isEmpty())
+        return nullptr;
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = accountKey;
+
+    const int before = m_composers.size();
+    openComposer(context);
+    if (m_composers.size() == before)
+        return nullptr;
+    return m_composers.constLast().data();
+}
+
+QList<ComposeWindow *> MainWindow::openComposersForTest() const
+{
+    QList<ComposeWindow *> live;
+    for (const QPointer<ComposeWindow> &composer : m_composers) {
+        if (composer)
+            live.append(composer.data());
+    }
+    return live;
+}
+
+int MainWindow::openComposerCount() const
+{
+    int live = 0;
+    for (const QPointer<ComposeWindow> &composer : m_composers) {
+        if (composer)
+            ++live;
+    }
+    return live;
+}
+
+void MainWindow::markComposersDirtyForTest()
+{
+    // Through the real edit path: the body editor's own textChanged is what
+    // ComposeWindow::markDirty() is connected to, so inserting text here
+    // exercises the same route typing does. Setting a dirty flag directly
+    // would pass against a composer that never notices an edit at all.
+    //
+    // QTextCursor rather than QTest::keyClicks, so production code does not
+    // have to link QtTest.
+    for (const QPointer<ComposeWindow> &composer : m_composers) {
+        if (!composer)
+            continue;
+        if (auto *body = composer->findChild<QPlainTextEdit *>(
+                QStringLiteral("body"))) {
+            body->textCursor().insertText(QStringLiteral("x"));
+        }
+    }
+}
+
+QString MainWindow::accountForCurrentMessage() const
+{
+    if (m_mailRoot.isEmpty())
+        return {};
+
+    const QModelIndex current = m_threadView->currentIndex();
+    if (!current.isValid())
+        return {};
+
+    // The model's path, deliberately. This decides whether a CONTROL is live,
+    // which a stale path answers well enough; the context that actually opens
+    // a composer resolves the account again from the database. Asking the
+    // worker here would make every selection change a round trip.
+    //
+    // The two sources are in DIFFERENT FORMS and normalising them is not
+    // tidying. ThreadSummary::firstMessagePath is RELATIVE to the mail root,
+    // because runQuery() reduces it with relativeFilePath() so the UI can
+    // compare it against an account's maildir; MessageNode::filePath is
+    // ABSOLUTE, because MimeParser opens it. accountOwning() builds an
+    // absolute prefix, so handing it the relative one matches no account at
+    // all and every thread row reports no account, which disables the reply
+    // family on mail from an account that can perfectly well send. Measured:
+    // it did exactly that until the guard test caught it.
+    QString path;
+    if (m_model->isMessageRow(current)) {
+        path = m_model->messageAt(current).filePath;
+    } else {
+        path = m_model->threadFor(current).firstMessagePath;
+    }
+    if (path.isEmpty())
+        return {};
+
+    const QString absolute = QDir::isAbsolutePath(path)
+                                 ? path
+                                 : QDir(m_mailRoot).absoluteFilePath(path);
+
+    return ComposeContextBuilder::accountForReply(m_config, { absolute },
+                                                  QStringList(), m_mailRoot);
+}
+
+void MainWindow::updateComposeActions()
+{
+    // The reply family is disabled on mail that arrived at an account which
+    // cannot send. save_message is deliberately NOT in this list: it is the
+    // escape hatch for exactly that case, writing the raw message to a file
+    // that can be attached to a new message from an account that can send.
+    const QString replyAccount = accountForCurrentMessage();
+    const bool canReply = !replyAccount.isEmpty()
+                          && m_config.account(replyAccount).canSend();
+
+    static const QStringList kReplyFamily = {
+        QStringLiteral("reply"), QStringLiteral("reply_all"),
+        QStringLiteral("reply_no_quote"), QStringLiteral("forward")
+    };
+    for (const QString &name : kReplyFamily) {
+        if (QAction *action = m_actions.value(name))
+            action->setEnabled(canReply);
+    }
+
+    // The ribbon appears only when an account was identified AND it cannot
+    // send. An unidentified account is not a receive-only one: it is a message
+    // whose file no account owns, and naming no account in a ribbon that
+    // exists to name one would be worse than staying quiet.
+    const bool receiveOnly =
+        !replyAccount.isEmpty() && !m_config.account(replyAccount).canSend();
+    m_messageView->setReceiveOnlyAccount(receiveOnly ? replyAccount
+                                                     : QString());
+
+    // compose is disabled only when NO account can send. A read-only
+    // installation is valid and is not warned about.
+    if (QAction *compose = m_actions.value(QStringLiteral("compose")))
+        compose->setEnabled(!m_config.sendingAccounts().isEmpty());
+}
+
+void MainWindow::saveDisplayedMessage(const QString &chosenDirectory)
+{
+    const QModelIndex current = m_threadView->currentIndex();
+    const ActionScope scope = m_model->messageScopeFor({ current });
+    if (scope.messageIds.isEmpty()) {
+        showTransientStatus(tr("No message is selected"));
+        return;
+    }
+
+    // The path from the model, which is what the pane is rendering. Unlike a
+    // reply, a copy of the wrong file is visible to the user the moment they
+    // open it, so this does not need the database round trip a reply does.
+    QString sourcePath;
+    QString subject;
+    if (m_model->isMessageRow(current)) {
+        const MessageNode node = m_model->messageAt(current);
+        sourcePath = node.filePath;
+        subject = node.subject;
+    } else {
+        const ThreadSummary thread = m_model->threadFor(current);
+        sourcePath = thread.firstMessagePath;
+        subject = thread.subject;
+    }
+    if (sourcePath.isEmpty()) {
+        showTransientStatus(tr("That message's file could not be found"));
+        return;
+    }
+
+    // Relative for a thread row, absolute for a message row. The same
+    // asymmetry accountForCurrentMessage() documents at length.
+    if (!QDir::isAbsolutePath(sourcePath) && !m_mailRoot.isEmpty())
+        sourcePath = QDir(m_mailRoot).absoluteFilePath(sourcePath);
+
+    if (!QFileInfo::exists(sourcePath)) {
+        showTransientStatus(tr("That message's file could not be found"));
+        return;
+    }
+
+    // The dialog only when no directory was supplied. A test supplies one,
+    // because the modal cannot be driven under the offscreen platform and the
+    // containment check below is the only line guarding the write.
+    const QString directory =
+        chosenDirectory.isEmpty()
+            ? QFileDialog::getExistingDirectory(
+                  this, tr("Save message to"),
+                  QStandardPaths::writableLocation(
+                      QStandardPaths::DownloadLocation))
+            : chosenDirectory;
+    if (directory.isEmpty())
+        return;  // cancelled
+
+    // The default name is derived from the SUBJECT, which is input from a
+    // stranger: it may carry path separators, "..", or nothing usable. The
+    // same rules the attachment path follows, and the same helpers, rather
+    // than a second implementation that has to be kept correct separately.
+    Attachment naming;
+    naming.filename = defaultMessageFilename(subject);
+    const QString safeName = naming.safeFilename();
+
+    // Disambiguated rather than overwritten, matching what the attachment bar
+    // does. Attachment::saveWithoutOverwriting() is the same rule and cannot
+    // be reused here because it writes an Attachment's own bytes, while this
+    // COPIES a file; the naming is duplicated, the behaviour is not.
+    //
+    // The earlier version deleted an existing same-named file, on the
+    // reasoning that a save the user just confirmed a location for should not
+    // silently do nothing. That is right about the failure and wrong about the
+    // remedy: two messages very often share a subject, so the second save
+    // would destroy the first, and QFile::copy's refusal is a reason to pick
+    // another name rather than to delete somebody's file.
+    const QFileInfo naming_info(safeName);
+    const QString base = naming_info.completeBaseName();
+    const QString suffix = naming_info.suffix().isEmpty()
+                               ? QString()
+                               : QLatin1Char('.') + naming_info.suffix();
+    const QDir dir(directory);
+    QString candidate = safeName;
+    for (int n = 2; dir.exists(candidate); ++n)
+        candidate = QStringLiteral("%1 (%2)%3").arg(base).arg(n).arg(suffix);
+
+    const QString target = dir.absoluteFilePath(candidate);
+
+    // Compared as PATHS, never with startsWith(): "/tmp/safe-evil" passes a
+    // startsWith("/tmp/safe") check while being a sibling directory.
+    if (!Attachment::isPathInsideDirectory(directory, target)) {
+        showTransientStatus(tr("Refusing to write outside %1")
+                                .arg(QDir::cleanPath(
+                                    QDir(directory).absolutePath())));
+        return;
+    }
+
+    if (!QFile::copy(sourcePath, target)) {
+        showTransientStatus(tr("Could not write %1").arg(target));
+        return;
+    }
+    showTransientStatus(tr("Saved %1").arg(target));
+}
+
 QAction *MainWindow::addAction(const QString &name, const QString &text,
                                const QString &description,
                                const std::function<void()> &handler)
@@ -1124,6 +1690,34 @@ void MainWindow::registerActions()
     addAction(QStringLiteral("quit"), tr("&Quit"),
               tr("Quit qtmaildir"), [this]() { close(); });
 
+    // Compose and send (item 123). The handlers are empty: this is the
+    // registration, so the three coverage tests
+    // (everyKnownActionIsRegistered, everyActionCarriesAnIcon and
+    // everyActionIsReachableFromAMenu) cover the composer from the first
+    // commit rather than being satisfied once it is finished.
+    //
+    // Reply and reply-without-quoting are the same Kind with and without a
+    // seeded body, which is why the quoting is a parameter rather than a
+    // fourth Kind: the recipients, the subject prefix and the threading
+    // headers are identical, and only the body differs.
+    addAction(QStringLiteral("compose"), tr("&New message"),
+              tr("Compose a new message"), [this]() { composeNew(); });
+    addAction(QStringLiteral("reply"), tr("Re&ply"),
+              tr("Reply to the displayed message"),
+              [this]() { composeReply(ComposeContext::Kind::Reply, true); });
+    addAction(QStringLiteral("reply_all"), tr("Reply to a&ll"),
+              tr("Reply to the sender and every other recipient"),
+              [this]() { composeReply(ComposeContext::Kind::ReplyAll, true); });
+    addAction(QStringLiteral("reply_no_quote"), tr("Reply without &quoting"),
+              tr("Reply with an empty body"),
+              [this]() { composeReply(ComposeContext::Kind::Reply, false); });
+    addAction(QStringLiteral("forward"), tr("&Forward"),
+              tr("Forward the displayed message"),
+              [this]() { composeReply(ComposeContext::Kind::Forward, true); });
+    addAction(QStringLiteral("save_message"), tr("Sa&ve message as..."),
+              tr("Write the raw message to a file"),
+              [this]() { saveDisplayedMessage(); });
+
     // A binding the user wrote for an action that does not exist would be
     // silently dead. KeyMap warns about unknown names, but only a check here
     // catches the reverse: a known action nothing implements.
@@ -1135,6 +1729,10 @@ void MainWindow::registerActions()
     // and offering "Mark all read" against nothing is a live control that does
     // nothing.
     updateViewWideActions();
+
+    // Compose and the reply family, for the same reason: QAction starts
+    // enabled, so a window with nothing selected would offer a live Reply.
+    updateComposeActions();
 }
 
 void MainWindow::buildMenus()
@@ -1154,6 +1752,18 @@ void MainWindow::buildMenus()
     editMenu->addAction(m_actions.value(QStringLiteral("select_all")));
 
     auto *messageMenu = menuBar()->addMenu(tr("&Message"));
+    // Composing sits above organising (item 123). The spec called for a new
+    // top-level Message menu and this one already existed, so the six join it:
+    // two menus named Message would be a defect.
+    messageMenu->addAction(m_actions.value(QStringLiteral("compose")));
+    messageMenu->addSeparator();
+    messageMenu->addAction(m_actions.value(QStringLiteral("reply")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("reply_all")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("reply_no_quote")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("forward")));
+    messageMenu->addSeparator();
+    messageMenu->addAction(m_actions.value(QStringLiteral("save_message")));
+    messageMenu->addSeparator();
     messageMenu->addAction(m_actions.value(QStringLiteral("archive")));
     messageMenu->addAction(m_actions.value(QStringLiteral("delete")));
     // Beside Delete, whose inverse it is. Greyed outside the trash view
@@ -1282,6 +1892,22 @@ void MainWindow::buildMenus()
         { QStringLiteral("spam_thread"),          QStringLiteral("mail-mark-junk") },
         { QStringLiteral("toggle_unread_thread"), QStringLiteral("mail-mark-unread") },
         { QStringLiteral("flag_thread"),          QStringLiteral("mail-mark-important") },
+
+        // Compose and send (item 123). reply_no_quote SHARES reply's icon for
+        // the same reason the five above share theirs: it never reaches the
+        // toolbar, it is a menu entry that always carries its text, and
+        // "Reply without quoting" beside the reply icon is the honest pairing.
+        // It is named in the exception list in noTwoActionsShareAnIcon(), so
+        // putting it on the toolbar fails that test rather than passing
+        // silently.
+        { QStringLiteral("compose"),        QStringLiteral("mail-message-new") },
+        { QStringLiteral("reply"),          QStringLiteral("mail-reply-sender") },
+        { QStringLiteral("reply_all"),      QStringLiteral("mail-reply-all") },
+        { QStringLiteral("reply_no_quote"), QStringLiteral("mail-reply-sender") },
+        { QStringLiteral("forward"),        QStringLiteral("mail-forward") },
+        // NOT bookmark-new, which save_query uses: this really does write a
+        // file the user names, which is exactly what the disk shape means.
+        { QStringLiteral("save_message"),   QStringLiteral("document-save-as") },
     };
     for (auto it = themeIcons.cbegin(); it != themeIcons.cend(); ++it) {
         QAction *action = m_actions.value(it.key());
@@ -1340,6 +1966,16 @@ void MainWindow::buildMenus()
     // anything this code can see.
     const int iconSize = m_config.toolbarIconSize();
     toolBar->setIconSize(QSize(iconSize, iconSize));
+
+    // First, because composing and replying are what a user reaches for most
+    // (item 123). These TWO only: the other four are menu-and-key, which is
+    // what keeps the no-duplicate-icons rule satisfiable, since reply_no_quote
+    // shares reply's icon and an icon-only toolbar would make the two buttons
+    // indistinguishable.
+    toolBar->addAction(m_actions.value(QStringLiteral("compose")));
+    toolBar->addAction(m_actions.value(QStringLiteral("reply")));
+    toolBar->addSeparator();
+
     QAction *syncAction = m_actions.value(QStringLiteral("sync"));
     // Carried over from the QPushButton this replaced: with no command
     // configured the control is disabled, and the tooltip is the only thing
@@ -1638,6 +2274,8 @@ void MainWindow::wireWorker()
             this, &MainWindow::onWorkerError);
     connect(m_worker, &NotmuchWorker::allTagsReady,
             this, &MainWindow::onAllTagsReady);
+    connect(m_worker, &NotmuchWorker::mailRootReady,
+            this, &MainWindow::onMailRootReady);
     connect(m_worker, &NotmuchWorker::countsReady,
             this, &MainWindow::onCountsReady);
     connect(m_worker, &NotmuchWorker::databaseStatsReady,
@@ -1674,6 +2312,11 @@ void MainWindow::wireWorker()
     // as the database can be read. Nothing waits on the answer: requestAllTags
     // stays silent when the database cannot be opened.
     requestAllTags();
+
+    // The Maildir root, which this window cannot derive (item 124). Asked once:
+    // it does not change while the application runs. Nothing waits on it
+    // either; the reply family is gated on send_command, not on this.
+    QMetaObject::invokeMethod(m_worker, "requestMailRoot", Qt::QueuedConnection);
 }
 
 void MainWindow::requestAllTags()
@@ -1692,6 +2335,17 @@ void MainWindow::onAllTagsReady(const QStringList &tags)
     // throw away a good list.
     m_knownTags = tags;
     m_queryCompleter->setTags(tags);
+}
+
+void MainWindow::onMailRootReady(const QString &mailRoot)
+{
+    m_mailRoot = mailRoot;
+
+    // The enablement pass reads m_mailRoot to resolve which account owns the
+    // displayed message, so it answers "no account" until this arrives. A
+    // window that had already selected a row would otherwise keep the reply
+    // family greyed out until the next selection change.
+    updateComposeActions();
 }
 
 QList<MainWindow::PlaceholderLine> MainWindow::placeholderLines() const
@@ -2647,6 +3301,11 @@ void MainWindow::onSelectionChanged()
             if (changed)
                 onThreadSelected(current, QModelIndex());
         }
+
+        // Which account owns the displayed message decides whether the reply
+        // family is live and whether the ribbon shows, so it is re-answered
+        // whenever the displayed message can have changed.
+        updateComposeActions();
         return;
     }
 
@@ -2658,6 +3317,7 @@ void MainWindow::onSelectionChanged()
         if (m_statusLabel->text() == m_selectionMessage)
             m_statusLabel->clear();
         m_selectionMessage.clear();
+        updateComposeActions();
         return;
     }
 
@@ -2699,6 +3359,10 @@ void MainWindow::onSelectionChanged()
     m_currentMessageThreadId.clear();
     m_messageView->clear();
     showPlaceholderPane();
+
+    // A multi-row selection displays no message, so there is no account to
+    // reply from and no ribbon to show.
+    updateComposeActions();
 }
 
 void MainWindow::onThreadSelected(const QModelIndex &current,
@@ -2836,6 +3500,61 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
 void MainWindow::onMessageLoaded(const QVector<MessageRef> &messages,
                                  quint64 generation)
 {
+    // A compose request comes through this same signal rather than through a
+    // worker signal of its own, so it is answered before the render guards
+    // below: those exist to protect the PANE, and none of them applies to
+    // opening a composer.
+    //
+    // Matched by MESSAGE ID, not merely by a pending flag. The compose request
+    // and the pane share one loadMessage slot and one messageLoaded signal, so
+    // a pane load already in flight when the user presses Reply arrives FIRST
+    // and carries a different message: consuming it on the flag alone would
+    // open a composer on whichever message the pane happened to be loading.
+    // A non-matching reply falls through to the pane, which is what it is.
+    if (m_pendingCompose.active) {
+        const auto it = std::find_if(
+            messages.cbegin(), messages.cend(),
+            [this](const MessageRef &ref) {
+                return ref.messageId == m_pendingCompose.messageId;
+            });
+        if (it != messages.cend()) {
+            const PendingCompose request = m_pendingCompose;
+            m_pendingCompose = {};
+
+            // The generation guard still applies: a query that moved on means
+            // the row the user asked from is gone.
+            if (generation == m_generation)
+                openComposerFor(*it, request.kind, request.quote);
+
+            // A compose load carries no pane update: m_currentMessageId is
+            // untouched by requestMessageForCompose(), so falling through
+            // would repaint the pane with a message it did not select.
+            return;
+        }
+
+        // No match, and the request is DISARMED rather than left waiting.
+        //
+        // Leaving it armed was a two-stage defect. The immediate half is that
+        // Reply silently does nothing when the message is not in the index,
+        // which is item 105's "the key does nothing". The delayed half is
+        // worse: the request stays armed with a specific message id, and the
+        // pane's own loads are the traffic being matched against, so merely
+        // SELECTING that message later would match, open a composer nobody
+        // asked for, and return before renderMessages() leaving the pane blank
+        // on the row just clicked.
+        //
+        // Only an EMPTY reply disarms it, and that asymmetry is the point.
+        // loadMessage() emits an empty list precisely when the id resolved to
+        // nothing, so that reply belongs to this request and says it failed.
+        // A NON-empty reply naming other messages is the pane's own load
+        // crossing ours, which is the race the id match exists to survive;
+        // disarming on it would reintroduce that race from the other side.
+        if (messages.isEmpty()) {
+            m_pendingCompose = {};
+            showTransientStatus(tr("That message is no longer indexed"));
+        }
+    }
+
     // A stale generation means the query moved on. A reply landing after the
     // selection grew past one row would paint a message back over a pane that
     // was deliberately blanked: loadMessage crosses to the worker on a queued

@@ -4,3 +4,6 @@ HANDOFF.md
 
 # The .ts is tracked; the .qm is generated from it by lrelease.
 *.qm
+
+# Python bytecode from the notmuch hooks in assets/hooks/.
+__pycache__/

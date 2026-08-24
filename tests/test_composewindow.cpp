@@ -17,6 +17,7 @@
  */
 
 #include <QtTest>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QMenu>
@@ -43,6 +44,8 @@ private slots:
     void aResumedDraftSeedsNoSignature();
     void anUnknownSignatureNameSeedsNothing();
     void theSwitchListsEveryFileAndNone();
+    void changingTheAccountFollowsItsSignature();
+    void changingTheAccountStopsFollowingOnceTheSwitchIsUsed();
 
 private:
     /// A config pointing at a signatures directory holding \p files, with one
@@ -214,6 +217,122 @@ void TestComposeWindow::theSwitchListsEveryFileAndNone()
     QVERIFY(button->menu());
     // "None" plus one per file.
     QCOMPARE(button->menu()->actions().size(), 3);
+}
+
+void TestComposeWindow::changingTheAccountFollowsItsSignature()
+{
+    for (const auto &entry :
+         QList<QPair<QString, QString>>{
+             { QStringLiteral("work.md"), QStringLiteral("Work sig") },
+             { QStringLiteral("home.md"), QStringLiteral("Home sig") } }) {
+        QFile file(m_signatureDir + QStringLiteral("/") + entry.first);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        file.write(entry.second.toUtf8());
+        file.close();
+    }
+
+    const QString path = m_dir->path() + QStringLiteral("/qtmaildir.conf");
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&file);
+        out << "[account.work]\n"
+            << "name = Someone\naddress = someone@example.org\n"
+            << "maildir = work\nsend_command = /bin/cat\n"
+            << "signature = work\n"
+            << "\n[account.home]\n"
+            << "name = Someone\naddress = other@example.org\n"
+            << "maildir = home\nsend_command = /bin/cat\n"
+            << "signature = home\n";
+    }
+    Config config;
+    config.load(path);
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setSignatureDir(m_signatureDir);
+    window.seedSignature();
+
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *from = window.findChild<QComboBox *>(QStringLiteral("from"));
+    QVERIFY(body);
+    QVERIFY(from);
+    QVERIFY(body->toPlainText().contains(QStringLiteral("Work sig")));
+
+    // Select the other account by its key, never by index: the order of the
+    // combo is the config's and an index assertion would pass on the wrong one.
+    const int home = from->findData(QStringLiteral("home"));
+    QVERIFY(home >= 0);
+    from->setCurrentIndex(home);
+
+    QVERIFY(body->toPlainText().contains(QStringLiteral("Home sig")));
+    QVERIFY(!body->toPlainText().contains(QStringLiteral("Work sig")));
+}
+
+void TestComposeWindow::changingTheAccountStopsFollowingOnceTheSwitchIsUsed()
+{
+    for (const auto &entry :
+         QList<QPair<QString, QString>>{
+             { QStringLiteral("work.md"), QStringLiteral("Work sig") },
+             { QStringLiteral("home.md"), QStringLiteral("Home sig") },
+             { QStringLiteral("chosen.md"), QStringLiteral("Chosen sig") } }) {
+        QFile file(m_signatureDir + QStringLiteral("/") + entry.first);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        file.write(entry.second.toUtf8());
+        file.close();
+    }
+
+    const QString path = m_dir->path() + QStringLiteral("/qtmaildir.conf");
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&file);
+        out << "[account.work]\n"
+            << "name = Someone\naddress = someone@example.org\n"
+            << "maildir = work\nsend_command = /bin/cat\n"
+            << "signature = work\n"
+            << "\n[account.home]\n"
+            << "name = Someone\naddress = other@example.org\n"
+            << "maildir = home\nsend_command = /bin/cat\n"
+            << "signature = home\n";
+    }
+    Config config;
+    config.load(path);
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setSignatureDir(m_signatureDir);
+    window.seedSignature();
+
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *from = window.findChild<QComboBox *>(QStringLiteral("from"));
+    auto *button =
+        window.findChild<QToolButton *>(QStringLiteral("signatureSwitch"));
+    QVERIFY(body);
+    QVERIFY(from);
+    QVERIFY(button);
+
+    // The user picks one deliberately.
+    for (QAction *action : button->menu()->actions()) {
+        if (action->data().toString() == QStringLiteral("chosen"))
+            action->trigger();
+    }
+    QVERIFY(body->toPlainText().contains(QStringLiteral("Chosen sig")));
+
+    const int home = from->findData(QStringLiteral("home"));
+    QVERIFY(home >= 0);
+    from->setCurrentIndex(home);
+
+    // The deliberate choice survives the account change. Overwriting it is
+    // the one behaviour that can silently discard something the user just did.
+    QVERIFY(body->toPlainText().contains(QStringLiteral("Chosen sig")));
+    QVERIFY(!body->toPlainText().contains(QStringLiteral("Home sig")));
 }
 
 QTEST_MAIN(TestComposeWindow)

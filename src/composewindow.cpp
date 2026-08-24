@@ -406,8 +406,22 @@ void ComposeWindow::buildUi()
     for (QLineEdit *field : { m_to, m_cc, m_bcc, m_subject })
         connect(field, &QLineEdit::textChanged, this, &ComposeWindow::markDirty);
     connect(m_sendHtml, &QCheckBox::toggled, this, &ComposeWindow::markDirty);
-    connect(m_from, &QComboBox::currentIndexChanged, this,
-            &ComposeWindow::markDirty);
+    connect(m_from, &QComboBox::currentIndexChanged, this, [this]() {
+        markDirty();
+        // The account SEEDS the signature, so a change to it re-seeds. It
+        // stops the moment the user picks one: re-seeding unconditionally is
+        // the one behaviour that can silently discard a deliberate choice
+        // made a moment earlier. Same shape as send_html, which seeds from
+        // context and is then left alone.
+        if (m_signatureChosen)
+            return;
+        const QString seeded = seededSignatureName();
+        if (!Signatures::names(m_signatureDir).contains(seeded)) {
+            applySignature(QString());
+            return;
+        }
+        applySignature(seeded);
+    });
 }
 
 void ComposeWindow::buildFormatToolbar()
@@ -708,9 +722,12 @@ QStringList ComposeWindow::knownSignatures() const
 
 QString ComposeWindow::seededSignatureName() const
 {
-    // The account SEEDS, it does not bind: this is a starting value, and the
-    // switch keeps every signature reachable whichever account is selected.
-    const Account account = m_config.account(m_context.accountKey);
+    // The COMBO, not m_context: the context records where the composer opened
+    // and does not follow a From: change, so reading it would seed the
+    // original account's signature for ever.
+    const QString key = m_from->currentData().toString();
+    const Account account =
+        m_config.account(key.isEmpty() ? m_context.accountKey : key);
     if (!account.signature.isEmpty())
         return account.signature;
     return m_config.compose().signature;

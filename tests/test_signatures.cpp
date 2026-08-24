@@ -247,6 +247,16 @@ void TestSignatures::aDelimiterInsideTheQuoteIsNotTheSignature()
     // The quoted original carries the sender's own signature, quoted. A tail
     // rule would find it, and under End it would append after it; the block
     // must not be treated as this message's signature whichever way it goes.
+    //
+    // This test DOCUMENTS the case rather than pinning it, and that is worth
+    // knowing before trying to strengthen it. Two mutations were measured
+    // against it and both stayed green: trimming the delimiter comparison so
+    // that "> -- " matches, and making the quoted text one of the known
+    // signatures so the match guard could not be what refuses the removal.
+    // Neither changes the output, because blockEnd() stops the block at the
+    // quote, so the quoted signature survives whether or not the delimiter
+    // inside it is recognised. The behaviour is correct under both, and no
+    // assertion on the result can separate them.
     const QStringList known = { QStringLiteral("Jane Doe") };
     const QString buffer = QStringLiteral(
         "My reply.\n"

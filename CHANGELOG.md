@@ -23,6 +23,14 @@ point at which they are stable.
   reply follows what the message being answered used.
 - Drafts autosave to the account's `drafts` folder as ordinary Maildir files,
   so mbsync carries them to the server and another client can pick one up.
+- **The composer is laid out by scope.** Send is a large button beside the
+  headers rather than one more entry in a row of formatting buttons; the
+  formatting controls are icons on their own bar directly above the editor,
+  with Attach and Send as HTML at its right end; Remove attachment appears
+  beside the attachment list, and only once something is attached.
+- Cc and Bcc hide behind a disclosure next to To:, and reveal themselves
+  whenever either already carries a value, so a reply or a draft never hides
+  a recipient.
 - **A button bar over the message pane.** Reply and Forward sit directly
   above the message, with Toggle HTML at the right end. Forward had been
   reachable only from the Message menu.
@@ -48,6 +56,9 @@ point at which they are stable.
 
 ### Changed
 
+- "Also send a formatted copy" is now "Send as HTML", which says what it
+  does. It moved from a checkbox above the editor to the right end of the
+  formatting bar.
 - The main toolbar keeps the actions that need no particular message
   (Compose, Sync, Archive, Delete, Mark all read, Undo). Reply moves to the
   new message-pane bar, where Forward joins it.

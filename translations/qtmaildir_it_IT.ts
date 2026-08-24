@@ -8,8 +8,27 @@
         <translation>Componi</translation>
     </message>
     <message>
+        <source>The forwarded attachments could not be extracted.</source>
+        <translation>Non è stato possibile estrarre gli allegati inoltrati.</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n forwarded attachment(s) could not be extracted: %1</source>
+        <translation>
+            <numerusform>Non è stato possibile estrarre %n allegato inoltrato: %1</numerusform>
+            <numerusform>Non è stato possibile estrarre %n allegati inoltrati: %1</numerusform>
+        </translation>
+    </message>
+    <message>
         <source>From:</source>
         <translation>Da:</translation>
+    </message>
+    <message>
+        <source>Cc/Bcc</source>
+        <translation>Cc/Ccn</translation>
+    </message>
+    <message>
+        <source>Show or hide the Cc and Bcc fields</source>
+        <translation>Mostra o nascondi i campi Cc e Ccn</translation>
     </message>
     <message>
         <source>To:</source>
@@ -28,24 +47,12 @@
         <translation>Oggetto:</translation>
     </message>
     <message>
-        <source>Also send a formatted copy</source>
-        <translation>Invia anche una copia formattata</translation>
-    </message>
-    <message>
-        <source>Sends the message as plain text with a formatted version alongside it. The plain text is what you typed.</source>
-        <translation>Invia il messaggio come testo semplice con accanto una versione formattata. Il testo semplice è quello che hai scritto.</translation>
-    </message>
-    <message>
         <source>Send output</source>
         <translation>Output dell’invio</translation>
     </message>
     <message>
         <source>Close</source>
         <translation>Chiudi</translation>
-    </message>
-    <message>
-        <source>Formatting</source>
-        <translation>Formattazione</translation>
     </message>
     <message>
         <source>Bold</source>
@@ -82,6 +89,14 @@
     <message>
         <source>Remove attachment</source>
         <translation>Rimuovi allegato</translation>
+    </message>
+    <message>
+        <source>Send as HTML</source>
+        <translation>Invia come HTML</translation>
+    </message>
+    <message>
+        <source>Sends the message as plain text with an HTML version alongside it. The plain text is what you typed.</source>
+        <translation>Invia il messaggio come testo semplice con una versione HTML a fianco. Il testo semplice è quello che hai scritto.</translation>
     </message>
     <message>
         <source>Send</source>
@@ -179,8 +194,8 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>L&apos;account &apos;%1&apos; non ha un cestino configurato; aggiungere una chiave &apos;trash&apos; alla sua sezione. L&apos;eliminazione non funzionerà per questo account finché non verrà fatto.</translation>
     </message>
     <message>
-        <source>[compose] quote_position &apos;%1&apos; is not recognised; expected above or below. Using above.</source>
-        <translation>[compose] quote_position &apos;%1&apos; non è riconosciuto; atteso above o below. Verrà usato above.</translation>
+        <source>[compose] quote_position &apos;%1&apos; is not recognised; expected above or below. Using below.</source>
+        <translation>[compose] quote_position &apos;%1&apos; non è riconosciuto; atteso above o below. Uso below.</translation>
     </message>
     <message>
         <source>[compose] autosave_interval_ms &apos;%1&apos; is not a number; using %2.</source>
@@ -1096,6 +1111,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
             <numerusform>%n conversazione e %1 messaggi selezionati</numerusform>
             <numerusform>%n conversazioni e %1 messaggi selezionati</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>That message is no longer indexed</source>
+        <translation>Quel messaggio non è più indicizzato</translation>
     </message>
     <message>
         <source>(unreadable message)</source>

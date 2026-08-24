@@ -46,6 +46,7 @@
 #include <QTextCursor>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -141,6 +142,10 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
     // before the user has typed anything; a composer opened and closed at once
     // would then write a draft nobody asked for. The timer is stopped as well
     // as the flag cleared, since markDirty() started it.
+    // After seedFields(): a reply that carries Cc, or a draft that carries
+    // either, must show what the message is addressed to.
+    revealCcBccIfUsed();
+
     m_dirty = false;
     m_autosaveTimer->stop();
 
@@ -244,48 +249,106 @@ void ComposeWindow::buildUi()
     m_banner->hide();
     layout->addWidget(m_banner);
 
+    // The headers take the left, Send the right. Send is the terminal action
+    // and carries the weight to match, rather than sitting as one more entry
+    // in a row of formatting buttons (item 142).
+    auto *headerRow = new QHBoxLayout;
     auto *form = new QFormLayout;
 
     m_from = new QComboBox(central);
     m_from->setObjectName(QStringLiteral("from"));
     form->addRow(tr("From:"), m_from);
 
+    // To, with the Cc/Bcc disclosure beside it: the two hidden fields are
+    // revealed from the row they belong to.
     m_to = new QLineEdit(central);
     m_to->setObjectName(QStringLiteral("to"));
-    form->addRow(tr("To:"), m_to);
+    auto *toRow = new QWidget(central);
+    auto *toLayout = new QHBoxLayout(toRow);
+    toLayout->setContentsMargins(0, 0, 0, 0);
+    toLayout->addWidget(m_to, 1);
 
+    m_ccBccDisclosure = new QToolButton(toRow);
+    m_ccBccDisclosure->setObjectName(QStringLiteral("ccBccDisclosure"));
+    m_ccBccDisclosure->setText(tr("Cc/Bcc"));
+    m_ccBccDisclosure->setToolTip(tr("Show or hide the Cc and Bcc fields"));
+    m_ccBccDisclosure->setCheckable(true);
+    m_ccBccDisclosure->setArrowType(Qt::DownArrow);
+    m_ccBccDisclosure->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toLayout->addWidget(m_ccBccDisclosure);
+    form->addRow(tr("To:"), toRow);
+
+    // Cc and Bcc are hidden by default (item 145). The LABEL has to be hidden
+    // with the field: a QFormLayout keeps the two as separate items, so
+    // hiding only the QLineEdit leaves a stranded "Cc:" over empty space.
     m_cc = new QLineEdit(central);
     m_cc->setObjectName(QStringLiteral("cc"));
-    form->addRow(tr("Cc:"), m_cc);
+    auto *ccLabel = new QLabel(tr("Cc:"), central);
+    form->addRow(ccLabel, m_cc);
 
     m_bcc = new QLineEdit(central);
     m_bcc->setObjectName(QStringLiteral("bcc"));
-    form->addRow(tr("Bcc:"), m_bcc);
+    auto *bccLabel = new QLabel(tr("Bcc:"), central);
+    form->addRow(bccLabel, m_bcc);
+
+    const auto setCcBccVisible = [this, ccLabel, bccLabel](bool visible) {
+        ccLabel->setVisible(visible);
+        m_cc->setVisible(visible);
+        bccLabel->setVisible(visible);
+        m_bcc->setVisible(visible);
+        m_ccBccDisclosure->setChecked(visible);
+        m_ccBccDisclosure->setArrowType(visible ? Qt::UpArrow : Qt::DownArrow);
+    };
+    m_setCcBccVisible = setCcBccVisible;
+    setCcBccVisible(false);
+    connect(m_ccBccDisclosure, &QToolButton::toggled, this,
+            [setCcBccVisible](bool on) { setCcBccVisible(on); });
 
     m_subject = new QLineEdit(central);
     m_subject->setObjectName(QStringLiteral("subject"));
     form->addRow(tr("Subject:"), m_subject);
 
-    layout->addLayout(form);
+    headerRow->addLayout(form, 1);
 
-    // Labelled for what it does, a formatted copy riding along with the plain
-    // text, rather than "HTML", which reads as an either/or that it is not.
-    m_sendHtml = new QCheckBox(tr("Also send a formatted copy"), central);
-    m_sendHtml->setObjectName(QStringLiteral("sendHtml"));
-    m_sendHtml->setToolTip(
-        tr("Sends the message as plain text with a formatted version "
-           "alongside it. The plain text is what you typed."));
-    layout->addWidget(m_sendHtml);
+    // Icon above text, at the user's choice: a big target, with the word
+    // removing any doubt about what it does.
+    m_sendButton = new QToolButton(central);
+    m_sendButton->setObjectName(QStringLiteral("sendButton"));
+    m_sendButton->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    m_sendButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    headerRow->addWidget(m_sendButton, 0);
+
+    layout->addLayout(headerRow);
+
+    // The editor bar is created by buildFormatToolbar(), which runs after
+    // this, and inserted directly above the body. Recorded here so that
+    // insertion has a stable index rather than counting widgets.
+    m_editorBarIndex = layout->count();
 
     m_body = new QPlainTextEdit(central);
     m_body->setObjectName(QStringLiteral("body"));
     layout->addWidget(m_body, 1);
 
-    m_attachmentList = new QListWidget(central);
+    // The attachment list, with Remove beside it: the control acts on the
+    // list, so it lives with it, and both appear only once something is
+    // attached. A Remove button that can never do anything is worse than no
+    // button, since it invites a click that reports nothing.
+    m_attachmentRow = new QWidget(central);
+    auto *attachmentLayout = new QHBoxLayout(m_attachmentRow);
+    attachmentLayout->setContentsMargins(0, 0, 0, 0);
+
+    m_detachButton = new QToolButton(m_attachmentRow);
+    m_detachButton->setObjectName(QStringLiteral("detachButton"));
+    m_detachButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    attachmentLayout->addWidget(m_detachButton, 0, Qt::AlignTop);
+
+    m_attachmentList = new QListWidget(m_attachmentRow);
     m_attachmentList->setObjectName(QStringLiteral("attachments"));
     m_attachmentList->setMaximumHeight(90);
-    m_attachmentList->hide();
-    layout->addWidget(m_attachmentList);
+    attachmentLayout->addWidget(m_attachmentList, 1);
+
+    m_attachmentRow->hide();
+    layout->addWidget(m_attachmentRow);
 
     // The send-failure pane, in the shape MainWindow's sync log already has:
     // a header with a Close button and a read-only QPlainTextEdit under it. A
@@ -331,19 +394,47 @@ void ComposeWindow::buildUi()
 
 void ComposeWindow::buildFormatToolbar()
 {
-    m_formatToolbar = addToolBar(tr("Formatting"));
+    // A toolbar WIDGET in the central column, not addToolBar(): the row sits
+    // directly above the text it formats, the way every editor puts it, and a
+    // window toolbar cannot (item 142). The window has no toolbar at all now.
+    m_formatToolbar = new QToolBar(centralWidget());
     m_formatToolbar->setObjectName(QStringLiteral("formatToolbar"));
+    m_formatToolbar->setMovable(false);
+    // Icon-only for the formatting half, per the user's request and item 143.
+    m_formatToolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    const int editorIconSize = qMax(16, m_config.toolbarIconSize());
+    m_formatToolbar->setIconSize(QSize(editorIconSize, editorIconSize));
+    if (auto *column = qobject_cast<QVBoxLayout *>(centralWidget()->layout()))
+        column->insertWidget(m_editorBarIndex, m_formatToolbar);
 
     // A QAction parented to THIS WINDOW, not registered in KeyMap. Its
     // shortcut is therefore scoped to the composer: Qt dispatches a
     // WindowShortcut to the active window only, so the main window's Ctrl+B is
     // untouched and the two namespaces stay apart. These six do not
     // participate in item 132's reachability rule for the same reason.
-    const auto addFormat = [this](const QString &name, const QString &text,
-                                  const QString &token,
-                                  const QKeySequence &shortcut) {
+    // The theme's icon, with the WORDS kept as the tooltip: icon-only is
+    // exactly the state where a tooltip stops being decoration, and a theme
+    // that lacks one of these names must fall back to text rather than render
+    // an empty button (item 143).
+    const auto decorate = [](QAction *action, const QString &iconName,
+                             const QString &text) {
+        action->setToolTip(text);
+        const QIcon icon = QIcon::fromTheme(iconName);
+        if (icon.isNull())
+            return;
+        action->setIcon(icon);
+        // The text stays on the action for the tooltip and for any menu, but
+        // an icon-only toolbar shows the icon alone.
+    };
+
+    const auto addFormat = [this, decorate](const QString &name,
+                                            const QString &text,
+                                            const QString &iconName,
+                                            const QString &token,
+                                            const QKeySequence &shortcut) {
         QAction *action = m_formatToolbar->addAction(text);
         action->setObjectName(name);
+        decorate(action, iconName, text);
         if (!shortcut.isEmpty())
             action->setShortcut(shortcut);
         connect(action, &QAction::triggered, this,
@@ -351,18 +442,23 @@ void ComposeWindow::buildFormatToolbar()
     };
 
     addFormat(QStringLiteral("format_bold"), tr("Bold"),
+              QStringLiteral("format-text-bold"),
               QStringLiteral("**"), QKeySequence(QStringLiteral("Ctrl+B")));
     addFormat(QStringLiteral("format_italic"), tr("Italic"),
+              QStringLiteral("format-text-italic"),
               QStringLiteral("*"), QKeySequence(QStringLiteral("Ctrl+I")));
     addFormat(QStringLiteral("format_code"), tr("Code"),
+              QStringLiteral("format-text-code"),
               QStringLiteral("`"), QKeySequence(QStringLiteral("Ctrl+`")));
     // No shortcut, per the spec's table.
     addFormat(QStringLiteral("format_strike"), tr("Strikethrough"),
+              QStringLiteral("format-text-strikethrough"),
               QStringLiteral("~~"), QKeySequence());
 
     // Link and Quote are not wraps and cannot go through applyFormat().
     QAction *link = m_formatToolbar->addAction(tr("Link"));
     link->setObjectName(QStringLiteral("format_link"));
+    decorate(link, QStringLiteral("insert-link"), tr("Link"));
     link->setShortcut(QKeySequence(QStringLiteral("Ctrl+K")));
     connect(link, &QAction::triggered, this, [this]() {
         const QTextCursor cursor = m_body->textCursor();
@@ -373,6 +469,7 @@ void ComposeWindow::buildFormatToolbar()
 
     QAction *quote = m_formatToolbar->addAction(tr("Quote"));
     quote->setObjectName(QStringLiteral("format_quote"));
+    decorate(quote, QStringLiteral("format-text-blockquote"), tr("Quote"));
     connect(quote, &QAction::triggered, this, [this]() {
         const QTextCursor cursor = m_body->textCursor();
         applyEdit(MarkdownFormat::quote(m_body->toPlainText(),
@@ -380,10 +477,15 @@ void ComposeWindow::buildFormatToolbar()
                                         cursor.selectionEnd()));
     });
 
-    m_formatToolbar->addSeparator();
+    // Everything after this sits at the RIGHT of the row, apart from the
+    // formatting buttons, because none of it formats text.
+    auto *spacer = new QWidget(m_formatToolbar);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_formatToolbar->addWidget(spacer);
 
     m_attachAction = m_formatToolbar->addAction(tr("Attach..."));
     m_attachAction->setObjectName(QStringLiteral("compose_attach"));
+    decorate(m_attachAction, QStringLiteral("mail-attachment"), tr("Attach..."));
     connect(m_attachAction, &QAction::triggered, this, [this]() {
         const QStringList chosen = QFileDialog::getOpenFileNames(
             this, tr("Attach files"));
@@ -402,10 +504,39 @@ void ComposeWindow::buildFormatToolbar()
         markDirty();
     });
 
-    m_sendAction = m_formatToolbar->addAction(tr("Send"));
+    // The HTML toggle rides at the right end of the same row, icon AND text
+    // (item 144). Alone on its side, and worded for what it does rather than
+    // for the mechanism: "a formatted copy" never said HTML, which is what the
+    // user had to infer. It is an action on the bar rather than a checkbox
+    // under it, so it reads as a control of the editor.
+    m_sendHtml = new QToolButton(m_formatToolbar);
+    m_sendHtml->setObjectName(QStringLiteral("sendHtml"));
+    m_sendHtml->setCheckable(true);
+    m_sendHtml->setText(tr("Send as HTML"));
+    m_sendHtml->setToolTip(
+        tr("Sends the message as plain text with an HTML version alongside "
+           "it. The plain text is what you typed."));
+    m_sendHtml->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    const QIcon htmlIcon = QIcon::fromTheme(QStringLiteral("text-html"));
+    if (!htmlIcon.isNull())
+        m_sendHtml->setIcon(htmlIcon);
+    m_formatToolbar->addWidget(m_sendHtml);
+
+    // Send is NOT on this row: it is the terminal action, and it lives on the
+    // button beside the headers. The QAction survives because it carries the
+    // shortcut and is what the button triggers.
+    m_sendAction = new QAction(tr("Send"), this);
     m_sendAction->setObjectName(QStringLiteral("compose_send"));
     m_sendAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Return")));
+    const QIcon sendIcon = QIcon::fromTheme(QStringLiteral("mail-send"));
+    if (!sendIcon.isNull())
+        m_sendAction->setIcon(sendIcon);
     connect(m_sendAction, &QAction::triggered, this, &ComposeWindow::send);
+    addAction(m_sendAction);
+    m_sendButton->setDefaultAction(m_sendAction);
+
+    // Remove attachment moves to its own button beside the list it acts on.
+    m_detachButton->setDefaultAction(m_detachAction);
 }
 
 void ComposeWindow::seedFields()
@@ -438,6 +569,18 @@ void ComposeWindow::seedFields()
                          || m_context.kind == ComposeContext::Kind::ReplyAll;
     m_sendHtml->setChecked(isReply ? m_context.seedHtml
                                    : m_config.compose().sendHtml);
+}
+
+void ComposeWindow::revealCcBccIfUsed()
+{
+    // Never hides: only the user's own click on the disclosure does that. A
+    // field holding an address must not become invisible because something
+    // else changed, which is the whole reason this exists rather than a plain
+    // "start collapsed".
+    if (!m_setCcBccVisible)
+        return;
+    if (!m_cc->text().trimmed().isEmpty() || !m_bcc->text().trimmed().isEmpty())
+        m_setCcBccVisible(true);
 }
 
 void ComposeWindow::seedBody()
@@ -477,7 +620,13 @@ void ComposeWindow::refreshAttachmentList()
     m_attachmentList->clear();
     for (const QString &path : m_attachments)
         m_attachmentList->addItem(QFileInfo(path).fileName());
-    m_attachmentList->setVisible(!m_attachments.isEmpty());
+    // The ROW, so Remove goes with the list it acts on. The action's own
+    // visibility follows, which is what keeps it off screen with nothing
+    // attached even though it lives on a button rather than in a toolbar.
+    const bool any = !m_attachments.isEmpty();
+    m_attachmentRow->setVisible(any);
+    if (m_detachAction)
+        m_detachAction->setVisible(any);
 }
 
 bool ComposeWindow::attachmentNeedsWarning(qint64 size) const
@@ -701,6 +850,27 @@ void ComposeWindow::setInputsEnabled(bool enabled)
     m_sendHtml->setEnabled(enabled);
     m_attachmentList->setEnabled(enabled);
     m_formatToolbar->setEnabled(enabled);
+
+    // Every control that used to live in the one toolbar, now that item 142
+    // has split it four ways. m_formatToolbar->setEnabled() covered Bold
+    // through Send when they shared a row; it now reaches only the editor bar,
+    // and the rest have to be named. An Attach left live during the countdown
+    // appends to m_attachments after MessageBuilder has already run, so the
+    // file is either silently dropped or added to bytes already handed to the
+    // send command, with nothing reported either way.
+    m_sendButton->setEnabled(enabled);
+    m_sendAction->setEnabled(enabled);
+    m_detachButton->setEnabled(enabled);
+    m_detachAction->setEnabled(enabled);
+    m_attachAction->setEnabled(enabled);
+    m_ccBccDisclosure->setEnabled(enabled);
+
+    // The ACTIONS, not only the bar that holds them. Disabling a QToolBar
+    // greys its buttons but leaves each QAction enabled, so the keyboard
+    // shortcut still fires: Ctrl+B during a send would edit a message already
+    // being built, through a button that looks unavailable.
+    for (QAction *action : m_formatToolbar->actions())
+        action->setEnabled(enabled);
 }
 
 void ComposeWindow::showSendFailure(const QString &stderrText)

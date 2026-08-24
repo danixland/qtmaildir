@@ -19,6 +19,8 @@
 #pragma once
 
 #include <QMainWindow>
+
+#include <functional>
 #include <QStringList>
 
 #include <memory>
@@ -38,6 +40,8 @@ class QListWidget;
 class QPlainTextEdit;
 class QTimer;
 class QToolBar;
+class QAbstractButton;
+class QToolButton;
 class QTemporaryDir;
 class QWidget;
 
@@ -116,6 +120,15 @@ public:
     /// A warning rather than a refusal: the limit belongs to the recipient's
     /// server, which this application cannot know, so the user decides.
     void attachFile(const QString &path);
+
+    /// Shows Cc and Bcc when either already carries a value, and leaves them
+    /// shown. Called after seeding and after a draft is loaded.
+    ///
+    /// The load-bearing half of item 145: a hidden field holding an address is
+    /// a message going somewhere the sender cannot see, which is worse than
+    /// the clutter the disclosure removes. Never hides: only the user's own
+    /// click does that.
+    void revealCcBccIfUsed();
 
     /// A byte count as a figure a person reads.
     ///
@@ -200,12 +213,20 @@ private:
     std::unique_ptr<QTemporaryDir> m_forwardedParts;
 
     QLineEdit *m_to = nullptr;
+    QWidget *m_attachmentRow = nullptr;
+    QToolButton *m_detachButton = nullptr;
+    int m_editorBarIndex = -1;
+    std::function<void(bool)> m_setCcBccVisible;
+    QWidget *m_ccRow = nullptr;
+    QWidget *m_bccRow = nullptr;
+    QToolButton *m_ccBccDisclosure = nullptr;
+    QToolButton *m_sendButton = nullptr;
     QLineEdit *m_cc = nullptr;
     QLineEdit *m_bcc = nullptr;
     QLineEdit *m_subject = nullptr;
     QComboBox *m_from = nullptr;
     QPlainTextEdit *m_body = nullptr;
-    QCheckBox *m_sendHtml = nullptr;
+    QToolButton *m_sendHtml = nullptr;
     QLabel *m_banner = nullptr;
     QListWidget *m_attachmentList = nullptr;
     QWidget *m_sendLogPane = nullptr;

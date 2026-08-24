@@ -476,6 +476,10 @@ private slots:
     // MainWindow hands it, so a Config written to a temporary INI is the whole
     // fixture.
     void aComposerOpensClean();
+    void theComposerSplitsItsToolbarByScope();
+    void ccAndBccHideBehindADisclosure();
+    void ccAndBccAreRevealedWhenTheyCarryAValue();
+    void removeAttachmentAppearsOnlyWithAttachments();
     void typingMarksTheComposerDirty();
     void anAutosaveWritesADraftAndClearsTheDirtyFlag();
     void anUnwritableDraftsFolderRaisesThePersistentBanner();
@@ -9432,7 +9436,7 @@ void TestMainWindow::forwardSeedsHtmlFromTheConfigNotTheOriginal()
     QList<ComposeWindow *> opened = window.openComposersForTest();
     QCOMPARE(opened.size(), 1);
     auto *sendHtml =
-        opened.first()->findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+        opened.first()->findChild<QAbstractButton *>(QStringLiteral("sendHtml"));
     QVERIFY(sendHtml);
     QVERIFY2(!sendHtml->isChecked(),
              "Forward seeded sendHtml from the original's HTML part rather "
@@ -9446,7 +9450,7 @@ void TestMainWindow::forwardSeedsHtmlFromTheConfigNotTheOriginal()
     const QList<ComposeWindow *> both = window.openComposersForTest();
     QCOMPARE(both.size(), 2);
     auto *replyHtml =
-        both.last()->findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+        both.last()->findChild<QAbstractButton *>(QStringLiteral("sendHtml"));
     QVERIFY(replyHtml);
     QVERIFY2(replyHtml->isChecked(),
              "Reply did not seed sendHtml from the original's HTML part");
@@ -12213,6 +12217,194 @@ ComposeContext newContext()
 
 }  // namespace
 
+void TestMainWindow::theComposerSplitsItsToolbarByScope()
+{
+    // Items 142, 143 and 144. One row carried three scopes: text formatting,
+    // message composition and the terminal action. The user read it as a menu
+    // bar that is not one.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+    ComposeContext context = newContext();
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+
+    auto *editorBar =
+        window.findChild<QToolBar *>(QStringLiteral("formatToolbar"));
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *subject = window.findChild<QLineEdit *>(QStringLiteral("subject"));
+    QVERIFY(editorBar && body && subject);
+
+    // Directly above the text it formats, and below Subject, which belongs to
+    // the message rather than to the text.
+    auto *central = window.centralWidget();
+    QVERIFY(central);
+    auto *column = qobject_cast<QVBoxLayout *>(central->layout());
+    QVERIFY2(column, "the composer is not laid out in a vertical column");
+
+    int barIndex = -1;
+    int bodyIndex = -1;
+    for (int i = 0; i < column->count(); ++i) {
+        QLayoutItem *item = column->itemAt(i);
+        if (item->widget() == editorBar)
+            barIndex = i;
+        else if (item->widget() == body)
+            bodyIndex = i;
+    }
+    QVERIFY2(barIndex >= 0 && bodyIndex >= 0,
+             "the editor bar or the body is not in the composer's column");
+    QVERIFY2(barIndex < bodyIndex, "the editor bar is not above the editor");
+
+    // Send is NOT in that row any more: it is the terminal action and sits by
+    // the headers, where its weight belongs.
+    auto *send = window.findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(send);
+    QVERIFY2(!editorBar->actions().contains(send),
+             "Send still shares the editor bar with the formatting buttons");
+
+    auto *sendButton =
+        window.findChild<QToolButton *>(QStringLiteral("sendButton"));
+    QVERIFY2(sendButton, "there is no Send button beside the headers");
+    QCOMPARE(sendButton->toolButtonStyle(), Qt::ToolButtonTextUnderIcon);
+    QVERIFY2(sendButton->defaultAction() == send,
+             "the Send button does not carry the send action itself");
+
+    // Item 143: the formatting buttons carry icons, and keep their words as
+    // the tooltip so nothing becomes unnameable in an icon-only row.
+    for (const QString &name : { QStringLiteral("format_bold"),
+                                 QStringLiteral("format_italic"),
+                                 QStringLiteral("format_link") }) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action %1").arg(name)));
+        QVERIFY2(!action->toolTip().isEmpty(),
+                 qPrintable(QStringLiteral("%1 has no tooltip, so an "
+                                           "icon-only button cannot be named")
+                                .arg(name)));
+    }
+
+    // Item 144: the HTML toggle sits at the right of the same row, apart from
+    // the formatting buttons, since it is not one.
+    auto *sendHtml =
+        window.findChild<QAbstractButton *>(QStringLiteral("sendHtml"));
+    QVERIFY(sendHtml);
+}
+
+void TestMainWindow::ccAndBccHideBehindADisclosure()
+{
+    // Item 145. Most messages address neither, so two of four header rows sat
+    // empty on every composer.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+    ComposeContext context = newContext();
+    context.cc.clear();
+
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+    auto *cc = window.findChild<QLineEdit *>(QStringLiteral("cc"));
+    auto *bcc = window.findChild<QLineEdit *>(QStringLiteral("bcc"));
+    auto *disclosure = window.findChild<QAbstractButton *>(
+        QStringLiteral("ccBccDisclosure"));
+    QVERIFY(cc && bcc);
+    QVERIFY2(disclosure, "there is no Cc/Bcc disclosure beside To:");
+
+    QVERIFY2(cc->isHidden(), "Cc is shown on a composer that carries none");
+    QVERIFY2(bcc->isHidden(), "Bcc is shown on a composer that carries none");
+
+    disclosure->click();
+    QVERIFY2(!cc->isHidden() && !bcc->isHidden(),
+             "the disclosure did not reveal Cc and Bcc");
+
+    disclosure->click();
+    QVERIFY2(cc->isHidden() && bcc->isHidden(),
+             "the disclosure did not hide Cc and Bcc again");
+}
+
+void TestMainWindow::ccAndBccAreRevealedWhenTheyCarryAValue()
+{
+    // The load-bearing half of item 145, and the reason the disclosure is not
+    // simply "start collapsed". A hidden field holding an address is a message
+    // going somewhere the sender cannot see, which is worse than the clutter
+    // the disclosure removes. A reply carrying Cc, or a reopened draft, must
+    // show what it is addressed to.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    {
+        ComposeContext context = newContext();
+        context.cc = { QStringLiteral("someone@example.org") };
+
+        ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+        auto *cc = window.findChild<QLineEdit *>(QStringLiteral("cc"));
+        auto *bcc = window.findChild<QLineEdit *>(QStringLiteral("bcc"));
+        QVERIFY(cc && bcc);
+        QVERIFY2(!cc->isHidden(),
+                 "a seeded Cc is hidden, so the message goes somewhere the "
+                 "sender cannot see");
+        // Both together: they are one disclosure, and revealing half of it
+        // would leave Bcc hidden while Cc is visible for no stated reason.
+        QVERIFY2(!bcc->isHidden(),
+                 "Cc was revealed without Bcc, though they share a disclosure");
+    }
+
+    // ComposeContext carries no bcc at all: a reply never inherits one, so
+    // the only way a fresh composer starts with a Bcc is a reopened draft,
+    // which fills the widget rather than the context. That is also the case
+    // where hiding it matters most, since a Bcc is the value a sender is
+    // least able to notice missing.
+    {
+        ComposeContext context = newContext();
+        context.cc.clear();
+
+        ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+        auto *bcc = window.findChild<QLineEdit *>(QStringLiteral("bcc"));
+        auto *cc = window.findChild<QLineEdit *>(QStringLiteral("cc"));
+        QVERIFY(bcc && cc);
+        QVERIFY(bcc->isHidden());
+
+        // Setting the text is what a draft load does.
+        bcc->setText(QStringLiteral("hidden@example.org"));
+        window.revealCcBccIfUsed();
+        QVERIFY2(!bcc->isHidden(),
+                 "a Bcc filled after construction stayed hidden");
+        QVERIFY2(!cc->isHidden(),
+                 "Bcc was revealed without Cc, though they share a disclosure");
+    }
+}
+
+void TestMainWindow::removeAttachmentAppearsOnlyWithAttachments()
+{
+    // The user's placement: Remove sits with the list it acts on, and a
+    // control that can never do anything should not be on screen at all.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+    ComposeContext context = newContext();
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+
+    auto *detach = window.findChild<QAction *>(QStringLiteral("compose_detach"));
+    auto *list = window.findChild<QListWidget *>(QStringLiteral("attachments"));
+    QVERIFY(detach && list);
+
+    // isVisible() on the LIST, not isHidden(): the list is not hidden in its
+    // own right, its parent row is, and a child of a hidden parent reports
+    // isHidden() false while being just as invisible. Asserting the wrong one
+    // fails against correct code.
+    QVERIFY2(!list->isVisible(),
+             "the attachment list shows with nothing attached");
+    QVERIFY2(!detach->isVisible(),
+             "Remove attachment is offered with nothing attached");
+
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("note.txt"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("x");
+    file.close();
+    window.attachFile(path);
+
+    QVERIFY2(!list->isHidden(), "the attachment list stayed hidden");
+    auto *row = list->parentWidget();
+    QVERIFY(row);
+    QVERIFY2(detach->isVisible(),
+             "Remove attachment is not offered with a file attached");
+}
+
 void TestMainWindow::aComposerOpensClean()
 {
     ComposeFixture fixture;
@@ -12808,7 +13000,7 @@ void TestMainWindow::aReplySeedsTheHtmlToggleFromTheOriginal()
     context.seedHtml = false;
 
     ComposeWindow window(context, fixture.config(), fixture.mailRoot());
-    auto *toggle = window.findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    auto *toggle = window.findChild<QAbstractButton *>(QStringLiteral("sendHtml"));
     QVERIFY2(toggle, "no send-html toggle");
     QVERIFY2(!toggle->isChecked(),
              "a reply seeded from config rather than from the original");
@@ -12824,7 +13016,7 @@ void TestMainWindow::aReplySeedsTheHtmlToggleFromTheOriginal()
 
     ComposeWindow second(htmlReply, plain.config(), plain.mailRoot());
     auto *secondToggle =
-        second.findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+        second.findChild<QAbstractButton *>(QStringLiteral("sendHtml"));
     QVERIFY(secondToggle);
     QVERIFY2(secondToggle->isChecked(),
              "a reply-all ignored an HTML original");
@@ -12843,7 +13035,7 @@ void TestMainWindow::aNewMessageSeedsTheHtmlToggleFromConfig()
     context.seedHtml = true;
 
     ComposeWindow window(context, off.config(), off.mailRoot());
-    auto *toggle = window.findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    auto *toggle = window.findChild<QAbstractButton *>(QStringLiteral("sendHtml"));
     QVERIFY(toggle);
     QVERIFY2(!toggle->isChecked(), "a New message ignored [compose] send_html");
 
@@ -12856,7 +13048,7 @@ void TestMainWindow::aNewMessageSeedsTheHtmlToggleFromConfig()
 
     ComposeWindow second(forward, on.config(), on.mailRoot());
     auto *secondToggle =
-        second.findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+        second.findChild<QAbstractButton *>(QStringLiteral("sendHtml"));
     QVERIFY(secondToggle);
     QVERIFY2(secondToggle->isChecked(),
              "a Forward seeded from the original rather than from config");
@@ -12888,7 +13080,7 @@ void TestMainWindow::disablingInputsCoversEveryFieldAndTheToolbar()
     auto *to = window->findChild<QLineEdit *>(QStringLiteral("to"));
     auto *subject = window->findChild<QLineEdit *>(QStringLiteral("subject"));
     auto *from = window->findChild<QComboBox *>(QStringLiteral("from"));
-    auto *toggle = window->findChild<QCheckBox *>(QStringLiteral("sendHtml"));
+    auto *toggle = window->findChild<QAbstractButton *>(QStringLiteral("sendHtml"));
     QVERIFY(toolbar && to && subject && from && toggle);
 
     QVERIFY(to->isEnabled());
@@ -12913,6 +13105,41 @@ void TestMainWindow::disablingInputsCoversEveryFieldAndTheToolbar()
     QVERIFY(attachments);
     QVERIFY2(!attachments->isEnabled(),
              "the attachment list is still live during a send");
+
+    // EVERY control by name, not the toolbar that used to contain them all.
+    // Until item 142 split it, one setEnabled() on formatToolbar covered
+    // Bold through Send, so asserting on that one widget was the same as
+    // asserting on all of them. With the row split four ways, that assertion
+    // would pass while Attach sat live beside a message already being built:
+    // a file appended to m_attachments after MessageBuilder has run is either
+    // silently dropped or added to bytes already handed to the send command,
+    // and neither reports anything. Named individually so a control that
+    // grows a new home cannot quietly escape the lock.
+    for (const QString &name : { QStringLiteral("compose_attach"),
+                                 QStringLiteral("compose_detach"),
+                                 QStringLiteral("format_bold"),
+                                 QStringLiteral("format_italic"),
+                                 QStringLiteral("format_link"),
+                                 QStringLiteral("format_quote") }) {
+        auto *action = window->findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action %1").arg(name)));
+        QVERIFY2(!action->isEnabled(),
+                 qPrintable(QStringLiteral("%1 is still live during a send")
+                                .arg(name)));
+    }
+
+    // The Cc/Bcc disclosure too: revealing a field mid-send is harmless on its
+    // own, but the fields it reveals must be as locked as the rest.
+    auto *ccBcc = window->findChild<QAbstractButton *>(
+        QStringLiteral("ccBccDisclosure"));
+    QVERIFY(ccBcc);
+    QVERIFY2(!ccBcc->isEnabled(),
+             "the Cc/Bcc disclosure is still live during a send");
+    auto *cc = window->findChild<QLineEdit *>(QStringLiteral("cc"));
+    auto *bcc = window->findChild<QLineEdit *>(QStringLiteral("bcc"));
+    QVERIFY(cc && bcc);
+    QVERIFY2(!cc->isEnabled() && !bcc->isEnabled(),
+             "Cc or Bcc is still editable during a send");
 
     // /bin/true is the fixture's send command, so the send succeeds and the
     // composer closes itself: the message went, and holding a composer open

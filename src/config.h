@@ -212,7 +212,10 @@ struct ComposeSettings
     /// reply_no_quote does not).
     enum class QuotePosition { Above, Below };
 
-    QuotePosition quotePosition = QuotePosition::Above;
+    /// Below by default: the reply is typed at the top and the quote sits
+    /// under it, which is what the user asked for and what every mail client
+    /// they compare against does. Above is bottom-posting and stays available.
+    QuotePosition quotePosition = QuotePosition::Below;
 
     /// Seeds the per-message toggle for New and Forward only. Reply and
     /// Reply-all seed from whether the original carried a text/html part,

@@ -487,6 +487,7 @@ private slots:
     void aDisabledAttachmentWarningWarnsAboutNothing();
     void theQuotePositionDecidesWhereTheQuoteLands();
     void theCursorStartsOnBlankSpaceNotOnTheQuote();
+    void aReplyOpensWithTheBodyFocused();
     void theSeededQuoteIsNotAnUndoStep();
     void aReplySeedsTheHtmlToggleFromTheOriginal();
     void aNewMessageSeedsTheHtmlToggleFromConfig();
@@ -12522,6 +12523,48 @@ void TestMainWindow::theCursorStartsOnBlankSpaceNotOnTheQuote()
                  QLatin1String(testCase.position) == QLatin1String("above")
                      ? false
                      : true);
+    }
+}
+
+void TestMainWindow::aReplyOpensWithTheBodyFocused()
+{
+    // A Reply arrives with To: already filled, so the first widget in the form
+    // taking focus means the user has to click into the editor before typing.
+    // A New message is the opposite case and keeps the default.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    {
+        ComposeContext context = newContext();
+        context.kind = ComposeContext::Kind::Reply;
+        context.to = { QStringLiteral("someone@example.org") };
+        context.quotedBody = QStringLiteral("> the original");
+
+        ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+        auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+        QVERIFY(body);
+        // focusWidget(), not hasFocus(): an unshown window is never active, so
+        // hasFocus() is false whatever the code does and the assertion would
+        // fail against a correct fix. This is the same class of trap CLAUDE.md
+        // records for the offscreen platform and window sizing.
+        QVERIFY2(window.focusWidget() == body,
+                 "a reply did not open with the body focused");
+    }
+
+    {
+        // The guard: without it, focusing the body unconditionally would pass
+        // the assertion above while taking focus off an empty To: field, which
+        // is the one thing a new message needs first.
+        ComposeContext context = newContext();
+        context.kind = ComposeContext::Kind::New;
+        context.to.clear();
+
+        ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+        auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+        auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+        QVERIFY(body && to);
+        QVERIFY2(window.focusWidget() != body,
+                 "a new message stole focus from the empty To: field");
     }
 }
 

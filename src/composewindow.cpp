@@ -143,6 +143,14 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
     // as the flag cleared, since markDirty() started it.
     m_dirty = false;
     m_autosaveTimer->stop();
+
+    // The body, whenever there is already a recipient: a Reply or a Forward
+    // has To: filled in from the context, so the first widget in the form
+    // would take focus and the user would have to click into the editor
+    // before typing. A New message keeps the default, since To: is empty and
+    // is genuinely the first thing to fill in.
+    if (!m_to->text().trimmed().isEmpty())
+        m_body->setFocus();
 }
 
 

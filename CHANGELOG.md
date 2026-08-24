@@ -23,6 +23,10 @@ point at which they are stable.
   reply follows what the message being answered used.
 - Drafts autosave to the account's `drafts` folder as ordinary Maildir files,
   so mbsync carries them to the server and another client can pick one up.
+- A reply opens with the cursor on a blank line above the quote, and with the
+  body focused, so typing can start immediately. `[compose] quote_position`
+  defaults to `below` (your reply first, the quote under it); `above` puts the
+  quote first and the cursor after it.
   Closing a composer with unsaved edits asks first, and so does quitting with
   one open.
 - Sending goes to a per-account `send_command` on stdin, so any sendmail

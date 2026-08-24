@@ -130,7 +130,7 @@ private slots:
     void garbageSendDelayIsRejectedNotZero();
     void garbageAttachmentWarnBytesIsRejectedNotZero();
     void zeroOrNegativeAutosaveIntervalIsClamped();
-    void unrecognisedQuotePositionWarnsAndFallsBackToAbove();
+    void unrecognisedQuotePositionWarnsAndFallsBackToBelow();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -2359,8 +2359,8 @@ void TestConfig::composeSettingsDefaultWhenTheSectionIsAbsent()
     config.load(writeIni(dir, QStringLiteral("[general]\n")));
 
     const ComposeSettings compose = config.compose();
-    QVERIFY2(compose.quotePosition == ComposeSettings::QuotePosition::Above,
-             "default quote position must be Above");
+    QVERIFY2(compose.quotePosition == ComposeSettings::QuotePosition::Below,
+             "default quote position must be Below");
     QVERIFY2(compose.sendHtml, "default send_html must be true");
     QCOMPARE(compose.autosaveIntervalMs, 30000);
     QCOMPARE(compose.sendDelayMs, 5000);
@@ -2492,7 +2492,7 @@ void TestConfig::zeroOrNegativeAutosaveIntervalIsClamped()
                             .arg(negative.compose().autosaveIntervalMs)));
 }
 
-void TestConfig::unrecognisedQuotePositionWarnsAndFallsBackToAbove()
+void TestConfig::unrecognisedQuotePositionWarnsAndFallsBackToBelow()
 {
     // Matches the precedent set by sync_on_exit, language and date_format:
     // the only silent fallbacks in this file are for ABSENT keys, never for
@@ -2503,8 +2503,8 @@ void TestConfig::unrecognisedQuotePositionWarnsAndFallsBackToAbove()
         "[compose]\n"
         "quote_position=abov\n")));
 
-    QVERIFY2(config.compose().quotePosition == ComposeSettings::QuotePosition::Above,
-             "an unrecognised quote_position must still fall back to Above");
+    QVERIFY2(config.compose().quotePosition == ComposeSettings::QuotePosition::Below,
+             "an unrecognised quote_position must still fall back to Below");
     QVERIFY2(!config.problems().isEmpty(),
              "an unrecognised quote_position was accepted silently");
 }

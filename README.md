@@ -262,8 +262,10 @@ drafts = Drafts
 ; about the sender's software rather than a guess about their taste.
 send_html = true
 
-; Where the quoted original goes in a reply: above or below.
-quote_position = above
+; Where the quoted original goes relative to your reply: below (the default,
+; you type at the top and the quote follows) or above (bottom-posting, the
+; quote first and the cursor after it).
+quote_position = below
 
 ; How long the send popup counts down before the command runs, in
 ; milliseconds. This is the window in which Undo can still stop it; 0 skips

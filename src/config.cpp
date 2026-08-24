@@ -531,7 +531,7 @@ void Config::load(const QString &path)
     // other enum-ish key in this file (sync_on_exit, language, date_format)
     // rather than being the one silent exception.
     const QString quotePosition =
-        settings.value(QStringLiteral("quote_position"), QStringLiteral("above"))
+        settings.value(QStringLiteral("quote_position"), QStringLiteral("below"))
             .toString().trimmed();
     if (quotePosition.compare(QStringLiteral("above"), Qt::CaseInsensitive) == 0) {
         m_compose.quotePosition = ComposeSettings::QuotePosition::Above;
@@ -539,7 +539,7 @@ void Config::load(const QString &path)
         m_compose.quotePosition = ComposeSettings::QuotePosition::Below;
     } else {
         addProblem(tr("[compose] quote_position '%1' is not recognised; "
-                      "expected above or below. Using above.")
+                      "expected above or below. Using below.")
                        .arg(quotePosition));
     }
 

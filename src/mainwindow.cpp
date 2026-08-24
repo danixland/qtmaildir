@@ -1298,7 +1298,17 @@ void MainWindow::updateComposeActions()
     // cannot send. save_message is deliberately NOT in this list: it is the
     // escape hatch for exactly that case, writing the raw message to a file
     // that can be attached to a new message from an account that can send.
-    const QString replyAccount = accountForCurrentMessage();
+    // Everything below describes the DISPLAYED message, and every route that
+    // blanks the pane clears these two ids while leaving currentIndex() valid
+    // on a row from the previous result. Answering from the index instead
+    // would describe a message that is no longer on screen: it left Reply
+    // enabled over an empty pane, and, once this function refilled the pane's
+    // bar, put the wrong buttons there in both directions.
+    const bool showing =
+        !m_currentMessageId.isEmpty() || !m_currentThreadId.isEmpty();
+
+    const QString replyAccount =
+        showing ? accountForCurrentMessage() : QString();
     const bool canReply = !replyAccount.isEmpty()
                           && m_config.account(replyAccount).canSend();
 
@@ -1320,7 +1330,13 @@ void MainWindow::updateComposeActions()
     // notmuch surfaces the Maildir D flag as one, and a message flagged by
     // another client sits in the inbox rather than in the drafts folder.
     if (QAction *edit = m_actions.value(QStringLiteral("edit_draft")))
-        edit->setEnabled(currentMessageIsADraft());
+        edit->setEnabled(showing && currentMessageIsADraft());
+
+    // The pane's bar shows Edit draft in place of the reply pair on a draft
+    // (item 157), so it is refilled here rather than once at construction:
+    // this runs on every selection change, which is the only thing that can
+    // move a draft into or out of the pane.
+    populateMessageBar();
 
     // The ribbon appears only when an account was identified AND it cannot
     // send. An unidentified account is not a receive-only one: it is a message
@@ -2116,14 +2132,63 @@ void MainWindow::populateMessageBar()
     // Reply and Forward only: Compose needs no message and sits on the main
     // toolbar with the other window-wide actions.
     //
+    // A draft swaps that pair for Edit draft (item 157). It is the same rule
+    // items 139 to 141 settled, applied one level down: the bar carries what
+    // the DISPLAYED message affords, and a draft affords neither answering a
+    // sender it does not have nor passing on a message that is not finished.
+    // The view controls are unchanged by the swap, since how the pane renders
+    // is not a property of what the message is.
+    //
+    // Called from updateComposeActions() as well as at construction, so it
+    // follows the selection. That is also why the actions are looked up fresh
+    // rather than cached: the bar is refilled, never rebuilt.
+    //
     // Slightly smaller than the main toolbar's icons, deriving from the
     // configured size rather than hardcoding one, so the bar stays subordinate
     // to the chrome above it however the user sets that key.
     const int iconSize = qMax(16, (m_config.toolbarIconSize() * 7) / 8);
+
+    // Gated on whether a message is DISPLAYED, not on which row is current.
+    // The two disagree on every route that blanks the pane without moving the
+    // selection: running a query leaves currentIndex() valid on a row from the
+    // previous result, so a bar keyed on it kept offering Edit draft over an
+    // empty pane after leaving the Drafts filter, and the reply pair after
+    // arriving at it. This is item 150's trap exactly, one level up, and the
+    // test that missed it moved row to row, which is the one gesture that
+    // cannot expose it.
+    //
+    // m_currentMessageId is cleared with the pane by every one of those
+    // routes, so it is the only thing that tracks what the bar describes.
+    // The bar always carries a message half. Whether it is SEEN is
+    // MessageView's question, not this one: it hides the whole bar over an
+    // empty pane, alongside the subject and the details button, so this only
+    // ever decides what a displayed message affords.
+    //
+    // Only a displayed DRAFT swaps the pair, and "displayed" is the operative
+    // word: keyed on m_currentMessageId rather than on currentIndex(), which
+    // stays valid on a row from the previous result after a query and made the
+    // bar describe a message that was no longer on screen, in both directions.
+    // That is item 150's trap one level up, and the first version of this test
+    // could not see it because it moved row to row, the one gesture that
+    // always changes both.
+    // currentMessageIsADraft() alone, with no displayed-message guard beside
+    // it: a query calls m_model->clear(), which invalidates currentIndex(),
+    // so the predicate is already false whenever the pane is blank. Measured,
+    // after writing that guard and finding no reachable state where it
+    // changed the answer. The guard that IS load-bearing sits one level up in
+    // updateComposeActions(), where accountForCurrentMessage() would otherwise
+    // answer about a row this query is discarding.
+    QList<QAction *> messageActions;
+    if (currentMessageIsADraft()) {
+        messageActions = { m_actions.value(QStringLiteral("edit_draft")) };
+    } else {
+        messageActions = { m_actions.value(QStringLiteral("reply")),
+                           m_actions.value(QStringLiteral("forward")) };
+    }
+
     m_messageView->setBarActions(
-        { m_actions.value(QStringLiteral("reply")),
-          m_actions.value(QStringLiteral("forward")) },
-        { m_actions.value(QStringLiteral("toggle_html")) }, iconSize);
+        messageActions, { m_actions.value(QStringLiteral("toggle_html")) },
+        iconSize);
 }
 
 void MainWindow::showShortcutReference()
@@ -2565,6 +2630,22 @@ QList<HtmlBuilder::PlaceholderHelper> MainWindow::placeholderHelpers() const
 void MainWindow::showPlaceholderPane()
 {
     m_messageView->showPlaceholder(placeholderHelpers());
+
+    // Every route that blanks the pane comes through here, which is why the
+    // bar is refilled here rather than at each of them: item 150 was the same
+    // defect one level down and was fixed by finding the one shared site.
+    // The ids this reads are cleared by the callers around the same point;
+    // the order between the two was measured and no test can tell it apart,
+    // since a query invalidates currentIndex() anyway. Left as it was found.
+    //
+    // updateComposeActions() rather than populateMessageBar() alone, because
+    // the ENABLEMENT was stale here too and had been since before the bar
+    // existed: it ran only from the two selection handlers, so a query that
+    // blanked the pane left Reply and Forward enabled over nothing. Invisible
+    // while they lived on the main toolbar among other always-on actions, and
+    // plain once they sat over an empty pane. It calls populateMessageBar()
+    // last, so the bar still gets refilled.
+    updateComposeActions();
 
     QMetaObject::invokeMethod(m_worker, "requestCounts", Qt::QueuedConnection,
                               Q_ARG(QStringList, placeholderQueries()),
@@ -3171,8 +3252,6 @@ void MainWindow::runQuery(FlatResult flat, AccountScope scope)
 
     ++m_generation;
     m_model->clear();
-    m_messageView->clear();
-    showPlaceholderPane();
 
     // Cleared WITH the pane, not merely alongside it. These three name what the
     // pane is showing, and both selection handlers use them to decide whether a
@@ -3185,6 +3264,9 @@ void MainWindow::runQuery(FlatResult flat, AccountScope scope)
     // the thread is current at the moment the query replaces the view, and its
     // one card opens onto the placeholder. A query returning any OTHER thread
     // hides it, which is why it took a screenshot to find.
+    m_messageView->clear();
+    showPlaceholderPane();
+
     m_currentThreadId.clear();
     m_currentMessageId.clear();
     m_currentMessageThreadId.clear();

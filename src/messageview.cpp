@@ -617,7 +617,18 @@ void MessageView::setBarActions(const QList<QAction *> &messageActions,
         }
     }
 
-    m_messageBar->setVisible(!m_messageBar->actions().isEmpty());
+    // Hidden over an empty pane whatever it holds, so it comes and goes with
+    // the subject and the details button rather than hovering over the logo.
+    // The user's call, and the reason is consistency with those two: a bar
+    // that persists was the only piece of header furniture that did.
+    //
+    // This guard covers the HIDING only. MainWindow refills the bar from
+    // showPlaceholderPane(), which every route that blanks the pane passes
+    // through, so the refill re-reads m_items and this line answers. Nothing
+    // refills it when a message ARRIVES, so updateHeader() shows it there;
+    // see the note beside the details button, which it rides with.
+    m_messageBar->setVisible(!m_messageBar->actions().isEmpty()
+                             && !m_items.isEmpty());
 }
 
 void MessageView::clear()
@@ -754,6 +765,14 @@ void MessageView::updateHeader()
     // scratch a few lines down.
     m_headerOffers.clear();
 
+    // The bar rides with the details button, but only the SHOWING half belongs
+    // here. Hiding is covered by setBarActions(), since MainWindow refills the
+    // bar on every route that blanks the pane, and a hide() in the empty
+    // branch below was measured to change nothing. Nothing refills the bar
+    // when a message ARRIVES, though, so without the show() below it stayed
+    // hidden for the first message opened after any blanking and appeared on
+    // the second, when m_items still held the first: one selection behind for
+    // as long as the view lasted.
     if (m_items.isEmpty()) {
         m_headerLabel->clear();
         m_detailsButton->hide();
@@ -761,6 +780,7 @@ void MessageView::updateHeader()
     }
 
     m_detailsButton->show();
+    m_messageBar->setVisible(!m_messageBar->actions().isEmpty());
 
     // The thread's subject comes from its first message; later replies carry
     // Re: prefixes that add nothing.

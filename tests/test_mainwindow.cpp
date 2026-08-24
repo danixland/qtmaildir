@@ -488,6 +488,7 @@ private slots:
     void ctrlWClosesTheComposer();
     void aDraftReopensWithItsOwnContent();
     void editDraftIsOfferedOnlyForADraft();
+    void theMessageBarOffersEditOnADraft();
     void doubleClickingADraftOpensTheComposer();
     void aResumedDraftReplacesItsFileRatherThanAddingOne();
     void aResumedDraftKeepsItsBlindRecipients();
@@ -12593,6 +12594,169 @@ void TestMainWindow::editDraftIsOfferedOnlyForADraft()
              "the draft was not found");
     QVERIFY2(edit->isEnabled(),
              "Edit draft is not offered on a message in the drafts folder");
+}
+
+void TestMainWindow::theMessageBarOffersEditOnADraft()
+{
+    // Item 157, and the half item 153 did not close. A draft was editable by
+    // double-click and by a Message-menu entry, neither of which is where the
+    // user looks while reading one. The pane's own bar carries Reply and
+    // Forward, which are the two things a draft cannot do: it has no sender to
+    // answer and is not finished enough to pass on.
+    WorkerComposeFixture fixture;
+    QVERIFY(fixture.backed.fixture().addMessage(
+        QStringLiteral("acct/Drafts"), QStringLiteral("draft1@example.org"),
+        QStringLiteral("Half written"), QStringLiteral("you@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body.")));
+    QVERIFY2(fixture.seed({ { QStringLiteral("acct"), QStringLiteral("acct"),
+                              QStringLiteral("Trash"),
+                              QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org"),
+                              QStringLiteral("Drafts") } },
+                          QStringLiteral("acct/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    // Pinned by name: since item 141 the window holds two toolbars, and an
+    // unnamed findChild would assert against whichever came first.
+    auto *bar = window.findChild<QToolBar *>(QStringLiteral("message_toolbar"));
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(model && view && queryEdit && bar && pane);
+
+    const auto selectById = [&](const QString &id) {
+        queryEdit->setText(QStringLiteral("id:") + id);
+        queryEdit->returnPressed();
+        bool ready = false;
+        for (int attempt = 0; attempt < 150 && !ready; ++attempt) {
+            ready = model->rowCount(QModelIndex()) == 1
+                    && !window.mailRootForTesting().isEmpty();
+            if (!ready)
+                QTest::qWait(100);
+        }
+        if (!ready)
+            return false;
+        view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+        return true;
+    };
+
+    const auto barHolds = [&](const QString &name) {
+        const auto actions = bar->actions();
+        return std::any_of(actions.cbegin(), actions.cend(),
+                           [&](const QAction *action) {
+                               return action && action->objectName() == name;
+                           });
+    };
+
+    // Ordinary mail first, so the assertions below mean something: a bar that
+    // never holds Edit passes the draft check by accident if the reply pair is
+    // simply absent everywhere.
+    QVERIFY2(selectById(QStringLiteral("compose1@example.org")),
+             "the inbox message was not found");
+    QVERIFY2(barHolds(QStringLiteral("reply")),
+             "the message bar lost Reply on ordinary mail");
+    QVERIFY2(barHolds(QStringLiteral("forward")),
+             "the message bar lost Forward on ordinary mail");
+    QVERIFY2(!barHolds(QStringLiteral("edit_draft")),
+             "Edit draft is on the message bar for a message in the inbox");
+
+    // toggle_html is the view-control half, on the far side of the stretch. It
+    // describes how the pane renders and not what the message is, so it must
+    // survive the swap: a draft can be read as HTML like anything else.
+    QVERIFY2(barHolds(QStringLiteral("toggle_html")),
+             "the view controls were lost from the message bar");
+
+    QVERIFY2(selectById(QStringLiteral("draft1@example.org")),
+             "the draft was not found");
+    QVERIFY2(barHolds(QStringLiteral("edit_draft")),
+             "Edit draft is missing from the message bar on a draft");
+    QVERIFY2(!barHolds(QStringLiteral("reply")),
+             "Reply is still offered on a draft, which has nobody to answer");
+    QVERIFY2(!barHolds(QStringLiteral("forward")),
+             "Forward is still offered on a draft");
+    QVERIFY2(barHolds(QStringLiteral("toggle_html")),
+             "the view controls were lost when the bar swapped to a draft");
+
+    // And back, because a one-way swap is the plausible defect: the bar is
+    // refilled on every selection change, so returning to ordinary mail has to
+    // restore the pair rather than leaving Edit behind on mail it must not act
+    // on.
+    QVERIFY2(selectById(QStringLiteral("compose1@example.org")),
+             "the inbox message was not found on the way back");
+    QVERIFY2(barHolds(QStringLiteral("reply")),
+             "Reply did not come back after leaving a draft");
+    QVERIFY2(!barHolds(QStringLiteral("edit_draft")),
+             "Edit draft stayed on the bar after leaving the draft");
+
+    // And the gesture the first version of this test could not see. Running a
+    // query blanks the pane WITHOUT moving the selection, so currentIndex()
+    // stays valid on a row from the previous result and a bar keyed on it
+    // describes a message that is no longer displayed. Both directions were
+    // reported: Edit draft left over an empty pane after leaving Drafts, and
+    // the reply pair left over one after arriving.
+    const auto runQuery = [&](const QString &query) {
+        queryEdit->setText(query);
+        queryEdit->returnPressed();
+        QTest::qWait(300);
+    };
+
+    QVERIFY2(selectById(QStringLiteral("draft1@example.org")),
+             "the draft was not found before the query change");
+    QVERIFY2(barHolds(QStringLiteral("edit_draft")), "precondition: on a draft");
+
+    // A query with RESULTS, which is what the user reported and what a query
+    // matching nothing cannot reproduce: with no rows the selection goes
+    // invalid and the stale-index answer is accidentally right. Here the list
+    // repopulates, currentIndex() lands on a row of the NEW result, and the
+    // pane is still blank because nothing has been selected by hand.
+    runQuery(QStringLiteral("tag:inbox"));
+    QVERIFY2(model->rowCount(QModelIndex()) > 0,
+             "the blanking query returned nothing, which is the case that "
+             "cannot reproduce the defect");
+
+    // The whole bar goes with the pane, which is the shape the user settled on
+    // after looking at the greyed-out one: the subject and the details button
+    // already vanish when the pane is cleared, and a persisting action bar was
+    // the only piece of header furniture that did not.
+    QVERIFY2(bar->isHidden(),
+             "the message bar is still shown over a blank pane");
+
+    // Enablement is a separate property from visibility and was ALSO stale:
+    // updateComposeActions() ran only from the selection handlers, so a query
+    // that blanked the pane left Reply enabled. A hidden bar would hide that,
+    // but the Message menu shows the same QAction.
+    auto *reply = window.findChild<QAction *>(QStringLiteral("reply"));
+    QVERIFY(reply);
+    QVERIFY2(!reply->isEnabled(), "Reply is enabled over a blank pane");
+
+    // The other direction, and the one the user reported second: arriving at
+    // Drafts from the inbox left the reply pair over the blank pane. Selecting
+    // a draft after the query must reach Edit draft, which it cannot if the
+    // bar is only refilled on a selection change.
+    QVERIFY2(selectById(QStringLiteral("draft1@example.org")),
+             "the draft was not found after the blanking query");
+
+    // The FIRST message opened after a blanking, which is the gesture the
+    // hiding half broke: nothing refills the bar when a message arrives, so a
+    // bar hidden by the query stayed hidden until a SECOND selection, where
+    // m_items still held the first message and the guard passed one behind.
+    // Asserted before the membership checks below, since a bar that is filled
+    // correctly and invisible passes every one of them.
+    // The pane loads through the worker, so the render lands a turn or more
+    // after the selection. Waiting on the pane itself rather than on a fixed
+    // delay, which passes when the render never arrives.
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
+    QVERIFY2(!bar->isHidden(),
+             "the message bar stayed hidden for the first message opened "
+             "after the pane was blanked");
+    QVERIFY2(barHolds(QStringLiteral("edit_draft")),
+             "Edit draft did not return after the pane was blanked");
+    QVERIFY2(!barHolds(QStringLiteral("reply")),
+             "Reply is offered on a draft reached through a blank pane");
 }
 
 void TestMainWindow::aDraftReopensWithItsOwnContent()

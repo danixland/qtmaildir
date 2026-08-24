@@ -23,6 +23,9 @@ point at which they are stable.
   reply follows what the message being answered used.
 - Drafts autosave to the account's `drafts` folder as ordinary Maildir files,
   so mbsync carries them to the server and another client can pick one up.
+- **A button bar over the message pane.** Compose, Reply and Forward sit
+  above the message, with Toggle HTML at the right end. Forward had been
+  reachable only from the Message menu.
 - A reply opens with the cursor on a blank line above the quote, and with the
   body focused, so typing can start immediately. `[compose] quote_position`
   defaults to `below` (your reply first, the quote under it); `above` puts the
@@ -42,6 +45,12 @@ point at which they are stable.
 - The notmuch hooks that auto-tag incoming mail now live in this repository,
   under `assets/hooks/`. They moved from the companion `mailctl` project,
   which is being retired.
+
+### Changed
+
+- The main toolbar keeps only the actions that act on the list or the
+  selection (Sync, Archive, Delete, Mark all read, Undo). Compose and Reply
+  move to the new message-pane bar, where Forward joins them.
 
 ### Fixed
 

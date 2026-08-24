@@ -555,6 +555,9 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     }
 
     buildMenus();
+    // After buildMenus(), which registers the toolbar and menu entries these
+    // actions already carry: the bar shows the same objects a second time.
+    populateMessageBar();
     // After buildMenus(): QMainWindow::restoreState() matches toolbars by
     // object name, so they must already exist or their position is dropped.
     restoreUiState();
@@ -1967,15 +1970,10 @@ void MainWindow::buildMenus()
     const int iconSize = m_config.toolbarIconSize();
     toolBar->setIconSize(QSize(iconSize, iconSize));
 
-    // First, because composing and replying are what a user reaches for most
-    // (item 123). These TWO only: the other four are menu-and-key, which is
-    // what keeps the no-duplicate-icons rule satisfiable, since reply_no_quote
-    // shares reply's icon and an icon-only toolbar would make the two buttons
-    // indistinguishable.
-    toolBar->addAction(m_actions.value(QStringLiteral("compose")));
-    toolBar->addAction(m_actions.value(QStringLiteral("reply")));
-    toolBar->addSeparator();
-
+    // Compose, Reply and Forward are NOT here (item 140). They act on a
+    // message, where everything below acts on the list or on the selection,
+    // and mixing the two is what made this toolbar read as the place for
+    // everything. They live on the message pane's own bar instead.
     QAction *syncAction = m_actions.value(QStringLiteral("sync"));
     // Carried over from the QPushButton this replaced: with no command
     // configured the control is disabled, and the tooltip is the only thing
@@ -1992,6 +1990,18 @@ void MainWindow::buildMenus()
     toolBar->addAction(m_actions.value(QStringLiteral("mark_all_read")));
     toolBar->addSeparator();
     toolBar->addAction(m_actions.value(QStringLiteral("undo")));
+}
+
+void MainWindow::populateMessageBar()
+{
+    // The window's own QActions, shown a second time rather than copied: a
+    // duplicate QAction would need its own enablement and would drift from the
+    // menu entry that updateComposeActions() keeps in step.
+    m_messageView->setBarActions(
+        { m_actions.value(QStringLiteral("compose")),
+          m_actions.value(QStringLiteral("reply")),
+          m_actions.value(QStringLiteral("forward")) },
+        { m_actions.value(QStringLiteral("toggle_html")) });
 }
 
 void MainWindow::showShortcutReference()

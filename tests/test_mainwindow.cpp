@@ -420,6 +420,8 @@ private slots:
     void placeholderCountsDropAnUncountableQuery();
     void flatModeDoesNotSurviveTheNextQuery();
     void noTwoActionsShareAnIcon();
+    void theMessagePaneCarriesItsOwnActionBar();
+    void theMainToolbarKeepsOnlyListWideActions();
 
     void onlyPinnedQueriesBecomeButtons();
     void unpinnedQueriesReachTheMenu();
@@ -7233,6 +7235,109 @@ void TestMainWindow::flatModeDoesNotSurviveTheNextQuery()
     QVERIFY(!model->flatMode());
 }
 
+void TestMainWindow::theMessagePaneCarriesItsOwnActionBar()
+{
+    // Items 139, 140 and 141. The main toolbar had grown to mix two scopes:
+    // Sync, Archive, Delete, Mark all read and Undo act on the LIST, while
+    // Compose, Reply and Forward are about a message. Forward was on no
+    // toolbar at all and reachable only from the Message menu, which is
+    // item 139.
+    const Config config;
+    MainWindow window(config);
+
+    auto *bar = window.findChild<QToolBar *>(QStringLiteral("message_toolbar"));
+    QVERIFY2(bar, "the message pane has no action bar");
+
+    // Inside the message pane, not merely somewhere in the window: the point
+    // of the item is WHERE it sits.
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+    QVERIFY2(pane->isAncestorOf(bar),
+             "the message bar is not inside the message pane");
+
+    // The three message actions, in the user's order, and the same QAction
+    // objects the menus use rather than copies: a second QAction would need
+    // its own enablement and would drift from the menu entry.
+    const QStringList expected = { QStringLiteral("compose"),
+                                   QStringLiteral("reply"),
+                                   QStringLiteral("forward") };
+    for (const QString &name : expected) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action %1").arg(name)));
+        QVERIFY2(bar->actions().contains(action),
+                 qPrintable(QStringLiteral("%1 is not on the message bar")
+                                .arg(name)));
+    }
+
+    // toggle_html is the view control the user named for this bar. It is a
+    // different scope from the three above ("change how I am looking at it",
+    // not "act on this"), so it sits apart from them, after a stretch.
+    auto *toggleHtml =
+        window.findChild<QAction *>(QStringLiteral("toggle_html"));
+    QVERIFY(toggleHtml);
+    QVERIFY2(bar->actions().contains(toggleHtml),
+             "toggle_html is not on the message bar");
+
+    const QList<QAction *> actions = bar->actions();
+    const int lastMessageAction =
+        actions.indexOf(window.findChild<QAction *>(QStringLiteral("forward")));
+    const int htmlIndex = actions.indexOf(toggleHtml);
+    QVERIFY2(lastMessageAction >= 0 && htmlIndex > lastMessageAction,
+             "toggle_html does not sit after the three message actions");
+
+    // Order alone is not the property: the two groups must be SEPARATED, which
+    // is an expanding spacer between them, and a test asserting only on the
+    // index passes with the spacer deleted (measured). Find the widget the
+    // toolbar made for it and check it expands and sits between the groups.
+    int spacerIndex = -1;
+    for (int i = 0; i < actions.size(); ++i) {
+        auto *widget = bar->widgetForAction(actions.at(i));
+        if (widget
+            && widget->sizePolicy().horizontalPolicy() == QSizePolicy::Expanding) {
+            spacerIndex = i;
+            break;
+        }
+    }
+    QVERIFY2(spacerIndex > lastMessageAction && spacerIndex < htmlIndex,
+             "no expanding spacer separates the message actions from the view "
+             "controls, so they read as one group");
+}
+
+void TestMainWindow::theMainToolbarKeepsOnlyListWideActions()
+{
+    // The other half of item 140: the actions do not merely gain a second
+    // home, they LEAVE the main toolbar, which is what makes its remaining
+    // contents mean one thing.
+    const Config config;
+    MainWindow window(config);
+
+    auto *toolBar =
+        window.findChild<QToolBar *>(QStringLiteral("main_toolbar"));
+    QVERIFY(toolBar);
+
+    for (const QString &name : { QStringLiteral("compose"),
+                                 QStringLiteral("reply"),
+                                 QStringLiteral("forward") }) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action, qPrintable(QStringLiteral("no action %1").arg(name)));
+        QVERIFY2(!toolBar->actions().contains(action),
+                 qPrintable(QStringLiteral("%1 is still on the main toolbar")
+                                .arg(name)));
+    }
+
+    // The guard: without it, a change emptying the toolbar entirely would pass
+    // every assertion above while deleting the feature.
+    for (const QString &name : { QStringLiteral("sync"),
+                                 QStringLiteral("archive"),
+                                 QStringLiteral("undo") }) {
+        auto *action = window.findChild<QAction *>(name);
+        QVERIFY2(action && toolBar->actions().contains(action),
+                 qPrintable(QStringLiteral("%1 left the main toolbar, which "
+                                           "should keep the list-wide actions")
+                                .arg(name)));
+    }
+}
+
 void TestMainWindow::noTwoActionsShareAnIcon()
 {
     // Reported by the user against the icons shipped in 0.12.0: Archive and
@@ -7279,7 +7384,11 @@ void TestMainWindow::noTwoActionsShareAnIcon()
     // The exception must not become a hiding place: every one of them still
     // has to carry an icon, which everyActionCarriesAnIcon asserts, and none
     // may sit on the toolbar.
-    auto *toolBar = window.findChild<QToolBar *>();
+    // BY NAME. There are two toolbars since item 140, and an unnamed
+    // findChild returns whichever comes first: pointed at the message pane's
+    // bar, this loop would assert that a thread action is absent from a bar
+    // that never holds any, and pass while the rule went unchecked.
+    auto *toolBar = window.findChild<QToolBar *>(QStringLiteral("main_toolbar"));
     QVERIFY(toolBar);
     for (const QString &name : menuOnlySharedIconActions) {
         auto *action = window.findChild<QAction *>(name);

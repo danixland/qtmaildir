@@ -32,6 +32,7 @@
 
 class QLabel;
 class QMenu;
+class QToolBar;
 class QWebEnginePage;
 class QPushButton;
 class QWebEngineView;
@@ -245,6 +246,15 @@ public:
     /// after three wrong theories. Keep the two questions separate.
     static void addPaneActions(QMenu *menu, QWebEnginePage *page);
 
+    /// Fills the pane's own action bar (items 139 to 141). The actions are
+    /// MainWindow's own, shown a second time rather than duplicated, so they
+    /// keep one enablement state and one menu entry. \p viewControls are
+    /// separated from \p messageActions by a stretch: acting on the message
+    /// and changing how it is displayed are different scopes, which is the
+    /// confusion the bar exists to remove one level up.
+    void setBarActions(const QList<QAction *> &messageActions,
+                       const QList<QAction *> &viewControls);
+
     /// Tells the pane whether the query bar currently holds anything.
     ///
     /// The menus need it to grey out "Exclude from search": excluding from an
@@ -405,6 +415,7 @@ private:
     CidSchemeHandler *m_cidHandler = nullptr;
 
     QLabel *m_headerLabel = nullptr;
+    QToolBar *m_messageBar = nullptr;
     QWidget *m_blockedBar = nullptr;
     QLabel *m_blockedLabel = nullptr;
     QLabel *m_receiveOnlyRibbon = nullptr;

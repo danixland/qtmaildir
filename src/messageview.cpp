@@ -37,6 +37,9 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QStyle>
+#include <QSizePolicy>
+#include <QToolBar>
 #include <QWheelEvent>
 #include <QWebEnginePage>
 #include <QWebEngineProfile>
@@ -456,7 +459,20 @@ MessageView::MessageView(QWidget *parent)
                 menu.exec(globalPos);
             });
 
+    // The pane's own action bar (items 139 to 141). Empty until MainWindow
+    // fills it: the actions belong to the window, and MessageView deliberately
+    // knows nothing about the action map.
+    m_messageBar = new QToolBar(this);
+    m_messageBar->setObjectName(QStringLiteral("message_toolbar"));
+    // The desktop's own button style, for the reason the main toolbar records:
+    // a hardcoded setToolButtonStyle() overrides the user's "Icon only".
+    m_messageBar->setToolButtonStyle(static_cast<Qt::ToolButtonStyle>(
+        style()->styleHint(QStyle::SH_ToolButtonStyle, nullptr, m_messageBar)));
+    m_messageBar->setMovable(false);
+    m_messageBar->hide();
+
     auto *layout = new QVBoxLayout(this);
+    layout->addWidget(m_messageBar);
     layout->addLayout(headerRow);
     layout->addWidget(m_blockedBar);
     layout->addWidget(m_receiveOnlyRibbon);
@@ -564,6 +580,33 @@ void MessageView::applyNoticeBarStyles()
             sheet.arg(bar->objectName(), actionGround, actionBorder,
                       actionText));
     }
+}
+
+void MessageView::setBarActions(const QList<QAction *> &messageActions,
+                                const QList<QAction *> &viewControls)
+{
+    m_messageBar->clear();
+
+    for (QAction *action : messageActions) {
+        if (action)
+            m_messageBar->addAction(action);
+    }
+
+    // The stretch is what separates the two scopes, so the view controls end
+    // up at the right edge. A QToolBar has no addStretch(), so it takes an
+    // expanding spacer widget.
+    if (!viewControls.isEmpty()) {
+        auto *spacer = new QWidget(m_messageBar);
+        spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        m_messageBar->addWidget(spacer);
+
+        for (QAction *action : viewControls) {
+            if (action)
+                m_messageBar->addAction(action);
+        }
+    }
+
+    m_messageBar->setVisible(!m_messageBar->actions().isEmpty());
 }
 
 void MessageView::clear()

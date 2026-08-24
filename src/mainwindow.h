@@ -637,6 +637,11 @@ private:
 
     void registerActions();
     void buildMenus();
+
+    /// Fills the message pane's own bar with the three message actions and
+    /// toggle_html (items 139 to 141). Called after buildMenus(), which is
+    /// what creates the actions it hands over.
+    void populateMessageBar();
     void wireWorker();
 
     /// Asks the worker to re-enumerate the database tags for the completer.

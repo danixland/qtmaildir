@@ -46,6 +46,7 @@ private slots:
     void theSwitchListsEveryFileAndNone();
     void changingTheAccountFollowsItsSignature();
     void changingTheAccountStopsFollowingOnceTheSwitchIsUsed();
+    void aResumedDraftDoesNotReseedOnAnAccountChange();
 
 private:
     /// A config pointing at a signatures directory holding \p files, with one
@@ -332,6 +333,63 @@ void TestComposeWindow::changingTheAccountStopsFollowingOnceTheSwitchIsUsed()
     // The deliberate choice survives the account change. Overwriting it is
     // the one behaviour that can silently discard something the user just did.
     QVERIFY(body->toPlainText().contains(QStringLiteral("Chosen sig")));
+    QVERIFY(!body->toPlainText().contains(QStringLiteral("Home sig")));
+}
+
+void TestComposeWindow::aResumedDraftDoesNotReseedOnAnAccountChange()
+{
+    for (const auto &entry :
+         QList<QPair<QString, QString>>{
+             { QStringLiteral("work.md"), QStringLiteral("Work sig") },
+             { QStringLiteral("home.md"), QStringLiteral("Home sig") } }) {
+        QFile file(m_signatureDir + QStringLiteral("/") + entry.first);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        file.write(entry.second.toUtf8());
+        file.close();
+    }
+
+    const QString path = m_dir->path() + QStringLiteral("/qtmaildir.conf");
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&file);
+        out << "[account.work]\n"
+            << "name = Someone\naddress = someone@example.org\n"
+            << "maildir = work\nsend_command = /bin/cat\n"
+            << "signature = work\n"
+            << "\n[account.home]\n"
+            << "name = Someone\naddress = other@example.org\n"
+            << "maildir = home\nsend_command = /bin/cat\n"
+            << "signature = home\n";
+    }
+    Config config;
+    config.load(path);
+
+    // The saved body already carries its own signature, which does not match
+    // any on-disk file. A From: change must not replace it with the new
+    // account's: the draft is the message the user wrote, exactly as
+    // seedBody() takes its body verbatim.
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::Draft;
+    context.accountKey = QStringLiteral("work");
+    context.body = QStringLiteral("Half a thought.\n\n-- \nJane Doe");
+    context.draftPath = m_dir->path() + QStringLiteral("/draft");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setSignatureDir(m_signatureDir);
+    window.seedSignature();
+
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *from = window.findChild<QComboBox *>(QStringLiteral("from"));
+    QVERIFY(body);
+    QVERIFY(from);
+    QVERIFY(body->toPlainText().contains(QStringLiteral("Jane Doe")));
+
+    const int home = from->findData(QStringLiteral("home"));
+    QVERIFY(home >= 0);
+    from->setCurrentIndex(home);
+
+    QVERIFY(body->toPlainText().contains(QStringLiteral("Jane Doe")));
     QVERIFY(!body->toPlainText().contains(QStringLiteral("Home sig")));
 }
 

@@ -792,6 +792,11 @@ void ComposeWindow::seedSignature()
     // verbatim. Seeding again would append a second one.
     if (m_context.kind == ComposeContext::Kind::Draft) {
         none->setChecked(true);
+        // The draft IS the user's choice: its signature is deliberate prior
+        // state, so a From: change must not follow the new account and
+        // rewrite what was saved. Marking it chosen keeps the same invariant
+        // the switch actions set, without ever having run the switch.
+        m_signatureChosen = true;
         return;
     }
 

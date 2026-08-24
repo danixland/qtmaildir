@@ -12267,6 +12267,21 @@ void TestMainWindow::theComposerSplitsItsToolbarByScope()
     QVERIFY2(sendButton->defaultAction() == send,
              "the Send button does not carry the send action itself");
 
+    // A SQUARE, and not a widget that stretches. An Expanding vertical policy
+    // grew it to the full height of the header form beside it while the icon
+    // and label kept their natural sizes, leaving the two marooned at either
+    // end of a tall rectangle with a gap between them. Nothing in the layout
+    // or the actions could see that, which is why it is asserted here.
+    QCOMPARE(sendButton->sizePolicy().verticalPolicy(), QSizePolicy::Fixed);
+    QCOMPARE(sendButton->width(), sendButton->height());
+
+    // And the icon is the larger half of the button, not a small mark with
+    // the label doing the work.
+    QVERIFY2(sendButton->iconSize().width() >= 24,
+             qPrintable(QStringLiteral("the Send icon is %1px, too small to "
+                                       "read as the button's subject")
+                            .arg(sendButton->iconSize().width())));
+
     // Item 143: the formatting buttons carry icons, and keep their words as
     // the tooltip so nothing becomes unnameable in an icon-only row.
     for (const QString &name : { QStringLiteral("format_bold"),

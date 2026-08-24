@@ -312,11 +312,25 @@ void ComposeWindow::buildUi()
 
     // Icon above text, at the user's choice: a big target, with the word
     // removing any doubt about what it does.
+    //
+    // A SQUARE of a fixed size, and vertically centred against the header
+    // block. Expanding was wrong in a way that only shows on screen: it
+    // stretched the button to the full height of the form beside it while the
+    // icon and the label kept their natural sizes, so the two sat apart with a
+    // gap between them inside a tall rectangle. Fixed removes the stretch, and
+    // the alignment centres the whole button rather than its contents.
     m_sendButton = new QToolButton(central);
     m_sendButton->setObjectName(QStringLiteral("sendButton"));
     m_sendButton->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    m_sendButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-    headerRow->addWidget(m_sendButton, 0);
+    const int sendIconSize = qMax(24, m_config.toolbarIconSize() + 8);
+    m_sendButton->setIconSize(QSize(sendIconSize, sendIconSize));
+    // Derived from the icon rather than hardcoded, so the square still fits
+    // its contents if toolbar_icon_size changes. The extra covers the label
+    // under the icon and the style's own margins.
+    const int sendSide = sendIconSize + 34;
+    m_sendButton->setFixedSize(sendSide, sendSide);
+    m_sendButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    headerRow->addWidget(m_sendButton, 0, Qt::AlignVCenter);
 
     layout->addLayout(headerRow);
 

@@ -56,6 +56,7 @@
 #include "messagesender.h"
 #include <QCheckBox>
 #include <QPlainTextEdit>
+#include <QTextBlock>
 #include <QPointer>
 #include <QListWidget>
 #include "cardlayout.h"
@@ -484,6 +485,7 @@ private slots:
     void theAttachmentWarningRespectsTheConfiguredThreshold();
     void aDisabledAttachmentWarningWarnsAboutNothing();
     void theQuotePositionDecidesWhereTheQuoteLands();
+    void theCursorStartsOnBlankSpaceNotOnTheQuote();
     void theSeededQuoteIsNotAnUndoStep();
     void aReplySeedsTheHtmlToggleFromTheOriginal();
     void aNewMessageSeedsTheHtmlToggleFromConfig();
@@ -12371,6 +12373,59 @@ void TestMainWindow::theQuotePositionDecidesWhereTheQuoteLands()
                  "quote_position=below did not put the quote last");
         QVERIFY2(!body->toPlainText().startsWith(quote),
                  "the quote is at the top under quote_position=below");
+    }
+}
+
+void TestMainWindow::theCursorStartsOnBlankSpaceNotOnTheQuote()
+{
+    // The user types their reply where the cursor lands, so that line must be
+    // blank under BOTH quote positions. Asserting on the buffer's shape is not
+    // enough: theQuotePositionDecidesWhereTheQuoteLands() already does that and
+    // passed throughout the defect, because the quote was in the right place
+    // and the cursor was on top of it.
+    const QString quote = QStringLiteral("> the original");
+
+    const struct {
+        const char *position;
+        const char *label;
+    } cases[] = {
+        { "above", "quote_position=above" },
+        { "below", "quote_position=below" },
+    };
+
+    for (const auto &testCase : cases) {
+        ComposeFixture fixture;
+        QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                              QStringLiteral("quote_position=%1")
+                                  .arg(QLatin1String(testCase.position))));
+        ComposeContext context = newContext();
+        context.kind = ComposeContext::Kind::Reply;
+        context.quotedBody = quote;
+
+        ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+        auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+        QVERIFY(body);
+
+        const QTextCursor cursor = body->textCursor();
+        QVERIFY2(cursor.block().text().isEmpty(),
+                 qPrintable(QStringLiteral("%1: the cursor starts on \"%2\", "
+                                           "not on a blank line")
+                                .arg(QLatin1String(testCase.label),
+                                     cursor.block().text())));
+
+        // Typing must not land inside the quote either. A blank line that is
+        // still BELOW the quote would satisfy the check above while leaving the
+        // reply underneath what it answers, which is what quote_position
+        // decides and must not be silently inverted.
+        QTextCursor probe = cursor;
+        probe.insertText(QStringLiteral("typed"));
+        const QString text = body->toPlainText();
+        const bool typedFirst = text.indexOf(QStringLiteral("typed"))
+                                < text.indexOf(quote);
+        QCOMPARE(typedFirst,
+                 QLatin1String(testCase.position) == QLatin1String("above")
+                     ? false
+                     : true);
     }
 }
 

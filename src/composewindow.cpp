@@ -442,18 +442,21 @@ void ComposeWindow::seedBody()
     // tracking "my text" and "the quote" as separate pieces to make a toggle
     // reversible is machinery for a case answered by closing the composer and
     // reopening it.
+    // quote_position names where the QUOTE goes, so the reply goes on the
+    // other side of it, and the cursor follows the reply rather than the
+    // buffer. Start in both cases was wrong for Above: it put the cursor on
+    // the attribution line, so the user had to make room before typing.
     if (m_config.compose().quotePosition
         == ComposeSettings::QuotePosition::Above) {
-        // The quote first, then a blank line for the reply to be typed into.
+        // The quote first, then blank lines for the reply, and the cursor in
+        // them. Two lines rather than one so the reply is separated from the
+        // attribution by a blank line once typing starts.
         m_body->setPlainText(m_context.quotedBody + QStringLiteral("\n\n"));
+        m_body->moveCursor(QTextCursor::End);
     } else {
         m_body->setPlainText(QStringLiteral("\n\n") + m_context.quotedBody);
+        m_body->moveCursor(QTextCursor::Start);
     }
-
-    // The cursor at the very top in both cases: with the quote below, the
-    // blank lines the reply goes into are at the top; with it above, the user
-    // scrolls past what they are answering, which is what quoting above means.
-    m_body->moveCursor(QTextCursor::Start);
 
     // The seeded quote is not an edit the user made, so it must not survive as
     // an undo step: one Ctrl+Z on a fresh composer would otherwise wipe the

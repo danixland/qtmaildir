@@ -69,6 +69,20 @@ bool isQuoted(const QString &line)
     return line.startsWith(QLatin1Char('>'));
 }
 
+/// \p text with trailing blank lines removed, the same normalisation the block
+/// scan below applies. text() returns file content verbatim, so a signature
+/// file ends with the newline every editor writes; without this the match
+/// compares a block with no trailing newline against a known entry that has
+/// one, and the guard silently fails, appending a second signature instead of
+/// replacing the first.
+QString stripTrailingBlankLines(const QString &text)
+{
+    QStringList lines = text.split(QLatin1Char('\n'));
+    while (!lines.isEmpty() && lines.last().trimmed().isEmpty())
+        lines.removeLast();
+    return lines.join(QLatin1Char('\n'));
+}
+
 /// The index of the first line of the quote, or -1 when the buffer has none.
 ///
 /// The attribution line ("On Mon, someone wrote:") is deliberately NOT
@@ -164,9 +178,18 @@ QStringList withoutSignature(const QStringList &lines, int delimiter)
 QString replace(const QString &buffer, const QString &signature,
                 const QStringList &known, Position position)
 {
+    // Normalise known to the same footing the block scan uses, once here rather
+    // than per comparison. knownSignatures() passes text() verbatim, trailing
+    // newline and all, and the match must be newline-insensitive or the guard
+    // treats every on-disk signature as unknown.
+    QStringList normalized;
+    normalized.reserve(known.size());
+    for (const QString &entry : known)
+        normalized.append(stripTrailingBlankLines(entry));
+
     QStringList lines = buffer.split(QLatin1Char('\n'));
 
-    const int existing = existingSignature(lines, known);
+    const int existing = existingSignature(lines, normalized);
     if (existing >= 0)
         lines = withoutSignature(lines, existing);
 

@@ -40,6 +40,7 @@ private slots:
     void selectingNoneRemovesAKnownSignature();
     void aBlockMatchingNoKnownSignatureIsNotRemoved();
     void aDelimiterInsideTheQuoteIsNotTheSignature();
+    void aSignatureReadBackFromDiskIsReplaced();
 
 private:
     /// Writes \p files as name -> content into a fresh temporary directory.
@@ -271,6 +272,22 @@ void TestSignatures::aDelimiterInsideTheQuoteIsNotTheSignature()
 
     QVERIFY(result.contains(QStringLiteral("> -- \n> Their Name")));
     QVERIFY(result.endsWith(QStringLiteral("-- \nJane Doe")));
+}
+
+void TestSignatures::aSignatureReadBackFromDiskIsReplaced()
+{
+    // known here is what knownSignatures() produces: text() verbatim, carrying
+    // the trailing newline every editor writes into a file. The block scan
+    // treats a trailing blank line as separation rather than text, so a naive
+    // match compares "Jane Doe" against "Jane Doe\n" and silently fails, and
+    // switching then APPENDS a second signature instead of replacing the first.
+    const QStringList known = { QStringLiteral("Jane Doe\n") };
+    const QString buffer = QStringLiteral("Hello.\n\n-- \nJane Doe\n");
+
+    const QString result = Signatures::replace(
+        buffer, QStringLiteral("Brief"), known, Signatures::Position::End);
+
+    QCOMPARE(result, QStringLiteral("Hello.\n\n-- \nBrief"));
 }
 
 QTEST_MAIN(TestSignatures)

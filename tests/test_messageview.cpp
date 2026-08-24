@@ -16,9 +16,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSignalSpy>
 #include <QWebEnginePage>
@@ -66,6 +68,7 @@ private slots:
     void aPlainLinkOpensExternally();
     void aTargetBlankLinkOpensExternally();
     void theLinkMenuDropsTheOpenInWindowActions();
+    void theNoticeBarsCarryTheirSeverityAndFollowTheTheme();
 
 private:
     QWebEngineView *webViewOf(MessageView *view) const
@@ -1162,6 +1165,79 @@ void TestMessageView::theLinkMenuDropsTheOpenInWindowActions()
         QVERIFY2(left.contains(page->action(which)),
                  qPrintable(QStringLiteral("a wanted action was removed: %1")
                                 .arg(page->action(which)->text())));
+    }
+}
+
+void TestMessageView::theNoticeBarsCarryTheirSeverityAndFollowTheTheme()
+{
+    // The bars are the pane's only out-of-band messages, and they read as part
+    // of the page until they carry a ground of their own. Two severities: a
+    // warning that explains a limitation and offers nothing to do about it,
+    // and an action the user can take.
+    MessageView view;
+
+    auto *warning =
+        view.findChild<QWidget *>(QStringLiteral("receiveOnlyRibbon"));
+    auto *blocked =
+        view.findChild<QWidget *>(QStringLiteral("blockedContentBar"));
+    auto *stale = view.findChild<QWidget *>(QStringLiteral("staleThreadBar"));
+    QVERIFY2(warning && blocked && stale, "a notice bar is missing");
+
+    // Asserting on the stylesheet STRING rather than on a rendered pixel, for
+    // the reason CLAUDE.md records about rendering probes: an unshown widget
+    // under the offscreen platform renders nothing, so a pixel test here would
+    // pass whatever the code does.
+    const QString warningSheet = warning->styleSheet();
+    const QString blockedSheet = blocked->styleSheet();
+    const QString staleSheet = stale->styleSheet();
+
+    for (const QString &sheet : { warningSheet, blockedSheet, staleSheet }) {
+        QVERIFY2(sheet.contains(QStringLiteral("background")),
+                 qPrintable(QStringLiteral("a bar paints no ground: %1")
+                                .arg(sheet)));
+    }
+
+    // The two severities must not look alike, which is the whole point: a
+    // warning and an action reading identically is the state being fixed.
+    QVERIFY2(warningSheet != blockedSheet,
+             "the warning and the action bar share one appearance");
+
+    // Both action bars are the same severity and must agree on their COLOURS.
+    // Not on the whole sheet: each names its own widget, so the strings differ
+    // by that alone. Compare what carries the severity instead.
+    const QRegularExpression hex(QStringLiteral("#[0-9a-fA-F]{6}"));
+    const auto coloursOf = [&hex](const QString &sheet) {
+        QStringList found;
+        auto it = hex.globalMatch(sheet);
+        while (it.hasNext())
+            found << it.next().captured(0).toLower();
+        return found;
+    };
+    QVERIFY2(!coloursOf(blockedSheet).isEmpty(),
+             "the action bar names no colours at all");
+    QCOMPARE(coloursOf(blockedSheet), coloursOf(staleSheet));
+
+    // And the warning genuinely differs in colour, not merely in widget name.
+    QVERIFY2(coloursOf(warningSheet) != coloursOf(blockedSheet),
+             "the warning and the action bar use the same colours");
+
+    // The action bars put their button on the RIGHT. addStretch() at the end
+    // of the row left-aligns it, which is what both did.
+    for (QWidget *bar : { blocked, stale }) {
+        auto *row = qobject_cast<QHBoxLayout *>(bar->layout());
+        QVERIFY2(row, "an action bar has no horizontal row");
+        int lastWidget = -1;
+        int lastStretch = -1;
+        for (int i = 0; i < row->count(); ++i) {
+            if (row->itemAt(i)->widget())
+                lastWidget = i;
+            else if (row->itemAt(i)->spacerItem())
+                lastStretch = i;
+        }
+        QVERIFY2(lastStretch >= 0 && lastWidget >= 0,
+                 "an action bar has no stretch, so nothing is aligned");
+        QVERIFY2(lastStretch < lastWidget,
+                 "the stretch comes after the button, left-aligning it");
     }
 }
 

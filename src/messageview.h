@@ -334,6 +334,12 @@ private:
     /// thread with fifteen of them.
     void rebuildAttachmentBar();
 
+    /// Paints the three notice bars: yellow for a warning that
+    /// explains a limitation, blue for one offering an action.
+    /// Reads QPalette::Base, as HtmlBuilder does, so the bars and
+    /// the message agree about the theme.
+    void applyNoticeBarStyles();
+
     /// The list of attachments, with a save button each and a "save all".
     void showAttachmentDialog();
 
@@ -399,6 +405,7 @@ private:
     CidSchemeHandler *m_cidHandler = nullptr;
 
     QLabel *m_headerLabel = nullptr;
+    QWidget *m_blockedBar = nullptr;
     QLabel *m_blockedLabel = nullptr;
     QLabel *m_receiveOnlyRibbon = nullptr;
     QPushButton *m_loadRemoteButton = nullptr;

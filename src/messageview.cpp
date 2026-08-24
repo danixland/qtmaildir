@@ -370,10 +370,17 @@ MessageView::MessageView(QWidget *parent)
     connect(m_loadRemoteButton, &QPushButton::clicked,
             this, &MessageView::loadRemoteContent);
 
-    auto *blockedRow = new QHBoxLayout;
+    // A WIDGET rather than a bare layout, because a layout has nothing to
+    // paint a ground on and this bar now carries one.
+    m_blockedBar = new QWidget(this);
+    m_blockedBar->setObjectName(QStringLiteral("blockedContentBar"));
+    auto *blockedRow = new QHBoxLayout(m_blockedBar);
     blockedRow->addWidget(m_blockedLabel);
-    blockedRow->addWidget(m_loadRemoteButton);
+    // The stretch BEFORE the button, so the thing to act on sits at the right
+    // edge where the eye ends up after reading the sentence.
     blockedRow->addStretch();
+    blockedRow->addWidget(m_loadRemoteButton);
+    m_blockedBar->hide();
 
     // The stale-thread notice, deliberately the same shape as the row above:
     // a sentence and a button, above the message, leaving it readable. The
@@ -410,10 +417,9 @@ MessageView::MessageView(QWidget *parent)
         emit staleThreadRecoveryRequested(threadId, messageId);
     });
     auto *staleRow = new QHBoxLayout(m_staleBar);
-    staleRow->setContentsMargins(0, 0, 0, 0);
     staleRow->addWidget(m_staleLabel);
-    staleRow->addWidget(m_staleButton);
     staleRow->addStretch();
+    staleRow->addWidget(m_staleButton);
     m_staleBar->hide();
 
     // Receive-only ribbon (item 123). Hidden until a message from an account
@@ -452,12 +458,14 @@ MessageView::MessageView(QWidget *parent)
 
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(headerRow);
-    layout->addLayout(blockedRow);
+    layout->addWidget(m_blockedBar);
     layout->addWidget(m_receiveOnlyRibbon);
     layout->addWidget(m_staleBar);
     layout->addWidget(m_view, 1);
     layout->addWidget(m_attachmentBar);
     layout->addWidget(m_tagStrip);
+
+    applyNoticeBarStyles();
 
     clear();
 }
@@ -500,8 +508,7 @@ void MessageView::showPlaceholder(
 
     m_headerLabel->clear();
     m_detailsButton->hide();
-    m_blockedLabel->hide();
-    m_loadRemoteButton->hide();
+    m_blockedBar->hide();
     rebuildAttachmentBar();
 
     // Set before the document loads, not after: acceptNavigationRequest reads
@@ -515,6 +522,48 @@ void MessageView::showPlaceholder(
     setDocument(HtmlBuilder::buildPlaceholder(
         helpers, QStringLiteral(QTMAILDIR_VERSION),
         HtmlBuilder::brandPaletteFrom(palette())));
+}
+
+void MessageView::applyNoticeBarStyles()
+{
+    // QPalette::Base, the same surface HtmlBuilder reads, so a bar and the
+    // message under it never disagree about which way round the theme is.
+    const bool dark = palette().color(QPalette::Base).lightnessF() < 0.5;
+
+    // Yellow for a warning, blue for an action, as the user asked. The dark
+    // values are not the light ones dimmed: the same nominal tint behaves
+    // differently against near-black, so each set carries its own ground,
+    // border and text, and every ground states its text colour rather than
+    // inheriting one that may be near-white on a pale tint.
+    const QString warningGround = dark ? QStringLiteral("#3a2f0b")
+                                       : QStringLiteral("#fdf6d8");
+    const QString warningBorder = dark ? QStringLiteral("#6b5a15")
+                                       : QStringLiteral("#e3d08a");
+    const QString warningText   = dark ? QStringLiteral("#f0e2a8")
+                                       : QStringLiteral("#4a3c05");
+
+    const QString actionGround  = dark ? QStringLiteral("#0e2740")
+                                       : QStringLiteral("#e3f0fb");
+    const QString actionBorder  = dark ? QStringLiteral("#1d4a70")
+                                       : QStringLiteral("#a8cbe8");
+    const QString actionText    = dark ? QStringLiteral("#cfe4f7")
+                                       : QStringLiteral("#0d3355");
+
+    const QString sheet = QStringLiteral(
+        "QWidget#%1 { background: %2; border: 1px solid %3; "
+        "border-radius: 4px; } QWidget#%1 QLabel { color: %4; }");
+
+    m_receiveOnlyRibbon->setStyleSheet(
+        QStringLiteral("QLabel#receiveOnlyRibbon { background: %1; "
+                       "border: 1px solid %2; border-radius: 4px; "
+                       "color: %3; padding: 6px 8px; }")
+            .arg(warningGround, warningBorder, warningText));
+
+    for (QWidget *bar : { m_blockedBar, m_staleBar }) {
+        bar->setStyleSheet(
+            sheet.arg(bar->objectName(), actionGround, actionBorder,
+                      actionText));
+    }
 }
 
 void MessageView::clear()
@@ -531,8 +580,7 @@ void MessageView::clear()
 
     setDocument(QString());
     m_headerLabel->clear();
-    m_blockedLabel->hide();
-    m_loadRemoteButton->hide();
+    m_blockedBar->hide();
 
     // The stale notice describes the message that WAS rendered, so it goes with
     // it, for the same reason as the blocked-content bar above. Left behind, it
@@ -604,8 +652,7 @@ void MessageView::showError(const QString &text, const QString &filePath)
     m_interceptor->resetForNewMessage();
 
     m_headerLabel->setText(tr("<b>Cannot display message</b>"));
-    m_blockedLabel->hide();
-    m_loadRemoteButton->hide();
+    m_blockedBar->hide();
 
     const QString html = QStringLiteral(
         "<html><body><p>%1</p><p><code>%2</code></p></body></html>")
@@ -1073,8 +1120,9 @@ void MessageView::render()
     QTimer::singleShot(300, this, [this]() {
         const bool blocked = m_interceptor->blockedAnything()
                              && !m_interceptor->allowRemote();
-        m_blockedLabel->setVisible(blocked);
-        m_loadRemoteButton->setVisible(blocked);
+        // The BAR, not its children: the wrapper carries the ground, so
+        // hiding only the label and button would leave a painted empty strip.
+        m_blockedBar->setVisible(blocked);
     });
 }
 
@@ -1379,7 +1427,6 @@ void MessageView::loadRemoteContent()
 {
     // Applies to this thread only and is cleared by the next showThread().
     m_interceptor->setAllowRemote(true);
-    m_blockedLabel->hide();
-    m_loadRemoteButton->hide();
+    m_blockedBar->hide();
     render();
 }

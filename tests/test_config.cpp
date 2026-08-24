@@ -25,6 +25,7 @@
 #include <QJsonObject>
 #include "config.h"
 #include "mailsync.h"
+#include "signatures.h"
 
 class TestConfig : public QObject
 {
@@ -134,6 +135,9 @@ private slots:
     void garbageAttachmentWarnBytesIsRejectedNotZero();
     void zeroOrNegativeAutosaveIntervalIsClamped();
     void unrecognisedQuotePositionWarnsAndFallsBackToBelow();
+    void theSignatureKeysAreRead();
+    void anAccountSignatureOverridesTheComposeDefault();
+    void aMalformedSignaturePositionIsReportedAndFallsBack();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -2575,6 +2579,75 @@ void TestConfig::unrecognisedQuotePositionWarnsAndFallsBackToBelow()
              "an unrecognised quote_position must still fall back to Below");
     QVERIFY2(!config.problems().isEmpty(),
              "an unrecognised quote_position was accepted silently");
+}
+
+void TestConfig::theSignatureKeysAreRead()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "signature=work\n"
+        "signature_position=above_quote\n")));
+
+    QCOMPARE(config.compose().signature, QStringLiteral("work"));
+    QVERIFY2(config.compose().signaturePosition
+                 == Signatures::Position::AboveQuote,
+             "signature_position=above_quote was not read");
+}
+
+void TestConfig::anAccountSignatureOverridesTheComposeDefault()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "signature=work\n"
+        "\n"
+        "[account.personal]\n"
+        "name=Test User\n"
+        "address=user@example.org\n"
+        "maildir=personal-mail\n"
+        "trash=Trash\n"
+        "signature=brief\n"
+        "\n"
+        "[account.other]\n"
+        "name=Test User\n"
+        "address=other@example.org\n"
+        "maildir=other-mail\n"
+        "trash=Trash\n")));
+
+    // The account SEEDS the choice; it does not own the signature. The key is
+    // a starting value and the switch keeps every signature reachable.
+    QCOMPARE(config.account(QStringLiteral("personal")).signature,
+             QStringLiteral("brief"));
+    // An account with no key of its own carries none, and the caller falls
+    // through to the [compose] default rather than this being resolved here.
+    QVERIFY2(config.account(QStringLiteral("other")).signature.isEmpty(),
+             "an account with no signature key must not inherit the "
+             "[compose] one: the composer resolves the fallback, not Config");
+    QCOMPARE(config.compose().signature, QStringLiteral("work"));
+}
+
+void TestConfig::aMalformedSignaturePositionIsReportedAndFallsBack()
+{
+    // Present and malformed is REPORTED, matching quote_position. A silent
+    // value(key, default) would accept "abov" as above_quote.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[compose]\n"
+        "signature_position=abov\n")));
+
+    QVERIFY2(config.compose().signaturePosition == Signatures::Position::End,
+             "an unrecognised signature_position must still fall back to End");
+    bool reported = false;
+    for (const QString &problem : config.problems()) {
+        if (problem.contains(QStringLiteral("signature_position")))
+            reported = true;
+    }
+    QVERIFY2(reported,
+             "an unrecognised signature_position was accepted silently");
 }
 
 QTEST_MAIN(TestConfig)

@@ -459,6 +459,17 @@ void Config::load(const QString &path)
         account.sent =
             settings.value(QStringLiteral("sent")).toString().trimmed();
 
+        // Optional, and a STARTING value rather than a binding: the composer's
+        // switch keeps every signature reachable whichever account is
+        // selected. Left empty when absent, so the composer can tell "this
+        // account says nothing" from "this account says none" and fall through
+        // to [compose] signature itself; resolving that here would collapse
+        // the two. Trimmed for the same reason as sent, above: a trailing
+        // space would be carried into a filename lookup and match nothing,
+        // which is invisible in a config file.
+        account.signature =
+            settings.value(QStringLiteral("signature")).toString().trimmed();
+
         // Mandatory, unlike sent: Delete moves a file into this folder, so an
         // account without one cannot delete at all. Trimmed for the same
         // reason as sent, above.
@@ -546,6 +557,31 @@ void Config::load(const QString &path)
 
     m_compose.sendHtml =
         settings.value(QStringLiteral("send_html"), true).toBool();
+
+    // Trimmed for the same reason the account key is: it reaches a filename
+    // lookup, where a trailing space matches nothing invisibly.
+    m_compose.signature =
+        settings.value(QStringLiteral("signature")).toString().trimmed();
+
+    // The same shape as quote_position directly above: an absent key is
+    // silent and the struct default holds, but a PRESENT and malformed value
+    // is reported rather than silently accepted. value(key, default) alone
+    // would read "signature_position = abov" as above_quote.
+    const QString signaturePosition =
+        settings.value(QStringLiteral("signature_position"),
+                       QStringLiteral("end"))
+            .toString().trimmed();
+    if (signaturePosition.compare(QStringLiteral("above_quote"),
+                                  Qt::CaseInsensitive) == 0) {
+        m_compose.signaturePosition = Signatures::Position::AboveQuote;
+    } else if (signaturePosition.compare(QStringLiteral("end"),
+                                         Qt::CaseInsensitive) == 0) {
+        m_compose.signaturePosition = Signatures::Position::End;
+    } else {
+        addProblem(tr("[compose] signature_position '%1' is not recognised; "
+                      "expected end or above_quote. Using end.")
+                       .arg(signaturePosition));
+    }
 
     // Three numerics, all following the shape already established at
     // message_zoom, toolbar_icon_size, mark_read_delay_ms and

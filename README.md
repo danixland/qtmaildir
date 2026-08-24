@@ -516,6 +516,41 @@ that window stops it and returns you to the composer with everything intact.
 Nothing has reached the network until the countdown ends;
 `[compose] send_delay_ms` sets how long it lasts, and 0 removes it.
 
+### Signatures
+
+Signatures are markdown files, one per signature, in
+`~/.config/qtmaildir/signatures/`:
+
+```
+~/.config/qtmaildir/signatures/
+├── work.md
+├── personal.md
+└── brief.md
+```
+
+The filename without its extension is the name shown in the composer. There
+is no editor for them inside qtmaildir: the directory is yours to manage with
+your own editor.
+
+Markdown, like the body of a message. `qtmaildir` builds the plain-text part
+of a message from what you typed and the HTML part by rendering the same
+text, so one signature serves both and you never choose a format.
+
+The composer's editor bar carries a **Signature** control listing every file
+plus *None*. Choosing one replaces whichever is already in the message, so
+switching is safe to do repeatedly.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `[compose] signature` | none | The signature seeded on a new message, by name |
+| `[compose] signature_position` | `end` | `end`, or `above_quote` to put it before the quoted text in a reply |
+| `[account.<key>] signature` | none | Seeds this account's messages instead of the `[compose]` value |
+
+A signature is not tied to an account. `[account.<key>] signature` only
+chooses which one a message *starts* with; every signature stays reachable
+from the control whichever account you are sending from, and changing the
+From: account re-seeds it only until you pick one yourself.
+
 ## Tagging
 
 Archive, delete, spam, mark-important and toggle-unread write fixed tags. For anything

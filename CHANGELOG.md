@@ -65,6 +65,13 @@ point at which they are stable.
 - The notmuch hooks that auto-tag incoming mail now live in this repository,
   under `assets/hooks/`. They moved from the companion `mailctl` project,
   which is being retired.
+- Signatures. Markdown files in `~/.config/qtmaildir/signatures/`, one per
+  signature, chosen from a control on the composer's editor bar. One
+  signature serves both the plain-text and the HTML part of a message, since
+  the HTML is rendered from the same markdown. `[compose] signature` seeds a
+  new message, `[account.<key>] signature` overrides it per account, and
+  `[compose] signature_position` puts a new one at the end of the message
+  (the default) or above the quoted text in a reply.
 
 ### Changed
 

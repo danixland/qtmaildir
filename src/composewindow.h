@@ -168,6 +168,17 @@ signals:
     /// pointer before WA_DeleteOnClose destroys the window.
     void closed(ComposeWindow *window);
 
+    /// A draft was written to disk, so the window's owner can index it and it
+    /// appears in the Drafts view without a full sync (item 158).
+    ///
+    /// \p path is the file just written, absolute. \p previousPath is the file
+    /// the write replaced, empty on the first save of a new draft.
+    void draftSaved(const QString &path, const QString &previousPath);
+
+    /// A draft file was unlinked (sent), so its index entry must go too.
+    /// \p path is the file that was removed, absolute.
+    void draftRemoved(const QString &path);
+
 protected:
     /// The one place the registry is told, whichever route closes the window.
     void closeEvent(QCloseEvent *event) override;

@@ -93,6 +93,10 @@ private slots:
     void moveMessagesGivesTheFileAFreshMaildirName();
     void moveMessagesKeepsTheMaildirFlags();
 
+    void indexDraftFileMakesAFileFindable();
+    void indexDraftFileRemovesThePreviousFile();
+    void removeIndexedFileDropsTheEntry();
+
     void aSplitIndexStillResolvesTheMailRoot();
     void aSplitIndexMovesIntoTheMaildirNotTheIndex();
     void aSplitIndexListsTheMaildirsFolders();
@@ -103,6 +107,9 @@ private:
     /// Each of those takes its own message, because a move is destructive and
     /// the fixture database is shared by every test in this class.
     bool addMovableMessage(const QString &folder, const QString &messageId);
+    /// Writes a draft file into <folder>/cur with the "D" flag and returns its
+    /// path, WITHOUT indexing it, so a test can index just that file.
+    QString writeDraftFile(const QString &folder, const QString &messageId);
     /// The single file backing `messageId`, or an empty string when the
     /// database does not know the id.
     QString fileOf(const QString &messageId,
@@ -213,6 +220,42 @@ bool TestNotmuchWorker::addMovableMessage(const QString &folder,
         return false;
     }
     return m_fixture.index();
+}
+
+QString TestNotmuchWorker::writeDraftFile(const QString &folder,
+                                          const QString &messageId)
+{
+    const QString dirPath = m_fixture.maildirPath() + QLatin1Char('/') + folder;
+    QDir dir;
+    if (!dir.mkpath(dirPath + QStringLiteral("/cur"))
+        || !dir.mkpath(dirPath + QStringLiteral("/new"))
+        || !dir.mkpath(dirPath + QStringLiteral("/tmp"))) {
+        return {};
+    }
+
+    // The same filename recipe addMessage() uses, with the draft flag instead
+    // of the seen flag, matching what DraftStore writes.
+    QString base = messageId;
+    base.remove(QLatin1Char('<')).remove(QLatin1Char('>'));
+    base.replace(QLatin1Char('@'), QLatin1Char('.'));
+    base.replace(QLatin1Char('/'), QLatin1Char('.'));
+    base += QStringLiteral(":2,D");
+
+    const QString path = dirPath + QStringLiteral("/cur/") + base;
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+        return {};
+    QTextStream out(&file);
+    out << "From: You <you@example.org>\n"
+        << "To: someone@example.org\n"
+        << "Subject: A draft\n"
+        << "Message-ID: <" << messageId << ">\n"
+        << "Date: Sun, 7 Jun 2026 10:00:00 +0000\n"
+        << "\n"
+        << "draft body\n";
+    out.flush();
+    file.close();
+    return path;
 }
 
 QString TestNotmuchWorker::fileOf(const QString &messageId,
@@ -1381,6 +1424,69 @@ void TestNotmuchWorker::moveMessagesReportsOnlyWhatMoved()
     const QVector<ThreadSummary> inTrash =
         runQuery(QStringLiteral("path:\"trash/**\" and id:%1").arg(id));
     QCOMPARE(inTrash.size(), 1);
+}
+
+void TestNotmuchWorker::indexDraftFileMakesAFileFindable()
+{
+    const QString id = QStringLiteral("draft1@example.org");
+    const QString path = writeDraftFile(QStringLiteral("drafts"), id);
+    QVERIFY(!path.isEmpty());
+
+    // On disk but not indexed: no query sees it, which is item 158's defect.
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(id)).size(), 0);
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+    worker.indexDraftFile(path);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(id)).size(), 1);
+}
+
+void TestNotmuchWorker::indexDraftFileRemovesThePreviousFile()
+{
+    const QString first = QStringLiteral("draft2@example.org");
+    const QString second = QStringLiteral("draft3@example.org");
+    const QString firstPath = writeDraftFile(QStringLiteral("drafts"), first);
+    QVERIFY(!firstPath.isEmpty());
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+    worker.indexDraftFile(firstPath);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(first)).size(), 1);
+
+    // A rewrite: a new file (a fresh Message-ID) and the old one unlinked, as
+    // DraftStore does on every autosave. The old entry must not linger.
+    const QString secondPath = writeDraftFile(QStringLiteral("drafts"), second);
+    QVERIFY(!secondPath.isEmpty());
+    QVERIFY(QFile::remove(firstPath));
+
+    worker.indexDraftFile(secondPath, firstPath);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(second)).size(), 1);
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(first)).size(), 0);
+}
+
+void TestNotmuchWorker::removeIndexedFileDropsTheEntry()
+{
+    const QString id = QStringLiteral("draft4@example.org");
+    const QString path = writeDraftFile(QStringLiteral("drafts"), id);
+    QVERIFY(!path.isEmpty());
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+    worker.indexDraftFile(path);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(id)).size(), 1);
+
+    // The send path unlinks the draft and drops its entry, so it does not
+    // linger as a ghost until the next sync.
+    QVERIFY(QFile::remove(path));
+    worker.removeIndexedFile(path);
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(id)).size(), 0);
 }
 
 

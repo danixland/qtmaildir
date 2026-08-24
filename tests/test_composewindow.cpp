@@ -22,6 +22,7 @@
 #include <QFile>
 #include <QMenu>
 #include <QPlainTextEdit>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QToolButton>
@@ -47,6 +48,7 @@ private slots:
     void changingTheAccountFollowsItsSignature();
     void changingTheAccountStopsFollowingOnceTheSwitchIsUsed();
     void aResumedDraftDoesNotReseedOnAnAccountChange();
+    void savingADraftEmitsItsPathAndTheReplacedOne();
 
 private:
     /// A config pointing at a signatures directory holding \p files, with one
@@ -391,6 +393,58 @@ void TestComposeWindow::aResumedDraftDoesNotReseedOnAnAccountChange()
 
     QVERIFY(body->toPlainText().contains(QStringLiteral("Jane Doe")));
     QVERIFY(!body->toPlainText().contains(QStringLiteral("Home sig")));
+}
+
+void TestComposeWindow::savingADraftEmitsItsPathAndTheReplacedOne()
+{
+    // A config whose account has a drafts folder, which makeConfig() does not
+    // set, so the save can actually write somewhere.
+    const QString confPath = m_dir->path() + QStringLiteral("/qtmaildir.conf");
+    {
+        QString conf;
+        QTextStream out(&conf);
+        out << "[account.work]\n"
+            << "name = Someone\n"
+            << "address = someone@example.org\n"
+            << "maildir = work\n"
+            << "drafts = Drafts\n"
+            << "send_command = /bin/cat\n";
+        writeFile(confPath, conf);
+    }
+    Config config;
+    config.load(confPath);
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+
+    QSignalSpy saved(&window, &ComposeWindow::draftSaved);
+
+    body->setPlainText(QStringLiteral("First revision."));
+    QVERIFY(window.saveDraftNow());
+
+    QCOMPARE(saved.size(), 1);
+    const QString first = saved.first().at(0).toString();
+    const QString firstPrevious = saved.first().at(1).toString();
+    QVERIFY(!first.isEmpty());
+    QVERIFY(firstPrevious.isEmpty());
+    QVERIFY(QFile::exists(first));
+
+    // A rewrite writes a fresh file and unlinks the old; the previous path
+    // comes back so the owner can drop the old index entry.
+    body->setPlainText(QStringLiteral("Second revision."));
+    QVERIFY(window.saveDraftNow());
+
+    QCOMPARE(saved.size(), 2);
+    const QString second = saved.at(1).at(0).toString();
+    const QString secondPrevious = saved.at(1).at(1).toString();
+    QVERIFY(!second.isEmpty());
+    QCOMPARE(secondPrevious, first);
+    QVERIFY2(second != first, "a rewrite reused the old filename");
 }
 
 QTEST_MAIN(TestComposeWindow)

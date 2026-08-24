@@ -820,8 +820,99 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
     emit messagesMovedFrom(origins, destFolder);
 }
 
+void NotmuchWorker::indexDraftFile(const QString &path,
+                                   const QString &previousPath)
+{
+    if (path.isEmpty())
+        return;
+
+    // Same ordering as applyTags() and moveMessages(): notmuch allows one open
+    // handle per process, so the read-only one must close before the write.
+    close();
+
+    const QByteArray configPath = configPathArg();
+    notmuch_database_t *db = nullptr;
+    char *error = nullptr;
+    const notmuch_status_t status = notmuch_database_open_with_config(
+        nullptr,
+        NOTMUCH_DATABASE_MODE_READ_WRITE,
+        configPath.isEmpty() ? nullptr : configPath.constData(),
+        nullptr,
+        &db,
+        &error);
+
+    if (status != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(
+            QStringLiteral("Cannot open database for writing: %1")
+                .arg(QString::fromUtf8(error ? error
+                                             : notmuch_status_to_string(status))));
+        free(error);
+        return;
+    }
+
+    notmuch_message_t *indexed = nullptr;
+    const notmuch_status_t added = notmuch_database_index_file(
+        db, path.toUtf8().constData(), nullptr, &indexed);
+    if (indexed)
+        notmuch_message_destroy(indexed);
+
+    // DUPLICATE_MESSAGE_ID is success here, exactly as in moveMessages(): the
+    // file reached the database, it is only the id that was already known.
+    if (added != NOTMUCH_STATUS_SUCCESS
+        && added != NOTMUCH_STATUS_DUPLICATE_MESSAGE_ID) {
+        notmuch_database_close(db);
+        notmuch_database_destroy(db);
+        emit errorOccurred(
+            QStringLiteral("Cannot index %1: %2")
+                .arg(QFileInfo(path).fileName(),
+                     QString::fromUtf8(notmuch_status_to_string(added))));
+        return;
+    }
+
+    // The previous revision, if any, is already unlinked from disk; its entry
+    // must not linger as a ghost draft with a filename that no longer exists.
+    if (!previousPath.isEmpty() && previousPath != path)
+        notmuch_database_remove_message(db, previousPath.toUtf8().constData());
+
+    notmuch_database_close(db);
+    notmuch_database_destroy(db);
+}
+
+void NotmuchWorker::removeIndexedFile(const QString &path)
+{
+    if (path.isEmpty())
+        return;
+
+    close();
+
+    const QByteArray configPath = configPathArg();
+    notmuch_database_t *db = nullptr;
+    char *error = nullptr;
+    const notmuch_status_t status = notmuch_database_open_with_config(
+        nullptr,
+        NOTMUCH_DATABASE_MODE_READ_WRITE,
+        configPath.isEmpty() ? nullptr : configPath.constData(),
+        nullptr,
+        &db,
+        &error);
+
+    if (status != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(
+            QStringLiteral("Cannot open database for writing: %1")
+                .arg(QString::fromUtf8(error ? error
+                                             : notmuch_status_to_string(status))));
+        free(error);
+        return;
+    }
+
+    notmuch_database_remove_message(db, path.toUtf8().constData());
+
+    notmuch_database_close(db);
+    notmuch_database_destroy(db);
+}
+
 void NotmuchWorker::resolveMessages(const QStringList &messageIds,
-                                   const QString &requestTag)
+                                    const QString &requestTag)
 {
     if (messageIds.isEmpty())
         return;

@@ -134,6 +134,28 @@ public slots:
     /// it, so removing before indexing loses the message's tags.
     void moveMessages(const QStringList &messageIds, const QString &destFolder);
 
+    /// Indexes one freshly written file, so it appears in a `path:` query
+    /// without a full `notmuch new` (item 158).
+    ///
+    /// The draft-save path writes the file and stops, and the Drafts view is a
+    /// path query, so an unindexed draft is invisible until the next sync. A
+    /// draft rewrite writes a NEW file (MessageBuilder generates a fresh
+    /// Message-ID on every build) and unlinks the old, so \p previousPath is
+    /// removed after the new one is indexed, mirroring moveMessages()'s
+    /// ordering: the old entry must not linger as a ghost draft.
+    ///
+    /// \p path is absolute, as DraftStore::write() returns it. The Maildir
+    /// flags on the file (the "D" flag a draft carries) drive its tags exactly
+    /// as they would on a later `notmuch new`.
+    void indexDraftFile(const QString &path, const QString &previousPath = {});
+
+    /// Removes one file from the index, without touching the file on disk.
+    ///
+    /// The counterpart to indexDraftFile() for the send path: a draft that was
+    /// indexed while being composed is unlinked when it is sent, and its entry
+    /// must not linger as a ghost draft until the next sync.
+    void removeIndexedFile(const QString &path);
+
     /// Batch tagging over whole threads. The UI holds thread ids, not message
     /// ids, for rows it has not opened, so the resolution happens here where
     /// the database handle lives. This is the path the archive/flag/delete

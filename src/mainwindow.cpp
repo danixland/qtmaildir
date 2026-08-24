@@ -1138,6 +1138,17 @@ void MainWindow::openComposer(const ComposeContext &context)
                 });
             });
 
+    // A saved draft is indexed immediately (item 158): the Drafts view is a
+    // path query, and without this the draft is invisible until the next sync.
+    // The worker lives on another thread, so this is a queued connection and
+    // notmuch stays on its own thread.
+    connect(composer, &ComposeWindow::draftSaved, m_worker,
+            &NotmuchWorker::indexDraftFile);
+
+    // A draft unlinked on send must leave no ghost entry behind.
+    connect(composer, &ComposeWindow::draftRemoved, m_worker,
+            &NotmuchWorker::removeIndexedFile);
+
     composer->show();
 }
 

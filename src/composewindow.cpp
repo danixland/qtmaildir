@@ -1018,6 +1018,7 @@ bool ComposeWindow::saveDraftNow()
     const QString folder = QDir(m_mailRoot).absoluteFilePath(
         account.maildir + QLatin1Char('/') + account.drafts);
 
+    const QString previousPath = m_draftPath;
     const DraftStore::Result written =
         DraftStore::write(folder, built.bytes, QStringLiteral("D"), m_draftPath);
 
@@ -1038,6 +1039,10 @@ bool ComposeWindow::saveDraftNow()
     m_dirty = false;
     m_saveFailed = false;
     m_banner->hide();
+
+    // The write is done and the previous revision already unlinked; hand both
+    // paths up so the owner indexes the new one and drops the old (item 158).
+    emit draftSaved(written.path, previousPath);
     return true;
 }
 
@@ -1200,6 +1205,7 @@ void ComposeWindow::send()
             dialog->setStage(SendDialog::Stage::RemovingDraft);
             if (!m_draftPath.isEmpty()) {
                 QFile::remove(m_draftPath);
+                emit draftRemoved(m_draftPath);
                 m_draftPath.clear();
             }
 

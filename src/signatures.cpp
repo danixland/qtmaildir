@@ -76,15 +76,15 @@ bool isQuoted(const QString &line)
 /// inserted above the quote goes above the attribution too. Returning the
 /// quoted line itself would strand the signature between the attribution and
 /// the text it introduces.
-int quoteStart(const QStringList &lines)
+int quoteStart(const QStringList &lines, int from = 0)
 {
-    for (int i = 0; i < lines.size(); ++i) {
+    for (int i = from; i < lines.size(); ++i) {
         if (!isQuoted(lines.at(i)))
             continue;
         // Walk back over the attribution and the blank line before it, so the
         // signature lands above the whole block rather than inside it.
         int start = i;
-        while (start > 0 && !lines.at(start - 1).trimmed().isEmpty()
+        while (start > from && !lines.at(start - 1).trimmed().isEmpty()
                && !isQuoted(lines.at(start - 1)))
             --start;
         return start;
@@ -92,27 +92,100 @@ int quoteStart(const QStringList &lines)
     return -1;
 }
 
+/// Where the block introduced by the delimiter at \p delimiter ends: the start
+/// of the quote below it, or the end of the buffer when there is none.
+///
+/// This must use quoteStart() rather than scanning for the first quoted line,
+/// because the ATTRIBUTION is part of the quote. Scanning for `>` alone puts
+/// "On Mon, someone wrote:" inside the signature block, which then matches no
+/// known signature and, when it did, left the attribution stranded above the
+/// removed text. The two boundaries have to be the same one.
+int blockEnd(const QStringList &lines, int delimiter)
+{
+    const int quote = quoteStart(lines, delimiter + 1);
+    return quote < 0 ? lines.size() : quote;
+}
+
+/// The line index of the delimiter introducing an existing signature, or -1.
+///
+/// Two conditions, and both are load-bearing. The delimiter must not be
+/// QUOTED, since the quoted original carries the other party's signature and
+/// it is not this message's to replace. And the block after it must MATCH one
+/// of \p known: finding a delimiter is not authority to delete what follows
+/// it, because "-- " reaches a buffer pasted in with quoted text.
+int existingSignature(const QStringList &lines, const QStringList &known)
+{
+    for (int i = lines.size() - 1; i >= 0; --i) {
+        if (lines.at(i) != kDelimiter)
+            continue;
+
+        // The block runs to the end, or to the quote when the signature sits
+        // above one.
+        const int end = blockEnd(lines, i);
+        // A trailing blank line belongs to the separation, not to the text.
+        int textEnd = end;
+        while (textEnd > i + 1 && lines.at(textEnd - 1).trimmed().isEmpty())
+            --textEnd;
+
+        const QString block =
+            lines.mid(i + 1, textEnd - (i + 1)).join(QLatin1Char('\n'));
+        if (known.contains(block))
+            return i;
+    }
+    return -1;
+}
+
+/// \p lines with the signature at \p delimiter removed, blank separator and
+/// all. The caller has already established that the block is a known one.
+QStringList withoutSignature(const QStringList &lines, int delimiter)
+{
+    const int end = blockEnd(lines, delimiter);
+
+    QStringList head = lines.mid(0, delimiter);
+    while (!head.isEmpty() && head.last().trimmed().isEmpty())
+        head.removeLast();
+
+    QStringList result = head;
+    if (end < lines.size()) {
+        // Something follows (the quote): restore the blank line that
+        // separated it from the signature now being removed.
+        result.append(QString());
+        result.append(lines.mid(end));
+    } else {
+        // The signature ran to the end of the buffer, and the trailing
+        // newline the head lost with its blank line goes back.
+        result.append(QString());
+    }
+    return result;
+}
+
 }  // namespace
 
 QString replace(const QString &buffer, const QString &signature,
                 const QStringList &known, Position position)
 {
-    Q_UNUSED(known);
+    QStringList lines = buffer.split(QLatin1Char('\n'));
 
+    const int existing = existingSignature(lines, known);
+    if (existing >= 0)
+        lines = withoutSignature(lines, existing);
+
+    const QString stripped = lines.join(QLatin1Char('\n'));
+
+    // "None", or nothing to insert: the removal above is the whole operation.
     if (signature.isEmpty())
-        return buffer;
+        return stripped;
 
     const QString block = QStringLiteral("\n") + kDelimiter
                           + QStringLiteral("\n") + signature;
 
-    QStringList lines = buffer.split(QLatin1Char('\n'));
     const int quote =
         position == Position::AboveQuote ? quoteStart(lines) : -1;
 
     // No quote to sit above is not a special case: it is the End placement,
     // which is why a New message needs no branch of its own.
     if (quote < 0)
-        return buffer + block;
+        return stripped + block;
 
     QStringList head = lines.mid(0, quote);
     const QStringList tail = lines.mid(quote);

@@ -35,6 +35,11 @@ private slots:
     void insertingAboveTheQuotePutsItBeforeTheFirstQuotedLine();
     void insertingAboveTheQuoteWithNoQuoteIsTheSameAsEnd();
     void insertingNothingLeavesTheBufferAlone();
+    void switchingReplacesAKnownSignature();
+    void switchingReplacesAKnownSignatureAboveAQuote();
+    void selectingNoneRemovesAKnownSignature();
+    void aBlockMatchingNoKnownSignatureIsNotRemoved();
+    void aDelimiterInsideTheQuoteIsNotTheSignature();
 
 private:
     /// Writes \p files as name -> content into a fresh temporary directory.
@@ -160,6 +165,102 @@ void TestSignatures::insertingNothingLeavesTheBufferAlone()
     QCOMPARE(Signatures::replace(buffer, QString(), {},
                                  Signatures::Position::End),
              buffer);
+}
+
+void TestSignatures::switchingReplacesAKnownSignature()
+{
+    const QStringList known = { QStringLiteral("Jane Doe"),
+                                QStringLiteral("Jane Doe\nqtmaildir") };
+    const QString buffer = QStringLiteral("Hello.\n\n-- \nJane Doe");
+
+    const QString result = Signatures::replace(
+        buffer, QStringLiteral("Jane Doe\nqtmaildir"), known,
+        Signatures::Position::End);
+
+    QCOMPARE(result,
+             QStringLiteral("Hello.\n\n-- \nJane Doe\nqtmaildir"));
+}
+
+void TestSignatures::switchingReplacesAKnownSignatureAboveAQuote()
+{
+    const QStringList known = { QStringLiteral("Jane Doe"),
+                                QStringLiteral("Brief") };
+    const QString buffer = QStringLiteral(
+        "My reply.\n"
+        "\n"
+        "-- \n"
+        "Jane Doe\n"
+        "\n"
+        "On Mon, someone wrote:\n"
+        "> the original\n");
+
+    const QString result = Signatures::replace(
+        buffer, QStringLiteral("Brief"), known,
+        Signatures::Position::AboveQuote);
+
+    QCOMPARE(result, QStringLiteral(
+        "My reply.\n"
+        "\n"
+        "-- \n"
+        "Brief\n"
+        "\n"
+        "On Mon, someone wrote:\n"
+        "> the original\n"));
+}
+
+void TestSignatures::selectingNoneRemovesAKnownSignature()
+{
+    const QStringList known = { QStringLiteral("Jane Doe") };
+    const QString buffer = QStringLiteral("Hello.\n\n-- \nJane Doe");
+
+    const QString result = Signatures::replace(
+        buffer, QString(), known, Signatures::Position::End);
+
+    QCOMPARE(result, QStringLiteral("Hello.\n"));
+}
+
+void TestSignatures::aBlockMatchingNoKnownSignatureIsNotRemoved()
+{
+    // THE test for the data-loss guard, and it must not be dropped. A "-- "
+    // reaches a buffer without the user ever choosing a signature, pasted in
+    // with quoted text from another client. Replacing from there would delete
+    // everything after it silently.
+    const QStringList known = { QStringLiteral("Jane Doe") };
+    const QString buffer = QStringLiteral(
+        "Hello.\n"
+        "\n"
+        "-- \n"
+        "text the user pasted and wants to keep");
+
+    const QString result = Signatures::replace(
+        buffer, QStringLiteral("Jane Doe"), known, Signatures::Position::End);
+
+    // The user's text survives, and the signature is ADDED. A wrong guess
+    // produces a visible duplicate, never a deletion.
+    QVERIFY(result.contains(
+        QStringLiteral("text the user pasted and wants to keep")));
+    QVERIFY(result.endsWith(QStringLiteral("-- \nJane Doe")));
+}
+
+void TestSignatures::aDelimiterInsideTheQuoteIsNotTheSignature()
+{
+    // The quoted original carries the sender's own signature, quoted. A tail
+    // rule would find it, and under End it would append after it; the block
+    // must not be treated as this message's signature whichever way it goes.
+    const QStringList known = { QStringLiteral("Jane Doe") };
+    const QString buffer = QStringLiteral(
+        "My reply.\n"
+        "\n"
+        "On Mon, someone wrote:\n"
+        "> the original\n"
+        "> -- \n"
+        "> Their Name\n");
+
+    const QString result = Signatures::replace(
+        buffer, QStringLiteral("Jane Doe"), known, Signatures::Position::End);
+
+    QVERIFY(result.contains(QStringLiteral("> -- \n> Their Name")));
+    QVERIFY(result.endsWith(QStringLiteral("-- \nJane Doe")));
 }
 
 QTEST_MAIN(TestSignatures)

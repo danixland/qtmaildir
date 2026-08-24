@@ -31,6 +31,10 @@ private slots:
     void aMissingDirectoryHasNoNames();
     void textIsTheFileContent();
     void textOfAnUnknownNameIsEmpty();
+    void insertingAtTheEndAppendsAfterADelimiter();
+    void insertingAboveTheQuotePutsItBeforeTheFirstQuotedLine();
+    void insertingAboveTheQuoteWithNoQuoteIsTheSameAsEnd();
+    void insertingNothingLeavesTheBufferAlone();
 
 private:
     /// Writes \p files as name -> content into a fresh temporary directory.
@@ -98,6 +102,64 @@ void TestSignatures::textOfAnUnknownNameIsEmpty()
     QVERIFY(dir.isValid());
 
     QVERIFY(Signatures::text(dir.path(), QStringLiteral("absent")).isEmpty());
+}
+
+void TestSignatures::insertingAtTheEndAppendsAfterADelimiter()
+{
+    const QString buffer = QStringLiteral("Hello.\n");
+
+    const QString result = Signatures::replace(
+        buffer, QStringLiteral("Jane Doe"), {}, Signatures::Position::End);
+
+    QCOMPARE(result, QStringLiteral("Hello.\n\n-- \nJane Doe"));
+}
+
+void TestSignatures::insertingAboveTheQuotePutsItBeforeTheFirstQuotedLine()
+{
+    const QString buffer = QStringLiteral(
+        "My reply.\n"
+        "\n"
+        "On Mon, someone wrote:\n"
+        "> the original\n"
+        "> second line\n");
+
+    const QString result = Signatures::replace(
+        buffer, QStringLiteral("Jane Doe"), {},
+        Signatures::Position::AboveQuote);
+
+    // Before the QUOTED lines, and the attribution stays with the quote it
+    // introduces: it is the line the quote hangs from, not part of the reply.
+    QCOMPARE(result, QStringLiteral(
+        "My reply.\n"
+        "\n"
+        "-- \n"
+        "Jane Doe\n"
+        "\n"
+        "On Mon, someone wrote:\n"
+        "> the original\n"
+        "> second line\n"));
+}
+
+void TestSignatures::insertingAboveTheQuoteWithNoQuoteIsTheSameAsEnd()
+{
+    const QString buffer = QStringLiteral("A new message.\n");
+
+    const QString above = Signatures::replace(
+        buffer, QStringLiteral("Jane Doe"), {},
+        Signatures::Position::AboveQuote);
+    const QString end = Signatures::replace(
+        buffer, QStringLiteral("Jane Doe"), {}, Signatures::Position::End);
+
+    QCOMPARE(above, end);
+}
+
+void TestSignatures::insertingNothingLeavesTheBufferAlone()
+{
+    const QString buffer = QStringLiteral("Hello.\n");
+
+    QCOMPARE(Signatures::replace(buffer, QString(), {},
+                                 Signatures::Position::End),
+             buffer);
 }
 
 QTEST_MAIN(TestSignatures)

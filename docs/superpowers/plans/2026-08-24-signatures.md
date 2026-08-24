@@ -149,10 +149,10 @@ void TestSignatures::textIsTheFileContent()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     write(dir, { { QStringLiteral("work.md"),
-                   QStringLiteral("Danilo\n**qtmaildir**\n") } });
+                   QStringLiteral("Jane Doe\n**qtmaildir**\n") } });
 
     QCOMPARE(Signatures::text(dir.path(), QStringLiteral("work")),
-             QStringLiteral("Danilo\n**qtmaildir**\n"));
+             QStringLiteral("Jane Doe\n**qtmaildir**\n"));
 }
 
 void TestSignatures::textOfAnUnknownNameIsEmpty()
@@ -396,9 +396,9 @@ void TestSignatures::insertingAtTheEndAppendsAfterADelimiter()
     const QString buffer = QStringLiteral("Hello.\n");
 
     const QString result = Signatures::replace(
-        buffer, QStringLiteral("Danilo"), {}, Signatures::Position::End);
+        buffer, QStringLiteral("Jane Doe"), {}, Signatures::Position::End);
 
-    QCOMPARE(result, QStringLiteral("Hello.\n\n-- \nDanilo"));
+    QCOMPARE(result, QStringLiteral("Hello.\n\n-- \nJane Doe"));
 }
 
 void TestSignatures::insertingAboveTheQuotePutsItBeforeTheFirstQuotedLine()
@@ -411,7 +411,7 @@ void TestSignatures::insertingAboveTheQuotePutsItBeforeTheFirstQuotedLine()
         "> second line\n");
 
     const QString result = Signatures::replace(
-        buffer, QStringLiteral("Danilo"), {},
+        buffer, QStringLiteral("Jane Doe"), {},
         Signatures::Position::AboveQuote);
 
     // Before the QUOTED lines, and the attribution stays with the quote it
@@ -420,7 +420,7 @@ void TestSignatures::insertingAboveTheQuotePutsItBeforeTheFirstQuotedLine()
         "My reply.\n"
         "\n"
         "-- \n"
-        "Danilo\n"
+        "Jane Doe\n"
         "\n"
         "On Mon, someone wrote:\n"
         "> the original\n"
@@ -432,10 +432,10 @@ void TestSignatures::insertingAboveTheQuoteWithNoQuoteIsTheSameAsEnd()
     const QString buffer = QStringLiteral("A new message.\n");
 
     const QString above = Signatures::replace(
-        buffer, QStringLiteral("Danilo"), {},
+        buffer, QStringLiteral("Jane Doe"), {},
         Signatures::Position::AboveQuote);
     const QString end = Signatures::replace(
-        buffer, QStringLiteral("Danilo"), {}, Signatures::Position::End);
+        buffer, QStringLiteral("Jane Doe"), {}, Signatures::Position::End);
 
     QCOMPARE(above, end);
 }
@@ -586,27 +586,27 @@ Add the implementations:
 ```cpp
 void TestSignatures::switchingReplacesAKnownSignature()
 {
-    const QStringList known = { QStringLiteral("Danilo"),
-                                QStringLiteral("Danilo M.\nqtmaildir") };
-    const QString buffer = QStringLiteral("Hello.\n\n-- \nDanilo");
+    const QStringList known = { QStringLiteral("Jane Doe"),
+                                QStringLiteral("Jane Doe\nqtmaildir") };
+    const QString buffer = QStringLiteral("Hello.\n\n-- \nJane Doe");
 
     const QString result = Signatures::replace(
-        buffer, QStringLiteral("Danilo M.\nqtmaildir"), known,
+        buffer, QStringLiteral("Jane Doe\nqtmaildir"), known,
         Signatures::Position::End);
 
     QCOMPARE(result,
-             QStringLiteral("Hello.\n\n-- \nDanilo M.\nqtmaildir"));
+             QStringLiteral("Hello.\n\n-- \nJane Doe\nqtmaildir"));
 }
 
 void TestSignatures::switchingReplacesAKnownSignatureAboveAQuote()
 {
-    const QStringList known = { QStringLiteral("Danilo"),
+    const QStringList known = { QStringLiteral("Jane Doe"),
                                 QStringLiteral("Brief") };
     const QString buffer = QStringLiteral(
         "My reply.\n"
         "\n"
         "-- \n"
-        "Danilo\n"
+        "Jane Doe\n"
         "\n"
         "On Mon, someone wrote:\n"
         "> the original\n");
@@ -627,8 +627,8 @@ void TestSignatures::switchingReplacesAKnownSignatureAboveAQuote()
 
 void TestSignatures::selectingNoneRemovesAKnownSignature()
 {
-    const QStringList known = { QStringLiteral("Danilo") };
-    const QString buffer = QStringLiteral("Hello.\n\n-- \nDanilo");
+    const QStringList known = { QStringLiteral("Jane Doe") };
+    const QString buffer = QStringLiteral("Hello.\n\n-- \nJane Doe");
 
     const QString result = Signatures::replace(
         buffer, QString(), known, Signatures::Position::End);
@@ -642,7 +642,7 @@ void TestSignatures::aBlockMatchingNoKnownSignatureIsNotRemoved()
     // reaches a buffer without the user ever choosing a signature, pasted in
     // with quoted text from another client. Replacing from there would delete
     // everything after it silently.
-    const QStringList known = { QStringLiteral("Danilo") };
+    const QStringList known = { QStringLiteral("Jane Doe") };
     const QString buffer = QStringLiteral(
         "Hello.\n"
         "\n"
@@ -650,13 +650,13 @@ void TestSignatures::aBlockMatchingNoKnownSignatureIsNotRemoved()
         "text the user pasted and wants to keep");
 
     const QString result = Signatures::replace(
-        buffer, QStringLiteral("Danilo"), known, Signatures::Position::End);
+        buffer, QStringLiteral("Jane Doe"), known, Signatures::Position::End);
 
     // The user's text survives, and the signature is ADDED. A wrong guess
     // produces a visible duplicate, never a deletion.
     QVERIFY(result.contains(
         QStringLiteral("text the user pasted and wants to keep")));
-    QVERIFY(result.endsWith(QStringLiteral("-- \nDanilo")));
+    QVERIFY(result.endsWith(QStringLiteral("-- \nJane Doe")));
 }
 
 void TestSignatures::aDelimiterInsideTheQuoteIsNotTheSignature()
@@ -664,7 +664,7 @@ void TestSignatures::aDelimiterInsideTheQuoteIsNotTheSignature()
     // The quoted original carries the sender's own signature, quoted. A tail
     // rule would find it, and under End it would append after it; the block
     // must not be treated as this message's signature whichever way it goes.
-    const QStringList known = { QStringLiteral("Danilo") };
+    const QStringList known = { QStringLiteral("Jane Doe") };
     const QString buffer = QStringLiteral(
         "My reply.\n"
         "\n"
@@ -674,10 +674,10 @@ void TestSignatures::aDelimiterInsideTheQuoteIsNotTheSignature()
         "> Their Name\n");
 
     const QString result = Signatures::replace(
-        buffer, QStringLiteral("Danilo"), known, Signatures::Position::End);
+        buffer, QStringLiteral("Jane Doe"), known, Signatures::Position::End);
 
     QVERIFY(result.contains(QStringLiteral("> -- \n> Their Name")));
-    QVERIFY(result.endsWith(QStringLiteral("-- \nDanilo")));
+    QVERIFY(result.endsWith(QStringLiteral("-- \nJane Doe")));
 }
 ```
 
@@ -1157,7 +1157,7 @@ Config TestComposeWindow::makeConfig(
 void TestComposeWindow::aNewMessageSeedsTheComposeSignature()
 {
     const Config config = makeConfig(
-        { { QStringLiteral("work.md"), QStringLiteral("Danilo") } },
+        { { QStringLiteral("work.md"), QStringLiteral("Jane Doe") } },
         QStringLiteral("work"));
 
     ComposeContext context;
@@ -1170,7 +1170,7 @@ void TestComposeWindow::aNewMessageSeedsTheComposeSignature()
 
     auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
     QVERIFY(body);
-    QVERIFY(body->toPlainText().endsWith(QStringLiteral("-- \nDanilo")));
+    QVERIFY(body->toPlainText().endsWith(QStringLiteral("-- \nJane Doe")));
 }
 
 void TestComposeWindow::anAccountSignatureOverridesTheComposeOne()
@@ -1196,7 +1196,7 @@ void TestComposeWindow::anAccountSignatureOverridesTheComposeOne()
 void TestComposeWindow::aResumedDraftSeedsNoSignature()
 {
     const Config config = makeConfig(
-        { { QStringLiteral("work.md"), QStringLiteral("Danilo") } },
+        { { QStringLiteral("work.md"), QStringLiteral("Jane Doe") } },
         QStringLiteral("work"));
 
     // The saved body already carries whatever signature it was written with.
@@ -1204,7 +1204,7 @@ void TestComposeWindow::aResumedDraftSeedsNoSignature()
     ComposeContext context;
     context.kind = ComposeContext::Kind::Draft;
     context.accountKey = QStringLiteral("work");
-    context.body = QStringLiteral("Half a thought.\n\n-- \nDanilo");
+    context.body = QStringLiteral("Half a thought.\n\n-- \nJane Doe");
     context.draftPath = m_dir->path() + QStringLiteral("/draft");
 
     ComposeWindow window(context, config, m_dir->path());
@@ -1213,13 +1213,13 @@ void TestComposeWindow::aResumedDraftSeedsNoSignature()
 
     auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
     QVERIFY(body);
-    QCOMPARE(body->toPlainText().count(QStringLiteral("-- \nDanilo")), 1);
+    QCOMPARE(body->toPlainText().count(QStringLiteral("-- \nJane Doe")), 1);
 }
 
 void TestComposeWindow::anUnknownSignatureNameSeedsNothing()
 {
     const Config config = makeConfig(
-        { { QStringLiteral("work.md"), QStringLiteral("Danilo") } },
+        { { QStringLiteral("work.md"), QStringLiteral("Jane Doe") } },
         QStringLiteral("absent"));
 
     ComposeContext context;
@@ -1239,7 +1239,7 @@ void TestComposeWindow::anUnknownSignatureNameSeedsNothing()
 void TestComposeWindow::theSwitchListsEveryFileAndNone()
 {
     const Config config = makeConfig(
-        { { QStringLiteral("work.md"), QStringLiteral("Danilo") },
+        { { QStringLiteral("work.md"), QStringLiteral("Jane Doe") },
           { QStringLiteral("brief.md"), QStringLiteral("Brief") } },
         QString());
 

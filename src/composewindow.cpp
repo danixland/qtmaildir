@@ -587,16 +587,27 @@ void ComposeWindow::seedFields()
 
     m_to->setText(m_context.to.join(QStringLiteral(", ")));
     m_cc->setText(m_context.cc.join(QStringLiteral(", ")));
+    // Only a resumed draft carries one, and dropping it would remove every
+    // blind recipient from the message the user then finishes and sends.
+    m_bcc->setText(m_context.bcc.join(QStringLiteral(", ")));
     m_subject->setText(m_context.subject);
+
+    // The draft file this composer is resuming, so the next autosave REPLACES
+    // it rather than writing a second one beside it.
+    m_draftPath = m_context.draftPath;
 
     // New and Forward seed from [compose] send_html; Reply and Reply-all seed
     // from whether the original carried a text/html part, ignoring the config
     // value. An HTML part in the original is a fact about the sender's
     // software, not a guess about their taste.
-    const bool isReply = m_context.kind == ComposeContext::Kind::Reply
-                         || m_context.kind == ComposeContext::Kind::ReplyAll;
-    m_sendHtml->setChecked(isReply ? m_context.seedHtml
-                                   : m_config.compose().sendHtml);
+    // A DRAFT seeds from itself for the same reason a reply seeds from the
+    // original: the user already made this choice, and the config default is a
+    // guess that would silently overrule it.
+    const bool fromContext = m_context.kind == ComposeContext::Kind::Reply
+                             || m_context.kind == ComposeContext::Kind::ReplyAll
+                             || m_context.kind == ComposeContext::Kind::Draft;
+    m_sendHtml->setChecked(fromContext ? m_context.seedHtml
+                                       : m_config.compose().sendHtml);
 }
 
 void ComposeWindow::revealCcBccIfUsed()
@@ -613,6 +624,16 @@ void ComposeWindow::revealCcBccIfUsed()
 
 void ComposeWindow::seedBody()
 {
+    // A resumed draft is the message ITSELF, so it goes in exactly as it was
+    // left: no attribution, no quote markers, no blank lines added and no
+    // cursor moved to make room for a reply that is already written.
+    if (m_context.kind == ComposeContext::Kind::Draft) {
+        m_body->setPlainText(m_context.body);
+        m_body->moveCursor(QTextCursor::End);
+        m_body->document()->clearUndoRedoStacks();
+        return;
+    }
+
     if (m_context.quotedBody.isEmpty())
         return;
 

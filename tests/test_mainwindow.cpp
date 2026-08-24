@@ -53,6 +53,9 @@
 #include "carddelegate.h"
 #include "composewindow.h"
 #include "senddialog.h"
+#include "composecontext.h"
+#include "messagebuilder.h"
+#include "draftstore.h"
 #include "messagesender.h"
 #include <QCheckBox>
 #include <QPlainTextEdit>
@@ -118,6 +121,9 @@ public:
         QString trash;
         QString sendCommand;
         QString address;
+        /// Written only when non-empty, like trash: an account without one
+        /// offers no Drafts filter and no Edit draft (items 138 and 153).
+        QString drafts;
     };
 
     /// Writes several accounts, for the compose cases.
@@ -194,6 +200,8 @@ public:
                 // send_command is receive-only, which is the shape under test.
                 if (!account.sendCommand.isEmpty())
                     out << "send_command=" << account.sendCommand << "\n";
+                if (!account.drafts.isEmpty())
+                    out << "drafts=" << account.drafts << "\n";
             }
         }
         file.close();
@@ -478,6 +486,11 @@ private slots:
     // fixture.
     void aComposerOpensClean();
     void ctrlWClosesTheComposer();
+    void aDraftReopensWithItsOwnContent();
+    void editDraftIsOfferedOnlyForADraft();
+    void doubleClickingADraftOpensTheComposer();
+    void aResumedDraftReplacesItsFileRatherThanAddingOne();
+    void aResumedDraftKeepsItsBlindRecipients();
     void theComposerSplitsItsToolbarByScope();
     void ccAndBccHideBehindADisclosure();
     void ccAndBccAreRevealedWhenTheyCarryAValue();
@@ -12447,6 +12460,282 @@ void TestMainWindow::removeAttachmentAppearsOnlyWithAttachments()
     QVERIFY(row);
     QVERIFY2(detach->isVisible(),
              "Remove attachment is not offered with a file attached");
+}
+
+namespace {
+
+/// Writes a draft the way ComposeWindow's autosave does, and returns its path.
+///
+/// Built through MessageBuilder rather than by hand, so the test resumes the
+/// bytes the application really writes: a draft assembled from a string
+/// literal could disagree with the builder and the round trip would prove
+/// nothing about the real file.
+QString writeDraftFile(const QString &folder, const OutgoingMessage &message,
+                       const Account &account)
+{
+    QDir().mkpath(folder + QStringLiteral("/cur"));
+    QDir().mkpath(folder + QStringLiteral("/new"));
+    QDir().mkpath(folder + QStringLiteral("/tmp"));
+    const MessageBuilder::Result built = MessageBuilder::build(message, account);
+    if (!built.ok()) {
+        qWarning("draft fixture: build failed: %s", qPrintable(built.error));
+        return {};
+    }
+    const DraftStore::Result written =
+        DraftStore::write(folder, built.bytes, QStringLiteral("D"));
+    if (!written.ok())
+        qWarning("draft fixture: write failed: %s", qPrintable(written.error));
+    return written.path;
+}
+
+}  // namespace
+
+void TestMainWindow::doubleClickingADraftOpensTheComposer()
+{
+    // The user's own words: "Double clicking on a draft should open the
+    // message in the editor window." Every other row opens its thread, which
+    // for an unfinished message means looking at it rendered and being unable
+    // to touch it.
+    WorkerComposeFixture fixture;
+    QVERIFY(fixture.backed.fixture().addMessage(
+        QStringLiteral("acct/Drafts"), QStringLiteral("draft2@example.org"),
+        QStringLiteral("Unfinished"), QStringLiteral("you@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Half a thought.")));
+    QVERIFY2(fixture.seed({ { QStringLiteral("acct"), QStringLiteral("acct"),
+                              QStringLiteral("Trash"),
+                              QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org"),
+                              QStringLiteral("Drafts") } },
+                          QStringLiteral("acct/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("id:draft2@example.org"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1
+                                 && !window.mailRootForTesting().isEmpty(),
+                             15000);
+
+    const QModelIndex row = model->index(0, 0, QModelIndex());
+    view->setCurrentIndex(row);
+
+    const int before = window.openComposerCount();
+    emit view->doubleClicked(row);
+
+    // Through the worker, so the composer arrives on a later turn.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        window.openComposerCount() == before + 1, 15000);
+}
+
+void TestMainWindow::editDraftIsOfferedOnlyForADraft()
+{
+    // A draft renders like any other message, so the action has to say which
+    // rows it applies to. Offered on ordinary mail it would open a composer
+    // that owns a file it did not write, and the first autosave would then
+    // delete a received message.
+    WorkerComposeFixture fixture;
+    // The draft goes in BEFORE the window opens: the worker holds the database
+    // open, so a message added afterwards is not in the index it queries.
+    QVERIFY(fixture.backed.fixture().addMessage(
+        QStringLiteral("acct/Drafts"), QStringLiteral("draft1@example.org"),
+        QStringLiteral("Half written"), QStringLiteral("you@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body.")));
+    QVERIFY2(fixture.seed({ { QStringLiteral("acct"), QStringLiteral("acct"),
+                              QStringLiteral("Trash"),
+                              QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org"),
+                              QStringLiteral("Drafts") } },
+                          QStringLiteral("acct/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *edit = window.findChild<QAction *>(QStringLiteral("edit_draft"));
+    QVERIFY(model && view && queryEdit && edit);
+
+    // Selected by id, not through selectTheMessage(): there are two messages
+    // here, and this test is about which FOLDER each sits in.
+    const auto selectById = [&](const QString &id) {
+        queryEdit->setText(QStringLiteral("id:") + id);
+        queryEdit->returnPressed();
+        bool ready = false;
+        for (int attempt = 0; attempt < 150 && !ready; ++attempt) {
+            ready = model->rowCount(QModelIndex()) == 1
+                    && !window.mailRootForTesting().isEmpty();
+            if (!ready)
+                QTest::qWait(100);
+        }
+        if (!ready)
+            return false;
+        view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+        return true;
+    };
+
+    QVERIFY2(selectById(QStringLiteral("compose1@example.org")),
+             "the inbox message was not found");
+    QVERIFY2(!edit->isEnabled(),
+             "Edit draft is offered on a message in the inbox");
+
+    // The guard, and it is the half that matters: an action disabled
+    // everywhere passes the assertion above while the feature does not exist.
+    QVERIFY2(selectById(QStringLiteral("draft1@example.org")),
+             "the draft was not found");
+    QVERIFY2(edit->isEnabled(),
+             "Edit draft is not offered on a message in the drafts folder");
+}
+
+void TestMainWindow::aDraftReopensWithItsOwnContent()
+{
+    // Item 153. A draft was write-only: DraftStore had a write() and no
+    // reader, and nothing opened a composer from an existing message, so a
+    // draft rendered as ordinary mail and could never be finished.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    OutgoingMessage message;
+    message.accountKey = QStringLiteral("acct");
+    message.to = { QStringLiteral("someone@example.org") };
+    message.cc = { QStringLiteral("copied@example.org") };
+    message.subject = QStringLiteral("A half-written note");
+    message.markdownBody = QStringLiteral("The first half.\n\nAnd more.");
+
+    const QString folder = fixture.mailRoot() + QStringLiteral("/acct/Drafts");
+    const QString path = writeDraftFile(folder, message,
+                                        fixture.config().account(
+                                            QStringLiteral("acct")));
+    QVERIFY2(!path.isEmpty(), "the draft fixture was not written");
+
+    ComposeContext context =
+        ComposeContextBuilder::forDraft(fixture.config(), path);
+    QVERIFY2(context.kind == ComposeContext::Kind::Draft,
+             "forDraft did not produce a Draft context");
+
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    auto *cc = window.findChild<QLineEdit *>(QStringLiteral("cc"));
+    auto *subject = window.findChild<QLineEdit *>(QStringLiteral("subject"));
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(to && cc && subject && body);
+
+    QVERIFY2(to->text().contains(QStringLiteral("someone@example.org")),
+             qPrintable(QStringLiteral("To reads '%1'").arg(to->text())));
+    QVERIFY2(cc->text().contains(QStringLiteral("copied@example.org")),
+             qPrintable(QStringLiteral("Cc reads '%1'").arg(cc->text())));
+    QCOMPARE(subject->text(), QStringLiteral("A half-written note"));
+
+    // The body VERBATIM: no attribution, no quote markers, and no blank lines
+    // added. A draft is the message itself, not something being answered, so
+    // seedBody()'s quote framing must not touch it.
+    QVERIFY2(body->toPlainText().contains(QStringLiteral("The first half.")),
+             qPrintable(QStringLiteral("the body reads '%1'")
+                            .arg(body->toPlainText())));
+    QVERIFY2(!body->toPlainText().contains(QStringLiteral("wrote:")),
+             "the draft body was framed as a quote");
+    QVERIFY2(!body->toPlainText().startsWith(QLatin1Char('>')),
+             "the draft body was quote-marked");
+    QVERIFY2(!body->toPlainText().startsWith(QStringLiteral("\n\n")),
+             "blank lines were prepended to a draft, as if it were a reply");
+}
+
+void TestMainWindow::aResumedDraftReplacesItsFileRatherThanAddingOne()
+{
+    // The half that makes resuming safe rather than merely possible. Maildir
+    // has no in-place edit, so an autosave writes a new file and unlinks the
+    // old one; a resumed draft that did not know its own path would leave the
+    // original behind and the user would have two drafts of one message.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    OutgoingMessage message;
+    message.accountKey = QStringLiteral("acct");
+    message.to = { QStringLiteral("someone@example.org") };
+    message.subject = QStringLiteral("Resumed");
+    message.markdownBody = QStringLiteral("Body.");
+
+    const QString folder = fixture.mailRoot() + QStringLiteral("/acct/Drafts");
+    const QString path = writeDraftFile(folder, message,
+                                        fixture.config().account(
+                                            QStringLiteral("acct")));
+    QVERIFY(!path.isEmpty());
+
+    const ComposeContext context =
+        ComposeContextBuilder::forDraft(fixture.config(), path);
+    QCOMPARE(context.draftPath, path);
+
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+
+    const auto draftCount = [&folder]() {
+        return QDir(folder + QStringLiteral("/cur"))
+            .entryList(QDir::Files).size();
+    };
+    QCOMPARE(draftCount(), 1);
+
+    body->setPlainText(QStringLiteral("Body, continued."));
+
+    // Through the real timer, which is what production uses: the edit above
+    // starts it, and firing it here runs the same autosave() a pause would.
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("autosave"));
+    QVERIFY2(timer, "the composer has no autosave timer");
+    QVERIFY2(timer->isActive(),
+             "editing the body did not arm the autosave timer");
+    timer->setInterval(0);
+    QTRY_VERIFY_WITH_TIMEOUT(!timer->isActive(), 5000);
+
+    QCOMPARE(draftCount(), 1);
+    QVERIFY2(!QFile::exists(path),
+             "the original draft file survived the autosave, so the message "
+             "now exists twice");
+}
+
+void TestMainWindow::aResumedDraftKeepsItsBlindRecipients()
+{
+    // MessageBuilder writes Bcc into the draft file deliberately, and says
+    // why. A resumed draft that did not read it back would drop every blind
+    // recipient silently: the user finishes the message, sends it, and the
+    // people they addressed blindly never receive it and nothing reports so.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    OutgoingMessage message;
+    message.accountKey = QStringLiteral("acct");
+    message.to = { QStringLiteral("someone@example.org") };
+    message.bcc = { QStringLiteral("blind@example.org") };
+    message.subject = QStringLiteral("With a blind copy");
+    message.markdownBody = QStringLiteral("Body.");
+
+    const QString folder = fixture.mailRoot() + QStringLiteral("/acct/Drafts");
+    const QString path = writeDraftFile(folder, message,
+                                        fixture.config().account(
+                                            QStringLiteral("acct")));
+    QVERIFY(!path.isEmpty());
+
+    const ComposeContext context =
+        ComposeContextBuilder::forDraft(fixture.config(), path);
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+
+    auto *bcc = window.findChild<QLineEdit *>(QStringLiteral("bcc"));
+    QVERIFY(bcc);
+    QVERIFY2(bcc->text().contains(QStringLiteral("blind@example.org")),
+             qPrintable(QStringLiteral("Bcc reads '%1', so a blind recipient "
+                                       "was dropped").arg(bcc->text())));
+
+    // And it is VISIBLE, per item 145: a hidden field holding an address is a
+    // message going somewhere the sender cannot see.
+    QVERIFY2(!bcc->isHidden(),
+             "the resumed draft hid a Bcc it actually carries");
 }
 
 void TestMainWindow::ctrlWClosesTheComposer()

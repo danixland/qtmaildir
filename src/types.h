@@ -247,7 +247,7 @@ struct DatabaseStats
 /// recipients. This is the same rule Restore already follows.
 struct ComposeContext
 {
-    enum class Kind { New, Reply, ReplyAll, Forward };
+    enum class Kind { New, Reply, ReplyAll, Forward, Draft };
 
     QString accountKey;          ///< Which account sends. Plain data here; the resolution rules live with whatever builds this context.
     Kind kind = Kind::New;
@@ -256,8 +256,23 @@ struct ComposeContext
     QStringList references;      ///< The original's References plus its Message-ID.
     QStringList to;              ///< Pre-filled, the user's own addresses already stripped.
     QStringList cc;
+    QStringList bcc;             ///< Only a resumed draft has one; see MimeParser::bcc.
     QString subject;             ///< Re:/Fwd: prefixed, an existing prefix not doubled.
     QString quotedBody;          ///< The >-prefixed original. Empty when the action does not quote.
+
+    /// The body as the user last left it, for a resumed draft ONLY.
+    ///
+    /// Separate from quotedBody because it is not a quote and must not be
+    /// framed like one: no attribution, no blank lines added, no cursor moved
+    /// to make room. It is the message itself.
+    QString body;
+
+    /// The draft file this composer OWNS, empty for every other kind.
+    ///
+    /// Seeded into ComposeWindow::m_draftPath so the next autosave REPLACES
+    /// the file rather than leaving the original beside it. Without it a
+    /// resumed draft becomes two drafts on the first autosave.
+    QString draftPath;
     bool seedHtml = false;       ///< Did the original carry a text/html part.
     QStringList attachments;     ///< Carried forward for Forward, empty otherwise.
 };

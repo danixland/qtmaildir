@@ -130,6 +130,13 @@ struct ParsedMessage
 
     QString to;
     QString cc;
+
+    /// Present only on a message this application wrote: a DRAFT or a sent
+    /// copy carries its Bcc list in the file (see messagebuilder.cpp, which
+    /// explains why), and a resumed draft has to read it back or a blind
+    /// recipient is silently dropped from the message the user finishes.
+    /// Received mail does not carry one.
+    QString bcc;
     QString date;
     QString messageId;
 

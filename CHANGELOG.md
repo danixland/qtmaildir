@@ -23,6 +23,11 @@ point at which they are stable.
   reply follows what the message being answered used.
 - Drafts autosave to the account's `drafts` folder as ordinary Maildir files,
   so mbsync carries them to the server and another client can pick one up.
+- **Drafts can be opened and finished.** Double-click one, or use Edit draft
+  in the Message menu. The composer takes ownership of the file, so saving
+  replaces the draft rather than leaving a second copy, and the Bcc list the
+  draft carries is read back rather than dropped. The action is offered only
+  on a message that really is in a drafts folder.
 - **A Drafts filter** in the query row, beside Sent and Trash. It matches each
   account's `drafts` folder, so it finds what the composer actually writes
   rather than trusting a flag. An account that configures no drafts folder

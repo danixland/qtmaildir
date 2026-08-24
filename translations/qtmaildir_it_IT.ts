@@ -620,6 +620,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Nessun messaggio selezionato</translation>
     </message>
     <message>
+        <source>That draft could not be read</source>
+        <translation>Non è stato possibile leggere quella bozza</translation>
+    </message>
+    <message>
+        <source>No account is configured to send</source>
+        <translation>Nessun account è configurato per inviare</translation>
+    </message>
+    <message>
         <source>That message could not be read</source>
         <translation>Impossibile leggere quel messaggio</translation>
     </message>
@@ -846,6 +854,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Forward the displayed message</source>
         <translation>Inoltra il messaggio visualizzato</translation>
+    </message>
+    <message>
+        <source>&amp;Edit draft</source>
+        <translation>&amp;Modifica bozza</translation>
+    </message>
+    <message>
+        <source>Open the selected draft in a composer to finish it</source>
+        <translation>Apri la bozza selezionata in un editor per completarla</translation>
     </message>
     <message>
         <source>Write the raw message to a file</source>

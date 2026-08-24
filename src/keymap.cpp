@@ -63,6 +63,7 @@ QStringList KeyMap::knownActions()
         QStringLiteral("reply_all"),
         QStringLiteral("reply_no_quote"),
         QStringLiteral("forward"),
+        QStringLiteral("edit_draft"),
         QStringLiteral("save_message"),
         QStringLiteral("focus_query"),
         QStringLiteral("complete_query"),

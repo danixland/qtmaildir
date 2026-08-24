@@ -486,6 +486,69 @@ QString ComposeContextBuilder::forwardSubject(const QString &original)
     return QStringLiteral("Fwd: ") + original;
 }
 
+ComposeContext ComposeContextBuilder::forDraft(const Config &config,
+                                               const QString &path)
+{
+    ComposeContext context;
+
+    MimeParser parser;
+    const ParsedMessage draft = parser.parse(path);
+    if (!draft.ok)
+        return context;  // Kind::New and empty: the caller reports the failure.
+
+    context.kind = ComposeContext::Kind::Draft;
+    context.originalPath = path;
+    // The file this composer OWNS. Without it the first autosave writes a
+    // second draft and leaves this one behind, so one message becomes two.
+    context.draftPath = path;
+
+    const auto addresses = [](const QString &header) {
+        QStringList out;
+        for (const Recipient &recipient : parseAddressHeader(header))
+            out.append(recipient.rendered);
+        return out;
+    };
+    context.to = addresses(draft.to);
+    context.cc = addresses(draft.cc);
+    // Written into the draft file by MessageBuilder, which explains why. Read
+    // back or every blind recipient is dropped from the finished message,
+    // silently.
+    context.bcc = addresses(draft.bcc);
+
+    // Verbatim, both of them. A draft is the message itself: its subject takes
+    // no Re:/Fwd: prefix and its body is not a quote.
+    context.subject = draft.subject;
+    context.body = draft.plainBody;
+
+    context.seedHtml = draft.hasHtml();
+
+    // The account the draft SAYS it is from, which is the user's own earlier
+    // choice, rather than whichever account owns the folder the file sits in.
+    //
+    // Matched on the bare ADDRESS, never on the rendered form: a display name
+    // may contain an address-looking substring, which is the trap Recipient
+    // exists to keep apart.
+    const QList<Recipient> from = parseAddressHeader(draft.from);
+    if (!from.isEmpty()) {
+        const QString address = from.first().address;
+        for (const Account &account : config.accounts()) {
+            if (account.canSend()
+                && account.address.compare(address, Qt::CaseInsensitive) == 0) {
+                context.accountKey = account.key;
+                break;
+            }
+        }
+    }
+    // The From address names no account that can send any more, which happens
+    // when an account is renamed or its send_command removed between saving
+    // the draft and resuming it. Fall back through the ordinary chain rather
+    // than opening a composer that cannot send.
+    if (context.accountKey.isEmpty())
+        context.accountKey = accountForNew(config, QString());
+
+    return context;
+}
+
 QString ComposeContextBuilder::quoteBody(const ParsedMessage &message)
 {
     QStringList quoted;

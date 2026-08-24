@@ -165,7 +165,20 @@ QString accountForNew(const Config &config, const QString &selectedAccount);
 /// treating it as a prefix means a genuine first reply gets no `Re:` and
 /// threads nowhere. See the patterns in composecontext.cpp for the measurement.
 QString replySubject(const QString &original);
+
 QString forwardSubject(const QString &original);
+
+/// Builds the context that RESUMES a draft from its file.
+///
+/// Unlike a reply, nothing here is derived: the recipients, the subject and
+/// the body are the draft's own, read back verbatim. The account comes from
+/// the From header rather than from which account owns the file, because a
+/// draft states who it is from and that is the user's own earlier choice.
+///
+/// The returned context carries `draftPath`, which the composer seeds into
+/// the path its autosave replaces. Returns a context whose kind is New, with
+/// nothing filled in, when the file cannot be read.
+ComposeContext forDraft(const Config &config, const QString &path);
 
 /// The `>`-prefixed original, with an attribution line.
 ///

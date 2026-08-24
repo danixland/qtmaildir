@@ -722,6 +722,19 @@ private:
     /// model's paths and tags come from the query, so a row that has not been
     /// re-queried carries stale values and a reply built from one would go to
     /// the wrong recipients.
+    /// Opens the selected draft in a composer to finish it (item 153).
+    /// Whether the current row's file sits in a configured drafts folder.
+    bool currentMessageIsADraft() const;
+
+    /// Whether \p index names a file in a configured drafts folder.
+    bool indexIsADraft(const QModelIndex &index) const;
+
+    void editDraft();
+
+    /// Opens the draft named by \p index, which double-click uses:
+    /// the clicked row is not necessarily the current one.
+    void editDraftAt(const QModelIndex &index);
+
     void requestMessageForCompose(const QString &messageId,
                                   ComposeContext::Kind kind, bool quote);
 

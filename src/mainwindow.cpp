@@ -875,6 +875,19 @@ void MainWindow::buildUi()
             &QItemSelectionModel::currentRowChanged,
             this, &MainWindow::onThreadSelected);
 
+    // Also on currentRowChanged, and NOT only from onSelectionChanged, which
+    // is where the reply family is answered. Both signals fire for an ordinary
+    // click, but a selection that does not CHANGE emits only this one: running
+    // a query and setting the current index reaches here and never the other,
+    // so the enablement was computed against the previously selected row.
+    // Measured: Edit draft stayed disabled on a draft selected that way.
+    //
+    // Safe on currentRowChanged, which CLAUDE.md restricts to "which row is
+    // current": that is exactly the question here, and no count is read.
+    connect(m_threadView->selectionModel(),
+            &QItemSelectionModel::currentRowChanged, this,
+            [this]() { updateComposeActions(); });
+
     // Separate from currentRowChanged: a selection can grow without current
     // moving at all. Ctrl+click adds a row and leaves current where it was, and
     // selectAll() emits no currentRowChanged whatsoever (verified against
@@ -970,6 +983,28 @@ void MainWindow::composeReply(ComposeContext::Kind kind, bool quote)
     requestMessageForCompose(scope.messageIds.first(), kind, quote);
 }
 
+void MainWindow::editDraft()
+{
+    editDraftAt(m_threadView->currentIndex());
+}
+
+void MainWindow::editDraftAt(const QModelIndex &index)
+{
+    // messageScopeFor(), like composeReply(): a thread row means the one
+    // message its card shows.
+    const ActionScope scope = m_model->messageScopeFor({ index });
+    if (scope.messageIds.isEmpty()) {
+        showTransientStatus(tr("No message is selected"));
+        return;
+    }
+
+    // Through the worker for its path, never from the model: the model's path
+    // comes from the query, and a draft is rewritten by every autosave, so a
+    // row that has not been re-queried names a file that no longer exists.
+    requestMessageForCompose(scope.messageIds.first(),
+                             ComposeContext::Kind::Draft, false);
+}
+
 void MainWindow::requestMessageForCompose(const QString &messageId,
                                           ComposeContext::Kind kind,
                                           bool quote)
@@ -990,6 +1025,24 @@ void MainWindow::requestMessageForCompose(const QString &messageId,
 void MainWindow::openComposerFor(const MessageRef &ref,
                                  ComposeContext::Kind kind, bool quote)
 {
+    // A draft is RESUMED rather than answered: nothing is derived from it,
+    // and the composer takes ownership of its file. Handled before the reply
+    // machinery below, none of which applies (item 153).
+    if (kind == ComposeContext::Kind::Draft) {
+        const ComposeContext draft =
+            ComposeContextBuilder::forDraft(m_config, ref.filePath);
+        if (draft.kind != ComposeContext::Kind::Draft) {
+            showTransientStatus(tr("That draft could not be read"));
+            return;
+        }
+        if (draft.accountKey.isEmpty()) {
+            showTransientStatus(tr("No account is configured to send"));
+            return;
+        }
+        openComposer(draft);
+        return;
+    }
+
     MimeParser parser;
     const ParsedMessage original = parser.parse(ref.filePath);
     if (!original.ok) {
@@ -1155,6 +1208,50 @@ void MainWindow::markComposersDirtyForTest()
     }
 }
 
+bool MainWindow::currentMessageIsADraft() const
+{
+    return indexIsADraft(m_threadView->currentIndex());
+}
+
+bool MainWindow::indexIsADraft(const QModelIndex &current) const
+{
+    if (m_mailRoot.isEmpty())
+        return false;
+
+    if (!current.isValid())
+        return false;
+
+    QString path;
+    if (m_model->isMessageRow(current))
+        path = m_model->messageAt(current).filePath;
+    else
+        path = m_model->threadFor(current).firstMessagePath;
+    if (path.isEmpty())
+        return false;
+
+    // ThreadSummary::firstMessagePath is RELATIVE to the mail root and
+    // MessageNode::filePath is ABSOLUTE, the asymmetry accountForCurrentMessage()
+    // documents. Compared as a resolved absolute path against each account's
+    // drafts folder.
+    const QString absolute = QDir::isAbsolutePath(path)
+                                 ? path
+                                 : QDir(m_mailRoot).absoluteFilePath(path);
+
+    for (const Account &account : m_config.accounts()) {
+        if (account.drafts.isEmpty())
+            continue;
+        const QString folder = QDir(m_mailRoot).absoluteFilePath(
+            account.maildir + QLatin1Char('/') + account.drafts);
+        // A path comparison with a separator, never startsWith() on the bare
+        // folder: "/mail/acct/Drafts-old/cur/x" starts with "/mail/acct/Drafts"
+        // and is a different folder. This is the rule the attachment save path
+        // already follows.
+        if (absolute.startsWith(folder + QLatin1Char('/')))
+            return true;
+    }
+    return false;
+}
+
 QString MainWindow::accountForCurrentMessage() const
 {
     if (m_mailRoot.isEmpty())
@@ -1213,6 +1310,17 @@ void MainWindow::updateComposeActions()
         if (QAction *action = m_actions.value(name))
             action->setEnabled(canReply);
     }
+
+    // Edit draft is offered only on a row that IS a draft. On ordinary mail
+    // it would open a composer owning a file it did not write, and the first
+    // autosave replaces that file: editing a received message would delete it.
+    //
+    // Answered from the path, like accountForCurrentMessage() above, because
+    // the folder is what makes a draft a draft. A `draft` tag is not enough:
+    // notmuch surfaces the Maildir D flag as one, and a message flagged by
+    // another client sits in the inbox rather than in the drafts folder.
+    if (QAction *edit = m_actions.value(QStringLiteral("edit_draft")))
+        edit->setEnabled(currentMessageIsADraft());
 
     // The ribbon appears only when an account was identified AND it cannot
     // send. An unidentified account is not a receive-only one: it is a message
@@ -1717,6 +1825,9 @@ void MainWindow::registerActions()
     addAction(QStringLiteral("forward"), tr("&Forward"),
               tr("Forward the displayed message"),
               [this]() { composeReply(ComposeContext::Kind::Forward, true); });
+    addAction(QStringLiteral("edit_draft"), tr("&Edit draft"),
+              tr("Open the selected draft in a composer to finish it"),
+              [this]() { editDraft(); });
     addAction(QStringLiteral("save_message"), tr("Sa&ve message as..."),
               tr("Write the raw message to a file"),
               [this]() { saveDisplayedMessage(); });
@@ -1764,6 +1875,7 @@ void MainWindow::buildMenus()
     messageMenu->addAction(m_actions.value(QStringLiteral("reply_all")));
     messageMenu->addAction(m_actions.value(QStringLiteral("reply_no_quote")));
     messageMenu->addAction(m_actions.value(QStringLiteral("forward")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("edit_draft")));
     messageMenu->addSeparator();
     messageMenu->addAction(m_actions.value(QStringLiteral("save_message")));
     messageMenu->addSeparator();
@@ -1875,6 +1987,7 @@ void MainWindow::buildMenus()
         { QStringLiteral("select_all"),      QStringLiteral("edit-select-all") },
         { QStringLiteral("clear_pane"),      QStringLiteral("edit-clear") },
         { QStringLiteral("clear_selection"), QStringLiteral("edit-clear-all") },
+        { QStringLiteral("edit_draft"),      QStringLiteral("document-edit") },
         { QStringLiteral("toggle_html"),     QStringLiteral("text-html") },
         { QStringLiteral("load_remote"),     QStringLiteral("image-loading") },
         { QStringLiteral("message_details"), QStringLiteral("dialog-information") },
@@ -4110,6 +4223,16 @@ void MainWindow::onRowDoubleClicked(const QModelIndex &index)
 {
     if (!index.isValid())
         return;
+
+    // A draft opens in the COMPOSER, not in a thread view of itself: it is an
+    // unfinished message, and looking at one rendered is not what the gesture
+    // means (item 153). Checked before the thread route below, which is what
+    // every other row does.
+    // The CLICKED row, which is not necessarily the current one.
+    if (indexIsADraft(index)) {
+        editDraftAt(index);
+        return;
+    }
 
     // The whole thread in every case, and the double-clicked row's own message
     // in the pane. A reply therefore drills to its THREAD with itself selected,

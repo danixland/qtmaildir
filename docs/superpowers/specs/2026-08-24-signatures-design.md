@@ -134,8 +134,11 @@ One free function, in a new `Signatures` namespace
 
 ```cpp
 QString replace(const QString &buffer, const QString &signature,
-                Position position);
+                const QStringList &known, Position position);
 ```
+
+`known` is the text of every signature in the directory. It is what makes the
+replacement non-destructive; see "The found block must match a signature".
 
 Stateless. No stored ranges, no tracked insertion point, nothing that can
 desync from the undo stack. This is the property that makes the switch safe to
@@ -166,6 +169,33 @@ select the quote and destroy it. The user chose to cover both.
 The quote is recognised as a contiguous run of lines beginning with `>`. That
 is a scan of the buffer, not stored state, so it survives editing and undo.
 
+### The found block must match a signature
+
+Finding a delimiter is not enough to replace what follows it. The block is
+replaced only when its text equals one of the signatures in `known`; otherwise
+the new signature is INSERTED and nothing is removed.
+
+This is the guard against destroying the user's own writing. `-- ` can reach
+the buffer without the user ever having chosen a signature, most plausibly
+pasted in with quoted text from another client, and without this check the
+switch would silently delete everything after it. The check costs one
+comparison and no state.
+
+The failure is then directional, which is the whole point: a block that
+matches is replaced, and a block that does not produces a SECOND signature,
+visible in the editor and one undo away. A wrong guess adds text rather than
+losing it.
+
+Two cases it deliberately does not cover, both raised and dismissed by the
+user as edge cases:
+
+- **A signature file edited or deleted while a composer is open.** The block
+  in the buffer then matches nothing and a duplicate appears. Snapshotting
+  `known` at construction would close this; it was considered and refused as
+  machinery for a case that costs one visible duplicate.
+- **Pasted text that is verbatim one of the user's own signatures.** It is
+  replaced, which is arguably the right answer anyway.
+
 ### Inserting
 
 - `end`: append to the buffer.
@@ -177,10 +207,28 @@ Selecting "None" removes the found block and inserts nothing.
 
 ### Accepted limit
 
-A buffer in which the user has typed a literal `-- ` line is indistinguishable
-from one holding a signature, and the switch will replace from there. This is
-the correct reading rather than a defect: that string is the signature
-delimiter, and typing it means what it means.
+A buffer holding a `-- ` line whose following text happens to equal one of the
+user's signatures is replaced. That is the correct reading rather than a
+defect, and the match requirement above means it is the only case where the
+switch removes anything it did not insert.
+
+Note that `--` alone does not match: the delimiter carries a trailing space,
+which an editor does not add on its own. The exposure is pasted text, which is
+what the match requirement addresses.
+
+Two rejected alternatives are recorded because both look attractive:
+
+- **A private marker** (a zero-width character after the delimiter). It ships
+  in the sent message, so it fingerprints the client in the user's outgoing
+  mail; it must survive the draft round trip through GMime, quoted-printable
+  and `MimeParser`, and is exactly the class of character such pipelines
+  normalise away; it is a known obfuscation trick and is treated as one by
+  some filters; and it is invisible in the file when it misbehaves.
+- **A doubled delimiter** (`--` and two spaces). It is not the RFC 3676
+  separator, so no receiving client would recognise the signature as one.
+  Trailing whitespace is unreliable through the same pipeline (markdown reads
+  two trailing spaces as a hard line break), and it would not have caught the
+  pasted-text case that prompted it.
 
 ## Seeding a new composer
 
@@ -230,6 +278,9 @@ deliberately a moment earlier.
 - `above_quote` with no quote in the buffer behaves as `end`
 - **the delimiter scan against a quoted reply**, which is the case a naive
   tail rule gets wrong: assert the quote survives
+- **a `-- ` block that matches no known signature is not removed**: the user's
+  text survives and the new signature is added. This is the guard against
+  silent data loss and is the one test that must not be dropped
 
 `test_composewindow`, for the wiring:
 

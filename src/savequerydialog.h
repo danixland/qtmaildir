@@ -22,7 +22,6 @@
 
 #include "config.h"
 
-class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -73,7 +72,6 @@ private:
     QLineEdit *m_name = nullptr;
     QLineEdit *m_query = nullptr;
     QComboBox *m_account = nullptr;
-    QCheckBox *m_pinned = nullptr;
     QPushButton *m_ok = nullptr;
     QLabel *m_notice = nullptr;
 };

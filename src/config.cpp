@@ -728,10 +728,6 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
             SavedQuery query;
             query.name = name;
             query.query = settings.value(name).toString();
-            // Pinned, because these are buttons today. A migration that left
-            // them unpinned would empty the query row on the first launch
-            // after an upgrade, which reads as data loss.
-            query.pinned = true;
             m_savedQueries.append(query);
         }
         settings.endGroup();
@@ -804,7 +800,6 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
         SavedQuery query;
         query.name = object.value(QStringLiteral("name")).toString();
         query.query = object.value(QStringLiteral("query")).toString();
-        query.pinned = object.value(QStringLiteral("pinned")).toBool(false);
         query.account = object.value(QStringLiteral("account")).toString();
         query.generated = object.value(QStringLiteral("generated")).toString();
         // A generator carries its own view mode, so "sent" is flat whether or
@@ -833,19 +828,12 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
             continue;
         }
 
-        // A stored entry naming a generator now duplicates a BUILT-IN filter of
-        // the same name, since item 93 ships all four rather than storing them.
-        // 0.19.0 migrated the hardcoded Sent button into exactly such an entry,
-        // so every existing install has one.
-        //
-        // Unpinned, never dropped: the row would otherwise carry two Sent
-        // buttons, one the user's to edit and one not. Deleting it would be
-        // data loss on a file whose readers are supposed to preserve what they
-        // do not own, and an unpin is reversible from the UI.
-        if (query.isGenerated() && isKnownGenerator(query.generated))
-            query.pinned = false;
-
         for (auto it = object.begin(); it != object.end(); ++it) {
+            // `pinned` is listed although nothing reads it any more (item
+            // 94). Dropping it from this list would make it an UNKNOWN field,
+            // which is preserved and written back, and the user chose to strip
+            // it rather than carry it forward. This is the one place a retired
+            // key has to stay named to be forgotten.
             static const QStringList known = {
                 QStringLiteral("name"), QStringLiteral("query"),
                 QStringLiteral("pinned"), QStringLiteral("account"),
@@ -869,7 +857,7 @@ bool Config::saveSavedQueries() const
         // Only what carries information. The file is hand-editable, so a key
         // that always holds the same value, or one the generator already
         // implies, is just something the reader has to skip past. Same reason
-        // `pinned` and `account` are written only when set.
+        // `account` is written only when set.
         QJsonObject object;
         object.insert(QStringLiteral("name"), query.name);
         if (query.isGenerated()) {
@@ -877,8 +865,6 @@ bool Config::saveSavedQueries() const
         } else {
             object.insert(QStringLiteral("query"), query.query);
         }
-        if (query.pinned)
-            object.insert(QStringLiteral("pinned"), true);
         if (!query.account.isEmpty())
             object.insert(QStringLiteral("account"), query.account);
         // Skipped when the generator already implies it, which loadSavedQueries

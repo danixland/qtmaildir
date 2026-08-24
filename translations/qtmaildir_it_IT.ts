@@ -1028,14 +1028,6 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Modifica...</translation>
     </message>
     <message>
-        <source>Move to menu</source>
-        <translation>Sposta nel menu</translation>
-    </message>
-    <message>
-        <source>Show as a button</source>
-        <translation>Mostra come pulsante</translation>
-    </message>
-    <message>
         <source>Create tagging rule...</source>
         <translation>Crea regola di etichettatura...</translation>
     </message>
@@ -1618,10 +1610,6 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Account</source>
         <translation>Account</translation>
-    </message>
-    <message>
-        <source>Show as a button</source>
-        <translation>Mostra come pulsante</translation>
     </message>
     <message>
         <source>A saved query named &apos;%1&apos; already exists and will be replaced.</source>

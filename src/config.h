@@ -165,11 +165,6 @@ struct SavedQuery
     QString name;
     QString query;
 
-    /// Renders as a button in the query row; otherwise it lives in the menu.
-    /// The two tiers are the point of the flag: a row that shows every saved
-    /// query does not scale past a handful.
-    bool pinned = false;
-
     /// Account KEY, the INI group suffix ("work" from [account.work]), and
     /// empty for a query that spans every account.
     ///

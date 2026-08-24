@@ -446,8 +446,8 @@ private:
     /// Builds the row of saved-query buttons, the overflow menu and Sent.
     ///
     /// Its own row since item 23: an unbounded list of buttons sharing the
-    /// query row squeezed the field, which is the whole reason for the
-    /// pinned/unpinned split.
+    /// query row squeezed the field. Item 94 settled the split the other way,
+    /// so the row is built-in filters and one menu.
     void buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout);
 
     /// Runs a saved query, taking its account scope through the dropdown.

@@ -57,7 +57,7 @@ private slots:
     void unknownFieldsSurviveARoundTrip();
     void savedQueriesRoundTripUnchanged();
     void migrationWritesJsonAndLeavesTheIniByteIdentical();
-    void migrationPinsEveryEntry();
+    void migrationKeepsEveryEntry();
     void jsonWinsOnceItExists();
     void malformedQueriesFileIsAProblemNotACrash();
     void futureVersionIsRefusedAndReported();
@@ -96,7 +96,7 @@ private slots:
     void allSentQueryIsEmptyWhenNoAccountHasOne();
     void allSentQuerySkipsAccountsWithoutTheKey();
     void allSentQueryJoinsEveryConfiguredAccount();
-    void aStoredGeneratedQueryIsUnpinnedNotDropped();
+    void aStoredGeneratedQueryIsKeptNotDropped();
     void theStartupAccountIsReadAndValidated();
     void theStartupAccountTakesTheKeyNotTheSyncChannel();
     void theStartupQueryCanNameABuiltinFilter();
@@ -1818,12 +1818,7 @@ void TestConfig::savedQueryFieldsAreRead()
 
     QCOMPARE(queries.at(0).name, QStringLiteral("Inbox"));
     QCOMPARE(queries.at(0).query, QStringLiteral("tag:inbox"));
-    QVERIFY(queries.at(0).pinned);
     QVERIFY(queries.at(0).account.isEmpty());
-
-    // pinned defaults to false, which is what puts a query in the menu rather
-    // than on the row.
-    QVERIFY(!queries.at(1).pinned);
     QCOMPARE(queries.at(1).account, QStringLiteral("work"));
 }
 
@@ -1883,7 +1878,6 @@ void TestConfig::savedQueriesRoundTripUnchanged()
     for (int i = 0; i < a.size(); ++i) {
         QCOMPARE(b.at(i).name, a.at(i).name);
         QCOMPARE(b.at(i).query, a.at(i).query);
-        QCOMPARE(b.at(i).pinned, a.at(i).pinned);
         QCOMPARE(b.at(i).account, a.at(i).account);
     }
 }
@@ -1929,9 +1923,11 @@ void TestConfig::migrationWritesJsonAndLeavesTheIniByteIdentical()
     QVERIFY(afterBytes.contains("; a comment the user wrote"));
 }
 
-/// A migrated query that was not pinned would vanish from the query row, which
-/// on the first launch after an upgrade looks like data loss.
-void TestConfig::migrationPinsEveryEntry()
+/// Every [queries] entry must survive the migration with its query intact. It
+/// used to also assert they came across PINNED, which item 94 retired along
+/// with the flag; losing an entry is the data loss that assertion was really
+/// guarding against, so that half is kept.
+void TestConfig::migrationKeepsEveryEntry()
 {
     QTemporaryDir dir;
     const QString path = writeIni(dir, QStringLiteral(
@@ -1945,9 +1941,14 @@ void TestConfig::migrationPinsEveryEntry()
 
     const QList<SavedQuery> queries = config.savedQueries();
     QCOMPARE(queries.size(), 2);
+
+    QMap<QString, QString> byName;
     for (const SavedQuery &query : queries)
-        QVERIFY2(query.pinned, qPrintable(
-            QStringLiteral("migrated query '%1' is not pinned").arg(query.name)));
+        byName.insert(query.name, query.query);
+    QCOMPARE(byName.value(QStringLiteral("Inbox")),
+             QStringLiteral("tag:inbox"));
+    QCOMPARE(byName.value(QStringLiteral("Unread")),
+             QStringLiteral("tag:unread"));
 }
 
 /// Once the JSON exists, [queries] is dead. Two sources of truth was the
@@ -1972,17 +1973,19 @@ void TestConfig::jsonWinsOnceItExists()
     QCOMPARE(queries.at(0).name, QStringLiteral("FromTheJson"));
 }
 
-void TestConfig::aStoredGeneratedQueryIsUnpinnedNotDropped()
+void TestConfig::aStoredGeneratedQueryIsKeptNotDropped()
 {
     // An existing install carries a Sent entry in queries.json: 0.19.0 migrated
     // the hardcoded button into one. Item 93 ships Sent as a built-in filter,
-    // so that stored entry is now a DUPLICATE and would put two Sent buttons on
-    // the row, one editable and one not.
+    // so that stored entry is now a DUPLICATE.
     //
-    // Unpinned rather than deleted. This file's whole design is that a reader
-    // preserves what it does not own, and the user's instruction for their own
-    // redundant queries was the same: fold them into the menu, do not drop
-    // them. An unpin is reversible from the UI; a delete is not.
+    // It used to be UNPINNED to keep it off the row beside the built-in of the
+    // same name. Item 94 removed the row for saved queries entirely, so the
+    // duplicate can no longer collide with anything and there is nothing to
+    // unpin. What must still hold is that it is KEPT: this file's whole design
+    // is that a reader preserves what it does not own, and the user's
+    // instruction for their own redundant queries was to fold them into the
+    // menu rather than drop them.
     QTemporaryDir dir;
     const QString path = writeIni(dir, QStringLiteral(
         "[account.work]\n"
@@ -1991,8 +1994,8 @@ void TestConfig::aStoredGeneratedQueryIsUnpinnedNotDropped()
     writeQueries(dir, QStringLiteral(R"({
         "version": 1,
         "queries": [
-            { "name": "Sent", "generated": "sent", "pinned": true },
-            { "name": "Mine", "query": "tag:todo", "pinned": true }
+            { "name": "Sent", "generated": "sent" },
+            { "name": "Mine", "query": "tag:todo" }
         ]
     })"));
 
@@ -2004,21 +2007,21 @@ void TestConfig::aStoredGeneratedQueryIsUnpinnedNotDropped()
 
     bool sawSent = false;
     for (const SavedQuery &query : queries) {
-        if (query.generated != QStringLiteral("sent"))
-            continue;
-        sawSent = true;
-        QVERIFY2(!query.pinned,
-                 "the stored Sent entry is still a button beside the built-in "
-                 "filter of the same name");
+        if (query.generated == QStringLiteral("sent"))
+            sawSent = true;
     }
-    QVERIFY2(sawSent, "the stored Sent entry was DROPPED rather than unpinned");
+    QVERIFY2(sawSent, "the stored Sent entry was DROPPED rather than kept");
 
-    // The user's own query is untouched: only the entry duplicating a built-in
-    // filter is unpinned.
+    // And the user's own query beside it, so the assertion above is not passing
+    // on a reader that kept everything by doing nothing at all.
+    bool sawMine = false;
     for (const SavedQuery &query : queries) {
-        if (query.name == QStringLiteral("Mine"))
-            QVERIFY2(query.pinned, "an unrelated pinned query was unpinned");
+        if (query.name == QStringLiteral("Mine")) {
+            sawMine = true;
+            QCOMPARE(query.query, QStringLiteral("tag:todo"));
+        }
     }
+    QVERIFY2(sawMine, "an unrelated saved query was lost");
 }
 
 void TestConfig::theStartupQueryPrefersASavedQueryOverAFilterOfTheSameName()

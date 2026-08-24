@@ -74,6 +74,16 @@ point at which they are stable.
 - The main toolbar keeps the actions that need no particular message
   (Compose, Sync, Archive, Delete, Mark all read, Undo). Reply moves to the
   new message-pane bar, where Forward joins it.
+- **Saved queries live in the "More queries" menu, and only there.** The query
+  row is the six built-in filters (Unread, Inbox, Important, Sent, Drafts,
+  Trash), which compose with the account dropdown. Pinning a saved query to the
+  row is gone: nothing has to decide which of the user's queries get button
+  space, and every saved query is reached the same way. Each menu entry still
+  offers Run, Edit, Delete and, for a stored query, Create tagging rule.
+- The message-pane bar shows **Edit draft** in place of Reply and Forward when
+  the message on display is a draft, and the bar itself now appears and
+  disappears with the pane's subject and details rows rather than sitting over
+  an empty pane.
 
 ### Fixed
 
@@ -91,6 +101,12 @@ point at which they are stable.
   a session that had already ended.
 
 ### Upgrading
+
+**Pinned saved queries are no longer buttons.** If any of your saved queries
+sat on the query row, it is now in the "More queries" menu with the rest. The
+`pinned` key is no longer read, and it is dropped from `queries.json` the next
+time a query is saved, edited or deleted. Nothing else about a saved query
+changes, and none are removed.
 
 **To send, an account needs a `send_command`.** Without one it is
 receive-only: it still reads, tags and syncs exactly as before, and the

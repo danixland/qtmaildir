@@ -18,7 +18,6 @@
 
 #include "savequerydialog.h"
 
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -45,7 +44,6 @@ SaveQueryDialog::SaveQueryDialog(const Config &config, const QString &query,
     SavedQuery initial;
     initial.query = query;
     initial.account = accountKey;
-    initial.pinned = true;
     setWindowTitle(tr("Save query"));
     build(initial);
 }
@@ -100,11 +98,6 @@ void SaveQueryDialog::build(const SavedQuery &initial)
     const int index = m_account->findData(initial.account);
     m_account->setCurrentIndex(index >= 0 ? index : 0);
     form->addRow(tr("Account"), m_account);
-
-    m_pinned = new QCheckBox(tr("Show as a button"), this);
-    m_pinned->setObjectName(QStringLiteral("saveQueryPinned"));
-    m_pinned->setChecked(initial.pinned);
-    form->addRow(QString(), m_pinned);
 
     layout->addLayout(form);
 
@@ -162,7 +155,6 @@ SavedQuery SaveQueryDialog::savedQuery() const
     saved.name = m_name->text().trimmed();
     saved.query = m_query->text().trimmed();
     saved.account = m_account->currentData().toString();
-    saved.pinned = m_pinned->isChecked();
     // Carried through rather than re-derived: an edit must not turn a
     // generated entry into a plain one holding a snapshot of what it happened
     // to resolve to today.

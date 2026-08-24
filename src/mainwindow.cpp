@@ -2782,11 +2782,10 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
     // from, since nothing looks them up by name.
     m_filterButtons.clear();
 
-    // The built-in filters come first, in their own fixed order, and they are
-    // not saved queries: they are shipped, they are not in queries.json, and
-    // the user cannot edit or delete them (item 93). They are what the row is
-    // FOR; the pinned saved queries below them are the transitional half that
-    // item 94 removes.
+    // The built-in filters are the whole row: they are shipped, they are not
+    // in queries.json, and the user cannot edit or delete them (item 93).
+    // Item 94 removed the transitional half, so a saved query is never a
+    // button and the menu is its only home.
     for (const SavedQuery &filter : Config::builtinFilters()) {
         // Sent with no account configuring a sent folder finds nothing by
         // construction. Hidden rather than present and empty, which is what the
@@ -2854,28 +2853,18 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
         box->addWidget(button);
     }
 
-    // The user's own saved queries. A pinned one is still a button, beside the
-    // filters, until item 94 makes the menu their only home.
-    QList<SavedQuery> unpinned;
+    // The user's own saved queries, every one of them in the menu (item 94).
+    // The row is built-in filters only, so nothing has to decide which saved
+    // queries get button real estate.
+    QList<SavedQuery> savedQueries;
     for (const SavedQuery &saved : m_config.savedQueries()) {
-        // A generator whose accounts configure nothing produces a button that
+        // A generator whose accounts configure nothing produces an entry that
         // always finds nothing. Skipped entirely, which is what the hardcoded
         // Sent button did and is worth keeping.
         if (saved.isGenerated() && m_config.resolvedQuery(saved).isEmpty())
             continue;
 
-        if (!saved.pinned) {
-            unpinned.append(saved);
-            continue;
-        }
-        auto *button = new QPushButton(saved.name, row);
-        // No object name here any more. "sentButton" now belongs to the BUILT-IN
-        // Sent filter, and a migrated Sent entry claiming it too would give two
-        // buttons one name, so findChild() would return whichever came first.
-        connect(button, &QPushButton::clicked, this,
-                [this, saved]() { runSavedQuery(saved); });
-        addSavedQueryActions(button, saved);
-        box->addWidget(button);
+        savedQueries.append(saved);
     }
 
     // Everything above is left-aligned; the stretch here pushes what follows
@@ -2887,16 +2876,16 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
 
     // The overflow menu, and only when something is in it: an empty menu
     // button is a control that always does nothing.
-    if (!unpinned.isEmpty()) {
+    if (!savedQueries.isEmpty()) {
         auto *menuButton = new QPushButton(tr("More queries"), row);
         menuButton->setObjectName(QStringLiteral("savedQueryMenuButton"));
         auto *menu = new QMenu(menuButton);
-        for (const SavedQuery &saved : unpinned) {
+        for (const SavedQuery &saved : savedQueries) {
             QAction *action = menu->addAction(saved.name);
 
             // A menu entry has no context menu of its own, so its own submenu
-            // carries the same actions; an unpinned query would otherwise be
-            // the one thing that cannot be edited or deleted.
+            // carries the same actions; a saved query would otherwise be the
+            // one thing that cannot be edited or deleted.
             auto *entryMenu = new QMenu(menu);
 
             // Running the query is an item INSIDE that submenu, and must be:
@@ -2905,7 +2894,8 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
             // only opens the submenu. That shipped, and went unnoticed while
             // the menu was the rarely-used half and the user's queries were
             // pinned buttons. Item 93 moved every query into the menu, and item
-            // 94 makes it their only home.
+            // 94 made it their only home, so this is now the ONLY way to run
+            // one.
             auto *run = new QAction(tr("Run"), entryMenu);
             run->setObjectName(QStringLiteral("runQuery"));
             connect(run, &QAction::triggered, this,
@@ -2927,9 +2917,9 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
 
     // Nothing on either side of the stretch leaves an empty strip of padding,
     // so the row goes away rather than sitting there as a gap. Counted before
-    // the stretch was added, since the stretch is always there: an unpinned
-    // query with no pinned ones still needs the row for its menu.
-    if (contentCount == 0 && unpinned.isEmpty())
+    // the stretch was added, since the stretch is always there: a saved query
+    // with no built-in filters shown still needs the row for its menu.
+    if (contentCount == 0 && savedQueries.isEmpty())
         row->hide();
 
     // Connected HERE rather than beside the query bar's other handlers, which
@@ -2958,17 +2948,6 @@ void MainWindow::addSavedQueryActions(QWidget *target, const SavedQuery &saved)
     connect(edit, &QAction::triggered, this,
             [this, saved]() { editSavedQuery(saved); });
     target->addAction(edit);
-
-    auto *pin = new QAction(saved.pinned ? tr("Move to menu")
-                                         : tr("Show as a button"),
-                            target);
-    pin->setObjectName(QStringLiteral("pinQuery"));
-    connect(pin, &QAction::triggered, this, [this, saved]() {
-        SavedQuery toggled = saved;
-        toggled.pinned = !saved.pinned;
-        replaceSavedQuery(saved.name, toggled);
-    });
-    target->addAction(pin);
 
     auto *separator = new QAction(target);
     separator->setSeparator(true);
@@ -3182,10 +3161,9 @@ void MainWindow::saveCurrentQuery()
 
 void MainWindow::rebuildSavedQueryRow()
 {
-    // The row is rebuilt wholesale rather than patched: a new query can be
-    // pinned, unpinned, or replace an existing one, and each moves a different
-    // widget. Deleting and rebuilding is a handful of buttons and cannot get
-    // the three cases wrong.
+    // The row is rebuilt wholesale rather than patched: a query can be added,
+    // deleted or replaced, and each moves a different entry. Deleting and
+    // rebuilding is a handful of widgets and cannot get the cases wrong.
     auto *old = findChild<QWidget *>(QStringLiteral("savedQueryRow"));
     if (!old)
         return;

@@ -434,22 +434,20 @@ private slots:
     void theMessageBarSitsAboveTheBodyAndBelowTheHeader();
     void theMessageBarIconsAreSmallerThanTheToolbars();
 
-    void onlyPinnedQueriesBecomeButtons();
-    void unpinnedQueriesReachTheMenu();
-    void pinnedButtonsFollowTheDocumentOrder();
-    void theSavedQueryMenuIsHiddenWhenEveryQueryIsPinned();
+    void everySavedQueryLivesInTheMenu();
+    void menuEntriesFollowTheDocumentOrder();
     void aScopedSavedQuerySelectsItsAccount();
     void anUnscopedSavedQueryClearsTheAccount();
     void theSaveQueryActionIsDisabledOnAnEmptyQuery();
     void thereIsASaveButtonBesideTheQueryBar();
     void theMenuIsRightAlignedAwayFromTheButtons();
-    void theRowSurvivesWithNothingButUnpinnedQueries();
+    void theRowSurvivesWithNothingButAMenu();
     void aStoredGeneratedQueryRunsFlatAndComposed();
     void aRenamedSentEntryKeepsWorking();
     void aGeneratedQueryWithNothingToShowIsSkipped();
-    void aSavedQueryButtonOffersEditUnpinAndDelete();
+    void aSavedQueryEntryOffersRunEditAndDelete();
     void onlyAStoredQueryOffersToBecomeATaggingRule();
-    void unpinningMovesAQueryToTheMenu();
+    void savingStripsTheRetiredPinnedField();
     void deletingRemovesTheQueryFromTheFile();
     void anEditedQueryKeepsItsUnknownFields();
     void renamingReplacesRatherThanDuplicating();
@@ -7637,46 +7635,44 @@ static QStringList savedQueryButtonLabels(MainWindow &window)
 /// Positional lookup does not work any more: the built-in filters occupy the
 /// first four places on the row, so row->findChild<QPushButton *>() returns
 /// Unread rather than the query a test means.
-static QPushButton *savedQueryButton(MainWindow &window, const QString &label)
+/// The submenu carrying one saved query's actions, which since item 94 is where
+/// every saved query lives: the row is built-in filters only, so there is no
+/// button to right-click and the entry's own submenu is the whole affordance.
+static QMenu *savedQueryEntryMenu(MainWindow &window, const QString &label)
 {
-    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
-    if (!row)
+    auto *menuButton =
+        window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
+    if (!menuButton || !menuButton->menu())
         return nullptr;
-    const QList<QPushButton *> buttons =
-        row->findChildren<QPushButton *>(QString(), Qt::FindDirectChildrenOnly);
-    for (QPushButton *button : buttons) {
-        if (isBuiltinFilterButton(button))
-            continue;
-        if (button->text() == label)
-            return button;
+    for (QAction *action : menuButton->menu()->actions()) {
+        if (action->text() == label)
+            return action->menu();
     }
     return nullptr;
 }
 
-void TestMainWindow::onlyPinnedQueriesBecomeButtons()
+/// One action from a saved query's submenu, by object name. The counterpart of
+/// contextActionNamed() for the menu, which holds its actions directly rather
+/// than as a context menu on a widget.
+static QAction *savedQueryActionNamed(MainWindow &window, const QString &label,
+                                      const QString &objectName)
 {
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    Config config;
-    loadWithQueries(config, dir, QStringLiteral(R"({
-        "version": 1,
-        "queries": [
-            { "name": "Inbox", "query": "tag:inbox", "pinned": true },
-            { "name": "Buried", "query": "tag:buried" }
-        ]
-    })"));
-
-    MainWindow window(config);
-    const QStringList labels = savedQueryButtonLabels(window);
-
-    QVERIFY2(labels.contains(QStringLiteral("Inbox")),
-             "a pinned query must have a button");
-    QVERIFY2(!labels.contains(QStringLiteral("Buried")),
-             "an unpinned query must NOT have a button");
+    QMenu *menu = savedQueryEntryMenu(window, label);
+    if (!menu)
+        return nullptr;
+    for (QAction *action : menu->actions()) {
+        if (action->objectName() == objectName)
+            return action;
+    }
+    return nullptr;
 }
 
-void TestMainWindow::unpinnedQueriesReachTheMenu()
+void TestMainWindow::everySavedQueryLivesInTheMenu()
 {
+    // Item 94. The row is built-in filters ONLY, and every saved query is in
+    // the menu whatever queries.json says: `pinned` is no longer read, so a
+    // file still carrying it from before the removal must not put a button
+    // back on the row.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     Config config;
@@ -7689,27 +7685,35 @@ void TestMainWindow::unpinnedQueriesReachTheMenu()
     })"));
 
     MainWindow window(config);
+
+    // No saved query is a button any more, INCLUDING the one the file pins.
+    // That entry is the whole point of the fixture: a test with nothing
+    // pinned passes against `pinned` still being honoured.
+    const QStringList labels = savedQueryButtonLabels(window);
+    QVERIFY2(!labels.contains(QStringLiteral("Inbox")),
+             "a saved query marked pinned in the file still became a button");
+    QVERIFY2(!labels.contains(QStringLiteral("Buried")),
+             "a saved query became a button");
+
     auto *menuButton =
         window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
-    QVERIFY2(menuButton, "an unpinned query needs a menu to live in");
+    QVERIFY2(menuButton, "the saved queries have no menu to live in");
     QVERIFY(menuButton->menu());
 
     QStringList entries;
-    const QList<QAction *> actions = menuButton->menu()->actions();
-    for (QAction *action : actions)
+    for (QAction *action : menuButton->menu()->actions())
         entries.append(action->text());
 
+    QVERIFY2(entries.contains(QStringLiteral("Inbox")),
+             "the formerly pinned query is missing from the menu");
     QVERIFY2(entries.contains(QStringLiteral("Buried")),
              "the unpinned query is missing from the menu");
-    // A pinned query is already a button; listing it twice is the duplicate
-    // this asserts against.
-    QVERIFY2(!entries.contains(QStringLiteral("Inbox")),
-             "a pinned query must not also appear in the menu");
 }
 
-/// The property the whole storage change was made for. "Zebra" is written
-/// first and must stay first; alphabetical order would put it last.
-void TestMainWindow::pinnedButtonsFollowTheDocumentOrder()
+/// Document order, not alphabetical: "Zebra" is written first and must stay
+/// first. The property the storage change was made for, kept from the deleted
+/// pinnedButtonsFollowTheDocumentOrder now that the menu is the only home.
+void TestMainWindow::menuEntriesFollowTheDocumentOrder()
 {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -7717,44 +7721,23 @@ void TestMainWindow::pinnedButtonsFollowTheDocumentOrder()
     loadWithQueries(config, dir, QStringLiteral(R"({
         "version": 1,
         "queries": [
-            { "name": "Zebra", "query": "tag:zebra", "pinned": true },
-            { "name": "Apple", "query": "tag:apple", "pinned": true }
+            { "name": "Zebra", "query": "tag:zebra" },
+            { "name": "Apple", "query": "tag:apple" }
         ]
     })"));
 
     MainWindow window(config);
-    const QStringList labels = savedQueryButtonLabels(window);
-
-    QCOMPARE(labels.size(), 2);
-    QCOMPARE(labels.at(0), QStringLiteral("Zebra"));
-    QCOMPARE(labels.at(1), QStringLiteral("Apple"));
-}
-
-void TestMainWindow::theSavedQueryMenuIsHiddenWhenEveryQueryIsPinned()
-{
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    Config config;
-    loadWithQueries(config, dir, QStringLiteral(R"({
-        "version": 1,
-        "queries": [
-            { "name": "Inbox", "query": "tag:inbox", "pinned": true }
-        ]
-    })"));
-
-    MainWindow window(config);
-
-    // The guard the assertion below needs. Asserting only that the menu button
-    // is absent passed against NO implementation at all, before any of this
-    // was built, so it has to prove first that the row it is looking in was
-    // populated and that a button was found.
-    const QStringList labels = savedQueryButtonLabels(window);
-    QCOMPARE(labels, QStringList{ QStringLiteral("Inbox") });
-
     auto *menuButton =
         window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
-    QVERIFY2(!menuButton,
-             "an empty menu button is a control that always does nothing");
+    QVERIFY(menuButton && menuButton->menu());
+
+    QStringList entries;
+    for (QAction *action : menuButton->menu()->actions())
+        entries.append(action->text());
+
+    QCOMPARE(entries.size(), 2);
+    QCOMPARE(entries.at(0), QStringLiteral("Zebra"));
+    QCOMPARE(entries.at(1), QStringLiteral("Apple"));
 }
 
 /// The scope goes through the account dropdown rather than being baked into
@@ -7796,11 +7779,12 @@ void TestMainWindow::aScopedSavedQuerySelectsItsAccount()
         QStringLiteral("personal")));
     QCOMPARE(accountBox->currentData().toString(), QStringLiteral("personal"));
 
-    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
-    QVERIFY(row);
-    auto *button = savedQueryButton(window, QStringLiteral("Billing"));
-    QVERIFY(button);
-    button->click();
+    // Through the menu's Run entry: since item 94 a saved query is never a
+    // button, and Qt emits no triggered for the entry that owns the submenu.
+    QAction *run = savedQueryActionNamed(window, QStringLiteral("Billing"),
+                                         QStringLiteral("runQuery"));
+    QVERIFY(run);
+    run->trigger();
 
     QCOMPARE(accountBox->currentData().toString(), QStringLiteral("work"));
     // The text is the bare query. The path scope is applied once, by
@@ -7840,9 +7824,10 @@ void TestMainWindow::anUnscopedSavedQueryClearsTheAccount()
 
     auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
     QVERIFY(row);
-    auto *button = savedQueryButton(window, QStringLiteral("Everywhere"));
-    QVERIFY(button);
-    button->click();
+    QAction *run = savedQueryActionNamed(window, QStringLiteral("Everywhere"),
+                                        QStringLiteral("runQuery"));
+    QVERIFY(run);
+    run->trigger();
 
     QVERIFY2(accountBox->currentData().toString().isEmpty(),
              "an unscoped saved query must clear the account selection");
@@ -7970,9 +7955,9 @@ void TestMainWindow::theMenuIsRightAlignedAwayFromTheButtons()
              "the menu must come AFTER the stretch to sit at the right edge");
 }
 
-/// The row must not vanish when every saved query is unpinned: the menu is
-/// then the only way to reach any of them, and hiding the row buries it.
-void TestMainWindow::theRowSurvivesWithNothingButUnpinnedQueries()
+/// The row must not vanish when the only content is the menu, which since item
+/// 94 is where every saved query lives: hiding the row buries all of them.
+void TestMainWindow::theRowSurvivesWithNothingButAMenu()
 {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -8077,9 +8062,8 @@ void TestMainWindow::aRenamedSentEntryKeepsWorking()
         found = true;
         QVERIFY2(saved.isGenerated(),
                  "the entry lost its generator when renamed");
-        QVERIFY2(!saved.pinned, "the entry was not unpinned");
     }
-    QVERIFY2(found, "the renamed entry was DROPPED rather than unpinned");
+    QVERIFY2(found, "the renamed entry was DROPPED rather than kept");
 
     // The built-in Sent still resolves the same query, so nothing the user
     // could reach before became unreachable.
@@ -8115,12 +8099,12 @@ void TestMainWindow::aGeneratedQueryWithNothingToShowIsSkipped()
 
     MainWindow window(config);
 
-    // The guard: the row was built and the other entry did get a button, so a
-    // missing Sent means it was skipped rather than that nothing was built.
-    QCOMPARE(savedQueryButtonLabels(window),
-             QStringList{ QStringLiteral("Inbox") });
-    QVERIFY2(!window.findChild<QAbstractButton *>(QStringLiteral("sentButton")),
-             "a generated query with nothing to show must not get a button");
+    // The guard: the menu was built and the other entry is in it, so a missing
+    // Sent means it was skipped rather than that nothing was built at all.
+    QVERIFY2(savedQueryEntryMenu(window, QStringLiteral("Inbox")),
+             "the menu was not built, so the assertion below proves nothing");
+    QVERIFY2(!savedQueryEntryMenu(window, QStringLiteral("Sent")),
+             "a generated query with nothing to show must not get an entry");
 }
 
 /// Reads queries.json back from disk, which is what "it was saved" means.
@@ -8145,29 +8129,38 @@ static QAction *contextActionNamed(MainWindow &window, QWidget *target,
     return nullptr;
 }
 
-void TestMainWindow::aSavedQueryButtonOffersEditUnpinAndDelete()
+void TestMainWindow::aSavedQueryEntryOffersRunEditAndDelete()
 {
+    // Item 94 removed the pin action along with the row, so the entry offers
+    // three things rather than four. Run is among them and is load-bearing:
+    // Qt emits no triggered for the action owning the submenu, so without an
+    // item INSIDE it the query could not be run at all.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     Config config;
     loadWithQueries(config, dir, QStringLiteral(R"({
         "version": 1,
         "queries": [
-            { "name": "Inbox", "query": "tag:inbox", "pinned": true }
+            { "name": "Inbox", "query": "tag:inbox" }
         ]
     })"));
 
     MainWindow window(config);
-    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
-    QVERIFY(row);
-    auto *button = savedQueryButton(window, QStringLiteral("Inbox"));
-    QVERIFY(button);
+    QVERIFY2(savedQueryEntryMenu(window, QStringLiteral("Inbox")),
+             "the saved query has no menu entry to carry its actions");
 
-    // A context menu, so the actions live on the widget itself.
-    QCOMPARE(button->contextMenuPolicy(), Qt::ActionsContextMenu);
-    QVERIFY(contextActionNamed(window, button, QStringLiteral("editQuery")));
-    QVERIFY(contextActionNamed(window, button, QStringLiteral("pinQuery")));
-    QVERIFY(contextActionNamed(window, button, QStringLiteral("deleteQuery")));
+    QVERIFY(savedQueryActionNamed(window, QStringLiteral("Inbox"),
+                                  QStringLiteral("runQuery")));
+    QVERIFY(savedQueryActionNamed(window, QStringLiteral("Inbox"),
+                                  QStringLiteral("editQuery")));
+    QVERIFY(savedQueryActionNamed(window, QStringLiteral("Inbox"),
+                                  QStringLiteral("deleteQuery")));
+
+    // The retired affordance, asserted absent rather than merely unused: item
+    // 94 removed pinning, and an action left behind would still be clickable.
+    QVERIFY2(!savedQueryActionNamed(window, QStringLiteral("Inbox"),
+                                    QStringLiteral("pinQuery")),
+             "the retired pin action is still offered");
 }
 
 void TestMainWindow::onlyAStoredQueryOffersToBecomeATaggingRule()
@@ -8200,41 +8193,41 @@ void TestMainWindow::onlyAStoredQueryOffersToBecomeATaggingRule()
                         "sent=work-mail/Sent\n"));
 
     MainWindow window(config);
-    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
-    QVERIFY(row);
 
-    // By object name, which rebuildSavedQueryRow assigns precisely so a test
-    // need not depend on a label the user can rename.
-    auto *generated = row->findChild<QAbstractButton *>(
-        QStringLiteral("sentButton"));
+    // Both are menu entries since item 94, so the comparison is between two
+    // entries rather than between a button and a built-in filter. The stored
+    // one is found by name, which the user can rename, but nothing else
+    // distinguishes an entry in the menu.
+    QVERIFY2(savedQueryEntryMenu(window, QStringLiteral("Inbox")),
+             "no menu entry was built for the stored query");
+    QVERIFY2(savedQueryEntryMenu(window, QStringLiteral("Sent")),
+             "no menu entry was built for the generated query");
 
-    // savedQueryButton(), not a scan for the label: item 93 puts a BUILT-IN
-    // Inbox filter on the row too, and it carries no context actions by design,
-    // so a scan finds that one and the assertion below fails against correct
-    // code.
-    QPushButton *stored = savedQueryButton(window, QStringLiteral("Inbox"));
-
-    QVERIFY2(stored, "no button was built for the stored query");
-    QVERIFY2(generated, "no button was built for the generated query");
-
-    QVERIFY2(contextActionNamed(window, stored, QStringLiteral("queryToRule")),
+    QVERIFY2(savedQueryActionNamed(window, QStringLiteral("Inbox"),
+                                   QStringLiteral("queryToRule")),
              "a stored query must offer Create tagging rule");
-    QVERIFY2(!contextActionNamed(window, generated,
-                                 QStringLiteral("queryToRule")),
+    QVERIFY2(!savedQueryActionNamed(window, QStringLiteral("Sent"),
+                                    QStringLiteral("queryToRule")),
              "a generated query must not: its query is a snapshot");
 
-    // The guard, and it has moved since item 93. It used to prove the generated
-    // button HAS a menu, so the assertion above was about one action rather
-    // than about a button with none. `generated` is now the BUILT-IN Sent
-    // filter, which correctly carries no actions at all, so proving the
-    // machinery works has to happen on the button that does have them.
-    QVERIFY2(contextActionNamed(window, stored, QStringLiteral("deleteQuery")),
-             "the stored button lost its other actions, so the assertion above "
-             "is not about queryToRule in particular");
+    // The guard: without it, an entry carrying NO actions at all would pass the
+    // assertion above. Asserted on the generated entry, since that is the one
+    // the absence is claimed of.
+    QVERIFY2(savedQueryActionNamed(window, QStringLiteral("Sent"),
+                                   QStringLiteral("deleteQuery")),
+             "the generated entry lost its other actions, so the assertion "
+             "above is not about queryToRule in particular");
 }
 
-void TestMainWindow::unpinningMovesAQueryToTheMenu()
+void TestMainWindow::savingStripsTheRetiredPinnedField()
 {
+    // Item 94, and the half that is NOT just deleting UI: the user chose to
+    // strip `pinned` rather than leave it ignored in the file. A key that is
+    // no longer read but still written back is the shape that makes a later
+    // reader disagree with this one.
+    //
+    // The fixture pins BOTH entries, so the assertion cannot pass by the field
+    // having been absent all along.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     Config config;
@@ -8247,32 +8240,38 @@ void TestMainWindow::unpinningMovesAQueryToTheMenu()
     })"));
 
     MainWindow window(config);
-    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
-    QVERIFY(row);
-    QCOMPARE(savedQueryButtonLabels(window).size(), 2);
-    QVERIFY(!window.findChild<QAbstractButton *>(
-        QStringLiteral("savedQueryMenuButton")));
 
-    auto *button = savedQueryButton(window, QStringLiteral("Inbox"));
-    QVERIFY(button);
-    QAction *pin = contextActionNamed(window, button, QStringLiteral("pinQuery"));
-    QVERIFY(pin);
-    pin->trigger();
+    // Neither is a button any more, which is what makes the file the only
+    // place the retired field could still be observed.
+    QVERIFY(savedQueryButtonLabels(window).isEmpty());
 
-    // Off the row, into the menu, and written to the file: an unpin that only
-    // redrew would come back pinned on the next launch.
-    QCOMPARE(savedQueryButtonLabels(window), QStringList{ QStringLiteral("Other") });
-    auto *menuButton =
-        window.findChild<QPushButton *>(QStringLiteral("savedQueryMenuButton"));
-    QVERIFY(menuButton);
-    QCOMPARE(menuButton->menu()->actions().size(), 1);
+    // Any save rewrites the whole array, so editing one entry puts BOTH through
+    // the writer, including the one that was not touched. Through the testing
+    // seam rather than the Delete action, which raises a confirmation modal
+    // with nothing to dismiss it under the offscreen platform.
+    SavedQuery edited;
+    edited.name = QStringLiteral("Inbox");
+    edited.query = QStringLiteral("tag:inbox and not tag:muted");
+    window.replaceSavedQueryForTesting(QStringLiteral("Inbox"), edited);
 
     const QJsonArray stored = storedQueries(dir);
     QCOMPARE(stored.size(), 2);
-    QCOMPARE(stored.at(0).toObject().value(QStringLiteral("name")).toString(),
-             QStringLiteral("Inbox"));
-    QVERIFY2(!stored.at(0).toObject().contains(QStringLiteral("pinned")),
-             "the unpin did not reach the file");
+    for (const QJsonValue &value : stored) {
+        const QJsonObject entry = value.toObject();
+        QVERIFY2(!entry.contains(QStringLiteral("pinned")),
+                 qPrintable(QStringLiteral("the retired pinned field was "
+                                           "written back for '%1'")
+                                .arg(entry.value(QStringLiteral("name"))
+                                         .toString())));
+    }
+
+    // The untouched entry is otherwise intact: a strip that took the query with
+    // it would pass the loop above and lose the user's data.
+    const QJsonObject other = stored.at(1).toObject();
+    QCOMPARE(other.value(QStringLiteral("name")).toString(),
+             QStringLiteral("Other"));
+    QCOMPARE(other.value(QStringLiteral("query")).toString(),
+             QStringLiteral("tag:other"));
 }
 
 void TestMainWindow::deletingRemovesTheQueryFromTheFile()
@@ -8289,22 +8288,21 @@ void TestMainWindow::deletingRemovesTheQueryFromTheFile()
     })"));
 
     MainWindow window(config);
-    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
-    QVERIFY(row);
-    auto *button = savedQueryButton(window, QStringLiteral("Doomed"));
-    QVERIFY(button);
-    QCOMPARE(button->text(), QStringLiteral("Doomed"));
+    QVERIFY2(savedQueryEntryMenu(window, QStringLiteral("Doomed")),
+             "the query to be deleted is not in the menu");
 
-    QAction *del =
-        contextActionNamed(window, button, QStringLiteral("deleteQuery"));
+    QAction *del = savedQueryActionNamed(window, QStringLiteral("Doomed"),
+                                         QStringLiteral("deleteQuery"));
     QVERIFY(del);
     // Destructive and not on the undo stack, so it confirms. Suppressed here
     // rather than driven through the modal dialog, which would hang the test.
     window.setConfirmDeleteForTesting(false);
     del->trigger();
 
-    QCOMPARE(savedQueryButtonLabels(window),
-             QStringList{ QStringLiteral("Keeper") });
+    QVERIFY2(!savedQueryEntryMenu(window, QStringLiteral("Doomed")),
+             "the deleted query is still in the menu");
+    QVERIFY2(savedQueryEntryMenu(window, QStringLiteral("Keeper")),
+             "the surviving query was removed too");
 
     const QJsonArray stored = storedQueries(dir);
     QCOMPARE(stored.size(), 1);
@@ -8337,7 +8335,6 @@ void TestMainWindow::anEditedQueryKeepsItsUnknownFields()
     SavedQuery edited;
     edited.name = QStringLiteral("Inbox");
     edited.query = QStringLiteral("tag:inbox and not tag:muted");
-    edited.pinned = true;
     QVERIFY(edited.unknown.isEmpty());
     window.replaceSavedQueryForTesting(QStringLiteral("Inbox"), edited);
 
@@ -8371,14 +8368,19 @@ void TestMainWindow::renamingReplacesRatherThanDuplicating()
     SavedQuery renamed;
     renamed.name = QStringLiteral("New");
     renamed.query = QStringLiteral("tag:old");
-    renamed.pinned = true;
     window.replaceSavedQueryForTesting(QStringLiteral("Old"), renamed);
 
     const QJsonArray stored = storedQueries(dir);
     QCOMPARE(stored.size(), 1);
     QCOMPARE(stored.at(0).toObject().value(QStringLiteral("name")).toString(),
              QStringLiteral("New"));
-    QCOMPARE(savedQueryButtonLabels(window), QStringList{ QStringLiteral("New") });
+
+    // And the menu followed the rename rather than keeping both, which is the
+    // duplication this asserts against.
+    QVERIFY2(savedQueryEntryMenu(window, QStringLiteral("New")),
+             "the renamed query is missing from the menu");
+    QVERIFY2(!savedQueryEntryMenu(window, QStringLiteral("Old")),
+             "the old name is still in the menu, so the rename duplicated");
 }
 
 void TestMainWindow::aMalformedAccountIsReportedWithoutBlockingTheConstructor()
@@ -9999,19 +10001,14 @@ void TestMainWindow::aSavedQueryStillClearsTheAccountSelection()
     MainWindow window(config);
     window.selectAccountForTesting(QStringLiteral("work"));
 
-    // The migrated [queries] entry is pinned, so it is a button beside the
-    // filters. Found by its label, since only the filters have stable object
-    // names.
-    QPushButton *mine = nullptr;
-    auto *row = window.findChild<QWidget *>(QStringLiteral("savedQueryRow"));
-    QVERIFY(row);
-    for (QPushButton *button : row->findChildren<QPushButton *>()) {
-        if (button->text() == QStringLiteral("Mine"))
-            mine = button;
-    }
-    QVERIFY2(mine, "the user's own pinned query is not on the row");
+    // The migrated [queries] entry lives in the menu since item 94, like every
+    // saved query. Run rather than the entry itself: Qt emits no triggered for
+    // an action that owns a submenu.
+    QAction *run = savedQueryActionNamed(window, QStringLiteral("Mine"),
+                                         QStringLiteral("runQuery"));
+    QVERIFY2(run, "the user's own query is not in the menu");
 
-    mine->click();
+    run->trigger();
     QVERIFY2(window.selectedAccountForTesting().isEmpty(),
              "an unscoped saved query no longer clears the account selection");
 }

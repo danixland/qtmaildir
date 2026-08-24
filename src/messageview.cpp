@@ -540,6 +540,14 @@ void MessageView::clear()
     // button offers to recover a thread the user has navigated away from.
     setStaleThread(QString(), QString());
 
+    // The ribbon explains ONE message's account, so it goes with the message
+    // for the same reason as the two bars above. Only setReceiveOnlyAccount()
+    // hid it, which every SELECTION change reaches, so the ribbon survived
+    // every other route to a blank pane: clear_pane, clear_selection, a new
+    // query and a multi-row selection all blanked the message underneath it
+    // and left it contradicting the Reply button beside it.
+    m_receiveOnlyRibbon->hide();
+
     // clear() does not go through render(), so the bar has to be emptied
     // here or the previous thread's attachments stay offered.
     rebuildAttachmentBar();

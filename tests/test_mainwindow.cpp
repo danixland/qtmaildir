@@ -257,6 +257,7 @@ private slots:
     void theMailRootComesFromTheConfigNotTheIndex();
     void replyIsDisabledOnAReceiveOnlyAccountsMail();
     void theReceiveOnlyRibbonNamesTheAccount();
+    void theReceiveOnlyRibbonGoesWithTheMessageThatRaisedIt();
     void replyIsEnabledOnASendingAccountsMail();
     void composeIsDisabledOnlyWhenNoAccountCanSend();
     void quittingWithACleanComposerAsksNothing();
@@ -8429,6 +8430,101 @@ void TestMainWindow::theReceiveOnlyRibbonNamesTheAccount()
     // PlainText, not AutoText. A QLabel guesses under AutoText, and this is
     // the same protection MessageDetailsDialog states on every value.
     QCOMPARE(ribbon->textFormat(), Qt::PlainText);
+}
+
+void TestMainWindow::theReceiveOnlyRibbonGoesWithTheMessageThatRaisedIt()
+{
+    // The ribbon explains ONE message, so it must not outlive it. Observed in
+    // All accounts: receive-only mail raised it, and selecting mail from an
+    // account that can send left it on screen contradicting the live Reply
+    // button beside it.
+    WorkerComposeFixture fixture;
+    QVERIFY(fixture.backed.fixture().addMessage(
+        QStringLiteral("listsonly/inbox"), QStringLiteral("ro@example.org"),
+        QStringLiteral("Receive only"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY(fixture.backed.fixture().addMessage(
+        QStringLiteral("work/inbox"), QStringLiteral("rw@example.org"),
+        QStringLiteral("Can send"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(fixture.backed.buildWithAccounts(
+                 { { QStringLiteral("listsonly"), QStringLiteral("listsonly"),
+                     QString(), QString(), QStringLiteral("you@example.org") },
+                   { QStringLiteral("work"), QStringLiteral("work"),
+                     QString(), QStringLiteral("/bin/true"),
+                     QStringLiteral("you@example.org") } }),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *ribbon =
+        window.findChild<QLabel *>(QStringLiteral("receiveOnlyRibbon"));
+    QVERIFY(model && view && queryEdit && ribbon);
+
+    // Both messages in one list, which is the All accounts view the defect was
+    // seen in. The mail root has to have arrived too: the ribbon is decided by
+    // which account owns the message, which cannot be answered without it.
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2
+                                 && !window.mailRootForTesting().isEmpty(),
+                             15000);
+
+    // Find each row by subject rather than by position: the sort order is not
+    // what is under test, and asserting on it would make this fail for a
+    // reason that has nothing to do with the ribbon.
+    QModelIndex receiveOnlyRow;
+    QModelIndex sendingRow;
+    for (int row = 0; row < model->rowCount(QModelIndex()); ++row) {
+        const QModelIndex index = model->index(row, 0, QModelIndex());
+        const QString subject = model->threadFor(index).subject;
+        if (subject == QStringLiteral("Receive only"))
+            receiveOnlyRow = index;
+        else if (subject == QStringLiteral("Can send"))
+            sendingRow = index;
+    }
+    QVERIFY2(receiveOnlyRow.isValid() && sendingRow.isValid(),
+             "the two seeded messages are not both in the list");
+
+    view->setCurrentIndex(receiveOnlyRow);
+    QTRY_VERIFY_WITH_TIMEOUT(!ribbon->isHidden(), 15000);
+
+    // Straight from one to the other, with no deselection in between. This
+    // half already worked: a selection change reaches updateComposeActions().
+    view->setCurrentIndex(sendingRow);
+    QTRY_VERIFY_WITH_TIMEOUT(ribbon->isHidden(), 15000);
+    QVERIFY2(ribbon->isHidden(),
+             "the ribbon stayed up on mail from an account that can send");
+
+    // The half that did not: blanking the pane by any route that is not a
+    // selection change. MessageView::clear() resets the blocked-content bar,
+    // the stale notice and the attachment bar by hand, and forgot this one, so
+    // the ribbon outlived the message it explains.
+    view->setCurrentIndex(receiveOnlyRow);
+    QTRY_VERIFY_WITH_TIMEOUT(!ribbon->isHidden(), 15000);
+
+    window.findChild<QAction *>(QStringLiteral("clear_pane"))->trigger();
+    QVERIFY2(ribbon->isHidden(),
+             "the ribbon survived clear_pane, over a blank message pane");
+
+    // Away and back, not straight back: clear_pane leaves the receive-only row
+    // CURRENT, so re-selecting it emits no change and the ribbon would never
+    // be re-raised. That is the view's behaviour and not the defect under test.
+    view->setCurrentIndex(sendingRow);
+    QTRY_VERIFY_WITH_TIMEOUT(ribbon->isHidden(), 15000);
+    view->setCurrentIndex(receiveOnlyRow);
+    QTRY_VERIFY_WITH_TIMEOUT(!ribbon->isHidden(), 15000);
+
+    queryEdit->setText(QStringLiteral("tag:inbox and subject:\"Can send\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    QVERIFY2(ribbon->isHidden(),
+             "the ribbon survived a new query that blanked the pane");
 }
 
 void TestMainWindow::composeIsDisabledOnlyWhenNoAccountCanSend()

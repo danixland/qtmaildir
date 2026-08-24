@@ -231,7 +231,8 @@ maildir = work-mail        ; relative to notmuch's mail root
 trash = Trash              ; Delete moves the file here. Not optional in
                            ;   practice: without it the application reports a
                            ;   config problem and Delete does not work.
-drafts = Drafts            ; optional; where the composer autosaves
+drafts = Drafts            ; optional; enables the Drafts button, and where
+                           ;   the composer autosaves
 sent = Sent                ; optional; enables the Sent button, and where a
                            ;   sent copy is filed
 inbox = Inbox              ; optional; where Restore puts a message whose

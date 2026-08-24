@@ -551,6 +551,20 @@ void ComposeWindow::buildFormatToolbar()
 
     // Remove attachment moves to its own button beside the list it acts on.
     m_detachButton->setDefaultAction(m_detachAction);
+
+    // Ctrl+W closes the composer (item 148), the way it closes a window in
+    // every other application. Parented to this window like the formatting
+    // shortcuts, so it is a WindowShortcut dispatched to the active composer
+    // only and the main window's own namespace is untouched.
+    //
+    // close() rather than anything of its own: closeEvent() already decides
+    // whether the draft is saved or discarded, and a second route out that
+    // skipped it would lose the message.
+    auto *closeAction = new QAction(tr("Close"), this);
+    closeAction->setObjectName(QStringLiteral("compose_close"));
+    closeAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+W")));
+    connect(closeAction, &QAction::triggered, this, &ComposeWindow::close);
+    addAction(closeAction);
 }
 
 void ComposeWindow::seedFields()

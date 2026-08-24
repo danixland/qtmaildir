@@ -119,6 +119,9 @@ private slots:
     void anAccountCarriesItsTrashFolder();
     void aBracketedTrashFolderIsQuoted();
     void anAccountWithoutATrashFolderWarns();
+    void theDraftsFilterComposesPerAccount();
+    void theDraftsFilterMatchesNothingWithoutAFolder();
+    void theDraftsFilterIsThreadedNotFlat();
     void theTrashFilterComposesPerAccount();
     void theTrashFilterMatchesNothingWithoutAFolder();
     void anAccountWithoutASendCommandIsReceiveOnly();
@@ -1021,6 +1024,67 @@ void TestConfig::anAccountWithoutATrashFolderWarns()
     QVERIFY(joined.contains(QStringLiteral("trash")));
 }
 
+void TestConfig::theDraftsFilterComposesPerAccount()
+{
+    // Item 138. Follows `sent` and `trash`, which match a FOLDER: `draft` is a
+    // Maildir flag notmuch surfaces as a tag, but the folder is what the user
+    // means by Drafts, and a provider that flags differently would disagree
+    // with the folder the composer actually writes into.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n"
+        "drafts=Drafts\n"
+        "\n"
+        "[account.personal]\n"
+        "maildir=personal\n"
+        "drafts=[Provider]/Bozze\n")));
+
+    const SavedQuery drafts = Config::builtinFilter(QStringLiteral("drafts"));
+    QVERIFY2(drafts.isGenerated(), "drafts is not a generated filter");
+
+    const QString all = config.resolvedQuery(drafts, QString());
+    QVERIFY(all.contains(QStringLiteral("path:\"work/Drafts/**\"")));
+    QVERIFY(all.contains(
+        QStringLiteral("path:\"personal/[Provider]/Bozze/**\"")));
+
+    // The account's OWN query, asserted on the STRING: the all-accounts query
+    // wrapped in this account's path returns exactly the right rows because
+    // path: is hierarchical, so a row count passes against the wrong thing.
+    const QString scoped = config.resolvedQuery(drafts, QStringLiteral("work"));
+    QCOMPARE(scoped, QStringLiteral("path:\"work/Drafts/**\""));
+    QVERIFY(!scoped.contains(QStringLiteral("personal")));
+}
+
+void TestConfig::theDraftsFilterMatchesNothingWithoutAFolder()
+{
+    // An empty query means "match everything" to notmuch, so a button labelled
+    // Drafts would show the whole Maildir.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\n"
+        "maildir=work\n")));
+
+    const SavedQuery drafts = Config::builtinFilter(QStringLiteral("drafts"));
+    QCOMPARE(config.resolvedQuery(drafts, QString()),
+             Config::matchNothingQuery());
+}
+
+void TestConfig::theDraftsFilterIsThreadedNotFlat()
+{
+    // Unlike Sent, and deliberately. Sent is flat because a thread would fold
+    // the user's own message back into the conversation it answers, which is
+    // item 63's finding. A draft reply belongs with its conversation for the
+    // same reason a trashed message does, so drafts follow trash here.
+    const SavedQuery drafts = Config::builtinFilter(QStringLiteral("drafts"));
+    QVERIFY2(!drafts.flat, "the drafts filter is flat, like Sent");
+
+    const SavedQuery sent = Config::builtinFilter(QStringLiteral("sent"));
+    QVERIFY2(sent.flat, "Sent stopped being flat, which item 63 requires");
+}
+
 void TestConfig::theTrashFilterComposesPerAccount()
 {
     // Two accounts, one with a plain folder and one nested under a bracketed
@@ -1492,7 +1556,7 @@ void TestConfig::everyBuiltinFilterIsAKnownGenerator()
     Config config;
     const QList<SavedQuery> filters = config.builtinFilters();
 
-    QCOMPARE(filters.size(), 5);
+    QCOMPARE(filters.size(), 6);
 
     QStringList names;
     for (const SavedQuery &filter : filters) {
@@ -1514,6 +1578,7 @@ void TestConfig::everyBuiltinFilterIsAKnownGenerator()
                                   QStringLiteral("Inbox"),
                                   QStringLiteral("Important"),
                                   QStringLiteral("Sent"),
+                                  QStringLiteral("Drafts"),
                                   QStringLiteral("Trash") }));
 }
 

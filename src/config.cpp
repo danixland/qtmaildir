@@ -63,11 +63,12 @@ const QStringList kQueryGenerators = { QStringLiteral("unread"),
                                        QStringLiteral("inbox"),
                                        QStringLiteral("flagged"),
                                        QStringLiteral("sent"),
+                                       QStringLiteral("drafts"),
                                        QStringLiteral("trash") };
 
 /// The tag a generator matches, for the three filters that are a plain tag
-/// query. Empty for "sent", which composes from each account's folder instead
-/// and is handled separately.
+/// query. Empty for "sent", "drafts" and "trash", which compose from each
+/// account's folder instead and are handled separately.
 QString generatorTag(const QString &generator)
 {
     if (generator == QStringLiteral("unread"))
@@ -986,6 +987,12 @@ SavedQuery Config::builtinFilter(const QString &generator)
         // thread would fold the user's sent message back into the conversation
         // it belongs to, which is item 63's finding.
         filter.flat = true;
+    } else if (generator == QStringLiteral("drafts")) {
+        // The LABEL is translated; the generator stays `drafts`, which is what
+        // queries.json stores and what a closed set is matched against.
+        filter.name = tr("Drafts");
+        // NOT flat, like Trash and unlike Sent: a draft reply belongs with the
+        // conversation it answers.
     } else if (generator == QStringLiteral("trash")) {
         filter.name = tr("Trash");
         // NOT flat, unlike Sent. A deleted message still belongs to its
@@ -1015,6 +1022,10 @@ QString Config::resolvedQuery(const SavedQuery &query,
             const QString all = allSentQuery();
             return all.isEmpty() ? matchNothingQuery() : all;
         }
+        if (query.generated == QStringLiteral("drafts")) {
+            const QString all = allDraftsQuery();
+            return all.isEmpty() ? matchNothingQuery() : all;
+        }
         if (query.generated == QStringLiteral("trash")) {
             const QString all = allTrashQuery();
             return all.isEmpty() ? matchNothingQuery() : all;
@@ -1037,6 +1048,13 @@ QString Config::resolvedQuery(const SavedQuery &query,
         // case and not a misconfiguration. Returned as-is it would mean "match
         // everything", so a button labelled Sent would show the whole Maildir.
         return sent.isEmpty() ? matchNothingQuery() : sent;
+    }
+
+    if (query.generated == QStringLiteral("drafts")) {
+        // The account's OWN drafts query, for the reason spelled out above the
+        // sent case.
+        const QString drafts = scope.draftsQuery();
+        return drafts.isEmpty() ? matchNothingQuery() : drafts;
     }
 
     if (query.generated == QStringLiteral("trash")) {

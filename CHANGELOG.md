@@ -23,6 +23,13 @@ point at which they are stable.
   reply follows what the message being answered used.
 - Drafts autosave to the account's `drafts` folder as ordinary Maildir files,
   so mbsync carries them to the server and another client can pick one up.
+- **A Drafts filter** in the query row, beside Sent and Trash. It matches each
+  account's `drafts` folder, so it finds what the composer actually writes
+  rather than trusting a flag. An account that configures no drafts folder
+  contributes nothing and shows no button.
+- `Ctrl+W` closes a composer, the way it closes a window elsewhere. The draft
+  is saved or discarded exactly as it is when the window is closed by any
+  other route.
 - **The composer is laid out by scope.** Send is a large button beside the
   headers rather than one more entry in a row of formatting buttons; the
   formatting controls are icons on their own bar directly above the editor,

@@ -274,6 +274,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Inviati</translation>
     </message>
     <message>
+        <source>Drafts</source>
+        <translation>Bozze</translation>
+    </message>
+    <message>
         <source>Trash</source>
         <translation>Cestino</translation>
     </message>

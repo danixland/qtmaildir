@@ -276,6 +276,7 @@ private slots:
     void aStartupAccountAlsoScopesASavedStartupQuery();
     void aGeneratedStartupQueryActuallyRuns();
     void everyBuiltinFilterButtonCarriesAnIconAndItsText();
+    void theDraftsButtonIsAbsentWithoutADraftsFolder();
     void aQueryInTheMenuCanActuallyBeRun();
     void theFourBuiltinFiltersAreOnTheRowInOrder();
     void aFilterComposesWithTheSelectedAccount();
@@ -476,6 +477,7 @@ private slots:
     // MainWindow hands it, so a Config written to a temporary INI is the whole
     // fixture.
     void aComposerOpensClean();
+    void ctrlWClosesTheComposer();
     void theComposerSplitsItsToolbarByScope();
     void ccAndBccHideBehindADisclosure();
     void ccAndBccAreRevealedWhenTheyCarryAValue();
@@ -9572,6 +9574,32 @@ void TestMainWindow::aGeneratedStartupQueryActuallyRuns()
     QCOMPARE(queryEdit->text(), config.allSentQuery());
 }
 
+void TestMainWindow::theDraftsButtonIsAbsentWithoutADraftsFolder()
+{
+    // Item 138 follows item 103's rule: a folder filter with no folder to
+    // match is left out of the row rather than shown resolving to
+    // matchNothingQuery(). A button that can only ever report nothing is worse
+    // than no button, since it reads as "you have no drafts".
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeSentConfig(dir, {
+        {QStringLiteral("work"), QStringLiteral("Sent")},
+    });
+
+    Config config;
+    config.load(path);
+    MainWindow window(config);
+
+    QVERIFY2(!window.findChild<QAbstractButton *>(
+                 QStringLiteral("draftsButton")),
+             "a Drafts button appeared for an account with no drafts folder");
+
+    // The guard: Sent IS configured here, so a change that dropped every
+    // filter button would otherwise pass the assertion above.
+    QVERIFY2(window.findChild<QAbstractButton *>(QStringLiteral("sentButton")),
+             "the Sent button is missing, so this test proves nothing");
+}
+
 void TestMainWindow::everyBuiltinFilterButtonCarriesAnIconAndItsText()
 {
     // The filters are part of the application now, so they carry icons like the
@@ -9589,11 +9617,12 @@ void TestMainWindow::everyBuiltinFilterButtonCarriesAnIconAndItsText()
     });
     // A trash key too, or the Trash filter finds nothing and is skipped from
     // the row entirely (item 103), leaving no trashButton for this loop to
-    // find.
+    // find. Drafts behaves the same way since item 138.
     {
         QSettings s(path, QSettings::IniFormat);
         s.beginGroup(QStringLiteral("account.work"));
         s.setValue(QStringLiteral("trash"), QStringLiteral("Trash"));
+        s.setValue(QStringLiteral("drafts"), QStringLiteral("Drafts"));
         s.endGroup();
     }
     Config config;
@@ -12418,6 +12447,36 @@ void TestMainWindow::removeAttachmentAppearsOnlyWithAttachments()
     QVERIFY(row);
     QVERIFY2(detach->isVisible(),
              "Remove attachment is not offered with a file attached");
+}
+
+void TestMainWindow::ctrlWClosesTheComposer()
+{
+    // Item 148. Ctrl+W closes a window in every application the user runs, and
+    // the composer bound nothing, so the only way out was the title bar.
+    //
+    // Scoped to the composer, not registered in KeyMap: Qt dispatches a
+    // WindowShortcut to the active window only, which is the same reason the
+    // formatting shortcuts are parented here rather than to the main window.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+    ComposeContext context = newContext();
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, fixture.config(), fixture.mailRoot());
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    auto *close = window->findChild<QAction *>(QStringLiteral("compose_close"));
+    QVERIFY2(close, "the composer has no close action");
+    QVERIFY2(close->shortcut() == QKeySequence(QStringLiteral("Ctrl+W")),
+             qPrintable(QStringLiteral("the close action is bound to '%1', "
+                                       "not Ctrl+W")
+                            .arg(close->shortcut().toString())));
+
+    close->trigger();
+
+    // WA_DeleteOnClose, so the window really goes rather than merely hiding.
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 5000);
 }
 
 void TestMainWindow::aComposerOpensClean()

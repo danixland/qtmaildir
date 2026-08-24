@@ -2630,6 +2630,7 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
             { QStringLiteral("inbox"),   QStringLiteral("mail-inbox") },
             { QStringLiteral("flagged"), QStringLiteral("starred") },
             { QStringLiteral("sent"),    QStringLiteral("mail-folder-sent") },
+            { QStringLiteral("drafts"),  QStringLiteral("document-edit") },
             { QStringLiteral("trash"),   QStringLiteral("user-trash") },
         };
         button->setIcon(

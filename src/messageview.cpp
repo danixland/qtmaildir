@@ -342,6 +342,7 @@ MessageView::MessageView(QWidget *parent)
     qApp->installEventFilter(this);
 
     m_headerLabel = new QLabel(this);
+    m_headerLabel->setObjectName(QStringLiteral("messageHeader"));
     m_headerLabel->setTextFormat(Qt::RichText);
     m_headerLabel->setWordWrap(true);
     m_headerLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -470,13 +471,20 @@ MessageView::MessageView(QWidget *parent)
         style()->styleHint(QStyle::SH_ToolButtonStyle, nullptr, m_messageBar)));
     m_messageBar->setMovable(false);
     m_messageBar->hide();
+    // Set by MainWindow, which owns the configured size this is derived from.
+    // Left at the style's own default until then, which is what a MessageView
+    // built on its own in a test gets.
 
     auto *layout = new QVBoxLayout(this);
-    layout->addWidget(m_messageBar);
     layout->addLayout(headerRow);
     layout->addWidget(m_blockedBar);
     layout->addWidget(m_receiveOnlyRibbon);
     layout->addWidget(m_staleBar);
+    // Directly above the message it acts on, below the subject and details
+    // rows: the bar belongs to the body, not to the pane's heading. The
+    // transient notice bars stay above it, since they explain the message
+    // rather than offer an action on it.
+    layout->addWidget(m_messageBar);
     layout->addWidget(m_view, 1);
     layout->addWidget(m_attachmentBar);
     layout->addWidget(m_tagStrip);
@@ -583,9 +591,12 @@ void MessageView::applyNoticeBarStyles()
 }
 
 void MessageView::setBarActions(const QList<QAction *> &messageActions,
-                                const QList<QAction *> &viewControls)
+                                const QList<QAction *> &viewControls,
+                                int iconSize)
 {
     m_messageBar->clear();
+    if (iconSize > 0)
+        m_messageBar->setIconSize(QSize(iconSize, iconSize));
 
     for (QAction *action : messageActions) {
         if (action)

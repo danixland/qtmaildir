@@ -253,7 +253,8 @@ public:
     /// and changing how it is displayed are different scopes, which is the
     /// confusion the bar exists to remove one level up.
     void setBarActions(const QList<QAction *> &messageActions,
-                       const QList<QAction *> &viewControls);
+                       const QList<QAction *> &viewControls,
+                       int iconSize = 0);
 
     /// Tells the pane whether the query bar currently holds anything.
     ///

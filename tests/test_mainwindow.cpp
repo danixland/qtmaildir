@@ -422,6 +422,8 @@ private slots:
     void noTwoActionsShareAnIcon();
     void theMessagePaneCarriesItsOwnActionBar();
     void theMainToolbarKeepsOnlyListWideActions();
+    void theMessageBarSitsAboveTheBodyAndBelowTheHeader();
+    void theMessageBarIconsAreSmallerThanTheToolbars();
 
     void onlyPinnedQueriesBecomeButtons();
     void unpinnedQueriesReachTheMenu();
@@ -7258,8 +7260,11 @@ void TestMainWindow::theMessagePaneCarriesItsOwnActionBar()
     // The three message actions, in the user's order, and the same QAction
     // objects the menus use rather than copies: a second QAction would need
     // its own enablement and would drift from the menu entry.
-    const QStringList expected = { QStringLiteral("compose"),
-                                   QStringLiteral("reply"),
+    // Compose is deliberately NOT here: it needs no message, so it stays on
+    // the main toolbar with the window-wide actions. The user reconsidered
+    // this after seeing the first version, and the split is now by what the
+    // action needs rather than by what it is about.
+    const QStringList expected = { QStringLiteral("reply"),
                                    QStringLiteral("forward") };
     for (const QString &name : expected) {
         auto *action = window.findChild<QAction *>(name);
@@ -7268,6 +7273,11 @@ void TestMainWindow::theMessagePaneCarriesItsOwnActionBar()
                  qPrintable(QStringLiteral("%1 is not on the message bar")
                                 .arg(name)));
     }
+
+    auto *compose = window.findChild<QAction *>(QStringLiteral("compose"));
+    QVERIFY(compose);
+    QVERIFY2(!bar->actions().contains(compose),
+             "compose is on the message bar, where it needs no message");
 
     // toggle_html is the view control the user named for this bar. It is a
     // different scope from the three above ("change how I am looking at it",
@@ -7303,6 +7313,84 @@ void TestMainWindow::theMessagePaneCarriesItsOwnActionBar()
              "controls, so they read as one group");
 }
 
+void TestMainWindow::theMessageBarSitsAboveTheBodyAndBelowTheHeader()
+{
+    // The user's correction after seeing the first version: the bar belongs
+    // immediately above the message it acts on, under the subject and details
+    // rows, rather than at the very top of the pane where it read as part of
+    // the window chrome.
+    const Config config;
+    MainWindow window(config);
+
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+    auto *bar = window.findChild<QToolBar *>(QStringLiteral("message_toolbar"));
+    auto *header = pane->findChild<QLabel *>(QStringLiteral("messageHeader"));
+    QVERIFY(bar);
+
+    auto *layout = qobject_cast<QVBoxLayout *>(pane->layout());
+    QVERIFY2(layout, "the message pane is not laid out vertically");
+
+    // Index in the pane's own column, which is what "above" and "below" mean
+    // here. Asserting on geometry instead would measure the offscreen
+    // platform's idea of an unshown widget, which is nothing.
+    int barIndex = -1;
+    int viewIndex = -1;
+    int headerIndex = -1;
+    for (int i = 0; i < layout->count(); ++i) {
+        QLayoutItem *item = layout->itemAt(i);
+        if (item->widget() == bar)
+            barIndex = i;
+        else if (item->widget()
+                 && item->widget()->inherits("QWebEngineView"))
+            viewIndex = i;
+        else if (header && item->layout()
+                 && item->layout()->indexOf(header) >= 0)
+            headerIndex = i;
+    }
+
+    QVERIFY2(barIndex >= 0 && viewIndex >= 0,
+             "the bar or the web view is not in the pane's column");
+    QVERIFY2(barIndex < viewIndex,
+             "the message bar sits below the message body");
+    if (headerIndex >= 0) {
+        QVERIFY2(headerIndex < barIndex,
+                 "the message bar sits above the header row, where it reads as "
+                 "window chrome rather than as belonging to the message");
+    }
+}
+
+void TestMainWindow::theMessageBarIconsAreSmallerThanTheToolbars()
+{
+    // The bar is subordinate to the main toolbar, so its icons are smaller.
+    // Derived from the configured size rather than hardcoded, so the relation
+    // survives the user changing toolbar_icon_size.
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("[general]\ntoolbar_icon_size = 32\n");
+    file.close();
+
+    Config config;
+    config.load(path);
+    QCOMPARE(config.toolbarIconSize(), 32);
+
+    MainWindow window(config);
+    auto *toolBar =
+        window.findChild<QToolBar *>(QStringLiteral("main_toolbar"));
+    auto *bar = window.findChild<QToolBar *>(QStringLiteral("message_toolbar"));
+    QVERIFY(toolBar && bar);
+
+    QCOMPARE(toolBar->iconSize(), QSize(32, 32));
+    QCOMPARE(bar->iconSize(), QSize(28, 28));
+
+    // The RELATION, not the constant: a fixed 28 would satisfy the line above
+    // and stop meaning anything the moment the user set a different size.
+    QVERIFY2(bar->iconSize().width() < toolBar->iconSize().width(),
+             "the message bar's icons are not smaller than the toolbar's");
+}
+
 void TestMainWindow::theMainToolbarKeepsOnlyListWideActions()
 {
     // The other half of item 140: the actions do not merely gain a second
@@ -7315,8 +7403,7 @@ void TestMainWindow::theMainToolbarKeepsOnlyListWideActions()
         window.findChild<QToolBar *>(QStringLiteral("main_toolbar"));
     QVERIFY(toolBar);
 
-    for (const QString &name : { QStringLiteral("compose"),
-                                 QStringLiteral("reply"),
+    for (const QString &name : { QStringLiteral("reply"),
                                  QStringLiteral("forward") }) {
         auto *action = window.findChild<QAction *>(name);
         QVERIFY2(action, qPrintable(QStringLiteral("no action %1").arg(name)));
@@ -7327,7 +7414,8 @@ void TestMainWindow::theMainToolbarKeepsOnlyListWideActions()
 
     // The guard: without it, a change emptying the toolbar entirely would pass
     // every assertion above while deleting the feature.
-    for (const QString &name : { QStringLiteral("sync"),
+    for (const QString &name : { QStringLiteral("compose"),
+                                 QStringLiteral("sync"),
                                  QStringLiteral("archive"),
                                  QStringLiteral("undo") }) {
         auto *action = window.findChild<QAction *>(name);

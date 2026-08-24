@@ -1970,10 +1970,13 @@ void MainWindow::buildMenus()
     const int iconSize = m_config.toolbarIconSize();
     toolBar->setIconSize(QSize(iconSize, iconSize));
 
-    // Compose, Reply and Forward are NOT here (item 140). They act on a
-    // message, where everything below acts on the list or on the selection,
-    // and mixing the two is what made this toolbar read as the place for
-    // everything. They live on the message pane's own bar instead.
+    // Compose stays here, and Reply and Forward do not (item 140). The split
+    // is what the action NEEDS: composing a new message requires no message at
+    // all, so it belongs with the window-wide operations, while Reply and
+    // Forward act on whatever the pane is showing and live on its own bar.
+    toolBar->addAction(m_actions.value(QStringLiteral("compose")));
+    toolBar->addSeparator();
+
     QAction *syncAction = m_actions.value(QStringLiteral("sync"));
     // Carried over from the QPushButton this replaced: with no command
     // configured the control is disabled, and the tooltip is the only thing
@@ -1997,11 +2000,17 @@ void MainWindow::populateMessageBar()
     // The window's own QActions, shown a second time rather than copied: a
     // duplicate QAction would need its own enablement and would drift from the
     // menu entry that updateComposeActions() keeps in step.
+    // Reply and Forward only: Compose needs no message and sits on the main
+    // toolbar with the other window-wide actions.
+    //
+    // Slightly smaller than the main toolbar's icons, deriving from the
+    // configured size rather than hardcoding one, so the bar stays subordinate
+    // to the chrome above it however the user sets that key.
+    const int iconSize = qMax(16, (m_config.toolbarIconSize() * 7) / 8);
     m_messageView->setBarActions(
-        { m_actions.value(QStringLiteral("compose")),
-          m_actions.value(QStringLiteral("reply")),
+        { m_actions.value(QStringLiteral("reply")),
           m_actions.value(QStringLiteral("forward")) },
-        { m_actions.value(QStringLiteral("toggle_html")) });
+        { m_actions.value(QStringLiteral("toggle_html")) }, iconSize);
 }
 
 void MainWindow::showShortcutReference()

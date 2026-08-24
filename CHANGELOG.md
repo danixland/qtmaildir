@@ -23,7 +23,7 @@ point at which they are stable.
   reply follows what the message being answered used.
 - Drafts autosave to the account's `drafts` folder as ordinary Maildir files,
   so mbsync carries them to the server and another client can pick one up.
-- **A button bar over the message pane.** Compose, Reply and Forward sit
+- **A button bar over the message pane.** Reply and Forward sit directly
   above the message, with Toggle HTML at the right end. Forward had been
   reachable only from the Message menu.
 - A reply opens with the cursor on a blank line above the quote, and with the
@@ -48,9 +48,9 @@ point at which they are stable.
 
 ### Changed
 
-- The main toolbar keeps only the actions that act on the list or the
-  selection (Sync, Archive, Delete, Mark all read, Undo). Compose and Reply
-  move to the new message-pane bar, where Forward joins them.
+- The main toolbar keeps the actions that need no particular message
+  (Compose, Sync, Archive, Delete, Mark all read, Undo). Reply moves to the
+  new message-pane bar, where Forward joins it.
 
 ### Fixed
 

@@ -99,8 +99,20 @@
         <translation>Invia il messaggio come testo semplice con una versione HTML a fianco. Il testo semplice è quello che hai scritto.</translation>
     </message>
     <message>
+        <source>Signature</source>
+        <translation>Firma</translation>
+    </message>
+    <message>
+        <source>Chooses the signature added to this message.</source>
+        <translation>Sceglie la firma da aggiungere a questo messaggio.</translation>
+    </message>
+    <message>
         <source>Send</source>
         <translation>Invia</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>Nessuna</translation>
     </message>
     <message>
         <source>Large attachment</source>
@@ -196,6 +208,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>[compose] quote_position &apos;%1&apos; is not recognised; expected above or below. Using below.</source>
         <translation>[compose] quote_position &apos;%1&apos; non è riconosciuto; atteso above o below. Uso below.</translation>
+    </message>
+    <message>
+        <source>[compose] signature_position &apos;%1&apos; is not recognised; expected end or above_quote. Using end.</source>
+        <translation>[compose] signature_position &apos;%1&apos; non è riconosciuto; atteso end o above_quote. Uso end.</translation>
     </message>
     <message>
         <source>[compose] autosave_interval_ms &apos;%1&apos; is not a number; using %2.</source>

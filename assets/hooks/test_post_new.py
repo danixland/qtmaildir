@@ -38,6 +38,16 @@ from pathlib import Path
 HOOK = Path(__file__).resolve().parent / "post-new"
 
 
+def files(env, query):
+    """How many FILES notmuch holds for the messages matching a query, which
+    is not the message count: a message sent to another of the user's own
+    accounts is one message with two files."""
+    result = subprocess.run(
+        ["notmuch", "search", "--output=files", "--", query],
+        env=env, capture_output=True, text=True, check=True)
+    return len([line for line in result.stdout.splitlines() if line])
+
+
 def make_message(maildir, name, sender, subject):
     path = maildir / "new" / name
     path.write_text(
@@ -202,7 +212,7 @@ def test_a_protected_removal_is_skipped_whole_and_the_run_continues():
         assert count(env, "tag:new") == 0
 
 
-def setup_accounts(tmp, sent_config=True):
+def setup_accounts(tmp, sent_config=True, split_index=False):
     """A maildir laid out as qtmaildir configures it: two accounts, each with
     an Inbox and a Sent folder, one message in each.
 
@@ -232,10 +242,23 @@ def setup_accounts(tmp, sent_config=True):
                  "you@example.org", "something else sent")
 
     config = Path(tmp) / "notmuch-config"
-    config.write_text(
-        f"[database]\npath={root}\n\n"
-        f"[new]\ntags=new;unread;inbox\n\n"
-        f"[user]\nname=Test\nprimary_email=you@example.org\n")
+    if split_index:
+        # The index somewhere else entirely, which is how the developer's own
+        # machine runs: `database.path` is then the INDEX directory and no
+        # message file is inside it. Anything reading that key as the mail
+        # root resolves every path wrongly, and the ordinary layout above
+        # cannot show it because both keys return the same string.
+        index = Path(tmp) / "index"
+        index.mkdir()
+        config.write_text(
+            f"[database]\npath={index}\nmail_root={root}\n\n"
+            f"[new]\ntags=new;unread;inbox\n\n"
+            f"[user]\nname=Test\nprimary_email=you@example.org\n")
+    else:
+        config.write_text(
+            f"[database]\npath={root}\n\n"
+            f"[new]\ntags=new;unread;inbox\n\n"
+            f"[user]\nname=Test\nprimary_email=you@example.org\n")
 
     env = dict(os.environ)
     env["NOTMUCH_CONFIG"] = str(config)
@@ -282,6 +305,65 @@ def test_sent_mail_does_not_keep_the_inbox_tag():
         assert count(env, "tag:inbox") == 2
         assert count(env, 'tag:inbox and path:"acct-one/Inbox/**"') == 1
         assert count(env, 'tag:inbox and path:"acct-two/Inbox/**"') == 1
+
+
+def test_a_message_that_was_sent_AND_received_keeps_inbox():
+    """Item 166. notmuch deduplicates by Message-ID, so mail the user sends
+    to their own other account is ONE message with TWO files: the sender's
+    Sent copy and the recipient's Inbox copy.
+
+    The carve-out matches on a file's path but tags the MESSAGE, so matching
+    the Sent copy stripped `inbox` from the Inbox copy as well and the mail
+    vanished from the account that genuinely received it. The predicate has
+    to hold for every file, not for any file.
+
+    The identical `name` is what makes this one message: make_message()
+    derives the Message-Id from it.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = setup_accounts(tmp)
+        root = Path(tmp) / "Mail"
+        make_message(root / "acct-one/Sent", "self-addressed",
+                     "you@example.org", "to my other account")
+        make_message(root / "acct-two/Inbox", "self-addressed",
+                     "you@example.org", "to my other account")
+        subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                       check=True)
+        # One message, two files: the premise of the whole defect.
+        assert count(env, "id:self-addressed@example.org") == 1
+        assert files(env, "id:self-addressed@example.org") == 2
+
+        write_rules(env, [])
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+
+        # It arrived, so it keeps `inbox`...
+        assert count(env, "tag:inbox and id:self-addressed@example.org") == 1
+        # ...and the ordinary sent message, whose only file is in a sent
+        # folder, still loses it. Without this half the fix could simply be
+        # "never strip anything".
+        assert count(env, "tag:inbox and id:sent-one@example.org") == 0
+
+
+def test_the_carve_out_works_with_the_index_split_from_the_mail():
+    """notmuch can hold the Xapian index outside the Maildir, and this user's
+    does. `database.path` is then the index directory, so a carve-out reading
+    that key as the mail root builds prefixes no message file is under, finds
+    every file "outside" the sent folders, and silently stops stripping
+    anything.
+
+    The ordinary fixture cannot catch it: with the index inside the mail root
+    both keys return the same string and either one passes.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        env = setup_accounts(tmp, split_index=True)
+        write_rules(env, [])
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert count(env, 'tag:inbox and path:"acct-one/Sent/**"') == 0
+        assert count(env, 'tag:inbox and path:"acct-one/Inbox/**"') == 1
 
 
 def test_sent_mail_keeps_every_other_tag():

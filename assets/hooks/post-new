@@ -73,6 +73,109 @@ def log(message):
     print(f"post-new: {message}", file=sys.stderr)
 
 
+def _quote(value):
+    """Escape a Message-ID for a double-quoted notmuch term."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def sent_only(query, folders):
+    """The ids matching `query` whose files are ALL inside `folders`.
+
+    None on failure, so the caller leaves `tag:new` in place rather than
+    stripping on a half-read answer.
+
+    **Every file has to be in a sent folder, not merely one of them.** notmuch
+    deduplicates by Message-ID, so mail the user sends to another of their own
+    accounts is ONE message with two files: the sender's Sent copy and the
+    recipient's Inbox copy. The old query matched on a path and the tag applied
+    to the message, so matching the Sent copy stripped `inbox` from the copy
+    that had genuinely arrived, and the mail was missing from the account that
+    received it (item 166).
+
+    This cannot be expressed as a query, which is why it is a loop. Measured
+    against a two-file message: `not path:"Inbox/**"` does NOT exclude it, and
+    `count --output=files` on a path query reports every file of every matching
+    message rather than the files that matched. Both read as if they worked and
+    are wrong for the same reason, that a notmuch term is a predicate over a
+    MESSAGE and the distinction being drawn here is between its FILES.
+    """
+    root = mail_root()
+    if root is None:
+        log("no mail root; leaving sent mail alone")
+        return None
+
+    prefixes = [root / folder for folder in folders]
+
+    matched = search(query, "messages")
+    if matched is None:
+        return None
+
+    # ponytail: one `notmuch search` per matched message. N is the sent mail
+    # in tag:new, so an ordinary sync is a handful and a first-run reindex is
+    # the whole corpus. Batch by parsing --format=json once if that ever
+    # matters; it does not at this size, and the loop is the readable form.
+    ids = []
+    for message_id in matched:
+        paths = search(f"id:{_quote(message_id)}", "files")
+        if paths is None:
+            return None
+        if all(any(_within(Path(path), prefix) for prefix in prefixes)
+               for path in paths):
+            ids.append(message_id)
+    return ids
+
+
+def _within(path, prefix):
+    """Whether `path` is inside `prefix`, compared as paths.
+
+    Not `startswith`: `<root>/Sent-old/cur/1` starts with `<root>/Sent` and is
+    a different folder. Same trap as the attachment-save path check in the
+    application.
+    """
+    try:
+        path.relative_to(prefix)
+    except ValueError:
+        return False
+    return True
+
+
+def mail_root():
+    """The Maildir root, or None.
+
+    `database.mail_root`, not `database.path`: notmuch can hold the Xapian
+    index somewhere else entirely, and this user's does. Under that layout
+    `database.path` is the INDEX directory and no message file is inside it.
+    """
+    result = subprocess.run(["notmuch", "config", "get", "database.mail_root"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return Path(value) if value else None
+
+
+def search(query, output):
+    """`notmuch search --output=<output>` as a list, or None on failure.
+
+    An id comes back bare here, without the `id:` prefix, because
+    `--output=messages` prints `id:<value>` and the prefix is stripped.
+    """
+    result = subprocess.run(
+        ["notmuch", "search", f"--output={output}", "--", query],
+        capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"notmuch search failed: {result.stderr.strip()}")
+        return None
+
+    values = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        values.append(line[3:] if line.startswith("id:") else line)
+    return values
+
+
 def strip_inbox_from_sent(run):
     """Take `inbox` off mail the user SENT, and nothing else.
 
@@ -105,20 +208,20 @@ def strip_inbox_from_sent(run):
 
     query = f"{SCOPE} and ({qtmaildirconf.sent_query(folders)})"
 
-    # Counted BEFORE the tag, because the tag is what makes the count zero.
-    # A `notmuch tag` that matches nothing SUCCEEDS, so the old log line said
-    # "applied" whether it stripped four messages or none, and item 164 is
-    # exactly the case where that distinction is the whole question: a draft
-    # kept `inbox` on a pass whose log claimed the carve-out had run. The
-    # count is the only thing that separates "the tag ran and something
-    # re-added inbox afterwards" from "the message was never in scope".
-    matched = count(query)
-
-    if not run(["-inbox"], query):
+    ids = sent_only(query, folders)
+    if ids is None:
         return False
 
+    for message_id in ids:
+        if not run(["-inbox"], f"id:{_quote(message_id)}"):
+            return False
+
+    # A `notmuch tag` matching nothing SUCCEEDS, so the old log line said
+    # "applied" whether it stripped four messages or none, and item 164 is
+    # exactly the case where that distinction is the whole question: a draft
+    # that kept `inbox` on a pass whose log claimed the carve-out had run.
     log(f"sent-folder carve-out applied over {len(folders)} folder(s), "
-        f"{matched} message(s)")
+        f"{len(ids)} message(s)")
     return True
 
 

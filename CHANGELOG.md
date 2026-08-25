@@ -11,6 +11,15 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-08-25
+
+qtmaildir can write mail. A composer, markdown bodies sent as plain text or
+alongside an HTML part, drafts that autosave to the server and can be picked
+up again, signatures, and a send that goes through your own sendmail
+compatible program so this application still speaks no network protocol of its
+own. The query row gains a Drafts filter and gives up pinning, and the message
+pane gains a button bar of its own.
+
 ### Added
 
 - **Composing and sending.** Ctrl+N opens a composer; Reply, Reply all, Reply

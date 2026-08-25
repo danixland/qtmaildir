@@ -288,8 +288,28 @@ QByteArray NotmuchWorker::configPathArg() const
 
 bool NotmuchWorker::openReadOnly()
 {
-    if (m_db)
+    if (m_db) {
+        // A read-only handle is a Xapian SNAPSHOT taken when it was opened, so
+        // it never observes a write made by another process afterwards. The
+        // sync script's `notmuch new` is exactly that, which made mail arriving
+        // while the window was open invisible until the application restarted:
+        // not only to the post-sync refresh, but to any query the user typed by
+        // hand, since all of them are answered from the same handle. Item 104.
+        //
+        // Reopening here rather than at each call site covers every read path,
+        // which all begin by asking for the handle. It is cheap and it is what
+        // notmuch provides the call for; a failure is deliberately NOT fatal,
+        // since the existing handle is still usable and serving slightly stale
+        // results beats refusing to answer at all.
+        const notmuch_status_t status =
+            notmuch_database_reopen(m_db, NOTMUCH_DATABASE_MODE_READ_ONLY);
+        if (status != NOTMUCH_STATUS_SUCCESS) {
+            emit errorOccurred(
+                QStringLiteral("Cannot refresh notmuch database: %1")
+                    .arg(QString::fromUtf8(notmuch_status_to_string(status))));
+        }
         return true;
+    }
 
     const QByteArray configPath = configPathArg();
     char *error = nullptr;

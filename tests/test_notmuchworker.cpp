@@ -104,6 +104,8 @@ private slots:
     void aSplitIndexListsTheMaildirsFolders();
     void twoMessagesMovedTogetherGetDistinctNames();
 
+    void aQuerySeesMailIndexedAfterTheWorkerOpened();
+
 private:
     /// Adds one read message in `folder` and reindexes, for the move tests.
     /// Each of those takes its own message, because a move is destructive and
@@ -184,6 +186,59 @@ void TestNotmuchWorker::initTestCase()
                                                 "third@example.org")));
 
     QVERIFY2(m_fixture.index(), qPrintable(m_fixture.error()));
+}
+
+void TestNotmuchWorker::aQuerySeesMailIndexedAfterTheWorkerOpened()
+{
+    // The defect this covers is item 104, and it is the reason mail arriving
+    // while the window is open was invisible until the application restarted.
+    //
+    // A read-only notmuch handle is a Xapian SNAPSHOT taken when it is opened.
+    // `notmuch new` runs in a separate process, so nothing it writes is visible
+    // to a handle already open, however long it is held and however many
+    // queries are run through it. The worker opens once and keeps that handle
+    // for the process lifetime, so every query after the first sync answered
+    // from a stale index: a refresh missed the mail, and so did a query the
+    // user typed by hand, which is what ruled out the model and the generation
+    // counter when this was diagnosed.
+    //
+    // ONE worker across both queries is the whole point. The runQuery() helper
+    // builds a fresh worker per call, which opens a fresh handle and therefore
+    // cannot reproduce this at all: a test written through it passes against
+    // the bug.
+    NotmuchWorker worker(m_fixture.configPath());
+
+    const QString query = QStringLiteral("subject:\"Arrived mid-session\"");
+
+    {
+        QSignalSpy ready(&worker, &NotmuchWorker::threadsReady);
+        worker.runQuery(query, 1);
+        QVector<ThreadSummary> before;
+        for (const QList<QVariant> &args : ready)
+            before += args.at(0).value<QVector<ThreadSummary>>();
+        // Establishes that the handle is open and the query is well-formed,
+        // rather than leaving "found nothing" to mean either.
+        QCOMPARE(before.size(), 0);
+    }
+
+    // A second process writes to the index, exactly as the sync script's
+    // `notmuch new` does while the window is open.
+    QVERIFY(m_fixture.addMessage(QStringLiteral("inbox"),
+                                 QStringLiteral("mid@example.org"),
+                                 QStringLiteral("Arrived mid-session"),
+                                 QStringLiteral("Carol <carol@example.org>"),
+                                 QStringLiteral("Tue, 9 Jun 2026 10:00:00 +0000"),
+                                 QStringLiteral("new mail")));
+    QVERIFY2(m_fixture.index(), qPrintable(m_fixture.error()));
+
+    QSignalSpy ready(&worker, &NotmuchWorker::threadsReady);
+    worker.runQuery(query, 2);
+    QVector<ThreadSummary> after;
+    for (const QList<QVariant> &args : ready)
+        after += args.at(0).value<QVector<ThreadSummary>>();
+
+    QCOMPARE(after.size(), 1);
+    QCOMPARE(after.first().subject, QStringLiteral("Arrived mid-session"));
 }
 
 QVector<ThreadSummary> TestNotmuchWorker::runQuery(

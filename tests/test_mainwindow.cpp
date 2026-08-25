@@ -384,6 +384,9 @@ private slots:
     void editTagsOnAReplyCountsItsOwnThreadNotTheFirstInTheList();
     void markCurrentThreadReadResolvesTheThreadThroughTheIndex();
     void deletingAReplyRepaintsThatReplyRow();
+    void deleteIsHiddenOnMailAlreadyInTheTrash();
+    void restoreIsHiddenOnMailThatWasNeverDeleted();
+    void deleteAlsoMarksTheMessageRead();
     void emptyTrashAsksBeforeDestroyingAnything();
     void theUnreadLabelSaysWhichDirectionItWillGo();
     void theUnreadLabelFollowsAWriteWithoutReselecting();
@@ -5212,6 +5215,165 @@ void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
     const QModelIndex threadRow = reply.parent();
     QVERIFY2(!model->threadFor(threadRow).isSpam(),
              "deleting one reply marked its whole thread deleted");
+}
+
+/// A window whose one account owns `acct/`, with its trash at `acct/trash`.
+///
+/// Delete and Restore both ask about a row's PATH, so a test for either needs
+/// a config that says which prefix is a trash folder. Bare-window tests carry
+/// no account at all and would answer "not in the trash" for every row.
+static Config configWithTrash(QTemporaryDir &dir)
+{
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&file);
+        out << "[account.acct]\n"
+            << "maildir = acct\n"
+            << "trash = trash\n"
+            << "inbox = inbox\n";
+    }
+    Config config;
+    config.load(path);
+    return config;
+}
+
+/// One thread row whose displayed message sits at `filePath`.
+static ThreadSummary threadAtPath(const QString &id, const QString &filePath,
+                                  const QStringList &tags = {})
+{
+    ThreadSummary thread = makeThread(id, tags);
+    thread.firstMessagePath = filePath;
+    thread.firstMessageTags = tags;
+    return thread;
+}
+
+void TestMainWindow::deleteIsHiddenOnMailAlreadyInTheTrash()
+{
+    // Item 168, from the user: "I noticed I can hit delete via context menu on
+    // a message already in the trash."
+    //
+    // It was not dangerous, which is the part that made it survive: the file
+    // is already in the destination, so moveMessages() takes its
+    // already-there branch, reports the message as moved and counts an
+    // unsynced change for a move that never happened. The menu claimed to
+    // have done something and nothing had.
+    //
+    // The question is about the PATH, never the `deleted` TAG: a message
+    // trashed by another client carries no such tag, which is why item 103
+    // made the trash view path-based, and asking the tag would offer Delete on
+    // exactly the mail a trash view is full of.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const Config config = configWithTrash(dir);
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *deleteAction =
+        window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(deleteAction);
+
+    model->appendBatch({
+        threadAtPath(QStringLiteral("t1"),
+                     QStringLiteral("acct/inbox/cur/1:2,S")),
+        threadAtPath(QStringLiteral("t2"),
+                     QStringLiteral("acct/trash/cur/2:2,S")),
+    });
+
+    view->setCurrentIndex(model->index(0, 0, {}));
+    QVERIFY2(deleteAction->isVisible(),
+             "Delete is hidden on mail that is NOT in the trash, so this test "
+             "cannot tell the two cases apart");
+
+    view->setCurrentIndex(model->index(1, 0, {}));
+    QVERIFY2(!deleteAction->isVisible(),
+             "Delete is still offered on a message already in the trash, "
+             "where it reports success and does nothing");
+
+    // A folder whose name STARTS with the trash folder's is a different
+    // folder. Without the trailing separator `acct/trash-old` matches
+    // `acct/trash` and Delete silently disappears from mail that was never
+    // trashed, which is the quiet half of the same mistake.
+    model->appendBatch({ threadAtPath(QStringLiteral("t3"),
+                                      QStringLiteral("acct/trash-old/cur/3:2,S")) });
+    view->setCurrentIndex(model->index(2, 0, {}));
+    QVERIFY2(deleteAction->isVisible(),
+             "Delete vanished on mail in acct/trash-old, which is not the "
+             "trash: the prefix was compared without its separator");
+}
+
+void TestMainWindow::restoreIsHiddenOnMailThatWasNeverDeleted()
+{
+    // The mirror, shipped beside it: `restore` was added unconditionally to
+    // both menus, so it was offered on mail that was never deleted, where it
+    // has as little meaning as Delete has in the trash.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const Config config = configWithTrash(dir);
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *restore = window.findChild<QAction *>(QStringLiteral("restore"));
+    QVERIFY(restore);
+
+    model->appendBatch({
+        threadAtPath(QStringLiteral("t1"),
+                     QStringLiteral("acct/inbox/cur/1:2,S")),
+        threadAtPath(QStringLiteral("t2"),
+                     QStringLiteral("acct/trash/cur/2:2,S")),
+    });
+
+    view->setCurrentIndex(model->index(1, 0, {}));
+    QVERIFY2(restore->isVisible(), "Restore is hidden on trashed mail");
+
+    view->setCurrentIndex(model->index(0, 0, {}));
+    QVERIFY2(!restore->isVisible(),
+             "Restore is still offered on mail that was never deleted");
+}
+
+void TestMainWindow::deleteAlsoMarksTheMessageRead()
+{
+    // The user's second request on the same tangent: "messages moved to the
+    // trash should be automatically marked -unread". Deleting is a decision
+    // about the message, so the unread count must not go on including what
+    // the user threw away.
+    //
+    // Asserted on the undo TEXT and depth rather than on the tags: the write
+    // is a move, which a bare window cannot complete, but the tag change it
+    // composes is pushed as one command either way. One command, not two, is
+    // the property that matters: undo has to return the folder AND the tag
+    // together.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const Config config = configWithTrash(dir);
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ threadAtPath(QStringLiteral("t1"),
+                                      QStringLiteral("acct/inbox/cur/1:2,S"),
+                                      { QStringLiteral("unread") }) });
+    const QModelIndex row = model->index(0, 0, {});
+    view->setCurrentIndex(row);
+
+    QVERIFY2(model->threadFor(row).isUnread(),
+             "the fixture is already read, so this test cannot see the tag go");
+
+    auto *deleteAction = window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(deleteAction);
+    deleteAction->trigger();
+
+    QVERIFY2(!model->threadFor(row).isUnread(),
+             "Delete left the message unread in the trash");
 }
 
 void TestMainWindow::emptyTrashAsksBeforeDestroyingAnything()

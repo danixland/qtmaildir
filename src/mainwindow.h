@@ -909,6 +909,20 @@ private:
     /// single state. Called whenever the selection changes.
     void refreshUnreadAction();
 
+    /// Hides Delete on mail already in the trash, and Restore on mail that
+    /// was never there (item 168). Each is offered only where it means
+    /// something, the same rule refreshUnreadAction() applies to the label.
+    void refreshTrashActions();
+
+    /// Whether every selected row's file already sits in its account's trash
+    /// folder. Empty selection answers false.
+    ///
+    /// The question is about the PATH, never the `deleted` TAG: a message
+    /// trashed by another client carries no such tag at all, which is why the
+    /// trash view is path-based (item 103), and asking the tag would offer
+    /// Delete on exactly the mail a trash view is full of.
+    bool everySelectedRowIsInATrashFolder() const;
+
     void editTagsOnSelection();
 
     /// Set once the user has answered the exit prompt, or once a sync started

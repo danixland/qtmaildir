@@ -905,8 +905,10 @@ void MainWindow::buildUi()
     // entry to "Mark as unread" with the same row still selected. Keyed on
     // the model rather than on each of the six call sites that apply an
     // optimistic update, so a new one cannot forget.
-    connect(m_model, &QAbstractItemModel::dataChanged, this,
-            [this]() { refreshUnreadAction(); });
+    connect(m_model, &QAbstractItemModel::dataChanged, this, [this]() {
+        refreshUnreadAction();
+        refreshTrashActions();
+    });
 
     connect(m_threadView, &QAbstractItemView::doubleClicked,
             this, &MainWindow::onRowDoubleClicked);
@@ -3517,6 +3519,60 @@ void MainWindow::showThreadContextMenu(const QPoint &pos)
     m_threadContextMenu->popup(m_threadView->viewport()->mapToGlobal(pos));
 }
 
+bool MainWindow::everySelectedRowIsInATrashFolder() const
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return false;
+
+    for (const QModelIndex &index : rows) {
+        // The row's own file: a reply row's message, a thread row's displayed
+        // message. Same rule as everySelectedRowHasTag(), and for the same
+        // reason: a thread row acts on the message its card shows.
+        const QString path =
+            m_model->isMessageRow(index)
+                ? m_model->messageAt(index).filePath
+                : m_model->threadFor(index).firstMessagePath;
+        if (path.isEmpty())
+            return false;
+
+        const Account account = accountForMessagePath(path);
+        if (account.maildir.isEmpty() || account.trash.isEmpty())
+            return false;
+
+        // Compared as a path segment, never with startsWith(): `trash-old`
+        // starts with `trash` and is a different folder. The same trap the
+        // attachment-save check records.
+        const QString prefix = account.maildir + QLatin1Char('/')
+                               + account.trash + QLatin1Char('/');
+        // accountForMessagePath() accepts both shapes, so this must too: a
+        // thread row's path is database-relative and a reply row's absolute.
+        if (!path.contains(prefix))
+            return false;
+    }
+    return true;
+}
+
+void MainWindow::refreshTrashActions()
+{
+    const bool inTrash = everySelectedRowIsInATrashFolder();
+    const bool haveSelection =
+        !m_threadView->selectionModel()->selectedRows().isEmpty();
+
+    // Delete on mail already in the trash reported success and did nothing:
+    // moveMessages() finds the file already in the destination and takes its
+    // early-return branch, which counts an unsynced change for a move that
+    // never happened (item 168).
+    if (auto *del = m_actions.value(QStringLiteral("delete")))
+        del->setVisible(!haveSelection || !inTrash);
+
+    // The mirror, which shipped beside it: Restore was added unconditionally
+    // to both menus and so was offered on mail that was never deleted.
+    if (auto *restore = m_actions.value(QStringLiteral("restore")))
+        restore->setVisible(!haveSelection || inTrash);
+}
+
 void MainWindow::refreshUnreadAction()
 {
     // The user's design (item 112 and its duplicates 99/147): the label says
@@ -3553,6 +3609,7 @@ void MainWindow::onSelectionChanged()
     // selectedRows() there sees the PREVIOUS selection and would label the
     // action for the rows the user just left (CLAUDE.md, verified Qt 6.11).
     refreshUnreadAction();
+    refreshTrashActions();
 
     const QModelIndexList rows = m_threadView->selectionModel()->selectedRows();
     const int selected = rows.size();
@@ -5388,8 +5445,23 @@ void MainWindow::trashMessages(const QStringList &messageIds,
         return;
 
     for (auto it = byTrash.cbegin(); it != byTrash.cend(); ++it) {
+        // `unread` goes with it (item 168, the user's request). Deleting is a
+        // decision about the message, so the unread count must not go on
+        // including what the user threw away.
+        //
+        // In the SAME change rather than as a second write, so one undo
+        // returns the folder and the tag together: TagChange::inverted()
+        // gives it back only if it travelled with the move.
+        //
+        // This rewrites the Maildir filename, because
+        // maildir.synchronize_flags is true, and so reaches the server on the
+        // next mbsync. That is the same mechanism the post-new hook REFUSES
+        // to touch, and the difference is who is acting: the hook tags
+        // arriving mail unattended, while this is an explicit gesture on a
+        // message in front of the user.
         sendMove(it.value(), it.key(),
-                 { QStringLiteral("deleted"), kOriginTagPlaceholder() }, {},
+                 { QStringLiteral("deleted"), kOriginTagPlaceholder() },
+                 { QStringLiteral("unread") },
                  tr("Delete"), false, wholeThreadIds);
     }
 

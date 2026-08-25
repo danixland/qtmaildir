@@ -37,6 +37,7 @@ add_library(qtmaildir_lib STATIC
     querycompleter.cpp
     rulequery.cpp
     searchterm.cpp
+    signatures.cpp
 )
 
 target_include_directories(qtmaildir_lib

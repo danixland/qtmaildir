@@ -25,6 +25,7 @@
 #include "mimeparser.h"
 #include "messagesender.h"
 #include "senddialog.h"
+#include "signatures.h"
 
 #include <QAction>
 #include <QCheckBox>
@@ -40,9 +41,11 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QTextCursor>
 #include <QTimer>
 #include <QToolBar>
@@ -128,6 +131,7 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
     buildFormatToolbar();
     seedFields();
     seedBody();
+    seedSignature();
 
     // AFTER buildUi(), which creates m_banner, and BEFORE
     // refreshAttachmentList(), which renders m_attachments: extraction appends
@@ -402,8 +406,22 @@ void ComposeWindow::buildUi()
     for (QLineEdit *field : { m_to, m_cc, m_bcc, m_subject })
         connect(field, &QLineEdit::textChanged, this, &ComposeWindow::markDirty);
     connect(m_sendHtml, &QCheckBox::toggled, this, &ComposeWindow::markDirty);
-    connect(m_from, &QComboBox::currentIndexChanged, this,
-            &ComposeWindow::markDirty);
+    connect(m_from, &QComboBox::currentIndexChanged, this, [this]() {
+        markDirty();
+        // The account SEEDS the signature, so a change to it re-seeds. It
+        // stops the moment the user picks one: re-seeding unconditionally is
+        // the one behaviour that can silently discard a deliberate choice
+        // made a moment earlier. Same shape as send_html, which seeds from
+        // context and is then left alone.
+        if (m_signatureChosen)
+            return;
+        const QString seeded = seededSignatureName();
+        if (!Signatures::names(m_signatureDir).contains(seeded)) {
+            applySignature(QString());
+            return;
+        }
+        applySignature(seeded);
+    });
 }
 
 void ComposeWindow::buildFormatToolbar()
@@ -536,6 +554,29 @@ void ComposeWindow::buildFormatToolbar()
         m_sendHtml->setIcon(htmlIcon);
     m_formatToolbar->addWidget(m_sendHtml);
 
+    // The signature switch rides at the right end with Attach and the HTML
+    // toggle: item 142 put the controls OF THE EDITOR on this side, as against
+    // the formatting buttons on the left, and choosing a signature is one of
+    // those.
+    //
+    // A QToolButton with a menu rather than a QComboBox, matching the bar's
+    // other controls; a combo would read as a different class of thing. Not
+    // registered in KeyMap: it is parented to this window, exactly as the
+    // formatting actions are, so its scope is the composer and item 132's
+    // reachability rule does not apply.
+    m_signatureSwitch = new QToolButton(m_formatToolbar);
+    m_signatureSwitch->setObjectName(QStringLiteral("signatureSwitch"));
+    m_signatureSwitch->setText(tr("Signature"));
+    m_signatureSwitch->setToolTip(
+        tr("Chooses the signature added to this message."));
+    m_signatureSwitch->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_signatureSwitch->setPopupMode(QToolButton::InstantPopup);
+    const QIcon signatureIcon = QIcon::fromTheme(QStringLiteral("insert-text"));
+    if (!signatureIcon.isNull())
+        m_signatureSwitch->setIcon(signatureIcon);
+    m_signatureSwitch->setMenu(new QMenu(m_signatureSwitch));
+    m_formatToolbar->addWidget(m_signatureSwitch);
+
     // Send is NOT on this row: it is the terminal action, and it lives on the
     // button beside the headers. The QAction survives because it carries the
     // shortcut and is what the button triggers.
@@ -661,6 +702,122 @@ void ComposeWindow::seedBody()
     // The seeded quote is not an edit the user made, so it must not survive as
     // an undo step: one Ctrl+Z on a fresh composer would otherwise wipe the
     // quote and read as the buffer losing its content.
+    m_body->document()->clearUndoRedoStacks();
+}
+
+void ComposeWindow::setSignatureDir(const QString &dir)
+{
+    m_signatureDir = dir;
+}
+
+QStringList ComposeWindow::knownSignatures() const
+{
+    QStringList known;
+    const QStringList names = Signatures::names(m_signatureDir);
+    known.reserve(names.size());
+    for (const QString &name : names)
+        known.append(Signatures::text(m_signatureDir, name));
+    return known;
+}
+
+QString ComposeWindow::seededSignatureName() const
+{
+    // The COMBO, not m_context: the context records where the composer opened
+    // and does not follow a From: change, so reading it would seed the
+    // original account's signature for ever.
+    const QString key = m_from->currentData().toString();
+    const Account account =
+        m_config.account(key.isEmpty() ? m_context.accountKey : key);
+    if (!account.signature.isEmpty())
+        return account.signature;
+    return m_config.compose().signature;
+}
+
+void ComposeWindow::applySignature(const QString &name)
+{
+    const QString text =
+        name.isEmpty() ? QString() : Signatures::text(m_signatureDir, name);
+
+    // A QTextCursor replacement rather than setPlainText(), for the reason
+    // recorded at applyEdit(): setPlainText() destroys the document's undo
+    // stack, so a switch would make everything typed before it unrecoverable.
+    const QString replaced = Signatures::replace(
+        m_body->toPlainText(), text, knownSignatures(),
+        m_config.compose().signaturePosition);
+
+    QTextCursor cursor(m_body->document());
+    cursor.select(QTextCursor::Document);
+    cursor.insertText(replaced);
+
+    m_signatureName = name;
+
+    for (QAction *action : m_signatureSwitch->menu()->actions())
+        action->setChecked(action->data().toString() == name);
+}
+
+void ComposeWindow::seedSignature()
+{
+    if (m_signatureDir.isEmpty()) {
+        const QString base =
+            QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
+        m_signatureDir = base + QStringLiteral("/qtmaildir/signatures");
+    }
+
+    QMenu *menu = m_signatureSwitch->menu();
+    menu->clear();
+
+    auto *none = menu->addAction(tr("None"));
+    none->setCheckable(true);
+    none->setData(QString());
+    connect(none, &QAction::triggered, this, [this]() {
+        m_signatureChosen = true;
+        applySignature(QString());
+        markDirty();
+    });
+
+    const QStringList names = Signatures::names(m_signatureDir);
+    for (const QString &name : names) {
+        auto *action = menu->addAction(name);
+        action->setCheckable(true);
+        action->setData(name);
+        connect(action, &QAction::triggered, this, [this, name]() {
+            m_signatureChosen = true;
+            applySignature(name);
+            markDirty();
+        });
+    }
+
+    // A resumed draft is the message ITSELF and already carries whatever
+    // signature it was saved with, exactly as seedBody() takes its body
+    // verbatim. Seeding again would append a second one.
+    if (m_context.kind == ComposeContext::Kind::Draft) {
+        none->setChecked(true);
+        // The draft IS the user's choice: its signature is deliberate prior
+        // state, so a From: change must not follow the new account and
+        // rewrite what was saved. Marking it chosen keeps the same invariant
+        // the switch actions set, without ever having run the switch.
+        m_signatureChosen = true;
+        return;
+    }
+
+    const QString seeded = seededSignatureName();
+    if (seeded.isEmpty()) {
+        none->setChecked(true);
+        return;
+    }
+    if (!names.contains(seeded)) {
+        // Reported by Config as a problem; the composer still opens, with no
+        // signature, and the switch still works.
+        none->setChecked(true);
+        return;
+    }
+
+    applySignature(seeded);
+
+    // The seeded signature is not an edit the user made, so it must not
+    // survive as an undo step: one Ctrl+Z on a fresh composer would otherwise
+    // wipe content they never typed. Same reason seedBody() clears after the
+    // quote.
     m_body->document()->clearUndoRedoStacks();
 }
 
@@ -861,6 +1018,7 @@ bool ComposeWindow::saveDraftNow()
     const QString folder = QDir(m_mailRoot).absoluteFilePath(
         account.maildir + QLatin1Char('/') + account.drafts);
 
+    const QString previousPath = m_draftPath;
     const DraftStore::Result written =
         DraftStore::write(folder, built.bytes, QStringLiteral("D"), m_draftPath);
 
@@ -881,6 +1039,10 @@ bool ComposeWindow::saveDraftNow()
     m_dirty = false;
     m_saveFailed = false;
     m_banner->hide();
+
+    // The write is done and the previous revision already unlinked; hand both
+    // paths up so the owner indexes the new one and drops the old (item 158).
+    emit draftSaved(written.path, previousPath);
     return true;
 }
 
@@ -897,6 +1059,7 @@ void ComposeWindow::setInputsEnabled(bool enabled)
     m_from->setEnabled(enabled);
     m_body->setReadOnly(!enabled);
     m_sendHtml->setEnabled(enabled);
+    m_signatureSwitch->setEnabled(enabled);
     m_attachmentList->setEnabled(enabled);
     m_formatToolbar->setEnabled(enabled);
 
@@ -1042,6 +1205,7 @@ void ComposeWindow::send()
             dialog->setStage(SendDialog::Stage::RemovingDraft);
             if (!m_draftPath.isEmpty()) {
                 QFile::remove(m_draftPath);
+                emit draftRemoved(m_draftPath);
                 m_draftPath.clear();
             }
 

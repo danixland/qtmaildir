@@ -26,6 +26,7 @@
 #include <QStringList>
 
 #include "completionentry.h"
+#include "signatures.h"
 
 class QSettings;
 
@@ -57,6 +58,18 @@ struct Account
     /// convention would produce an empty view for the nested ones and a wrong
     /// one for the account that has none.
     QString sent;
+
+    /// The signature seeded when composing from this account, by name.
+    ///
+    /// Optional, and it does not tie a signature to the account: the switch on
+    /// the composer's editor bar keeps every signature reachable whichever
+    /// account is selected. This is a STARTING value only, which is why the
+    /// user's "not tied to an account" constraint survives it (item 152).
+    ///
+    /// The fallback to [compose] signature is NOT resolved here. An account
+    /// with no key of its own carries an empty string and the composer falls
+    /// through, so the two values stay distinguishable.
+    QString signature;
 
     /// The account's trash folder, relative to maildir.
     ///
@@ -227,6 +240,16 @@ struct ComposeSettings
     /// Preferred account for a New message when the dropdown is on All
     /// accounts. Falls through when it names an account that cannot send.
     QString defaultAccount;
+
+    /// The signature seeded when the account carries none, by name. Empty
+    /// means no signature is seeded at all.
+    QString signature;
+
+    /// Where a newly inserted signature goes. End by default, which is the
+    /// user's own habit; above_quote exists because other clients offer the
+    /// choice, and the splice's quote-aware scan is needed for the guard
+    /// either way.
+    Signatures::Position signaturePosition = Signatures::Position::End;
 
     qint64 attachmentWarnBytes = 26214400;
 };

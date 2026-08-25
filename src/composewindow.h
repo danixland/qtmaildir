@@ -96,6 +96,21 @@ public:
     /// and quitting therefore loses that text.
     bool lastSaveFailed() const { return m_saveFailed; }
 
+    /// Where the signature files live. Defaults to
+    /// <config>/qtmaildir/signatures; a test points it at its own directory.
+    ///
+    /// A setter rather than a config key: nothing yet suggests the user wants
+    /// a second location, and the tests need to not read the real one.
+    void setSignatureDir(const QString &dir);
+
+    /// Seeds the signature from config and fills the switch.
+    ///
+    /// Public and called by the constructor rather than private, so a test can
+    /// drive it after pointing setSignatureDir() somewhere safe. A resumed
+    /// draft seeds nothing: its body already carries the signature it was
+    /// written with.
+    void seedSignature();
+
     /// Writes the current buffer to the drafts folder now. Returns false and
     /// leaves the banner up on failure.
     ///
@@ -153,6 +168,17 @@ signals:
     /// pointer before WA_DeleteOnClose destroys the window.
     void closed(ComposeWindow *window);
 
+    /// A draft was written to disk, so the window's owner can index it and it
+    /// appears in the Drafts view without a full sync (item 158).
+    ///
+    /// \p path is the file just written, absolute. \p previousPath is the file
+    /// the write replaced, empty on the first save of a new draft.
+    void draftSaved(const QString &path, const QString &previousPath);
+
+    /// A draft file was unlinked (sent), so its index entry must go too.
+    /// \p path is the file that was removed, absolute.
+    void draftRemoved(const QString &path);
+
 protected:
     /// The one place the registry is told, whichever route closes the window.
     void closeEvent(QCloseEvent *event) override;
@@ -176,6 +202,16 @@ private:
     /// a silently wrong send is not among the outcomes.
     void extractForwardedAttachments();
     void seedBody();
+
+    /// Applies \p name to the buffer, replacing whatever is there.
+    void applySignature(const QString &name);
+
+    /// The text of every signature on disk, for replace()'s guard.
+    QStringList knownSignatures() const;
+
+    /// The signature name this account seeds, falling through to [compose].
+    QString seededSignatureName() const;
+
     void refreshAttachmentList();
     void setInputsEnabled(bool enabled);
     void showSendFailure(const QString &stderrText);
@@ -227,6 +263,14 @@ private:
     QComboBox *m_from = nullptr;
     QPlainTextEdit *m_body = nullptr;
     QToolButton *m_sendHtml = nullptr;
+    QToolButton *m_signatureSwitch = nullptr;
+    QString m_signatureDir;
+    QString m_signatureName;  ///< The selected signature, empty for None.
+
+    /// True once the user has used the switch. From then on a From: change
+    /// stops re-seeding, so a deliberate choice is never overwritten. Matches
+    /// how send_html seeds from context and is then left alone.
+    bool m_signatureChosen = false;
     QLabel *m_banner = nullptr;
     QListWidget *m_attachmentList = nullptr;
     QWidget *m_sendLogPane = nullptr;

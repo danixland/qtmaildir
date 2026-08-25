@@ -31,7 +31,9 @@ point at which they are stable.
 - **A Drafts filter** in the query row, beside Sent and Trash. It matches each
   account's `drafts` folder, so it finds what the composer actually writes
   rather than trusting a flag. An account that configures no drafts folder
-  contributes nothing and shows no button.
+  contributes nothing and shows no button. Like Sent, it lists messages rather
+  than threads: a draft reply gets a row of its own instead of being folded
+  into the conversation it answers, where it could not be opened.
 - `Ctrl+W` closes a composer, the way it closes a window elsewhere. The draft
   is saved or discarded exactly as it is when the window is closed by any
   other route.
@@ -65,6 +67,13 @@ point at which they are stable.
 - The notmuch hooks that auto-tag incoming mail now live in this repository,
   under `assets/hooks/`. They moved from the companion `mailctl` project,
   which is being retired.
+- Signatures. Markdown files in `~/.config/qtmaildir/signatures/`, one per
+  signature, chosen from a control on the composer's editor bar. One
+  signature serves both the plain-text and the HTML part of a message, since
+  the HTML is rendered from the same markdown. `[compose] signature` seeds a
+  new message, `[account.<key>] signature` overrides it per account, and
+  `[compose] signature_position` puts a new one at the end of the message
+  (the default) or above the quoted text in a reply.
 
 ### Changed
 

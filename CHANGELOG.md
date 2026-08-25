@@ -25,6 +25,46 @@ point at which they are stable.
   already there and is now findable: Send and Close under File, the editor's
   undo and clipboard actions under Edit, and the formatting buttons, Attach,
   Send as HTML and the signature switch under Format.
+- **Empty trash**, under Message. It permanently deletes every message in the
+  trash of the selected account, or of every account in the All accounts view.
+  This is the one action in qtmaildir that cannot be undone, so it is also the
+  one that asks first, naming how many messages it will destroy and where;
+  Cancel is the default and it has no keyboard shortcut. The files are removed
+  locally, and a channel configured with `Expunge Both` carries that to the
+  server on the next sync.
+- **A build number on unreleased builds.** A build of an unreleased version
+  now reports `X.Y.Z build N`, so one binary can be told from the one it
+  replaced; a release reports a plain `X.Y.Z`. Shown by `--version`, `--help`,
+  the About dialog and the placeholder pane, and deliberately not in the
+  window title.
+
+### Changed
+
+- **The unread action says which way it will go.** "Toggle unread" read the
+  same whichever direction it would take; it is now "Mark as read" on unread
+  mail and "Mark as unread" on read mail, and it is hidden entirely when the
+  selection holds both, where no label would be true.
+- **Marking a whole thread read or unread is now two entries**, both under
+  Whole thread, replacing the single toggle. A thread's unread state is the
+  union over its messages, so a thread with one unread reply always answered
+  "unread" and the toggle could only ever mark it read. Neither entry carries
+  a shortcut, and `Ctrl+Alt+U` is now unbound.
+- **Delete and Restore appear only where they apply.** Delete is hidden on
+  mail already in the trash, where it reported success and did nothing, and
+  Restore is hidden on mail that was never deleted.
+- **Deleting a message also marks it read.** Mail you threw away no longer
+  counts towards unread. Undo returns both the folder and the tag.
+
+### Fixed
+
+- **New mail reached the index but not the window.** The worker never reopened
+  its read-only notmuch handle, so nothing indexed after startup appeared in
+  any query and the application looked like it had stopped syncing.
+- **Mail sent to another of your own accounts lost `inbox`** and was missing
+  from the account that received it. notmuch stores one message with two files
+  in that case, the sender's copy and the recipient's, and the `post-new`
+  hook's sent-mail carve-out matched the sent copy and stripped the tag from
+  both.
 
 ## [0.27.0] - 2026-08-25
 

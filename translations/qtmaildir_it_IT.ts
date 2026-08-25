@@ -499,6 +499,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Aggiunge o rimuove l&apos;etichetta deleted</translation>
     </message>
     <message>
+        <source>Mark thread &amp;read</source>
+        <translation>Segna conversazione come &amp;letta</translation>
+    </message>
+    <message>
+        <source>Remove the unread tag from every message of the selected threads</source>
+        <translation>Rimuove il tag unread da ogni messaggio delle conversazioni selezionate</translation>
+    </message>
+    <message>
         <source>Re&amp;ply</source>
         <translation>Ris&amp;pondi</translation>
     </message>
@@ -752,12 +760,16 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Segna conversazione come spam</translation>
     </message>
     <message>
-        <source>Toggle the unread tag on whole threads</source>
-        <translation>Inverte l&apos;etichetta non letto su intere conversazioni</translation>
-    </message>
-    <message>
         <source>Mark thread read</source>
         <translation>Segna conversazione come letta</translation>
+    </message>
+    <message>
+        <source>Mark thread &amp;unread</source>
+        <translation>Segna conversazione come &amp;non letta</translation>
+    </message>
+    <message>
+        <source>Add the unread tag to every message of the selected threads</source>
+        <translation>Aggiunge il tag unread a ogni messaggio delle conversazioni selezionate</translation>
     </message>
     <message>
         <source>Mark thread unread</source>
@@ -1163,6 +1175,22 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
             <numerusform>%1: %n conversazione</numerusform>
             <numerusform>%1: %n conversazioni</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Mark as &amp;read</source>
+        <translation>Segna come &amp;letto</translation>
+    </message>
+    <message>
+        <source>Remove the unread tag from the selection</source>
+        <translation>Rimuove il tag unread dalla selezione</translation>
+    </message>
+    <message>
+        <source>Mark as &amp;unread</source>
+        <translation>Segna come &amp;non letto</translation>
+    </message>
+    <message>
+        <source>Add the unread tag to the selection</source>
+        <translation>Aggiunge il tag unread alla selezione</translation>
     </message>
     <message numerus="yes">
         <source>1 thread selected (%n message(s))</source>

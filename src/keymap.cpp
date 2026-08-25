@@ -52,7 +52,12 @@ QStringList KeyMap::knownActions()
         QStringLiteral("archive_thread"),
         QStringLiteral("delete_thread"),
         QStringLiteral("spam_thread"),
-        QStringLiteral("toggle_unread_thread"),
+        // Item 112 split the thread toggle in two. Neither carries a default
+        // chord, at the user's choice: since item 132 a shortcut is a chosen
+        // subset rather than a requirement, and Ctrl+Alt+U meant whichever
+        // direction the union happened to pick, which is what made it wrong.
+        QStringLiteral("mark_thread_read"),
+        QStringLiteral("mark_thread_unread"),
         QStringLiteral("flag_thread"),
         // Compose and send (item 123). save_message deliberately carries no
         // default chord: since item 132 a shortcut is a chosen subset rather
@@ -177,7 +182,6 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Ctrl+Alt+E"),   QStringLiteral("archive_thread") },
         { QStringLiteral("Ctrl+Alt+D"),   QStringLiteral("delete_thread") },
         { QStringLiteral("Ctrl+Alt+S"),   QStringLiteral("spam_thread") },
-        { QStringLiteral("Ctrl+Alt+U"),   QStringLiteral("toggle_unread_thread") },
         { QStringLiteral("Ctrl+Alt+I"),   QStringLiteral("flag_thread") },
         { QStringLiteral("Ctrl+T"),       QStringLiteral("edit_tags") },
         // Shifted against Ctrl+T for the same reason Ctrl+Shift+U is shifted

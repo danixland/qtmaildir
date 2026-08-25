@@ -383,6 +383,11 @@ private slots:
     void editTagsOnAReplyCountsItsOwnThreadNotTheFirstInTheList();
     void markCurrentThreadReadResolvesTheThreadThroughTheIndex();
     void deletingAReplyRepaintsThatReplyRow();
+    void theUnreadLabelSaysWhichDirectionItWillGo();
+    void theUnreadLabelFollowsAWriteWithoutReselecting();
+    void theUnreadActionIsHiddenOnAMixedSelection();
+    void markThreadUnreadReachesAMixedThread();
+    void markThreadReadAndUnreadAreSeparateActions();
     void toggleUnreadOnAReplyReadsTheReplysOwnState();
     void toggleUnreadOnAReplyRepaintsItInBothDirections();
     void taggingTheOpenReplyUpdatesTheMessagePaneStrip();
@@ -5207,6 +5212,207 @@ void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
              "deleting one reply marked its whole thread deleted");
 }
 
+void TestMainWindow::theUnreadLabelSaysWhichDirectionItWillGo()
+{
+    // The user's note: "the label for toggle unread should be dynamic. On an
+    // unread message it should be Mark as read, on a read message Mark as
+    // unread."
+    //
+    // "Toggle unread" reads the same whichever way it will go, so the only
+    // way to learn what it does is to press it and look. The action stays a
+    // toggle, because one message has a real two-valued state; what changes
+    // is that the label tells the truth about the direction it has chosen.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("toggle_unread"));
+    QVERIFY(action);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t2"), {}) });
+
+    view->setCurrentIndex(model->index(0, 0, {}));
+    QVERIFY2(action->text().contains(QStringLiteral("read")),
+             qPrintable(action->text()));
+    QVERIFY2(!action->text().contains(QStringLiteral("unread")),
+             qPrintable(QStringLiteral("an UNREAD row must offer Mark as "
+                                       "read, not: %1").arg(action->text())));
+
+    view->setCurrentIndex(model->index(1, 0, {}));
+    QVERIFY2(action->text().contains(QStringLiteral("unread")),
+             qPrintable(QStringLiteral("a READ row must offer Mark as unread, "
+                                       "not: %1").arg(action->text())));
+}
+
+void TestMainWindow::theUnreadLabelFollowsAWriteWithoutReselecting()
+{
+    // The label describes the selection's STATE, and a write moves that state
+    // without touching the selection. Marking the current row read has to
+    // leave the entry offering "Mark as unread" on the same row, or the menu
+    // offers to do again what was just done.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("toggle_unread"));
+    QVERIFY(action);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }) });
+    view->setCurrentIndex(model->index(0, 0, {}));
+    QVERIFY2(action->text().contains(QStringLiteral("read"))
+                 && !action->text().contains(QStringLiteral("unread")),
+             qPrintable(action->text()));
+
+    action->trigger();
+
+    QVERIFY2(action->text().contains(QStringLiteral("unread")),
+             qPrintable(QStringLiteral("the label did not follow the write: "
+                                       "still offering %1 on a row it just "
+                                       "marked read").arg(action->text())));
+}
+
+void TestMainWindow::theUnreadActionIsHiddenOnAMixedSelection()
+{
+    // The other half of the same note: "on a thread with mixed states it
+    // should be hidden, we have a submenu for thread actions".
+    //
+    // A selection spanning an unread row and a read one has no single state,
+    // so no honest label exists for it. Hiding the entry sends the user to
+    // the thread submenu, whose entries are absolute and work regardless of
+    // the mix.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *action = window.findChild<QAction *>(QStringLiteral("toggle_unread"));
+    QVERIFY(action);
+
+    model->appendBatch({ makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") }),
+                         makeThread(QStringLiteral("t2"), {}) });
+
+    // From a row that is already current, and NOT via selectAll(): a fresh
+    // selectAll emits no currentRowChanged at all and leaves the current
+    // index invalid, so a test using it passes against a missing guard
+    // (CLAUDE.md).
+    view->setCurrentIndex(model->index(0, 0, {}));
+    QVERIFY2(action->isVisible(), "a single row already has no single state");
+
+    view->selectionModel()->select(
+        model->index(1, 0, {}),
+        QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    QCOMPARE(view->selectionModel()->selectedRows().size(), 2);
+
+    QVERIFY2(!action->isVisible(),
+             qPrintable(QStringLiteral("a mixed selection still offers the "
+                                       "unread action, labelled: %1")
+                            .arg(action->text())));
+
+    // ...and it comes back when the selection agrees again, or the entry
+    // would be gone for the rest of the session.
+    view->selectionModel()->select(
+        model->index(1, 0, {}),
+        QItemSelectionModel::Deselect | QItemSelectionModel::Rows);
+    QVERIFY2(action->isVisible(),
+             "the action did not return when the selection agreed again");
+}
+
+void TestMainWindow::markThreadUnreadReachesAMixedThread()
+{
+    // Item 112. The user's report: on a thread with two unread replies, asking
+    // to mark the whole thread unread marked it READ instead.
+    //
+    // ThreadSummary::tags is notmuch's UNION over the conversation, so a
+    // thread containing even one unread message answers "unread" and a toggle
+    // reading that predicate always picks "mark read". There was no input that
+    // could reach "mark thread unread" on a mixed thread: the only threads
+    // taking that branch were the ones already entirely read.
+    //
+    // A union is not a state. The fix is two fixed-direction actions, so this
+    // asserts the direction rather than the resulting tags: on a mixed thread
+    // BOTH directions are reachable, which is the property that was missing.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    // MIXED: the union carries `unread` because some message is unread, while
+    // others are not. A thread whose messages are all in one state answers
+    // identically whichever way the direction is computed, so a uniform
+    // fixture passes against the bug (CLAUDE.md, item 88's opposite-states
+    // requirement).
+    model->appendBatch({ makeThread(QStringLiteral("T1"),
+                                    { QStringLiteral("unread") }) });
+    const QModelIndex thread = model->index(0, 0, {});
+    QVERIFY(thread.isValid());
+    QVERIFY2(model->threadFor(thread).isUnread(),
+             "the fixture's union does not carry unread, so this test cannot "
+             "reach the branch the defect lives in");
+    view->setCurrentIndex(thread);
+
+    auto *markUnread =
+        window.findChild<QAction *>(QStringLiteral("mark_thread_unread"));
+    QVERIFY2(markUnread, "mark_thread_unread does not exist: the thread toggle "
+                         "was not split, so a mixed thread still has no way to "
+                         "be marked unread");
+    markUnread->trigger();
+
+    QVERIFY2(window.undoTextForTesting().contains(QStringLiteral("unread")),
+             qPrintable(QStringLiteral("wrong direction on a mixed thread: %1")
+                            .arg(window.undoTextForTesting())));
+    QVERIFY2(!window.undoTextForTesting().contains(QStringLiteral("Mark thread read")),
+             qPrintable(QStringLiteral("marked the thread READ when asked to "
+                                       "mark it unread: %1")
+                            .arg(window.undoTextForTesting())));
+}
+
+void TestMainWindow::markThreadReadAndUnreadAreSeparateActions()
+{
+    // The other half: the read direction must still be reachable, and must be
+    // its own action rather than the same one answering differently. Both are
+    // asserted on the SAME mixed thread, which a toggle cannot do: whichever
+    // direction it picks, the other is unreachable there.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    model->appendBatch({ makeThread(QStringLiteral("T1"),
+                                    { QStringLiteral("unread") }) });
+    const QModelIndex thread = model->index(0, 0, {});
+    view->setCurrentIndex(thread);
+
+    auto *markRead =
+        window.findChild<QAction *>(QStringLiteral("mark_thread_read"));
+    QVERIFY(markRead);
+    markRead->trigger();
+    QVERIFY2(window.undoTextForTesting().contains(QStringLiteral("Mark thread read")),
+             qPrintable(window.undoTextForTesting()));
+
+    // The old toggle must be gone rather than left beside its replacements,
+    // which would leave the defect reachable from the menu it still sat in.
+    QVERIFY2(!window.findChild<QAction *>(QStringLiteral("toggle_unread_thread")),
+             "toggle_unread_thread still exists beside the split actions");
+}
+
 void TestMainWindow::toggleUnreadOnAReplyReadsTheReplysOwnState()
 {
     // The user's report: "read/unread still doesn't trigger a repaint of the
@@ -5551,7 +5757,8 @@ void TestMainWindow::theThreadSubmenuIsReachableFromBothMenus()
         QStringLiteral("archive_thread"),
         QStringLiteral("delete_thread"),
         QStringLiteral("spam_thread"),
-        QStringLiteral("toggle_unread_thread"),
+        QStringLiteral("mark_thread_read"),
+        QStringLiteral("mark_thread_unread"),
         QStringLiteral("flag_thread"),
     };
 
@@ -7480,7 +7687,8 @@ void TestMainWindow::noTwoActionsShareAnIcon()
         QStringLiteral("archive_thread"),
         QStringLiteral("delete_thread"),
         QStringLiteral("spam_thread"),
-        QStringLiteral("toggle_unread_thread"),
+        QStringLiteral("mark_thread_read"),
+        QStringLiteral("mark_thread_unread"),
         QStringLiteral("flag_thread"),
         QStringLiteral("reply_no_quote"),
     };

@@ -900,6 +900,14 @@ void MainWindow::buildUi()
             &QItemSelectionModel::selectionChanged,
             this, &MainWindow::onSelectionChanged);
 
+    // The label describes the SELECTION'S STATE, which a write moves without
+    // touching the selection: marking the current row read has to flip the
+    // entry to "Mark as unread" with the same row still selected. Keyed on
+    // the model rather than on each of the six call sites that apply an
+    // optimistic update, so a new one cannot forget.
+    connect(m_model, &QAbstractItemModel::dataChanged, this,
+            [this]() { refreshUnreadAction(); });
+
     connect(m_threadView, &QAbstractItemView::doubleClicked,
             this, &MainWindow::onRowDoubleClicked);
 
@@ -1684,21 +1692,34 @@ void MainWindow::registerActions()
         tagSelected({ QStringLiteral("spam") }, { QStringLiteral("inbox") },
                     tr("Mark thread spam"), TagScope::Thread);
     });
-    addAction(QStringLiteral("toggle_unread_thread"), tr("Toggle &unread"),
-              tr("Toggle the unread tag on whole threads"), [this]() {
+    // Two fixed directions rather than one toggle, and the asymmetry with the
+    // message-scoped twin is the point (item 112). `ThreadSummary::tags` is
+    // notmuch's UNION over the conversation, so a thread holding even one
+    // unread message answers "unread" and a toggle reading that predicate
+    // always chose "mark read": there was no input that reached "mark thread
+    // unread" on a mixed thread, which is exactly the thread a user wants it
+    // for. A union is not a state, and a toggle needs a state.
+    //
+    // The message-scoped `toggle_unread` stays a toggle, because one message
+    // has a real two-valued state. Do not unify them.
+    addAction(QStringLiteral("mark_thread_read"), tr("Mark thread &read"),
+              tr("Remove the unread tag from every message of the selected "
+                 "threads"), [this]() {
+        m_markReadTimer->stop();
+        m_markReadMessageId.clear();
+        tagSelected({}, { QStringLiteral("unread") },
+                    tr("Mark thread read"), TagScope::Thread);
+    });
+    addAction(QStringLiteral("mark_thread_unread"), tr("Mark thread &unread"),
+              tr("Add the unread tag to every message of the selected threads"),
+              [this]() {
         // Cancels the automatic mark-read for the same reason its
         // message-scoped twin does: a thread marked unread by hand must not be
         // undone a moment later by a timer armed when it was opened.
         m_markReadTimer->stop();
         m_markReadMessageId.clear();
-
-        if (everySelectedRowHasTag(QStringLiteral("unread"), TagScope::Thread)) {
-            tagSelected({}, { QStringLiteral("unread") },
-                        tr("Mark thread read"), TagScope::Thread);
-        } else {
-            tagSelected({ QStringLiteral("unread") }, {},
-                        tr("Mark thread unread"), TagScope::Thread);
-        }
+        tagSelected({ QStringLiteral("unread") }, {},
+                    tr("Mark thread unread"), TagScope::Thread);
     });
     addAction(QStringLiteral("flag_thread"), tr("&Important"),
               tr("Mark every message of the selected threads as important"),
@@ -2040,7 +2061,8 @@ void MainWindow::buildMenus()
         { QStringLiteral("archive_thread"),       QStringLiteral("mail-archive") },
         { QStringLiteral("delete_thread"),        QStringLiteral("edit-delete") },
         { QStringLiteral("spam_thread"),          QStringLiteral("mail-mark-junk") },
-        { QStringLiteral("toggle_unread_thread"), QStringLiteral("mail-mark-unread") },
+        { QStringLiteral("mark_thread_read"), QStringLiteral("mail-mark-read") },
+        { QStringLiteral("mark_thread_unread"), QStringLiteral("mail-mark-unread") },
         { QStringLiteral("flag_thread"),          QStringLiteral("mail-mark-important") },
 
         // Compose and send (item 123). reply_no_quote SHARES reply's icon for
@@ -3468,8 +3490,43 @@ void MainWindow::showThreadContextMenu(const QPoint &pos)
     m_threadContextMenu->popup(m_threadView->viewport()->mapToGlobal(pos));
 }
 
+void MainWindow::refreshUnreadAction()
+{
+    // The user's design (item 112 and its duplicates 99/147): the label says
+    // which way the action will go, and on a selection with no single state
+    // the entry is HIDDEN rather than labelled wrongly. The thread submenu is
+    // then the route, whose entries are absolute and work whatever the mix.
+    auto *action = m_actions.value(QStringLiteral("toggle_unread"));
+    if (!action)
+        return;
+
+    switch (selectionTagPresence(QStringLiteral("unread"))) {
+    case TagPresence::Every:
+        action->setVisible(true);
+        action->setText(tr("Mark as &read"));
+        action->setStatusTip(tr("Remove the unread tag from the selection"));
+        break;
+    case TagPresence::None:
+        action->setVisible(true);
+        action->setText(tr("Mark as &unread"));
+        action->setStatusTip(tr("Add the unread tag to the selection"));
+        break;
+    case TagPresence::Mixed:
+        // No honest label exists, so there is no label to show. Hidden rather
+        // than disabled, at the user's choice.
+        action->setVisible(false);
+        break;
+    }
+}
+
 void MainWindow::onSelectionChanged()
 {
+    // Here rather than in the currentRowChanged handler: that signal is
+    // emitted BEFORE the selection model is updated, so a handler reading
+    // selectedRows() there sees the PREVIOUS selection and would label the
+    // action for the rows the user just left (CLAUDE.md, verified Qt 6.11).
+    refreshUnreadAction();
+
     const QModelIndexList rows = m_threadView->selectionModel()->selectedRows();
     const int selected = rows.size();
     if (selected == 1) {
@@ -4915,6 +4972,16 @@ QString MainWindow::currentThreadFirstMessageId() const
 bool MainWindow::everySelectedRowHasTag(const QString &tag,
                                         TagScope scope) const
 {
+    // Kept as the direction question, which only has two answers to give: a
+    // mixed selection has to go one way, and this says which. The LABEL asks
+    // selectionTagPresence() instead, because a label can say "these disagree"
+    // and a direction cannot.
+    return selectionTagPresence(tag, scope) == TagPresence::Every;
+}
+
+MainWindow::TagPresence MainWindow::selectionTagPresence(const QString &tag,
+                                                         TagScope scope) const
+{
     // What a toggle asks before choosing its direction, for both Delete and
     // Toggle unread.
     //
@@ -4932,8 +4999,9 @@ bool MainWindow::everySelectedRowHasTag(const QString &tag,
     const QModelIndexList rows =
         m_threadView->selectionModel()->selectedRows();
     if (rows.isEmpty())
-        return false;
+        return TagPresence::None;
 
+    int withTag = 0;
     for (const QModelIndex &index : rows) {
         QStringList tags;
         if (scope == TagScope::Thread) {
@@ -4979,10 +5047,13 @@ bool MainWindow::everySelectedRowHasTag(const QString &tag,
             tags = own.messageId.isEmpty() ? summary.firstMessageTags
                                            : own.tags;
         }
-        if (!tags.contains(tag))
-            return false;
+        if (tags.contains(tag))
+            ++withTag;
     }
-    return true;
+
+    if (withTag == 0)
+        return TagPresence::None;
+    return withTag == rows.size() ? TagPresence::Every : TagPresence::Mixed;
 }
 
 ThreadSummary MainWindow::threadForCurrentRowForTesting() const
@@ -5003,7 +5074,8 @@ QMenu *MainWindow::buildThreadActionsMenu(QWidget *parent)
     menu->addAction(m_actions.value(QStringLiteral("delete_thread")));
     menu->addAction(m_actions.value(QStringLiteral("spam_thread")));
     menu->addSeparator();
-    menu->addAction(m_actions.value(QStringLiteral("toggle_unread_thread")));
+    menu->addAction(m_actions.value(QStringLiteral("mark_thread_read")));
+    menu->addAction(m_actions.value(QStringLiteral("mark_thread_unread")));
     menu->addAction(m_actions.value(QStringLiteral("flag_thread")));
     return menu;
 }

@@ -887,6 +887,23 @@ private:
     bool everySelectedRowHasTag(const QString &tag,
                                 TagScope scope = TagScope::Message) const;
 
+    /// The three-valued version of the question above, which is what a LABEL
+    /// needs and a toggle's direction does not.
+    ///
+    /// `everySelectedRowHasTag` answers yes or no over a reality with three
+    /// states: every row has the tag, none does, or they disagree. That is
+    /// enough to choose a direction, since a mixed selection has to go one way
+    /// or the other, but it cannot name the direction honestly, and item 112
+    /// is what happens when a two-valued predicate is asked a three-valued
+    /// question.
+    enum class TagPresence { None, Every, Mixed };
+    TagPresence selectionTagPresence(
+        const QString &tag, TagScope scope = TagScope::Message) const;
+
+    /// Relabels the unread action, and hides it when the selection has no
+    /// single state. Called whenever the selection changes.
+    void refreshUnreadAction();
+
     void editTagsOnSelection();
 
     /// Set once the user has answered the exit prompt, or once a sync started

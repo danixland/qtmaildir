@@ -122,7 +122,7 @@ private slots:
     void anAccountWithoutATrashFolderWarns();
     void theDraftsFilterComposesPerAccount();
     void theDraftsFilterMatchesNothingWithoutAFolder();
-    void theDraftsFilterIsThreadedNotFlat();
+    void theDraftsFilterIsFlatLikeSent();
     void theTrashFilterComposesPerAccount();
     void theTrashFilterMatchesNothingWithoutAFolder();
     void anAccountWithoutASendCommandIsReceiveOnly();
@@ -1076,17 +1076,24 @@ void TestConfig::theDraftsFilterMatchesNothingWithoutAFolder()
              Config::matchNothingQuery());
 }
 
-void TestConfig::theDraftsFilterIsThreadedNotFlat()
+void TestConfig::theDraftsFilterIsFlatLikeSent()
 {
-    // Unlike Sent, and deliberately. Sent is flat because a thread would fold
-    // the user's own message back into the conversation it answers, which is
-    // item 63's finding. A draft reply belongs with its conversation for the
-    // same reason a trashed message does, so drafts follow trash here.
+    // Item 138 shipped this THREADED, reasoning that a draft reply belongs
+    // with the conversation it answers. Item 159 reversed it on what that
+    // cost: a thread row stands for its first MATCHED message, which for a
+    // draft reply is the message being replied TO, so the draft had no row of
+    // its own and double-clicking the conversation opened nothing.
     const SavedQuery drafts = Config::builtinFilter(QStringLiteral("drafts"));
-    QVERIFY2(!drafts.flat, "the drafts filter is flat, like Sent");
+    QVERIFY2(drafts.flat, "the drafts filter went back to threaded, so a draft "
+                          "reply has no row of its own (item 159)");
 
     const SavedQuery sent = Config::builtinFilter(QStringLiteral("sent"));
     QVERIFY2(sent.flat, "Sent stopped being flat, which item 63 requires");
+
+    // Trash deliberately did NOT follow. A deleted message still belongs to
+    // its conversation, and nothing has to be reachable for editing there.
+    const SavedQuery trash = Config::builtinFilter(QStringLiteral("trash"));
+    QVERIFY2(!trash.flat, "trash became flat; only sent and drafts should be");
 }
 
 void TestConfig::theTrashFilterComposesPerAccount()
@@ -2357,6 +2364,7 @@ void TestConfig::aGeneratedEntryWritesNoRedundantKeys()
         "version": 1,
         "queries": [
             { "name": "Sent", "generated": "sent", "pinned": true },
+            { "name": "Drafts", "generated": "drafts", "pinned": true },
             { "name": "Inbox", "query": "tag:inbox", "pinned": true }
         ]
     })"));
@@ -2381,18 +2389,28 @@ void TestConfig::aGeneratedEntryWritesNoRedundantKeys()
     QVERIFY2(!sent.contains(QStringLiteral("flat")),
              "the sent generator implies flat; storing it says nothing");
 
+    // Drafts is the second flat generator (item 159) and must be skipped by
+    // the same rule, not by a second one that could disagree with it.
+    const QJsonObject drafts = array.at(1).toObject();
+    QCOMPARE(drafts.value(QStringLiteral("generated")).toString(),
+             QStringLiteral("drafts"));
+    QVERIFY2(!drafts.contains(QStringLiteral("flat")),
+             "the drafts generator implies flat; storing it says nothing");
+
     // The ordinary entry is untouched by any of that.
-    const QJsonObject inbox = array.at(1).toObject();
+    const QJsonObject inbox = array.at(2).toObject();
     QCOMPARE(inbox.value(QStringLiteral("query")).toString(),
              QStringLiteral("tag:inbox"));
 
     // And it all still reads back the same.
     Config reloaded;
     reloaded.load(path);
-    QCOMPARE(reloaded.savedQueries().size(), 2);
+    QCOMPARE(reloaded.savedQueries().size(), 3);
     QVERIFY(reloaded.savedQueries().at(0).isGenerated());
     QVERIFY2(reloaded.savedQueries().at(0).flat,
              "flat must come back from the generator, not from the file");
+    QVERIFY2(reloaded.savedQueries().at(1).flat,
+             "drafts must come back flat too, from the same rule");
 }
 
 void TestConfig::anAccountWithoutASendCommandIsReceiveOnly()

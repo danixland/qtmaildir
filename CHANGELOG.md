@@ -31,7 +31,9 @@ point at which they are stable.
 - **A Drafts filter** in the query row, beside Sent and Trash. It matches each
   account's `drafts` folder, so it finds what the composer actually writes
   rather than trusting a flag. An account that configures no drafts folder
-  contributes nothing and shows no button.
+  contributes nothing and shows no button. Like Sent, it lists messages rather
+  than threads: a draft reply gets a row of its own instead of being folded
+  into the conversation it answers, where it could not be opened.
 - `Ctrl+W` closes a composer, the way it closes a window elsewhere. The draft
   is saved or discarded exactly as it is when the window is closed by any
   other route.

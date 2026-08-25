@@ -80,6 +80,18 @@ QString generatorTag(const QString &generator)
     return QString();
 }
 
+/// Whether a generator lists MESSAGES rather than threads. "sent" folds a
+/// user's own message back into the conversation it answers, and "drafts" is
+/// worse: a thread row stands for its first matched message, which for a draft
+/// reply is the message being replied TO, so the draft itself is unreachable.
+/// "trash" stays threaded, since a deleted message still belongs to its
+/// conversation. Closed set, and the one place the three views are decided.
+bool generatorIsFlat(const QString &generator)
+{
+    return generator == QStringLiteral("sent")
+           || generator == QStringLiteral("drafts");
+}
+
 } // namespace
 
 QString Account::scopedQuery(const QString &query) const
@@ -838,14 +850,14 @@ void Config::loadSavedQueries(const QString &configPath, QSettings &settings)
         query.query = object.value(QStringLiteral("query")).toString();
         query.account = object.value(QStringLiteral("account")).toString();
         query.generated = object.value(QStringLiteral("generated")).toString();
-        // A generator carries its own view mode, so "sent" is flat whether or
-        // not the file says so. Storing it as a plain field would let a
+        // A generator carries its own view mode, so a flat one is flat whether
+        // or not the file says so. Storing it as a plain field would let a
         // hand-edited or migrated-from-elsewhere row produce a THREADED sent
         // view, which folds every reply back into the conversation the user
         // sent one message into. The file may still set it for an ordinary
         // query.
         query.flat = object.value(QStringLiteral("flat")).toBool(false)
-                     || query.generated == QStringLiteral("sent");
+                     || generatorIsFlat(query.generated);
 
         if (query.isGenerated()
             && !kQueryGenerators.contains(query.generated)) {
@@ -905,7 +917,7 @@ bool Config::saveSavedQueries() const
             object.insert(QStringLiteral("account"), query.account);
         // Skipped when the generator already implies it, which loadSavedQueries
         // reapplies on the way back in.
-        if (query.flat && query.generated != QStringLiteral("sent"))
+        if (query.flat && !generatorIsFlat(query.generated))
             object.insert(QStringLiteral("flat"), true);
         for (auto it = query.unknown.begin(); it != query.unknown.end(); ++it)
             object.insert(it.key(), it.value());
@@ -987,6 +999,9 @@ SavedQuery Config::builtinFilter(const QString &generator)
 
     SavedQuery filter;
     filter.generated = generator;
+    // One source for the view mode, shared with the saved-query round trip, so
+    // a branch below cannot disagree with what loadSavedQueries reapplies.
+    filter.flat = generatorIsFlat(generator);
 
     // Translated, because these are the labels on the buttons. The GENERATOR
     // name is not: it is stored in queries.json and matched against a closed
@@ -1005,16 +1020,18 @@ SavedQuery Config::builtinFilter(const QString &generator)
         filter.name = tr("Important");
     } else if (generator == QStringLiteral("sent")) {
         filter.name = tr("Sent");
-        // Messages rather than threads, and the only filter that sets this. A
-        // thread would fold the user's sent message back into the conversation
-        // it belongs to, which is item 63's finding.
-        filter.flat = true;
+        // Flat, per generatorIsFlat(): a thread would fold the user's sent
+        // message back into the conversation it belongs to, item 63's finding.
     } else if (generator == QStringLiteral("drafts")) {
         // The LABEL is translated; the generator stays `drafts`, which is what
         // queries.json stores and what a closed set is matched against.
         filter.name = tr("Drafts");
-        // NOT flat, like Trash and unlike Sent: a draft reply belongs with the
-        // conversation it answers.
+        // Flat, per generatorIsFlat(). Item 138 chose threaded, reasoning that
+        // a draft reply belongs with the conversation it answers; item 159
+        // reversed it on what that cost. A thread row stands for its first
+        // MATCHED message, which for a draft reply is the message being
+        // replied TO, so the draft itself had no row of its own and
+        // double-clicking the conversation opened nothing.
     } else if (generator == QStringLiteral("trash")) {
         filter.name = tr("Trash");
         // NOT flat, unlike Sent. A deleted message still belongs to its

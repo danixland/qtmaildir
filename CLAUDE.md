@@ -233,8 +233,8 @@ process-wide, so holding it open would block the user's cron `notmuch new`. `app
 closes the read-only handle, opens read-write, applies, closes. notmuch permits only one
 open handle per process, so that close-first ordering is required, not stylistic.
 
-**No dry-run, no destructive-action confirmation.** Those gates exist in the companion
-project `../mailctl` to restrain an agent; a human at a GUI gets **undo** instead — every
+**No dry-run, no destructive-action confirmation.** Those gates belonged to the retired
+`mailctl` CLI, where they restrained an agent; a human at a GUI gets **undo** instead — every
 mutation pushes its inverse (`TagChange::inverted()`) onto a `QUndoStack`. Do not add
 confirmation dialogs for tag mutations. All actions funnel through one `applyTags` path;
 multi-row selections go through `applyTagsToThreads`, which resolves every thread in ONE
@@ -295,9 +295,9 @@ irreversibly. A restore must be right about its destination or it is worse than
 doing nothing.
 
 **The sync script lives here, in `assets/mailsync.sh`.** It moved from the
-companion `mailctl` project, which documents that it never calls it: the script
-is `mbsync` plus `notmuch new` with a lock, and qtmaildir is the only thing that
-runs it programmatically. Two properties exist for this application's sake and
+retired `mailctl` project, which never called it: the script is `mbsync` plus
+`notmuch new` with a lock, and qtmaildir is the only thing that runs it
+programmatically. Two properties exist for this application's sake and
 must survive any edit. It **prints to stdout as well as its log file**, because
 `MailSync` shows what the command prints and a self-redirecting script leaves
 the pane empty; and it **exits with the real status**, because a `0` from a
@@ -357,18 +357,19 @@ asserts on is guarded by `!m_savedQueries.isEmpty()`, so a test with no
 `queries.json` never reaches the branch and passes against a broken check. It
 writes one, and asserts the file loaded before asserting on what it produced.
 
-**This application has a sibling, and one file couples them.** `mailctl`
-(`../mailctl`) is a narrow, agent-safe CLI over the same notmuch index. The two
-are independent except for `~/.config/mailrules/rules.json`, which both read and
-write. **Before changing anything about that file's format, read
-"Changing the shared rule format" at the bottom of this document.** Nothing else
-here can break mailctl: it never imports from this repo, and this repo never
-calls it.
+**One config file has two readers, and both are now in this repo.**
+`~/.config/mailrules/rules.json` is read and written by `src/tagrules.cpp` and
+by `assets/hooks/mailrules.py`, which share no code and agree by test.
+**Before changing anything about that file's format, read "Changing the rule
+format" at the bottom of this document.** It used to be a cross-repo coupling
+with the `mailctl` CLI; that project is retired and the hooks moved here on
+2026-08-23, so a format change is now one repo and two suites.
 
-**The auto-tagging rules are NOT in this repo, and notmuch's parser rejects
-almost nothing.** Rules live in `~/.config/mailrules/rules.json`, applied by a
-notmuch `post-new` hook that ships from the companion `mailctl` project;
-`TagRules` here reads and writes the same file and `TagRulesDialog` edits it.
+**The auto-tagging rules live in a config file, not in the source, and notmuch's
+parser rejects almost nothing.** Rules are in `~/.config/mailrules/rules.json`,
+applied by the notmuch `post-new` hook in `assets/hooks/`, which the live
+`database.hook_dir` symlinks to; `TagRules` here reads and writes the same file
+and `TagRulesDialog` edits it.
 Two things bite. A stored query carries NO scope: the hook supplies `tag:new`
 and wraps the query in parentheses, because `tag:new and a or b` binds as
 `(tag:new and a) or b` and a rule that is a disjunction of senders would escape
@@ -885,12 +886,12 @@ backlog had already specified and that shipped unbuilt (item 29). A note saying
 "X does not work" is a bug report, and it will sit in a personal notes file
 indefinitely unless someone goes looking.
 
-**The backlog covers the mail system, not only this binary.** Item 44 shipped as
-commits in BOTH this repo and `../mailctl`, and any future item touching the
-shared rule format will too. An item is not "not ours" because its work lands in
-the sibling repo; note where the work goes in the table's Note column. mailctl
-keeps its own `TODO.md` for things that are purely its own, and that file is not
-part of this reconciliation.
+**The backlog covers the mail system, not only this binary.** An item can land
+in `assets/hooks/` rather than in `src/`, and item 166 is one: the tagging hook
+is part of the mail system the user sees, so a defect there gets an item here
+like any other. Item 44 predates that and shipped as commits in this repo and in
+the retired `mailctl`, which is why older entries mention a sibling repo; there
+is no longer one to split work across.
 
 **Then print the open items as a table, and stop.** The user picks what to work
 on; do not start on one, and do not recommend a single item as though the choice
@@ -993,39 +994,41 @@ was: bumping it is a task in that repo, which has its own workflow in its
 tracks upstream through an nvchecker stanza there, so a release here is picked
 up by that repo's own sweep.
 
-## Changing the shared rule format
+## Changing the rule format
 
-`~/.config/mailrules/rules.json` has **two independent implementations**, and
-they agree by test rather than by sharing code:
+`~/.config/mailrules/rules.json` has **two independent implementations**, both
+in this repo, and they agree by test rather than by sharing code:
 
 | | reads/writes | applies rules |
 |---|---|---|
-| `src/tagrules.cpp` (here) | yes | no |
-| `mailrules.py` (`../mailctl`) | yes | via the `post-new` hook |
+| `src/tagrules.cpp` | yes | no |
+| `assets/hooks/mailrules.py` | yes | via the `post-new` hook |
 
-**This is the only way work here can break mailctl.** It never imports from this
-repo and this repo never calls it, so nothing else is shared. The file is
-deliberately owned by neither: both readers preserve fields they do not
-understand (`TagRule::unknown`, `Rule.unknown`), which is what lets one tool
-save a file the other wrote without stripping it.
+They are two languages either side of one file, so nothing but the format
+couples them. Both readers preserve fields they do not understand
+(`TagRule::unknown`, `Rule.unknown`), which is what lets one save a file the
+other wrote without stripping it. This was a cross-repo coupling with the
+`mailctl` CLI until that project was retired and the hooks moved here on
+2026-08-23; the discipline below survives the move because the two readers do.
 
-**A format change is therefore a two-repo change, and the live hook runs every
-ten minutes on real mail.** Before touching the schema:
+**The live hook runs every ten minutes on real mail.** Before touching the
+schema:
 
-1. Change both readers, not one. A field added here and not there is silently
-   dropped on the next save from the other side, which looks like data loss with
-   no error anywhere.
+1. Change both readers, not one. A field added on one side and not the other is
+   silently dropped on the next save from the other, which looks like data loss
+   with no error anywhere.
 2. Bump `kFormatVersion` / `FORMAT_VERSION` together only for a BREAKING change.
    Both readers refuse a file whose version they do not know, which is the
-   correct behaviour and also means a half-deployed bump stops the hook from
+   correct behaviour and also means a half-applied bump stops the hook from
    tagging. Adding an optional field needs no bump.
-3. Run both suites: `ctest --test-dir build -R tagrules` here, and
-   `./test_mailrules.py && ./test_post_new.py` there.
-4. Verify the round trip across tools by hand, since no automated test spans
-   both repos: save from the dialog, then `mailctl rules list`, and confirm the
-   rule count and a note survive.
+3. Run both suites: `ctest --test-dir build -R tagrules`, and
+   `./test_post_new.py && ./test_mailrules.py` from `assets/hooks/`.
+4. Verify the round trip by hand, since no automated test spans the C++ and the
+   Python: save from the dialog, then run the hook over a throwaway index, and
+   confirm the rule count and a note survive.
 
-**Two hook properties are safety-critical and are not this repo's to weaken.**
+**Two hook properties are safety-critical, and being ours now is not a reason to
+weaken them.**
 The hook refuses to remove `unread` or `inbox` (`maildir.synchronize_flags` is
 true, so removing `unread` rewrites Maildir filenames and reaches the server),
 and it does not consume the `tag:new` marker when the rules fail to load

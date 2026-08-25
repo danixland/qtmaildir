@@ -184,6 +184,39 @@ void walkReplies(notmuch_messages_t *messages, int depth,
     }
 }
 
+/// Teach the database the current filenames in one Maildir directory.
+///
+/// Item 162's recovery step. mbsync renames a file to add its `,U=<uid>` infix
+/// and notmuch does not learn the new name until a `notmuch new` runs; this
+/// indexes just the one directory rather than waiting for that sweep.
+///
+/// Deliberately NOT a full `notmuch new`: that walks the entire Maildir and
+/// runs the post-new hook, which tags real mail. This must stay a read of one
+/// folder with no side effects beyond the filenames it records.
+///
+/// Indexing a file already known under another name ADDS a filename to the
+/// same message rather than creating a second message, which is what lets the
+/// caller pick the surviving path out of get_filenames(). Errors are ignored
+/// on purpose: this is a best-effort repair whose caller reports the failure
+/// if the path is still missing afterwards.
+void reindexFolder(notmuch_database_t *db, const QString &folder)
+{
+    const QDir dir(folder);
+    if (!dir.exists())
+        return;
+
+    const QFileInfoList entries =
+        dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+    for (const QFileInfo &entry : entries) {
+        notmuch_message_t *indexed = nullptr;
+        notmuch_database_index_file(
+            db, entry.absoluteFilePath().toUtf8().constData(), nullptr,
+            &indexed);
+        if (indexed)
+            notmuch_message_destroy(indexed);
+    }
+}
+
 /// The Maildir FOLDER a message file sits in, relative to the database root.
 ///
 /// `<root>/acct/inbox/cur/12345` becomes `acct/inbox`: the `cur`/`new` segment
@@ -747,7 +780,54 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
         const char *rawName = notmuch_message_get_filename(message.get());
         if (!rawName)
             continue;
-        const QString from = QString::fromUtf8(rawName);
+        QString from = QString::fromUtf8(rawName);
+
+        // Item 162. mbsync renames an uploaded file to record the server UID
+        // (`<name>,U=<uid>:2,<flags>`), and notmuch keeps the pre-`U=` name
+        // until that sync's `notmuch new` runs. Renaming a path that no longer
+        // exists fails, and Delete silently does nothing while blaming the
+        // destination folder for a timing problem.
+        //
+        // Refusing while a sync holds the write lock does NOT close this:
+        // mbsync renames throughout its run without touching notmuch's lock,
+        // so the damaging window is open when there is nothing to observe.
+        // Re-resolving is what closes it.
+        //
+        // Recovery is by MESSAGE ID, never by scanning the folder: two files
+        // can carry the same id, and picking the wrong one moves the wrong
+        // file. notmuch_message_get_filenames() lists every path the database
+        // holds for this id, so a file that was renamed rather than removed is
+        // found among them once the folder is reindexed.
+        if (!QFileInfo::exists(from)) {
+            // One reindex of the containing folder, which is what teaches
+            // notmuch the new name. Bounded deliberately: a single attempt,
+            // and a message that is still missing afterwards falls through to
+            // the error below, so a genuinely deleted file is still reported
+            // (item 41's territory) rather than becoming a silent no-op.
+            const QString folder = QFileInfo(from).absolutePath();
+            message.reset();
+            reindexFolder(db, folder);
+
+            notmuch_message_t *again = nullptr;
+            if (notmuch_database_find_message(db, id.toUtf8().constData(),
+                                              &again)
+                    == NOTMUCH_STATUS_SUCCESS
+                && again) {
+                message.reset(again);
+                for (NmFilenames names(
+                         notmuch_message_get_filenames(message.get()));
+                     notmuch_filenames_valid(names.get());
+                     notmuch_filenames_move_to_next(names.get())) {
+                    const QString candidate = QString::fromUtf8(
+                        notmuch_filenames_get(names.get()));
+                    if (QFileInfo::exists(candidate)) {
+                        from = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+
         // The handle is released before the file moves under it.
         message.reset();
 

@@ -67,3 +67,5 @@ using NmMessages = NmHandle<notmuch_messages_t, notmuch_messages_destroy>;
 using NmThread   = NmHandle<notmuch_thread_t, notmuch_thread_destroy>;
 using NmMessage  = NmHandle<notmuch_message_t, notmuch_message_destroy>;
 using NmTags     = NmHandle<notmuch_tags_t, notmuch_tags_destroy>;
+using NmFilenames =
+    NmHandle<notmuch_filenames_t, notmuch_filenames_destroy>;

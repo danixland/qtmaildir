@@ -92,6 +92,8 @@ private slots:
     void moveMessagesReportsOnlyWhatMoved();
     void moveMessagesGivesTheFileAFreshMaildirName();
     void moveMessagesKeepsTheMaildirFlags();
+    void moveMessagesRecoversWhenASyncRenamedTheFile();
+    void moveMessagesStillReportsAMessageThatIsReallyGone();
 
     void indexDraftFileMakesAFileFindable();
     void indexDraftFileRemovesThePreviousFile();
@@ -1363,6 +1365,82 @@ void TestNotmuchWorker::moveMessagesKeepsTheMaildirFlags()
              qPrintable(QStringLiteral("the move lost the maildir flags: %1")
                             .arg(name)));
     QVERIFY(!name.contains(QStringLiteral(",U=")));
+}
+
+void TestNotmuchWorker::moveMessagesRecoversWhenASyncRenamedTheFile()
+{
+    // Item 162. mbsync uploads a file and RENAMES it to record the server UID,
+    // and notmuch keeps the pre-`U=` name until that sync's `notmuch new`
+    // runs. moveMessages() then renames a path that no longer exists, reports
+    // "Cannot move <file> to <folder>", and silently does nothing.
+    //
+    // The ordinary fixture layout cannot see this: nothing renames a file
+    // underneath the index. Driving it means renaming the file WITHOUT
+    // reindexing, which is exactly the window mbsync opens.
+    const QString id = QStringLiteral("move-stale@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("inbox"), id),
+             qPrintable(m_fixture.error()));
+
+    const QString indexed = fileOf(id);
+    QVERIFY(!indexed.isEmpty());
+
+    // mbsync's rename, and deliberately NO m_fixture.index() afterwards: the
+    // database must still name the old path, which is the whole precondition.
+    const QString renamed = QFileInfo(indexed).absolutePath()
+                            + QStringLiteral("/move-stale.example.org,U=7:2,D");
+    QVERIFY2(QFile::rename(indexed, renamed), "could not stage the sync rename");
+
+    // The guard that proves this test can fail: without it, a fixture that
+    // quietly reindexed would make the assertions below pass against the bug.
+    QCOMPARE(fileOf(id), indexed);
+    QVERIFY2(!QFile::exists(indexed), "the stale path should no longer exist");
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy moved(&worker, &NotmuchWorker::messagesMoved);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.moveMessages({ id }, QStringLiteral("trash"));
+
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QCOMPARE(moved.size(), 1);
+    QCOMPARE(moved.first().at(0).toStringList(), QStringList{ id });
+
+    // The file really moved, and the database followed it.
+    const QString after = fileOf(id);
+    QVERIFY2(!after.isEmpty(), "the message is not in the database after the move");
+    QCOMPARE(QFileInfo(after).absolutePath(),
+             m_fixture.maildirPath() + QStringLiteral("/trash/cur"));
+    QVERIFY2(QFile::exists(after), qPrintable(after));
+    QVERIFY(!QFile::exists(renamed));
+
+    // The `,U=` infix must not be carried across the folder boundary: that is
+    // what produced `Maildir error: duplicate UID` on real mail.
+    QVERIFY(!QFileInfo(after).fileName().contains(QStringLiteral(",U=")));
+}
+
+void TestNotmuchWorker::moveMessagesStillReportsAMessageThatIsReallyGone()
+{
+    // The bounded half of the recovery above. A file that is genuinely absent,
+    // rather than merely renamed, must still be REPORTED: recovering silently
+    // from every missing path would turn a real defect into a move that
+    // claims success and does nothing.
+    const QString id = QStringLiteral("move-gone@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("inbox"), id),
+             qPrintable(m_fixture.error()));
+
+    const QString indexed = fileOf(id);
+    QVERIFY(!indexed.isEmpty());
+    QVERIFY2(QFile::remove(indexed), "could not remove the file");
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy moved(&worker, &NotmuchWorker::messagesMoved);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.moveMessages({ id }, QStringLiteral("trash"));
+
+    QCOMPARE(errors.size(), 1);
+    // Nothing is claimed to have moved.
+    QVERIFY(moved.isEmpty() || moved.first().at(0).toStringList().isEmpty());
 }
 
 void TestNotmuchWorker::twoMessagesMovedTogetherGetDistinctNames()

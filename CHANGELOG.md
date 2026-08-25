@@ -19,6 +19,12 @@ point at which they are stable.
   own modified marker for the same state, so it is visible while the composer
   sits behind another window. Autosaving already worked; it was silent on
   success, and the only feedback was the banner that reports a FAILED save.
+- **A menu bar on the composer**, with File, Edit and Format. **Save draft
+  (`Ctrl+S`) is new**: autosave, sending and closing were the only things that
+  could write a draft, so there was no way to ask for one. Everything else was
+  already there and is now findable: Send and Close under File, the editor's
+  undo and clipboard actions under Edit, and the formatting buttons, Attach,
+  Send as HTML and the signature switch under Format.
 
 ## [0.27.0] - 2026-08-25
 

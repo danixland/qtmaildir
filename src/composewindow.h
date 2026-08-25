@@ -228,6 +228,10 @@ private:
     void applyEdit(const MarkdownFormat::Edit &edit);
     void markDirty();
 
+    /// Builds the menu bar (item 161). Called after buildFormatToolbar(),
+    /// since the menus SHOW its actions rather than owning copies.
+    void buildMenuBar();
+
     /// Builds the status bar carrying the unsaved cue and the age line.
     void buildDraftStatusBar();
 
@@ -310,6 +314,12 @@ private:
     QPlainTextEdit *m_sendLog = nullptr;
     QToolBar *m_formatToolbar = nullptr;
     QAction *m_sendAction = nullptr;
+    QAction *m_saveAction = nullptr;
+    QAction *m_closeAction = nullptr;
+
+    /// The menu twin of the m_sendHtml tool button, which is a QToolButton
+    /// and cannot be put in a menu. Kept in step both ways.
+    QAction *m_sendHtmlAction = nullptr;
     QAction *m_attachAction = nullptr;
     QAction *m_detachAction = nullptr;
 

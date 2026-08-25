@@ -111,6 +111,42 @@
         <translation>Invia</translation>
     </message>
     <message>
+        <source>Save draft</source>
+        <translation>Salva bozza</translation>
+    </message>
+    <message>
+        <source>&amp;File</source>
+        <translation>&amp;File</translation>
+    </message>
+    <message>
+        <source>&amp;Edit</source>
+        <translation>&amp;Modifica</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>Annulla</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>Ripeti</translation>
+    </message>
+    <message>
+        <source>Cut</source>
+        <translation>Taglia</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copia</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>Incolla</translation>
+    </message>
+    <message>
+        <source>F&amp;ormat</source>
+        <translation>F&amp;ormato</translation>
+    </message>
+    <message>
         <source>None</source>
         <translation>Nessuna</translation>
     </message>

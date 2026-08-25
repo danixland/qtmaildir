@@ -42,6 +42,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -132,6 +133,9 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
 
     buildUi();
     buildFormatToolbar();
+    // AFTER buildFormatToolbar(): the menus show its actions, so they must
+    // exist before a menu can hold them.
+    buildMenuBar();
     seedFields();
     seedBody();
     seedSignature();
@@ -606,11 +610,114 @@ void ComposeWindow::buildFormatToolbar()
     // close() rather than anything of its own: closeEvent() already decides
     // whether the draft is saved or discarded, and a second route out that
     // skipped it would lose the message.
-    auto *closeAction = new QAction(tr("Close"), this);
-    closeAction->setObjectName(QStringLiteral("compose_close"));
-    closeAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+W")));
-    connect(closeAction, &QAction::triggered, this, &ComposeWindow::close);
-    addAction(closeAction);
+    m_closeAction = new QAction(tr("Close"), this);
+    m_closeAction->setObjectName(QStringLiteral("compose_close"));
+    m_closeAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+W")));
+    connect(m_closeAction, &QAction::triggered, this, &ComposeWindow::close);
+    addAction(m_closeAction);
+
+    // Save draft, the one action item 161 adds rather than gathers. It goes
+    // through saveDraftNow() like every other write: that is what emits
+    // draftSaved for item 158's indexing, reports through item 160's status
+    // bar, and raises the failure banner. A second write path would have to
+    // repeat all three and would reintroduce the ghost file 158 removed.
+    m_saveAction = new QAction(tr("Save draft"), this);
+    m_saveAction->setObjectName(QStringLiteral("compose_save"));
+    m_saveAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+S")));
+    const QIcon saveIcon = QIcon::fromTheme(QStringLiteral("document-save"));
+    if (!saveIcon.isNull())
+        m_saveAction->setIcon(saveIcon);
+    connect(m_saveAction, &QAction::triggered, this,
+            [this]() { saveDraftNow(); });
+    addAction(m_saveAction);
+
+    // The menu twin of the HTML tool button. m_sendHtml is a QToolButton, so
+    // it cannot go in a menu; this mirrors it in BOTH directions, since a
+    // menu entry that only follows the button is half a control.
+    m_sendHtmlAction = new QAction(tr("Send as HTML"), this);
+    m_sendHtmlAction->setObjectName(QStringLiteral("compose_send_html"));
+    m_sendHtmlAction->setCheckable(true);
+    m_sendHtmlAction->setChecked(m_sendHtml->isChecked());
+    connect(m_sendHtml, &QToolButton::toggled, m_sendHtmlAction,
+            &QAction::setChecked);
+    connect(m_sendHtmlAction, &QAction::toggled, m_sendHtml,
+            &QToolButton::setChecked);
+}
+
+void ComposeWindow::buildMenuBar()
+{
+    // The menus SHOW the toolbar's own QActions rather than owning copies,
+    // exactly as item 140 required for the message pane's bar: a copy drifts,
+    // so an enablement change or a new shortcut would reach one surface and
+    // not the other.
+    QMenu *file = menuBar()->addMenu(tr("&File"));
+    file->addAction(m_saveAction);
+    file->addAction(m_sendAction);
+    file->addSeparator();
+    file->addAction(m_closeAction);
+
+    // The editor's own undo stack, which had no menu presence at all. These
+    // are QPlainTextEdit's actions, so they follow its state for free: undo
+    // greys out when there is nothing to undo, and the clipboard entries
+    // follow the selection.
+    QMenu *edit = menuBar()->addMenu(tr("&Edit"));
+    const auto addEdit = [this, edit](const QString &name, const QString &text,
+                                      const QKeySequence &shortcut,
+                                      void (QPlainTextEdit::*slot)()) {
+        QAction *action = edit->addAction(text);
+        action->setObjectName(name);
+        action->setShortcut(shortcut);
+        connect(action, &QAction::triggered, m_body, slot);
+        return action;
+    };
+    QAction *undo = addEdit(QStringLiteral("compose_undo"), tr("Undo"),
+                            QKeySequence::Undo, &QPlainTextEdit::undo);
+    QAction *redo = addEdit(QStringLiteral("compose_redo"), tr("Redo"),
+                            QKeySequence::Redo, &QPlainTextEdit::redo);
+    edit->addSeparator();
+    QAction *cut = addEdit(QStringLiteral("compose_cut"), tr("Cut"),
+                           QKeySequence::Cut, &QPlainTextEdit::cut);
+    QAction *copy = addEdit(QStringLiteral("compose_copy"), tr("Copy"),
+                            QKeySequence::Copy, &QPlainTextEdit::copy);
+    addEdit(QStringLiteral("compose_paste"), tr("Paste"), QKeySequence::Paste,
+            &QPlainTextEdit::paste);
+
+    // Enablement follows the editor, so a greyed entry tells the truth about
+    // what pressing it would do.
+    undo->setEnabled(false);
+    redo->setEnabled(false);
+    cut->setEnabled(false);
+    copy->setEnabled(false);
+    connect(m_body, &QPlainTextEdit::undoAvailable, undo, &QAction::setEnabled);
+    connect(m_body, &QPlainTextEdit::redoAvailable, redo, &QAction::setEnabled);
+    connect(m_body, &QPlainTextEdit::copyAvailable, cut, &QAction::setEnabled);
+    connect(m_body, &QPlainTextEdit::copyAvailable, copy, &QAction::setEnabled);
+
+    QMenu *format = menuBar()->addMenu(tr("F&ormat"));
+    const auto byName = [this](const char *name) {
+        return findChild<QAction *>(QString::fromLatin1(name));
+    };
+    for (const char *name : { "format_bold", "format_italic", "format_code",
+                              "format_strike" }) {
+        if (QAction *action = byName(name))
+            format->addAction(action);
+    }
+    format->addSeparator();
+    for (const char *name : { "format_link", "format_quote" }) {
+        if (QAction *action = byName(name))
+            format->addAction(action);
+    }
+    format->addSeparator();
+    format->addAction(m_attachAction);
+    format->addAction(m_detachAction);
+    format->addSeparator();
+    format->addAction(m_sendHtmlAction);
+
+    // The switch's own menu, shown a second time. It is rebuilt whenever the
+    // signatures change, so taking the QMenu itself keeps both in step; a
+    // copy of its entries would go stale on the next rebuild.
+    QAction *signature = format->addMenu(m_signatureSwitch->menu());
+    signature->setText(tr("Signature"));
 }
 
 void ComposeWindow::seedFields()

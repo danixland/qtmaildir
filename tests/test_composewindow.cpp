@@ -24,6 +24,10 @@
 #include <QPlainTextEdit>
 #include <QSignalSpy>
 #include <QLabel>
+#include <QMenuBar>
+#include <QToolBar>
+#include <QSet>
+#include <functional>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -56,6 +60,10 @@ private slots:
     void aSavedDraftReportsItAndClearsTheCue();
     void aSentMessageLeavesNoUnsavedCue();
     void onlyTheSetterWritesTheDirtyFlag();
+    void theMenuBarReachesEveryComposerAction();
+    void saveDraftWritesAndReports();
+    void theMenusReuseTheToolbarActions();
+    void theHtmlMenuItemTracksTheToolbarButton();
     void theAgeLineFollowsTheClock();
 
 private:
@@ -641,6 +649,163 @@ void TestComposeWindow::theAgeLineFollowsTheClock()
     window.reportDraftAgeFor(90);
     QVERIFY2(age->text() != justSaved,
              "the age line must move as the clock does");
+}
+
+/// Item 132's rule for the main window, applied to the composer: an action
+/// nobody can find in a menu is reachable only by a chord the user has to
+/// know. Walks the real menu bar rather than a list, so an action added to
+/// the toolbar and forgotten in the menus fails here.
+void TestComposeWindow::theMenuBarReachesEveryComposerAction()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+
+    QMenuBar *bar = window.menuBar();
+    QVERIFY2(bar, "the composer has no menu bar");
+
+    // Every action the menus reach, submenus included.
+    QSet<QString> reachable;
+    std::function<void(QMenu *)> walk = [&](QMenu *menu) {
+        const QList<QAction *> actions = menu->actions();
+        for (QAction *action : actions) {
+            if (QMenu *sub = action->menu()) {
+                // An action owning a submenu is not itself reachable: Qt
+                // emits no triggered for it, as CLAUDE.md records.
+                walk(sub);
+                continue;
+            }
+            if (action->isSeparator())
+                continue;
+            if (!action->objectName().isEmpty())
+                reachable.insert(action->objectName());
+        }
+    };
+    const QList<QAction *> top = bar->actions();
+    for (QAction *action : top) {
+        QVERIFY2(action->menu(), "a top-level menu bar entry with no menu");
+        walk(action->menu());
+    }
+
+    // Every named action the composer owns. findChildren, so an action added
+    // later is picked up without touching this list.
+    const QList<QAction *> owned = window.findChildren<QAction *>();
+    QStringList missing;
+    for (QAction *action : owned) {
+        const QString name = action->objectName();
+        if (name.isEmpty())
+            continue;
+        // The signature entries are built from the files on disk and named
+        // per signature; the switch itself is what a menu offers.
+        if (name.startsWith(QStringLiteral("signature_choice")))
+            continue;
+        if (!reachable.contains(name))
+            missing.append(name);
+    }
+
+    QVERIFY2(missing.isEmpty(),
+             qPrintable(QStringLiteral("not reachable from any menu: %1")
+                            .arg(missing.join(QStringLiteral(", ")))));
+}
+
+/// The action item 161 adds. Save draft did not exist at all: saveDraftNow()
+/// was reachable only from the timer, the send path and closeEvent, so the
+/// user could not ask for a save.
+void TestComposeWindow::saveDraftWritesAndReports()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("Saved by hand."));
+
+    auto *save = window.findChild<QAction *>(QStringLiteral("compose_save"));
+    QVERIFY2(save, "there is no Save draft action");
+    QCOMPARE(save->shortcut(), QKeySequence(QStringLiteral("Ctrl+S")));
+
+    QSignalSpy saved(&window, &ComposeWindow::draftSaved);
+    save->trigger();
+
+    QCOMPARE(saved.size(), 1);
+
+    // Routed through saveDraftNow(), so item 160's reporting comes free. A
+    // second write path would have to repeat it, and would be the ghost-file
+    // bug item 158 fixed.
+    auto *age = window.findChild<QLabel *>(QStringLiteral("draftAge"));
+    QVERIFY(age);
+    QVERIFY2(!age->text().isEmpty(), "a manual save must report like an autosave");
+    QVERIFY2(!window.isWindowModified(), "a manual save must clear the marker");
+}
+
+/// The same QAction objects, shown twice over, exactly as item 140 required
+/// for the message pane's bar. A copy would drift: an enablement change or a
+/// new shortcut would reach one surface and not the other.
+void TestComposeWindow::theMenusReuseTheToolbarActions()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+
+    auto *bold = window.findChild<QAction *>(QStringLiteral("format_bold"));
+    auto *toolbar = window.findChild<QToolBar *>(QStringLiteral("formatToolbar"));
+    QVERIFY(bold);
+    QVERIFY(toolbar);
+    QVERIFY2(toolbar->actions().contains(bold),
+             "Bold left the formatting toolbar");
+
+    QMenu *format = nullptr;
+    const QList<QAction *> top = window.menuBar()->actions();
+    for (QAction *action : top) {
+        if (action->menu() && action->menu()->actions().contains(bold))
+            format = action->menu();
+    }
+    QVERIFY2(format, "Bold is not in any menu");
+
+    // The pointer itself, not a namesake.
+    QVERIFY2(format->actions().contains(bold),
+             "the menu holds a copy of Bold rather than the action itself");
+}
+
+/// The HTML toggle is a QToolButton, not a QAction, so a menu entry for it
+/// has to be built and kept in step by hand. Both directions: a menu that
+/// only follows the button is half a control.
+void TestComposeWindow::theHtmlMenuItemTracksTheToolbarButton()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+
+    auto *button = window.findChild<QToolButton *>(QStringLiteral("sendHtml"));
+    auto *item = window.findChild<QAction *>(QStringLiteral("compose_send_html"));
+    QVERIFY(button);
+    QVERIFY2(item, "there is no menu entry for the HTML toggle");
+    QVERIFY(item->isCheckable());
+
+    const bool initial = button->isChecked();
+    QCOMPARE(item->isChecked(), initial);
+
+    button->setChecked(!initial);
+    QCOMPARE(item->isChecked(), !initial);
+
+    item->setChecked(initial);
+    QCOMPARE(button->isChecked(), initial);
 }
 
 QTEST_MAIN(TestComposeWindow)

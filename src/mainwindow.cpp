@@ -2446,7 +2446,7 @@ void MainWindow::showAbout()
                      "version 2.</p>"
                      "<p>Developed with AI assistance. All code is reviewed, "
                      "tested and curated by the maintainer.</p>")
-                      .arg(QStringLiteral(QTMAILDIR_VERSION)));
+                      .arg(QStringLiteral(QTMAILDIR_VERSION_DISPLAY)));
 
     auto *link = new QLabel(
         QStringLiteral("<a href='https://danix.xyz/qtmaildir'>"

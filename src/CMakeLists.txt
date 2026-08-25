@@ -44,6 +44,12 @@ target_include_directories(qtmaildir_lib
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${NOTMUCH_INCLUDE_DIR}
            ${CMAKE_BINARY_DIR}/generated/qtmaildir)
 
+# The counter target rewrites buildnumber.h, which version.h includes, so the
+# library must not start compiling before it has run.
+if(TARGET qtmaildir_buildnumber)
+    add_dependencies(qtmaildir_lib qtmaildir_buildnumber)
+endif()
+
 target_link_libraries(qtmaildir_lib
     PUBLIC Qt6::Widgets Qt6::Svg Qt6::WebEngineWidgets PkgConfig::GMIME
            ${NOTMUCH_LIBRARY} PkgConfig::CMARK_GFM

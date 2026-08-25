@@ -963,7 +963,13 @@ because the first four steps were treated as the whole job.
    a user's own config or habits need to change.
 2. Bump `project(qtmaildir VERSION ...)` in `CMakeLists.txt`, the only place
    the version lives. Reconfigure, build, and check `./build/src/qtmaildir
-   --version`.
+   --version`. An ordinary dev build answers `X.Y.Z build N`, because
+   `QTMAILDIR_BUILD_NUMBER` counts rebuilds so one binary of an unreleased
+   version can be told from another (item 167). That is the DISPLAY version;
+   what a release ships is the clean one, from
+   `-DQTMAILDIR_BUILD_NUMBER=OFF`, which is what the SlackBuild configures and
+   what a tarball with no build directory produces anyway. Check the clean
+   form before tagging.
 3. Commit as `release: X.Y.Z`, then `git tag -s vX.Y.Z -m "qtmaildir X.Y.Z"`.
    Tags are annotated and GPG-signed, matching every existing one.
 4. `git push && git push --tags`. `origin` carries two push URLs, the personal

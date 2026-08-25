@@ -25,3 +25,26 @@
 #define QTMAILDIR_VERSION_MINOR @PROJECT_VERSION_MINOR@
 #define QTMAILDIR_VERSION_PATCH @PROJECT_VERSION_PATCH@
 #define QTMAILDIR_VERSION "@PROJECT_VERSION@"
+
+/// The version as shown to a person, which in a DEV build carries the build
+/// number and in a release build is exactly QTMAILDIR_VERSION.
+///
+/// Two separate macros deliberately. The release procedure checks `--version`
+/// against a clean X.Y.Z, the SlackBuild builds from a release tarball where
+/// no build counter exists, and the window title is a poor place for a number
+/// that changes on every rebuild. Anything comparing versions uses
+/// QTMAILDIR_VERSION; anything a person reads to answer "which build am I
+/// running" uses this one.
+///
+/// buildnumber.h is generated at BUILD time, not here: this file is written
+/// by configure_file(), which runs once per cmake run, so a counter
+/// interpolated into it would sit still across every rebuild, which is the
+/// entire thing item 167 is about. It defines QTMAILDIR_BUILD_NUMBER only in
+/// a dev build.
+#include "buildnumber.h"
+
+#ifdef QTMAILDIR_BUILD_NUMBER
+#  define QTMAILDIR_VERSION_DISPLAY QTMAILDIR_VERSION " build " QTMAILDIR_BUILD_NUMBER
+#else
+#  define QTMAILDIR_VERSION_DISPLAY QTMAILDIR_VERSION
+#endif

@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--version") == 0
             || std::strcmp(argv[i], "-v") == 0) {
-            std::printf("qtmaildir %s\n", QTMAILDIR_VERSION);
+            std::printf("qtmaildir %s\n", QTMAILDIR_VERSION_DISPLAY);
             return 0;
         }
         if (std::strcmp(argv[i], "--help") == 0
@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
                 "Configuration: ~/.config/qtmaildir/qtmaildir.conf\n"
                 "qtmaildir reads a notmuch-indexed Maildir. It does no network\n"
                 "protocol work: fetching and sending are external commands.\n",
-                QTMAILDIR_VERSION);
+                QTMAILDIR_VERSION_DISPLAY);
             return 0;
         }
     }

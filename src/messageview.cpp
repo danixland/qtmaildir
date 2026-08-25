@@ -544,7 +544,7 @@ void MessageView::showPlaceholder(
     // uses it: a style sheet or a themed parent can give this pane different
     // colours from the application.
     setDocument(HtmlBuilder::buildPlaceholder(
-        helpers, QStringLiteral(QTMAILDIR_VERSION),
+        helpers, QStringLiteral(QTMAILDIR_VERSION_DISPLAY),
         HtmlBuilder::brandPaletteFrom(palette())));
 }
 

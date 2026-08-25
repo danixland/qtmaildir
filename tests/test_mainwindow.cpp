@@ -490,6 +490,7 @@ private slots:
     void doubleClickingADraftOpensTheComposer();
     void aResumedDraftReplacesItsFileRatherThanAddingOne();
     void aResumedDraftKeepsItsBlindRecipients();
+    void aDraftRenamedByASyncStillReopensAndReplacesItsFile();
     void theComposerSplitsItsToolbarByScope();
     void ccAndBccHideBehindADisclosure();
     void ccAndBccAreRevealedWhenTheyCarryAValue();
@@ -12859,6 +12860,83 @@ void TestMainWindow::aResumedDraftReplacesItsFileRatherThanAddingOne()
     QVERIFY2(!QFile::exists(path),
              "the original draft file survived the autosave, so the message "
              "now exists twice");
+}
+
+void TestMainWindow::aDraftRenamedByASyncStillReopensAndReplacesItsFile()
+{
+    // Item 163, the composer site, and the one that costs data rather than
+    // display. mbsync uploads a draft and renames it to add its `,U=<uid>`
+    // infix; the model's path was captured when the query ran, so the reopen
+    // is handed a name that no longer exists.
+    //
+    // The refusal happens BEFORE any composer exists, so the user composes
+    // again into a FRESH window whose autosave has no previous path to unlink.
+    // The old revision survives, each save mints a new Message-ID, and both
+    // files reach the server. Asserted as the file COUNT, which is the shape
+    // the fork actually takes.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    OutgoingMessage message;
+    message.accountKey = QStringLiteral("acct");
+    message.to = { QStringLiteral("someone@example.org") };
+    message.subject = QStringLiteral("Written before a sync");
+    message.markdownBody = QStringLiteral("The first half.");
+
+    const QString folder = fixture.mailRoot() + QStringLiteral("/acct/Drafts");
+    const QString path = writeDraftFile(folder, message,
+                                        fixture.config().account(
+                                            QStringLiteral("acct")));
+    QVERIFY(!path.isEmpty());
+
+    // mbsync's rename: same directory, same unique stem, `,U=<uid>` inserted
+    // before the flag suffix. Nothing reindexes, so the caller below still
+    // holds the pre-rename name, which is the whole precondition.
+    const QFileInfo before(path);
+    const QString base = before.fileName();
+    const int suffix = base.indexOf(QStringLiteral(":2,"));
+    QVERIFY2(suffix > 0, "the draft fixture has no maildir flag suffix");
+    const QString renamed = before.absolutePath() + QLatin1Char('/')
+                            + base.left(suffix) + QStringLiteral(",U=7")
+                            + base.mid(suffix);
+    QVERIFY2(QFile::rename(path, renamed), "could not stage the sync rename");
+
+    // The guard that proves this test can fail: without it, a fixture that
+    // quietly left the original in place would pass against the bug.
+    QVERIFY2(!QFile::exists(path), "the stale path should no longer exist");
+
+    const auto draftCount = [&folder]() {
+        return QDir(folder + QStringLiteral("/cur"))
+            .entryList(QDir::Files).size();
+    };
+    QCOMPARE(draftCount(), 1);
+
+    // The STALE path, exactly as openComposerFor() passes MessageRef::filePath.
+    const ComposeContext context =
+        ComposeContextBuilder::forDraft(fixture.config(), path);
+    QVERIFY2(context.kind == ComposeContext::Kind::Draft,
+             "the reopen was refused, so the user would compose a second draft");
+    // Resolved, not the caller's: seeding the stale path would let the reopen
+    // succeed and the unlink still miss, forking the draft one step later.
+    QCOMPARE(context.draftPath, renamed);
+
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("The second half."));
+
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("autosave"));
+    QVERIFY2(timer, "the composer has no autosave timer");
+    QVERIFY2(timer->isActive(), "editing the body did not arm the autosave");
+    timer->setInterval(0);
+    QTRY_VERIFY_WITH_TIMEOUT(!timer->isActive(), 5000);
+
+    // Still ONE draft: the autosave replaced the renamed file rather than
+    // leaving it behind beside a new one.
+    QCOMPARE(draftCount(), 1);
+    QVERIFY2(!QFile::exists(renamed),
+             "the renamed draft survived the autosave, so the draft was forked "
+             "into two files and both would reach the server");
 }
 
 void TestMainWindow::aResumedDraftKeepsItsBlindRecipients()

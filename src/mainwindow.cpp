@@ -18,6 +18,8 @@
 
 #include "mainwindow.h"
 
+#include "maildirname.h"
+
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
@@ -1043,8 +1045,13 @@ void MainWindow::openComposerFor(const MessageRef &ref,
         return;
     }
 
+    // Item 163, the same stale path the pane and the draft reopen hit. Here it
+    // refuses a Reply or a Forward outright, so the user cannot answer a
+    // message that is sitting on disk and readable.
+    const QString originalPath = MaildirName::resolveRenamed(ref.filePath);
+
     MimeParser parser;
-    const ParsedMessage original = parser.parse(ref.filePath);
+    const ParsedMessage original = parser.parse(originalPath);
     if (!original.ok) {
         showTransientStatus(tr("That message could not be read"));
         return;
@@ -1052,7 +1059,7 @@ void MainWindow::openComposerFor(const MessageRef &ref,
 
     ComposeContext context;
     context.kind = kind;
-    context.originalPath = ref.filePath;
+    context.originalPath = originalPath;
 
     const bool replyAll = kind == ComposeContext::Kind::ReplyAll;
     const bool forwarding = kind == ComposeContext::Kind::Forward;
@@ -3849,11 +3856,22 @@ void MainWindow::renderMessages(const QVector<MessageRef> &messages)
         const MessageRef &ref = messages.at(i);
 
         ThreadRenderItem item;
-        item.message = parser.parse(ref.filePath);
+        // Item 163. The model's path was captured when the query ran, and
+        // mbsync renames an uploaded file to add its `,U=<uid>` infix, so a row
+        // loaded before that sync names a file that no longer exists. The pane
+        // then reported the message unreadable while nothing was wrong with it.
+        // Unchanged when nothing was renamed; empty when the file is genuinely
+        // gone, which still reports below.
+        const QString path = MaildirName::resolveRenamed(ref.filePath);
+        item.message = parser.parse(path);
 
         if (!item.message.ok) {
             // One unreadable message must not lose the rest of the thread, so
             // it becomes an inline note rather than replacing the whole pane.
+            //
+            // Named by the path the model HOLDS, not by the resolved one: when
+            // resolution failed there is no resolved path, and the stale name
+            // is what the user can act on.
             item.message = {};
             item.message.ok = true;
             item.message.from = tr("(unreadable message)");

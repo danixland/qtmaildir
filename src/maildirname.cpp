@@ -20,6 +20,8 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
 #include <QHostInfo>
 
 namespace MaildirName {
@@ -75,6 +77,65 @@ QString fresh(const QString &oldName)
         .arg(QString(host).replace(QLatin1Char('/'), QLatin1Char('_'))
                  .replace(QLatin1Char(':'), QLatin1Char('_')))
         .arg(info);
+}
+
+QString resolveRenamed(const QString &path)
+{
+    if (path.isEmpty())
+        return QString();
+
+    // The ordinary case, and the overwhelmingly common one: nothing was
+    // renamed. One stat, then out.
+    if (QFileInfo::exists(path))
+        return path;
+
+    const QFileInfo info(path);
+    const QString name = info.fileName();
+
+    // The unique part mbsync preserves. `<stem>:2,D` becomes
+    // `<stem>,U=5:2,D`, so the stem ends at whichever of `,` or `:` comes
+    // first. A name carrying neither is all stem.
+    int cut = name.size();
+    for (const QChar separator : { QLatin1Char(','), QLatin1Char(':') }) {
+        const int at = name.indexOf(separator);
+        if (at >= 0 && at < cut)
+            cut = at;
+    }
+    const QString stem = name.left(cut);
+    if (stem.isEmpty())
+        return QString();
+
+    // One directory, never a recursive walk: a rename keeps the file where it
+    // was, and a file that changed FOLDERS is a different question that only
+    // the message id can answer (see NotmuchWorker::moveMessages(), item 162).
+    const QDir dir(info.absolutePath());
+    if (!dir.exists())
+        return QString();
+
+    QString found;
+    const QFileInfoList entries =
+        dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+    for (const QFileInfo &entry : entries) {
+        const QString candidate = entry.fileName();
+        // Anchored on the stem AND on what follows it, so `...Q2` cannot match
+        // `...Q23`: the next character must begin the infix or the flags.
+        if (!candidate.startsWith(stem))
+            continue;
+        const QString rest = candidate.mid(stem.size());
+        if (!rest.isEmpty() && !rest.startsWith(QLatin1Char(','))
+            && !rest.startsWith(QLatin1Char(':'))) {
+            continue;
+        }
+
+        // Two files sharing a stem cannot happen in a correct Maildir. Refuse
+        // rather than guess: the caller reports "gone", which is honest, where
+        // a guess could open, move or delete the wrong message.
+        if (!found.isEmpty())
+            return QString();
+        found = entry.absoluteFilePath();
+    }
+
+    return found;
 }
 
 }  // namespace MaildirName

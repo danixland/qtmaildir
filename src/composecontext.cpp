@@ -24,6 +24,7 @@
 #include "composecontext.h"
 
 #include "config.h"
+#include "maildirname.h"
 #include "mimeparser.h"
 
 #include <QDir>
@@ -491,16 +492,32 @@ ComposeContext ComposeContextBuilder::forDraft(const Config &config,
 {
     ComposeContext context;
 
+    // Item 163. The caller's path comes from the model, captured when the
+    // query ran, and mbsync renames an uploaded draft to add its `,U=<uid>`
+    // infix. Resolving first is what stops a rename from refusing the reopen:
+    // the refusal happens BEFORE any composer exists, so the user composes
+    // again into a FRESH window whose autosave has no previous path to unlink,
+    // and the draft is silently forked into two files with two Message-IDs,
+    // both of which reach the server.
+    //
+    // Returns the path unchanged when nothing was renamed, and empty when the
+    // file is genuinely gone, which still fails below exactly as before.
+    const QString resolved = MaildirName::resolveRenamed(path);
+
     MimeParser parser;
-    const ParsedMessage draft = parser.parse(path);
+    const ParsedMessage draft = parser.parse(resolved);
     if (!draft.ok)
         return context;  // Kind::New and empty: the caller reports the failure.
 
     context.kind = ComposeContext::Kind::Draft;
-    context.originalPath = path;
+    context.originalPath = resolved;
     // The file this composer OWNS. Without it the first autosave writes a
     // second draft and leaves this one behind, so one message becomes two.
-    context.draftPath = path;
+    //
+    // The RESOLVED path, never the caller's: seeding the stale one would let
+    // the reopen succeed and the unlink still miss, which is the same fork
+    // arriving one step later.
+    context.draftPath = resolved;
 
     const auto addresses = [](const QString &header) {
         QStringList out;

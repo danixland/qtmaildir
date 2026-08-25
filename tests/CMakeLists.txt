@@ -85,6 +85,12 @@ add_qtmaildir_test(translations)
 target_compile_definitions(test_translations PRIVATE
     TRANSLATIONS_DIR="${CMAKE_SOURCE_DIR}/translations")
 
+# One test reads composewindow.cpp itself, to assert that m_dirty has a single
+# writer. The property is structural, so no runtime probe can see it: a
+# mutation restoring a direct assignment in the send path left the suite green.
+target_compile_definitions(test_composewindow PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # The notmuch hooks (assets/hooks/), which are Python rather than C++ and are
 # therefore registered directly rather than through add_qtmaildir_test().
 #

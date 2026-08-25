@@ -45,6 +45,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QStatusBar>
 #include <QStandardPaths>
 #include <QTextCursor>
 #include <QTimer>
@@ -109,7 +110,9 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
     // parent still makes Qt treat it as a window because of Qt::Window, which
     // QMainWindow carries.
     setAttribute(Qt::WA_DeleteOnClose);
-    setWindowTitle(tr("Compose"));
+    // The [*] is Qt's placeholder for the modified marker, substituted with
+    // the platform's own convention by setWindowModified().
+    setWindowTitle(tr("Compose[*]"));
 
     // A sensible default. NOT restored and NOT saved; see the header.
     resize(760, 640);
@@ -150,7 +153,7 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
     // either, must show what the message is addressed to.
     revealCcBccIfUsed();
 
-    m_dirty = false;
+    setDirty(false);
     m_autosaveTimer->stop();
 
     // The body, whenever there is already a recipient: a Reply or a Forward
@@ -406,6 +409,8 @@ void ComposeWindow::buildUi()
     for (QLineEdit *field : { m_to, m_cc, m_bcc, m_subject })
         connect(field, &QLineEdit::textChanged, this, &ComposeWindow::markDirty);
     connect(m_sendHtml, &QCheckBox::toggled, this, &ComposeWindow::markDirty);
+
+    buildDraftStatusBar();
     connect(m_from, &QComboBox::currentIndexChanged, this, [this]() {
         markDirty();
         // The account SEEDS the signature, so a change to it re-seeds. It
@@ -953,9 +958,104 @@ void ComposeWindow::applyFormat(const QString &token)
                                    cursor.selectionEnd(), token));
 }
 
+void ComposeWindow::buildDraftStatusBar()
+{
+    // The success channel item 160 added. Deliberately NOT the banner: that
+    // one reports FAILURE and its persistence is load-bearing, since the quit
+    // path's honesty depends on a failed save still being visible.
+    QStatusBar *bar = statusBar();
+
+    m_draftAge = new QLabel(bar);
+    m_draftAge->setObjectName(QStringLiteral("draftAge"));
+    m_draftAge->setTextFormat(Qt::PlainText);
+
+    // A ring, not a chip. Item 151's yellow ground belongs to the message
+    // pane's ribbons, which are bars spanning the pane and have something to
+    // be a ground OF; the same treatment on a bare status label reads as a
+    // misplaced widget rather than as a warning, which is what the user saw.
+    // Ordinary status text with a mark carries the same meaning quietly.
+    // The mark is NOT part of the translatable string: a translator cannot
+    // drop or mangle what they are never handed.
+    m_unsavedCue = new QLabel(
+        QStringLiteral("%1 %2").arg(QChar(0x25CB), tr("unsaved content")), bar);
+    m_unsavedCue->setObjectName(QStringLiteral("unsavedCue"));
+    m_unsavedCue->setTextFormat(Qt::PlainText);
+    m_unsavedCue->hide();
+
+    // addWidget, not addPermanentWidget: the permanent tray is the RIGHT hand
+    // end, and both of these belong on the left, the age first with the cue
+    // beside it.
+    bar->addWidget(m_draftAge);
+    bar->addWidget(m_unsavedCue);
+
+    // The age moves with no edit to drive it, so it needs a tick of its own.
+    // Five seconds against a label that reads in tens of them: a per-second
+    // tick would wake the window sixty times a minute to redraw the same
+    // string.
+    m_draftAgeTick = new QTimer(this);
+    m_draftAgeTick->setObjectName(QStringLiteral("draftAgeTick"));
+    m_draftAgeTick->setInterval(5000);
+    connect(m_draftAgeTick, &QTimer::timeout, this,
+            &ComposeWindow::refreshDraftStatus);
+    m_draftAgeTick->start();
+}
+
+void ComposeWindow::setDirty(bool dirty)
+{
+    m_dirty = dirty;
+
+    // Both cues, from the one flag. The status label is what the user reads
+    // while typing; the title marker is what they see when the composer sits
+    // behind another window. Qt substitutes the [*] placeholder in the title
+    // with the platform's own convention, so this is the native gesture
+    // rather than an invented one.
+    if (m_unsavedCue)
+        m_unsavedCue->setVisible(dirty);
+    setWindowModified(dirty);
+}
+
+void ComposeWindow::markClean()
+{
+    // No draft is written: the message has been sent, so there is nothing
+    // left to save. Only the state and its two displays move.
+    setDirty(false);
+}
+
+void ComposeWindow::refreshDraftStatus()
+{
+    if (!m_draftAge)
+        return;
+    if (!m_lastSavedAt.isValid()) {
+        m_draftAge->clear();
+        return;
+    }
+    reportDraftAgeFor(m_lastSavedAt.secsTo(QDateTime::currentDateTime()));
+}
+
+void ComposeWindow::reportDraftAgeFor(qint64 seconds)
+{
+    if (!m_draftAge)
+        return;
+
+    // Coarse on purpose. The label reads in tens of seconds and the tick is
+    // slower than a second, so a precise count would advertise an accuracy
+    // the refresh does not have.
+    if (seconds < 10)
+        m_draftAge->setText(tr("Draft autosaved"));
+    else if (seconds < 60)
+        m_draftAge->setText(tr("Last autosave %1s ago").arg(seconds));
+    else
+        // Minutes as a number rather than as a %n plural. There is no English
+        // .ts, so an untranslated %n string falls back to its SOURCE text and
+        // renders literally as "2 minute(s) ago" for every English user;
+        // measured. Italian keeps its own plural forms through this same
+        // string, since %1 is substituted either way.
+        m_draftAge->setText(tr("Last autosave %1 min ago").arg(seconds / 60));
+}
+
 void ComposeWindow::markDirty()
 {
-    m_dirty = true;
+    setDirty(true);
     // Debounced: the timer restarts on every keystroke, so a write happens
     // once the user has paused, not once per character. Every autosave
     // produces a Maildir write that mbsync uploads, which is what the debounce
@@ -996,7 +1096,7 @@ bool ComposeWindow::saveDraftNow()
     // blocking build entirely for the no-change case, which is the common one.
     const QString fingerprint = fingerprintOf(message);
     if (!m_savedFingerprint.isEmpty() && fingerprint == m_savedFingerprint) {
-        m_dirty = false;
+        setDirty(false);
         return true;
     }
 
@@ -1036,9 +1136,16 @@ bool ComposeWindow::saveDraftNow()
 
     m_draftPath = written.path;
     m_savedFingerprint = fingerprint;
-    m_dirty = false;
+    setDirty(false);
     m_saveFailed = false;
     m_banner->hide();
+
+    // The success half of item 160: an autosave used to be entirely silent,
+    // so the only sign a draft had been written was the file appearing in the
+    // Drafts view. The banner is deliberately NOT reused; it is the failure
+    // channel and its persistence is load-bearing for the quit path.
+    m_lastSavedAt = QDateTime::currentDateTime();
+    refreshDraftStatus();
 
     // The write is done and the previous revision already unlinked; hand both
     // paths up so the owner indexes the new one and drops the old (item 158).
@@ -1233,7 +1340,7 @@ void ComposeWindow::send()
             // twice. m_finished stops closeEvent() saving a draft for a
             // message that is gone, and stops it refusing the close.
             m_finished = true;
-            m_dirty = false;
+            markClean();
             close();
         }, Qt::SingleShotConnection);
 

@@ -4,8 +4,8 @@
 <context>
     <name>ComposeWindow</name>
     <message>
-        <source>Compose</source>
-        <translation>Componi</translation>
+        <source>Compose[*]</source>
+        <translation>Componi[*]</translation>
     </message>
     <message>
         <source>The forwarded attachments could not be extracted.</source>
@@ -121,6 +121,22 @@
     <message>
         <source>&apos;%1&apos; is %2. Many mail servers refuse messages above about %3. Attach it anyway?</source>
         <translation>&apos;%1&apos; occupa %2. Molti server di posta rifiutano messaggi oltre i %3 circa. Allegarlo comunque?</translation>
+    </message>
+    <message>
+        <source>unsaved content</source>
+        <translation>contenuto non salvato</translation>
+    </message>
+    <message>
+        <source>Draft autosaved</source>
+        <translation>Bozza salvata</translation>
+    </message>
+    <message>
+        <source>Last autosave %1s ago</source>
+        <translation>Ultimo salvataggio %1s fa</translation>
+    </message>
+    <message>
+        <source>Last autosave %1 min ago</source>
+        <translation>Ultimo salvataggio %1 min fa</translation>
     </message>
     <message>
         <source>The draft could not be saved: %1</source>

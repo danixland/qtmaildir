@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QDateTime>
 #include <QMainWindow>
 
 #include <functional>
@@ -95,6 +96,15 @@ public:
     /// dialog on the way out, because saving is what is already not working
     /// and quitting therefore loses that text.
     bool lastSaveFailed() const { return m_saveFailed; }
+
+    /// Clear the unsaved-edits state without writing a draft. The send path
+    /// needs this: the message is gone, so there is nothing left to save and
+    /// nothing to warn about on the way out.
+    void markClean();
+
+    /// Render the age line as though the last save were \p seconds ago.
+    /// Exists so a test can drive the clock instead of waiting on it.
+    void reportDraftAgeFor(qint64 seconds);
 
     /// Where the signature files live. Defaults to
     /// <config>/qtmaildir/signatures; a test points it at its own directory.
@@ -217,6 +227,17 @@ private:
     void showSendFailure(const QString &stderrText);
     void applyEdit(const MarkdownFormat::Edit &edit);
     void markDirty();
+
+    /// Builds the status bar carrying the unsaved cue and the age line.
+    void buildDraftStatusBar();
+
+    /// The one writer of m_dirty. Refreshes the status cue and the title
+    /// marker so neither can drift from the flag.
+    void setDirty(bool dirty);
+
+    /// Repaint the age line from m_lastSavedAt. Called by the tick and after
+    /// a save.
+    void refreshDraftStatus();
     void autosave();
     void send();
     void applyFormat(const QString &token);
@@ -272,6 +293,18 @@ private:
     /// how send_html seeds from context and is then left alone.
     bool m_signatureChosen = false;
     QLabel *m_banner = nullptr;
+
+    /// The status bar's two halves. The cue answers "is there anything
+    /// unwritten"; the age answers "when did the last write happen". Both
+    /// are refreshed from setDirty()/refreshDraftStatus() and never assigned
+    /// directly, so they cannot disagree with m_dirty.
+    QLabel *m_unsavedCue = nullptr;
+    QLabel *m_draftAge = nullptr;
+    QTimer *m_draftAgeTick = nullptr;
+
+    /// When the last successful save happened, invalid until one has. Drives
+    /// the age line, which changes with no edit to prompt it.
+    QDateTime m_lastSavedAt;
     QListWidget *m_attachmentList = nullptr;
     QWidget *m_sendLogPane = nullptr;
     QPlainTextEdit *m_sendLog = nullptr;
@@ -295,6 +328,11 @@ private:
     /// on the bytes can never fire. It would read as working while writing a
     /// file, and an mbsync upload, on every debounce.
     QString m_savedFingerprint;
+
+    /// Never assigned directly outside setDirty(). Seven sites used to write
+    /// it and four of them clear it, only two of which are a save, so a cue
+    /// hung off the save path alone missed the constructor and the send. The
+    /// setter is what keeps the flag and both displays in step.
     bool m_dirty = false;
     bool m_saveFailed = false;
 

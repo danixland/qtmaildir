@@ -23,7 +23,10 @@
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QSignalSpy>
+#include <QLabel>
+#include <QRegularExpression>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QTextStream>
 #include <QToolButton>
 
@@ -49,6 +52,11 @@ private slots:
     void changingTheAccountStopsFollowingOnceTheSwitchIsUsed();
     void aResumedDraftDoesNotReseedOnAnAccountChange();
     void savingADraftEmitsItsPathAndTheReplacedOne();
+    void anUnsavedEditIsAnnouncedInBothPlaces();
+    void aSavedDraftReportsItAndClearsTheCue();
+    void aSentMessageLeavesNoUnsavedCue();
+    void onlyTheSetterWritesTheDirtyFlag();
+    void theAgeLineFollowsTheClock();
 
 private:
     /// A config pointing at a signatures directory holding \p files, with one
@@ -61,6 +69,9 @@ private:
     /// macro expands to a bare `return;` on failure, which is invalid in a
     /// non-void function. A void helper keeps the check and sidesteps that.
     void writeFile(const QString &path, const QString &content);
+
+    /// A config whose one account has a drafts folder, so a save can write.
+    Config configWithDrafts();
 
     QTemporaryDir *m_dir = nullptr;
     QString m_signatureDir;
@@ -445,6 +456,191 @@ void TestComposeWindow::savingADraftEmitsItsPathAndTheReplacedOne()
     QVERIFY(!second.isEmpty());
     QCOMPARE(secondPrevious, first);
     QVERIFY2(second != first, "a rewrite reused the old filename");
+}
+
+/// A helper for the status-bar tests: a config whose account has a drafts
+/// folder, which makeConfig() deliberately does not set.
+Config TestComposeWindow::configWithDrafts()
+{
+    const QString confPath = m_dir->path() + QStringLiteral("/qtmaildir.conf");
+    QString conf;
+    {
+        QTextStream out(&conf);
+        out << "[account.work]\n"
+            << "name = Someone\n"
+            << "address = someone@example.org\n"
+            << "maildir = work\n"
+            << "drafts = Drafts\n"
+            << "send_command = /bin/cat\n";
+    }
+    writeFile(confPath, conf);
+
+    Config config;
+    config.load(confPath);
+    return config;
+}
+
+/// Both cues answer the same question and must agree. The status label is
+/// what the user reads while typing; the title marker is what they see when
+/// the composer is behind another window.
+void TestComposeWindow::anUnsavedEditIsAnnouncedInBothPlaces()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+
+    // Seeding is not an edit: the constructor clears the flag after filling
+    // the fields, so a composer nobody has typed into is clean.
+    auto *unsaved = window.findChild<QLabel *>(QStringLiteral("unsavedCue"));
+    QVERIFY(unsaved);
+    QVERIFY2(unsaved->isHidden(), "a freshly opened composer is not dirty");
+    QVERIFY2(!window.isWindowModified(),
+             "a freshly opened composer must not claim unsaved edits");
+
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("Something typed."));
+
+    QVERIFY2(!unsaved->isHidden(), "the status cue must appear on an edit");
+    QVERIFY2(window.isWindowModified(),
+             "the title marker must appear on an edit");
+}
+
+/// The gap item 160 exists to close: a successful save said nothing at all.
+void TestComposeWindow::aSavedDraftReportsItAndClearsTheCue()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    auto *unsaved = window.findChild<QLabel *>(QStringLiteral("unsavedCue"));
+    auto *age = window.findChild<QLabel *>(QStringLiteral("draftAge"));
+    QVERIFY(unsaved);
+    QVERIFY(age);
+
+    QVERIFY2(age->text().isEmpty(),
+             "nothing has been saved yet, so there is no age to report");
+
+    body->setPlainText(QStringLiteral("First revision."));
+    QVERIFY(window.saveDraftNow());
+
+    QVERIFY2(unsaved->isHidden(), "a save must clear the unsaved cue");
+    QVERIFY2(!window.isWindowModified(),
+             "a save must clear the title marker");
+    QVERIFY2(!age->text().isEmpty(), "a save must be reported");
+}
+
+/// The send path clears the flag WITHOUT saving a draft, and it is one of the
+/// four sites that write it. A cue hung off the save alone would leave a sent
+/// message claiming unsaved edits on the way out.
+void TestComposeWindow::aSentMessageLeavesNoUnsavedCue()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("Outgoing."));
+    QVERIFY(window.isWindowModified());
+
+    // What the send handler does on success, without running a real send.
+    window.markClean();
+
+    auto *unsaved = window.findChild<QLabel *>(QStringLiteral("unsavedCue"));
+    QVERIFY(unsaved);
+    QVERIFY2(unsaved->isHidden(), "a sent message has no unsaved edits");
+    QVERIFY2(!window.isWindowModified(),
+             "a sent message must not claim unsaved edits");
+}
+
+/// The test above drives markClean() directly, which proves what the SETTER
+/// does and nothing about whether the send path calls it: a mutation putting
+/// `m_dirty = false` back into the send handler left the whole suite green,
+/// measured. That is CLAUDE.md's "a probe pointed at the wrong object".
+///
+/// The property that actually matters is structural, so it is asserted
+/// structurally: m_dirty has ONE writer. Four of the seven sites that used to
+/// assign it clear it, and only two of those are a save, so a cue hung off
+/// the save path alone silently missed the constructor and the send.
+void TestComposeWindow::onlyTheSetterWritesTheDirtyFlag()
+{
+    QFile source(QStringLiteral(SOURCE_DIR "/src/composewindow.cpp"));
+    QVERIFY2(source.open(QIODevice::ReadOnly | QIODevice::Text),
+             qPrintable(source.errorString()));
+    const QStringList lines =
+        QString::fromUtf8(source.readAll()).split(QLatin1Char('\n'));
+    source.close();
+
+    // A guard against the probe itself rotting: if the member is ever
+    // renamed, this test must fail rather than quietly verify nothing.
+    QVERIFY2(lines.join(QLatin1Char('\n')).contains(QStringLiteral("m_dirty")),
+             "m_dirty is gone; this test needs updating, not deleting");
+
+    QStringList offenders;
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString line = lines.at(i);
+        // An assignment, not a read: `m_dirty =` but not `m_dirty ==`.
+        static const QRegularExpression assignment(
+            QStringLiteral("\\bm_dirty\\s*=[^=]"));
+        if (!assignment.match(line).hasMatch())
+            continue;
+        // The one legitimate writer.
+        if (line.contains(QStringLiteral("m_dirty = dirty")))
+            continue;
+        offenders.append(QStringLiteral("%1: %2").arg(i + 1).arg(line.trimmed()));
+    }
+
+    QVERIFY2(offenders.isEmpty(),
+             qPrintable(QStringLiteral(
+                 "m_dirty must only be written by setDirty(), or the status "
+                 "cue and the title marker drift from it. Offending lines:\n%1")
+                            .arg(offenders.join(QLatin1Char('\n')))));
+}
+
+/// The age changes with no edit to drive it, so it needs a tick of its own.
+/// Asserting on the TEXT changing rather than on a wording, which is
+/// translated and would pin the test to one locale.
+void TestComposeWindow::theAgeLineFollowsTheClock()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("First revision."));
+    QVERIFY(window.saveDraftNow());
+
+    auto *age = window.findChild<QLabel *>(QStringLiteral("draftAge"));
+    QVERIFY(age);
+    const QString justSaved = age->text();
+    QVERIFY(!justSaved.isEmpty());
+
+    // Driven rather than waited for: a real wait would put seconds into the
+    // suite for a label that reads in tens of them.
+    auto *tick = window.findChild<QTimer *>(QStringLiteral("draftAgeTick"));
+    QVERIFY2(tick, "the age needs a tick of its own; an edit cannot drive it");
+    QVERIFY(tick->isActive());
+
+    window.reportDraftAgeFor(90);
+    QVERIFY2(age->text() != justSaved,
+             "the age line must move as the clock does");
 }
 
 QTEST_MAIN(TestComposeWindow)

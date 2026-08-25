@@ -11,6 +11,15 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- **The composer says when it saved a draft.** A status bar reports the age of
+  the last autosave, and an `unsaved content` cue sits beside it whenever
+  there is text newer than that save. The window title carries the platform's
+  own modified marker for the same state, so it is visible while the composer
+  sits behind another window. Autosaving already worked; it was silent on
+  success, and the only feedback was the banner that reports a FAILED save.
+
 ## [0.27.0] - 2026-08-25
 
 qtmaildir can write mail. A composer, markdown bodies sent as plain text or

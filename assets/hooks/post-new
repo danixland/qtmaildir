@@ -104,16 +104,41 @@ def strip_inbox_from_sent(run):
         return True
 
     query = f"{SCOPE} and ({qtmaildirconf.sent_query(folders)})"
+
+    # Counted BEFORE the tag, because the tag is what makes the count zero.
+    # A `notmuch tag` that matches nothing SUCCEEDS, so the old log line said
+    # "applied" whether it stripped four messages or none, and item 164 is
+    # exactly the case where that distinction is the whole question: a draft
+    # kept `inbox` on a pass whose log claimed the carve-out had run. The
+    # count is the only thing that separates "the tag ran and something
+    # re-added inbox afterwards" from "the message was never in scope".
+    matched = count(query)
+
     if not run(["-inbox"], query):
         return False
 
-    log(f"sent-folder carve-out applied over {len(folders)} folder(s)")
+    log(f"sent-folder carve-out applied over {len(folders)} folder(s), "
+        f"{matched} message(s)")
     return True
 
 
 def protected_removals(rule):
     """The protected tags this rule would remove, if any."""
     return sorted(PROTECTED_REMOVALS.intersection(rule.remove))
+
+
+def count(query):
+    """How many messages a query matches, or `?` if the count itself failed.
+
+    Diagnostic only: nothing branches on this. A failure here must not fail
+    the sync, because the carve-out's own tag is what matters and it reports
+    its own status separately.
+    """
+    result = subprocess.run(["notmuch", "count", "--", query],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return "?"
+    return result.stdout.strip() or "?"
 
 
 def run_tag(arguments, query):

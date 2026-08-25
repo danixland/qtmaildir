@@ -134,6 +134,22 @@ public slots:
     /// it, so removing before indexing loses the message's tags.
     void moveMessages(const QStringList &messageIds, const QString &destFolder);
 
+    /// Destroys mail: removes each file from disk and each message from the
+    /// index. **This is the only irreversible operation in the application**
+    /// (item 118), which is why it is a separate entry point rather than a
+    /// flag on moveMessages(): the two look alike and one of them can be
+    /// undone.
+    ///
+    /// Named ids only, never a folder-wide sweep, so the blast radius is
+    /// whatever the caller enumerated and confirmed. A message with several
+    /// files loses every file it has, since leaving one behind would leave
+    /// the message alive in a folder the user emptied.
+    ///
+    /// The caller is responsible for confirming: CLAUDE.md rules out
+    /// confirmation dialogs for mutations because undo replaces them, and
+    /// this is the one action where undo cannot exist.
+    void purgeMessages(const QStringList &messageIds);
+
     /// Indexes one freshly written file, so it appears in a `path:` query
     /// without a full `notmuch new` (item 158).
     ///
@@ -189,6 +205,12 @@ public slots:
     /// the destination is worse than one that does nothing.
     void resolveMessages(const QStringList &messageIds,
                          const QString &requestTag);
+
+    /// The same walk for an arbitrary QUERY, which is what Empty Trash needs:
+    /// it has to enumerate what it is about to destroy before it can say how
+    /// much that is, and the answer must not come from the model, which holds
+    /// whatever the current view happens to be showing.
+    void resolveQueryMessages(const QString &query, const QString &requestTag);
 
 private:
     /// The shared walk behind resolveMessages() and resolveThreadMessages():
@@ -272,6 +294,10 @@ signals:
     /// A stale id, a missing folder or a failed rename drops out here rather
     /// than aborting the batch.
     void messagesMoved(const QStringList &messageIds, const QString &destFolder);
+
+    /// What a purge actually destroyed. Unlike a move there is no new path to
+    /// observe afterwards, so this is the only report the UI has.
+    void messagesPurged(const QStringList &messageIds);
 
     /// The same move, reported per message with the folder it came FROM.
     ///

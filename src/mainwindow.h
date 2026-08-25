@@ -169,6 +169,11 @@ public:
     /// command was pushed, which is what "this did nothing" has to assert.
     int undoDepthForTesting() const { return m_undoStack.count(); }
 
+    /// Runs a purge without the confirmation, which a test cannot drive: a
+    /// modal blocks the thread it is shown on (item 84). What this exists to
+    /// cover is what happens AFTER the user confirms.
+    void purgeForTesting(const QStringList &messageIds);
+
     /// The text of the command on top of the undo stack.
     ///
     /// A test seam for the DIRECTION a toggle chose. Delete and Undelete both
@@ -1031,6 +1036,17 @@ private:
     /// reason: mail reaches this state again whenever another client tags
     /// without moving.
     void showStrandedDeletedMail();
+
+    /// Asks the worker what is in the trash. The answer arrives at
+    /// onThreadMessagesResolved() tagged `empty_trash` and goes to
+    /// confirmAndPurge(): the count in the dialog has to be what will actually
+    /// be destroyed, so it comes from the database rather than from the model,
+    /// which holds whatever the current view happens to show.
+    void emptyTrash();
+
+    /// The confirmation, and the only one in this application. Destroys
+    /// nothing if the user declines.
+    void confirmAndPurge(const QStringList &messageIds);
 
     /// Moves each resolved message home, using the tags and paths the WORKER
     /// reported rather than anything the model holds.

@@ -260,6 +260,7 @@ private slots:
     void narrowingAnEmptyQueryBarIsAPlainSearch();
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
+    void aPurgeTakesTheRowsOutOfTheViewWithoutARefresh();
 
     // Compose and send, item 123 task 12.
     void theMailRootComesFromTheConfigNotTheIndex();
@@ -383,6 +384,7 @@ private slots:
     void editTagsOnAReplyCountsItsOwnThreadNotTheFirstInTheList();
     void markCurrentThreadReadResolvesTheThreadThroughTheIndex();
     void deletingAReplyRepaintsThatReplyRow();
+    void emptyTrashAsksBeforeDestroyingAnything();
     void theUnreadLabelSaysWhichDirectionItWillGo();
     void theUnreadLabelFollowsAWriteWithoutReselecting();
     void theUnreadActionIsHiddenOnAMixedSelection();
@@ -5212,6 +5214,48 @@ void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
              "deleting one reply marked its whole thread deleted");
 }
 
+void TestMainWindow::emptyTrashAsksBeforeDestroyingAnything()
+{
+    // Item 118, and the one place this application asks. CLAUDE.md rules out
+    // confirmation dialogs for mutations because every mutation pushes its
+    // inverse onto the undo stack; a purge has no inverse, so the rule does
+    // not reach it. What the rule protects is that a user never loses work to
+    // a keystroke, and here the dialog is what provides that rather than
+    // contradicting it.
+    //
+    // Asserting the action EXISTS and is wired, not the dialog's buttons: a
+    // modal cannot be driven from a test without blocking it (item 84), so
+    // the dialog itself is a hand test. What is pinned here is that nothing
+    // is destroyed without going through it.
+    const Config config;
+    MainWindow window(config);
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("empty_trash"));
+    QVERIFY2(action, "empty_trash does not exist");
+
+    // Reachable from a menu, which everyActionIsReachableFromAMenu() also
+    // enforces globally. Named here as well because an unreachable purge is
+    // worse than an unreachable anything else: the user cannot discover the
+    // action, but a stray keybinding still runs it.
+    bool found = false;
+    const QList<QMenu *> menus = window.findChildren<QMenu *>();
+    for (QMenu *menu : menus) {
+        if (menu->actions().contains(action)) {
+            found = true;
+            break;
+        }
+    }
+    QVERIFY2(found, "empty_trash is in no menu");
+
+    // No shortcut, deliberately: this is the one irreversible action, and a
+    // chord is exactly how it would be run by accident.
+    QVERIFY2(action->shortcut().isEmpty(),
+             qPrintable(QStringLiteral("empty_trash carries the shortcut %1; "
+                                       "the one irreversible action must not "
+                                       "be a keystroke away")
+                            .arg(action->shortcut().toString())));
+}
+
 void TestMainWindow::theUnreadLabelSaysWhichDirectionItWillGo()
 {
     // The user's note: "the label for toggle unread should be dynamic. On an
@@ -8664,6 +8708,47 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
     // thread, so findChild() cannot see it. Observing the window's own state
     // is both the only route and the better assertion.
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::aPurgeTakesTheRowsOutOfTheViewWithoutARefresh()
+{
+    // Found by hand: the mail was destroyed correctly and the list went on
+    // showing it until the user re-ran the query themselves.
+    //
+    // A purge is the one mutation with no optimistic update to apply. Every
+    // other one CHANGES a row, so the model can rewrite it in place; this one
+    // takes the row away entirely, and the only honest view afterwards is the
+    // one the query gives now.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/trash"), QStringLiteral("doomed@example.org"),
+        QStringLiteral("A subject"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.buildWithAccounts({ { QStringLiteral("acct"),
+                                          QStringLiteral("acct"),
+                                          QStringLiteral("trash"),
+                                          {}, {}, {} } }),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    queryEdit->setText(QStringLiteral("path:\"acct/trash/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    // Straight to the purge, bypassing the confirmation: a modal cannot be
+    // driven from a test without blocking it (item 84), and what is under
+    // test is what happens AFTER the user has confirmed.
+    window.purgeForTesting({ QStringLiteral("doomed@example.org") });
+
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 0, 15000);
 }
 
 namespace {

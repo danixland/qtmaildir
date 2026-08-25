@@ -920,6 +920,99 @@ void NotmuchWorker::moveMessages(const QStringList &messageIds,
     emit messagesMovedFrom(origins, destFolder);
 }
 
+void NotmuchWorker::purgeMessages(const QStringList &messageIds)
+{
+    if (messageIds.isEmpty())
+        return;
+
+    // Same handle ordering as applyTags() and moveMessages(): notmuch allows
+    // one open handle per process, so the read-only one closes first.
+    close();
+
+    const QByteArray configPath = configPathArg();
+    notmuch_database_t *db = nullptr;
+    char *error = nullptr;
+    const notmuch_status_t status = notmuch_database_open_with_config(
+        nullptr,
+        NOTMUCH_DATABASE_MODE_READ_WRITE,
+        configPath.isEmpty() ? nullptr : configPath.constData(),
+        nullptr,
+        &db,
+        &error);
+
+    if (status != NOTMUCH_STATUS_SUCCESS) {
+        emit errorOccurred(
+            QStringLiteral("Cannot open database for writing: %1")
+                .arg(QString::fromUtf8(error ? error
+                                             : notmuch_status_to_string(status))));
+        free(error);
+        return;
+    }
+
+    QStringList purged;
+    for (const QString &id : messageIds) {
+        notmuch_message_t *raw = nullptr;
+        // find_message reports SUCCESS with a null message for an unknown id,
+        // so both are checked. A stale id does not abort the batch: the live
+        // ids beside it still have to go.
+        if (notmuch_database_find_message(db, id.toUtf8().constData(), &raw)
+                != NOTMUCH_STATUS_SUCCESS || !raw) {
+            continue;
+        }
+        NmMessage message(raw);
+
+        // EVERY file, not just the first. notmuch deduplicates by Message-ID,
+        // so one message can have several files; unlinking one would leave the
+        // message alive in the folder the user emptied, which reads as the
+        // purge having silently skipped it. This is the same one-message,
+        // many-files property that item 166 turned on.
+        QStringList files;
+        for (NmFilenames names(notmuch_message_get_filenames(message.get()));
+             notmuch_filenames_valid(names.get());
+             notmuch_filenames_move_to_next(names.get())) {
+            files.append(QString::fromUtf8(notmuch_filenames_get(names.get())));
+        }
+
+        // The handle is released before the files go out from under it.
+        message.reset();
+
+        bool removedAny = false;
+        for (const QString &file : files) {
+            // A file already gone is not an ERROR: the index can name a path a
+            // sync has since removed, and the goal state (no file) is reached
+            // either way. Reporting it would teach the user to ignore the one
+            // message that matters here.
+            //
+            // It is not a DESTRUCTION either, which is a separate point and
+            // the one a first version got wrong. The count reaches the user as
+            // the size of an irreversible act, so it must say what this run
+            // actually destroyed, not what was already absent when it started.
+            if (!QFile::exists(file)) {
+                notmuch_database_remove_message(db, file.toUtf8().constData());
+                continue;
+            }
+            if (!QFile::remove(file)) {
+                emit errorOccurred(QStringLiteral("Cannot delete %1")
+                                       .arg(QFileInfo(file).fileName()));
+                continue;
+            }
+            removedAny = true;
+            // The index entry for that path. When the last filename goes, so
+            // does the message and every tag on it, which is exactly what is
+            // wanted here and is the thing moveMessages() has to avoid.
+            notmuch_database_remove_message(db, file.toUtf8().constData());
+        }
+
+        if (removedAny)
+            purged.append(id);
+    }
+
+    notmuch_database_close(db);
+    notmuch_database_destroy(db);
+
+    emit messagesPurged(purged);
+}
+
 void NotmuchWorker::indexDraftFile(const QString &path,
                                    const QString &previousPath)
 {
@@ -1023,6 +1116,14 @@ void NotmuchWorker::resolveMessages(const QStringList &messageIds,
         terms.append(QStringLiteral("id:%1").arg(id));
 
     resolveQuery(terms.join(QStringLiteral(" or ")), requestTag);
+}
+
+void NotmuchWorker::resolveQueryMessages(const QString &query,
+                                         const QString &requestTag)
+{
+    if (query.isEmpty())
+        return;
+    resolveQuery(query, requestTag);
 }
 
 void NotmuchWorker::resolveThreadMessages(const QStringList &threadIds,

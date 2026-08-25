@@ -1588,6 +1588,19 @@ void MainWindow::registerActions()
               [this]() {
         showStrandedDeletedMail();
     });
+    // The ONE irreversible action in this application, and the only one that
+    // asks before it runs (item 118). CLAUDE.md rules out confirmation
+    // dialogs for mutations because every mutation pushes its inverse onto
+    // the undo stack; a purge has no inverse, so the rule does not reach it.
+    // What the rule protects is that the user never loses work to a
+    // keystroke, which here is what the dialog provides.
+    //
+    // No default shortcut, for the same reason: a chord is how this would be
+    // run by accident.
+    addAction(QStringLiteral("empty_trash"), tr("Empt&y trash..."),
+              tr("Permanently delete every message in the trash"), [this]() {
+        emptyTrash();
+    });
     addAction(QStringLiteral("spam"), tr("Mark &spam"),
               tr("Add spam and remove inbox"), [this]() {
         tagSelected({ QStringLiteral("spam") }, { QStringLiteral("inbox") },
@@ -1957,6 +1970,7 @@ void MainWindow::buildMenus()
     // It replaces the whole view like a filter does, so a sixth button beside
     // the five filters would read as one of them.
     messageMenu->addAction(m_actions.value(QStringLiteral("cleanup_stranded")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("empty_trash")));
     messageMenu->addAction(m_actions.value(QStringLiteral("tag_rules")));
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
@@ -2017,6 +2031,7 @@ void MainWindow::buildMenus()
         // nothing, so an icon from the delete family would promise the one
         // thing it deliberately does not do.
         { QStringLiteral("cleanup_stranded"), QStringLiteral("system-search") },
+        { QStringLiteral("empty_trash"), QStringLiteral("edit-delete-shred") },
         { QStringLiteral("undo"),    QStringLiteral("edit-undo") },
         { QStringLiteral("spam"),    QStringLiteral("mail-mark-junk") },
         { QStringLiteral("flag"),    QStringLiteral("mail-mark-important") },
@@ -2539,6 +2554,18 @@ void MainWindow::wireWorker()
     // that reports them.
     connect(m_worker, &NotmuchWorker::messagesMovedFrom,
             this, &MainWindow::onMessagesMoved);
+
+    // A purge removes rows rather than changing them, so there is no
+    // optimistic update to apply: the only honest view is the one the query
+    // gives now. Without this the list went on showing mail that no longer
+    // existed until the user refreshed by hand, which is how the user found
+    // it.
+    connect(m_worker, &NotmuchWorker::messagesPurged, this,
+            [this](const QStringList &messageIds) {
+        showTransientStatus(
+            tr("Deleted %n message(s) permanently", "", messageIds.size()));
+        runCurrentQuery();
+    });
 
     connect(m_worker, &NotmuchWorker::threadMessagesResolved,
             this, &MainWindow::onThreadMessagesResolved);
@@ -5464,6 +5491,11 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
     const QStringList threadScope = m_pendingThreadScope;
     m_pendingThreadScope.clear();
 
+    if (requestTag == QStringLiteral("empty_trash")) {
+        confirmAndPurge(messageIds);
+        return;
+    }
+
     if (requestTag == QStringLiteral("delete_thread")) {
         trashMessages(messageIds, pathById, messageIds.size(), threadScope);
         return;
@@ -5690,6 +5722,83 @@ void MainWindow::restoreSelectedFromTrash()
         m_worker, "resolveMessages", Qt::QueuedConnection,
         Q_ARG(QStringList, scope.messageIds),
         Q_ARG(QString, QStringLiteral("restore_messages")));
+}
+
+void MainWindow::purgeForTesting(const QStringList &messageIds)
+{
+    if (!m_worker || messageIds.isEmpty())
+        return;
+    QMetaObject::invokeMethod(m_worker, "purgeMessages", Qt::QueuedConnection,
+                              Q_ARG(QStringList, messageIds));
+}
+
+void MainWindow::emptyTrash()
+{
+    // Scoped to the account selector, like every other account-aware surface:
+    // the All accounts view empties every configured trash, a selected
+    // account empties only its own. The user sees which in the dialog.
+    const QString accountKey = m_accountBox->currentData().toString();
+    const QString query = accountKey.isEmpty()
+                              ? m_config.allTrashQuery()
+                              : m_config.account(accountKey).trashQuery();
+
+    // An account with no trash folder configured produces an EMPTY query, and
+    // an empty notmuch query matches EVERYTHING. Refusing here rather than
+    // relying on the worker's own guard, so the message names the cause.
+    if (query.isEmpty()) {
+        showTransientStatus(tr("No trash folder is configured"));
+        return;
+    }
+
+    if (!m_worker) {
+        showTransientStatus(tr("Not connected to the mail index"));
+        return;
+    }
+
+    // Enumerated before it is counted, and counted from the DATABASE: the
+    // number in the dialog has to be the number destroyed, and the model
+    // holds whatever the current view is showing, which is usually not the
+    // trash at all.
+    QMetaObject::invokeMethod(m_worker, "resolveQueryMessages",
+                              Qt::QueuedConnection,
+                              Q_ARG(QString, query),
+                              Q_ARG(QString, QStringLiteral("empty_trash")));
+}
+
+void MainWindow::confirmAndPurge(const QStringList &messageIds)
+{
+    if (messageIds.isEmpty()) {
+        showTransientStatus(tr("The trash is already empty"));
+        return;
+    }
+
+    const QString accountKey = m_accountBox->currentData().toString();
+    const QString where = accountKey.isEmpty()
+                              ? tr("every account")
+                              : m_accountBox->currentText();
+
+    QMessageBox box(this);
+    box.setObjectName(QStringLiteral("emptyTrashConfirmation"));
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(tr("Empty trash"));
+    box.setText(tr("Permanently delete %n message(s) from the trash of %1?",
+                   "", messageIds.size())
+                    .arg(where));
+    // Said plainly, because it is the only place in this application where it
+    // is true.
+    box.setInformativeText(tr("This cannot be undone."));
+    box.addButton(QMessageBox::Cancel);
+    QPushButton *confirm =
+        box.addButton(tr("Delete permanently"), QMessageBox::DestructiveRole);
+    // Cancel is the default, so Return does not destroy mail.
+    box.setDefaultButton(QMessageBox::Cancel);
+    box.exec();
+
+    if (box.clickedButton() != confirm)
+        return;
+
+    QMetaObject::invokeMethod(m_worker, "purgeMessages", Qt::QueuedConnection,
+                              Q_ARG(QStringList, messageIds));
 }
 
 void MainWindow::showStrandedDeletedMail()

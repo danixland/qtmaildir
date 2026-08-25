@@ -236,7 +236,17 @@ open handle per process, so that close-first ordering is required, not stylistic
 **No dry-run, no destructive-action confirmation.** Those gates belonged to the retired
 `mailctl` CLI, where they restrained an agent; a human at a GUI gets **undo** instead — every
 mutation pushes its inverse (`TagChange::inverted()`) onto a `QUndoStack`. Do not add
-confirmation dialogs for tag mutations. All actions funnel through one `applyTags` path;
+confirmation dialogs for tag mutations.
+
+**There is exactly ONE exception, and its shape is the rule's own logic rather
+than a hole in it.** `empty_trash` (item 118) destroys files and index entries,
+so it has no inverse to push, and the protection the rule actually provides —
+that a user never loses work to a keystroke — has to come from somewhere else.
+It therefore asks, naming the count and the account, defaulting to Cancel, and
+it carries **no default shortcut** for the same reason. `NotmuchWorker::purgeMessages()`
+is a separate entry point from `moveMessages()` deliberately: the two look
+alike and only one of them can be undone. A second confirmation anywhere is a
+defect unless the action is likewise irreversible. All actions funnel through one `applyTags` path;
 multi-row selections go through `applyTagsToThreads`, which resolves every thread in ONE
 combined `thread:a or thread:b` query rather than one query per thread.
 

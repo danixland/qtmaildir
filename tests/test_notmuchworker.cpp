@@ -91,6 +91,11 @@ private slots:
     void moveMessagesKeepsTheMessagesTags();
     void moveMessagesReportsOnlyWhatMoved();
     void moveMessagesGivesTheFileAFreshMaildirName();
+    void purgeMessagesDeletesTheFileAndTheIndexEntry();
+    void purgeMessagesReportsWhatItDestroyed();
+    void purgeMessagesLeavesOtherMessagesAlone();
+    void purgeMessagesDoesNotClaimAnIdItCouldNotDelete();
+    void resolveQueryMessagesRefusesAnEmptyQuery();
     void moveMessagesKeepsTheMaildirFlags();
     void moveMessagesRecoversWhenASyncRenamedTheFile();
     void moveMessagesStillReportsAMessageThatIsReallyGone();
@@ -1283,6 +1288,132 @@ void TestNotmuchWorker::moveMessagesRelocatesTheFile()
     QCOMPARE(QFileInfo(after).absolutePath(), expectedDir);
     QVERIFY2(QFile::exists(after), qPrintable(after));
     QVERIFY(!QFile::exists(before));
+}
+
+void TestNotmuchWorker::purgeMessagesDoesNotClaimAnIdItCouldNotDelete()
+{
+    // The report drives what the UI tells the user, and the one number they
+    // will remember about an irreversible action is how much it destroyed. An
+    // id whose file the database names but that is not on disk contributes
+    // nothing: the index entry is still cleaned up, but claiming it as
+    // destroyed would overstate what happened.
+    const QString real = QStringLiteral("purge6@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("trash"), real),
+             qPrintable(m_fixture.error()));
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy purged(&worker, &NotmuchWorker::messagesPurged);
+
+    // A KNOWN id whose file is already gone, which is the case that reaches
+    // the removal loop and finds nothing to unlink. An unknown id is skipped
+    // far earlier and proves nothing about it.
+    const QString stale = QStringLiteral("purge7@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("trash"), stale),
+             qPrintable(m_fixture.error()));
+    const QString staleFile = fileOf(stale);
+    QVERIFY(!staleFile.isEmpty());
+    QVERIFY(QFile::remove(staleFile));
+
+    worker.purgeMessages({ real, stale });
+
+    QCOMPARE(purged.size(), 1);
+    const QStringList reported = purged.first().at(0).toStringList();
+    QVERIFY2(reported.contains(real), qPrintable(reported.join(QLatin1Char(','))));
+    QVERIFY2(!reported.contains(stale),
+             "claimed to have destroyed a message whose file was already gone");
+}
+
+void TestNotmuchWorker::resolveQueryMessagesRefusesAnEmptyQuery()
+{
+    // An EMPTY query means "match everything" to notmuch, and this walk is
+    // what Empty Trash enumerates from. An account with no trash folder
+    // configured produces an empty query, so without this guard the dialog
+    // would offer to destroy the entire Maildir and say so accurately.
+    QVERIFY2(addMovableMessage(QStringLiteral("trash"),
+                               QStringLiteral("empty1@example.org")),
+             qPrintable(m_fixture.error()));
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy resolved(&worker, &NotmuchWorker::threadMessagesResolved);
+
+    worker.resolveQueryMessages(QString(), QStringLiteral("purge"));
+    QCOMPARE(resolved.size(), 0);
+}
+
+void TestNotmuchWorker::purgeMessagesDeletesTheFileAndTheIndexEntry()
+{
+    // Item 118. The one destructive action in this application: the file is
+    // removed from disk and the message from the index, with no undo. Both
+    // halves are asserted, because either one alone leaves a visible defect:
+    // a file without an index entry is invisible mail on disk, and an index
+    // entry without a file is a row that opens onto nothing.
+    const QString id = QStringLiteral("purge1@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("trash"), id),
+             qPrintable(m_fixture.error()));
+
+    const QString before = fileOf(id);
+    QVERIFY(!before.isEmpty());
+    QVERIFY(QFile::exists(before));
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.purgeMessages({ id });
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    QVERIFY2(!QFile::exists(before), qPrintable(before));
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(id)).size(), 0);
+}
+
+void TestNotmuchWorker::purgeMessagesReportsWhatItDestroyed()
+{
+    // The count the confirmation named has to be the count that happened, and
+    // the UI has nothing else to report from: unlike a move, there is no new
+    // path to observe afterwards.
+    const QString first = QStringLiteral("purge2@example.org");
+    const QString second = QStringLiteral("purge3@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("trash"), first),
+             qPrintable(m_fixture.error()));
+    QVERIFY2(addMovableMessage(QStringLiteral("trash"), second),
+             qPrintable(m_fixture.error()));
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy purged(&worker, &NotmuchWorker::messagesPurged);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.purgeMessages({ first, second });
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    QCOMPARE(purged.size(), 1);
+    QStringList reported = purged.first().at(0).toStringList();
+    reported.sort();
+    QCOMPARE(reported, (QStringList{ first, second }));
+}
+
+void TestNotmuchWorker::purgeMessagesLeavesOtherMessagesAlone()
+{
+    // The blast radius. A purge names ids, and nothing outside that list may
+    // be touched: this is the action with no undo, so an over-reach is not
+    // recoverable. The survivor is in the SAME folder, which is where a
+    // folder-wide delete would take everything with it.
+    const QString doomed = QStringLiteral("purge4@example.org");
+    const QString survivor = QStringLiteral("purge5@example.org");
+    QVERIFY2(addMovableMessage(QStringLiteral("trash"), doomed),
+             qPrintable(m_fixture.error()));
+    QVERIFY2(addMovableMessage(QStringLiteral("trash"), survivor),
+             qPrintable(m_fixture.error()));
+
+    const QString survivorFile = fileOf(survivor);
+    QVERIFY(!survivorFile.isEmpty());
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+    worker.purgeMessages({ doomed });
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(doomed)).size(), 0);
+    QCOMPARE(runQuery(QStringLiteral("id:%1").arg(survivor)).size(), 1);
+    QVERIFY2(QFile::exists(survivorFile), qPrintable(survivorFile));
 }
 
 void TestNotmuchWorker::moveMessagesReindexesAtTheNewPath()

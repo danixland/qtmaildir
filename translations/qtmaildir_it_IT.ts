@@ -552,6 +552,41 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         </translation>
     </message>
     <message>
+        <source>No trash folder is configured</source>
+        <translation>Nessuna cartella cestino configurata</translation>
+    </message>
+    <message>
+        <source>Not connected to the mail index</source>
+        <translation>Non connesso all&apos;indice della posta</translation>
+    </message>
+    <message>
+        <source>The trash is already empty</source>
+        <translation>Il cestino è già vuoto</translation>
+    </message>
+    <message>
+        <source>every account</source>
+        <translation>ogni account</translation>
+    </message>
+    <message>
+        <source>Empty trash</source>
+        <translation>Svuota cestino</translation>
+    </message>
+    <message numerus="yes">
+        <source>Permanently delete %n message(s) from the trash of %1?</source>
+        <translation>
+            <numerusform>Eliminare definitivamente %n messaggio dal cestino di %1?</numerusform>
+            <numerusform>Eliminare definitivamente %n messaggi dal cestino di %1?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>This cannot be undone.</source>
+        <translation>Questa operazione non può essere annullata.</translation>
+    </message>
+    <message>
+        <source>Delete permanently</source>
+        <translation>Elimina definitivamente</translation>
+    </message>
+    <message>
         <source>Mail tagged deleted but not in a trash folder. Select what should go and press Delete.</source>
         <translation>Posta etichettata come eliminata ma non in un cestino. Seleziona cosa deve essere rimosso e premi Elimina.</translation>
     </message>
@@ -750,6 +785,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Show mail tagged deleted that is not in a trash folder</source>
         <translation>Mostra la posta etichettata come eliminata che non si trova in un cestino</translation>
+    </message>
+    <message>
+        <source>Empt&amp;y trash...</source>
+        <translation>S&amp;vuota cestino...</translation>
+    </message>
+    <message>
+        <source>Permanently delete every message in the trash</source>
+        <translation>Elimina definitivamente ogni messaggio nel cestino</translation>
     </message>
     <message>
         <source>Add spam and remove inbox on whole threads</source>
@@ -1041,6 +1084,13 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>&lt;h3&gt;qtmaildir %1&lt;/h3&gt;&lt;p&gt;A Qt6 mail client for notmuch-indexed Maildirs.&lt;/p&gt;&lt;p&gt;Reads and organizes local mail. Fetching and sending are handled by external scripts.&lt;/p&gt;&lt;p&gt;Copyright &amp;copy; 2026 Danilo M. &amp;lt;danix@danix.xyz&amp;gt;&lt;br&gt;Licensed under the GNU General Public License version 2.&lt;/p&gt;&lt;p&gt;Developed with AI assistance. All code is reviewed, tested and curated by the maintainer.&lt;/p&gt;</source>
         <translation>&lt;h3&gt;qtmaildir %1&lt;/h3&gt;&lt;p&gt;Un client di posta Qt6 per Maildir indicizzate con notmuch.&lt;/p&gt;&lt;p&gt;Legge e organizza la posta locale. Scaricamento e invio sono affidati a script esterni.&lt;/p&gt;&lt;p&gt;Copyright &amp;copy; 2026 Danilo M. &amp;lt;danix@danix.xyz&amp;gt;&lt;br&gt;Distribuito secondo la GNU General Public License versione 2.&lt;/p&gt;&lt;p&gt;Sviluppato con l&apos;assistenza dell&apos;IA. Tutto il codice è riveduto, testato e curato dal manutentore.&lt;/p&gt;</translation>
+    </message>
+    <message numerus="yes">
+        <source>Deleted %n message(s) permanently</source>
+        <translation>
+            <numerusform>%n messaggio eliminato definitivamente</numerusform>
+            <numerusform>%n messaggi eliminati definitivamente</numerusform>
+        </translation>
     </message>
     <message numerus="yes">
         <source>%n unread</source>

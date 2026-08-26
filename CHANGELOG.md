@@ -46,6 +46,13 @@ point at which they are stable.
   to the message and nothing reaches your mail server. It is deliberately a
   different mark from `passed`, which is the Maildir `P` flag and means *you*
   forwarded something.
+- Cards carry the sender's avatar: a squircle with their initials, filled with
+  a pattern generated from their address so the same sender always looks the
+  same. Senders that present a display name get an identicon, bulk senders a
+  two-tone fill, and `~/.config/qtmaildir/business-senders` decides the
+  borderline cases. Nothing is fetched from the network.
+- The account's colour now fades across the left of a card instead of only
+  marking its edge, and a reply's fade starts at its own indent.
 
 ### Changed
 

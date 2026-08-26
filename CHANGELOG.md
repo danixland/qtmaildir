@@ -38,6 +38,15 @@ point at which they are stable.
   the About dialog and the placeholder pane, and deliberately not in the
   window title.
 
+- **A mark for mail someone forwarded to you.** A card now carries its own
+  glyph when the subject reads as a forward, in any of the spellings clients
+  actually send (`Fwd:`, `Fw:`, `WG:`, `ENC:`, `RV:`, `TR:`), including under
+  a `Re:` chain. Add more with `[general] forward_prefixes`, which extends
+  that list rather than replacing it. This is display only: nothing is written
+  to the message and nothing reaches your mail server. It is deliberately a
+  different mark from `passed`, which is the Maildir `P` flag and means *you*
+  forwarded something.
+
 ### Changed
 
 - **The unread action says which way it will go.** "Toggle unread" read the
@@ -52,14 +61,45 @@ point at which they are stable.
 - **Delete and Restore appear only where they apply.** Delete is hidden on
   mail already in the trash, where it reported success and did nothing, and
   Restore is hidden on mail that was never deleted.
-- **Deleting a message also marks it read.** Mail you threw away no longer
-  counts towards unread. Undo returns both the folder and the tag.
+- **Deleting a message also marks it read, and takes it out of the inbox.**
+  Mail you threw away no longer counts towards unread, and no longer sits in
+  the Inbox view: `inbox` is stripped along with `unread`, and the row leaves
+  the list straight away rather than waiting for the next sync. Restore and
+  Undo both put the tag back with the file, so nothing comes home invisible.
+  One consequence worth knowing: pressing Delete a second time to undelete is
+  gone for ordinary mail, because there is no longer a row sitting there to
+  press it on. Undo retracts, and Restore in the Trash view is the deliberate
+  route. The second press still works on stranded mail, which is the one place
+  a message can carry `deleted` without being in a trash folder.
+- **The trash no longer paints every row red.** The deleted highlight exists
+  to tell you a message is on its way out of a view it is still sitting in; in
+  the Trash that is every row, so it said nothing and cost legibility. Deleted
+  mail there is now drawn normally, still struck through. A message tagged
+  spam keeps its tint, since that is still news in a folder that only promises
+  "thrown away".
 
 ### Fixed
 
 - **New mail reached the index but not the window.** The worker never reopened
   its read-only notmuch handle, so nothing indexed after startup appeared in
   any query and the application looked like it had stopped syncing.
+- **Replying or forwarding never flagged the message you answered.** The
+  Maildir `R` and `P` flags, which every other client sets and which notmuch
+  reads back as the `replied` and `passed` tags, were never written by
+  qtmaildir: measured on the developer's own index, all 317 `replied` and all
+  6 `passed` had come from other clients. A reply now marks its source
+  replied, a forward marks its source forwarded, and both reach the server on
+  the next sync. Neither goes on the undo stack, for the reason the automatic
+  mark-read does not: the flag records that the mail went, and the send itself
+  cannot be undone. A reply or forward finished from a saved draft is not
+  flagged, since a resumed draft cannot be told from a new message.
+- **A sent message could leave its draft behind.** mbsync renames an uploaded
+  draft to add its own `,U=<uid>` marker, while the composer still held the
+  name it originally wrote, so the removal on send ran against a path that no
+  longer existed and failed silently. The message went, the sent copy was
+  filed, and the draft stayed in the Drafts view looking unfinished. The same
+  rename was already handled everywhere a draft is READ; this was the one
+  place it is written.
 - **Mail sent to another of your own accounts lost `inbox`** and was missing
   from the account that received it. notmuch stores one message with two files
   in that case, the sender's copy and the recipient's, and the `post-new`

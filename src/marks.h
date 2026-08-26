@@ -52,6 +52,13 @@ enum class Mark {
     Flagged,
     Passed,
     Replied,
+    /// Someone forwarded this message TO the user.
+    ///
+    /// Not a Maildir flag and not a tag: derived from the subject line at paint
+    /// time, so it stores nothing and reaches no server. Passed means "I
+    /// forwarded this", which is a different fact about a different person,
+    /// which is why this is its own mark rather than a reuse.
+    ReceivedForward,
     ExpanderCollapsed,
     ExpanderExpanded,
 };

@@ -825,6 +825,7 @@ void MainWindow::buildUi()
     m_model = new ThreadListModel(this);
     m_model->setTagColors(&m_tagColors);
     m_model->setDateFormat(m_config.dateFormat());
+    m_model->setForwardPrefixes(m_config.forwardPrefixes());
     // ThreadListView, not a plain QTableView: it paints the row-wide tag
     // strip under each row's cells, which no delegate can do because a
     // delegate is confined to one column's rectangle.
@@ -1071,6 +1072,11 @@ void MainWindow::openComposerFor(const MessageRef &ref,
     context.kind = kind;
     context.originalPath = originalPath;
 
+    // Item 68. Set for a forward as well as a reply, which is why it is not
+    // inReplyTo: that header is deliberately omitted from a forward below, and
+    // the P flag still belongs on the message that was forwarded.
+    context.sourceMessageId = original.messageId;
+
     const bool replyAll = kind == ComposeContext::Kind::ReplyAll;
     const bool forwarding = kind == ComposeContext::Kind::Forward;
 
@@ -1165,6 +1171,26 @@ void MainWindow::openComposer(const ComposeContext &context)
     // A draft unlinked on send must leave no ghost entry behind.
     connect(composer, &ComposeWindow::draftRemoved, m_worker,
             &NotmuchWorker::removeIndexedFile);
+
+    // Item 68. The R and P Maildir flags, on the message the send answered.
+    //
+    // sendMessageTagChange, NOT tagSelected: this deliberately does not go on
+    // the undo stack, for the reason auto mark-read does not (see
+    // markCurrentThreadRead). The flag records a fact the user brought about
+    // by sending, and the send itself cannot be undone, so offering Ctrl+Z to
+    // retract only the flag would leave the two disagreeing. Removing the tag
+    // by hand still works.
+    //
+    // Message-scoped: the message answered, never its thread.
+    connect(composer, &ComposeWindow::sourceMessageAnswered, this,
+            [this](const QString &messageId, const QString &tag) {
+                if (messageId.isEmpty() || tag.isEmpty())
+                    return;
+                sendMessageTagChange({ messageId }, { tag }, {},
+                                     tag == QStringLiteral("passed")
+                                         ? tr("Mark forwarded")
+                                         : tr("Mark replied"));
+            });
 
     composer->show();
 }
@@ -1555,9 +1581,23 @@ void MainWindow::registerActions()
     });
     addAction(QStringLiteral("delete"), tr("&Delete"),
               tr("Add or remove the deleted tag"), [this]() {
-        // A toggle, like toggle_unread: pressing Delete twice is the natural
-        // way to say "no, put it back", and adding a tag that is already there
-        // is a no-op the user cannot see.
+        // Two directions, and since 2026-08-26 only ONE of them is reachable
+        // on ordinary mail.
+        //
+        // This began as item 16's toggle: pressing Delete twice was how a user
+        // said "no, put it back", and it existed because the deleted row
+        // STAYED in the view, tinted, with nothing else to press. Delete now
+        // strips `inbox` and the row leaves the view immediately, so there is
+        // no second press to make and the mitigation is not needed; Ctrl+Z
+        // retracts, and Restore in the trash is the deliberate route.
+        //
+        // The undelete branch survives because it is NOT dead: stranded mail
+        // (tagged `deleted`, outside any trash folder, from a version before
+        // Delete moved files) is the one place `allDeleted` is still true
+        // where Delete is visible at all, since item 168 hides the action
+        // whenever every selected row is already in a trash folder. That is
+        // what `cleanup_stranded` sends the user to, telling them to select
+        // what should go and press Delete.
         //
         // One direction for the WHOLE selection. Toggling each thread
         // independently would leave one keystroke with the selection in two
@@ -3271,6 +3311,28 @@ void MainWindow::runQuery(FlatResult flat, AccountScope scope)
     m_model->setFlatMode(m_sentView);
 
     QString query = m_queryEdit->text().trimmed();
+
+    // Whether this is the trash view, which suppresses the doomed fill: every
+    // row there is deleted, so the crimson says nothing and only costs
+    // legibility.
+    //
+    // Derived from the QUERY rather than from which button was clicked, so a
+    // hand-typed or edited trash query gets the same treatment as the button,
+    // and set on EVERY run for the reason flat mode is: a flag left standing
+    // would paint the next view's genuinely doomed rows plain.
+    //
+    // Compared against the trash filter resolved in the CURRENT account scope,
+    // which is what runFilter() put in the bar. matchNothingQuery() is
+    // excluded because it is a real string that compares equal to itself, so
+    // an account with no trash folder would otherwise match it.
+    {
+        const QString trashQuery = m_config.resolvedQuery(
+            Config::builtinFilter(QStringLiteral("trash")),
+            m_accountBox->currentData().toString());
+        m_model->setTrashView(!query.isEmpty()
+                              && trashQuery != Config::matchNothingQuery()
+                              && query == trashQuery);
+    }
 
     // A built-in filter arrives already resolved in the selected account's
     // scope, because a generator has to be asked for the account's own query
@@ -5459,9 +5521,15 @@ void MainWindow::trashMessages(const QStringList &messageIds,
         // to touch, and the difference is who is acting: the hook tags
         // arriving mail unattended, while this is an explicit gesture on a
         // message in front of the user.
+        // `inbox` goes with it too. Without that a message deleted FROM the
+        // inbox keeps the tag the Inbox filter matches on, so it stays in that
+        // view after being thrown away: measured 2026-08-26 on the user's own
+        // mail, where it was the only message ever deleted from an inbox and
+        // therefore the only one that could show it. Restore does not depend
+        // on it surviving, since `deleted-from:` carries the origin.
         sendMove(it.value(), it.key(),
                  { QStringLiteral("deleted"), kOriginTagPlaceholder() },
-                 { QStringLiteral("unread") },
+                 { QStringLiteral("unread"), QStringLiteral("inbox") },
                  tr("Delete"), false, wholeThreadIds);
     }
 
@@ -5745,12 +5813,40 @@ void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
         QStringList remove{ QStringLiteral("deleted") };
         if (!origin.isEmpty())
             remove.append(origin);
-        sendMove(it.value(), it.key(), {}, remove, tr("Restore"));
+
+        // `inbox` comes back when, and only when, the message is going back
+        // to an inbox. Delete strips it (so a deleted message leaves the
+        // Inbox view), which makes restoring it the other half of that
+        // change: without this a restored message sits in the inbox FOLDER
+        // carrying no `inbox` TAG, invisible to the view it was returned to
+        // until the next hook run. Undo is unaffected either way, since
+        // TagChange::inverted() gives back exactly what the move removed.
+        //
+        // Judged on the DESTINATION folder rather than on the origin tag's
+        // text, so an account whose inbox is named something else is right for
+        // the same reason inboxFolderFor() exists. The key is
+        // `<maildir>/<folder>`, and the account is resolved back from it
+        // rather than captured above, where it belongs to the per-message loop
+        // and is out of scope here.
+        QStringList add;
+        const QString destMaildir = it.key().section(QLatin1Char('/'), 0, 0);
+        for (const Account &candidate : m_config.accounts()) {
+            if (candidate.maildir != destMaildir)
+                continue;
+            if (origin.compare(candidate.inboxFolder(), Qt::CaseInsensitive) == 0)
+                add.append(QStringLiteral("inbox"));
+            break;
+        }
+
+        sendMove(it.value(), it.key(), add, remove, tr("Restore"));
     }
 
     for (auto it = byInbox.cbegin(); it != byInbox.cend(); ++it) {
-        sendMove(it.value(), it.key(), {}, { QStringLiteral("deleted") },
-                 tr("Restore"));
+        // This branch IS the inbox by construction: it is the fallback for a
+        // message with no origin tag, and the folder it names is the
+        // account's own inbox. So the tag always comes with it.
+        sendMove(it.value(), it.key(), { QStringLiteral("inbox") },
+                 { QStringLiteral("deleted") }, tr("Restore"));
     }
 
     if (!byInbox.isEmpty()) {
@@ -6092,6 +6188,24 @@ void MainWindow::sendMove(const QStringList &messageIds,
             m_model->applyMessageTagChange(messageId, displayAdd, displayRemove);
     }
 
+    // A row that no longer belongs in the view LEAVES it, rather than sitting
+    // there repainted until the next query. Delete strips `inbox`, so in the
+    // Inbox view the message it stripped it from stops matching, and leaving
+    // it was the defect: a deleted message stayed in the inbox across
+    // restarts, since the tag really was gone from the display and really was
+    // still what the query asked for.
+    //
+    // Guarded on the VIEW's own tag, resolved from the query rather than
+    // assumed: a plain `tag:<x>` query is the only shape whose membership one
+    // tag decides. A path query (Trash, Sent, Drafts) is unaffected by a tag
+    // going away, and an arbitrary query the user typed cannot be reasoned
+    // about at all, so both are left alone and refresh at the next sync.
+    // Without that guard, deleting from an `id:` view would empty the list.
+    if (const QString viewTag = viewFilterTag();
+        !viewTag.isEmpty() && displayRemove.contains(viewTag)) {
+        m_model->removeThreadsWithoutTag(viewTag);
+    }
+
     // What to tag once the move is CONFIRMED. Tagging now would leave a
     // message marked deleted in a folder it never left if the rename failed.
     //
@@ -6108,6 +6222,38 @@ void MainWindow::sendMove(const QStringList &messageIds,
     QMetaObject::invokeMethod(m_worker, "moveMessages", Qt::QueuedConnection,
                               Q_ARG(QStringList, messageIds),
                               Q_ARG(QString, destFolder));
+}
+
+QString MainWindow::viewFilterTag() const
+{
+    const QString query = m_queryEdit->text().trimmed();
+    if (query.isEmpty())
+        return {};
+
+    const QString accountKey = m_accountBox->currentData().toString();
+
+    // The three tag-backed built-ins, matched against the query RESOLVED in
+    // the current account scope, which is what runFilter() put in the bar. The
+    // comparison is on the generated string rather than on the button's
+    // checked state, so a query the user edited by hand into the same thing
+    // behaves identically, and a label translated into another locale cannot
+    // change the answer.
+    for (const QString &generator : { QStringLiteral("unread"),
+                                      QStringLiteral("inbox"),
+                                      QStringLiteral("flagged") }) {
+        const SavedQuery filter = Config::builtinFilter(generator);
+        const QString resolved = m_config.resolvedQuery(filter, accountKey);
+        if (resolved == Config::matchNothingQuery())
+            continue;
+        if (resolved == query) {
+            // The TAG, not the generator: "flagged" happens to match its tag
+            // and "inbox" and "unread" do too, but the generator is a filter
+            // identity and the tag is what a message carries.
+            return Config::generatorTagFor(generator);
+        }
+    }
+
+    return {};
 }
 
 void MainWindow::onMessagesMoved(const QMap<QString, QString> &originByMessageId,

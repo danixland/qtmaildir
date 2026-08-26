@@ -168,6 +168,26 @@ QString replySubject(const QString &original);
 
 QString forwardSubject(const QString &original);
 
+/// True when \p subject reads as a message someone forwarded TO the user.
+///
+/// Item 68. This is a DISPLAY predicate: the card draws a mark from it and
+/// stores nothing. It must never write a tag or a Maildir flag, because
+/// `passed` (the `P` flag) means "I forwarded this" and is a different fact
+/// about a different person. Setting it from a subject guess would assert
+/// something false and, with maildir.synchronize_flags on, propagate that to
+/// the server.
+///
+/// Matches the same prefix table forwardSubject() uses, so the set of
+/// recognised spellings cannot drift between "do not double the prefix" and
+/// "this is a forward". \p extraPrefixes adds locale spellings the built-in
+/// table omits, from `[general] forward_prefixes`; each is a bare word without
+/// its colon ("doorst", "vs"). An entry that is empty or not a word is ignored.
+///
+/// A `Re:` chain is stripped first, so `Re: Fwd: x` is recognised: a reply to
+/// a forward is still a forward the user received.
+bool subjectIsForwarded(const QString &subject,
+                        const QStringList &extraPrefixes = {});
+
 /// Builds the context that RESUMES a draft from its file.
 ///
 /// Unlike a reply, nothing here is derived: the recipients, the subject and

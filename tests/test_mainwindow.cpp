@@ -124,6 +124,10 @@ public:
         /// Written only when non-empty, like trash: an account without one
         /// offers no Drafts filter and no Edit draft (items 138 and 153).
         QString drafts;
+        /// Where a sent copy is filed. Written only when non-empty; an
+        /// account without one sends and files nothing, which is a real
+        /// configuration rather than an error.
+        QString sent;
     };
 
     /// Writes several accounts, for the compose cases.
@@ -202,6 +206,8 @@ public:
                     out << "send_command=" << account.sendCommand << "\n";
                 if (!account.drafts.isEmpty())
                     out << "drafts=" << account.drafts << "\n";
+                if (!account.sent.isEmpty())
+                    out << "sent=" << account.sent << "\n";
             }
         }
         file.close();
@@ -472,7 +478,7 @@ private slots:
     void twoDeletesToOneTrashBothGetTheirTags();
     void deletingTwiceLeavesNoOriginTagBehind();
     void undoOfADeleteRemovesTheOriginTagToo();
-    void deletingAThreadRootTwiceRestoresItRatherThanRedeleting();
+    void deletingAThreadRootRemovesItFromTheInboxAndUndoReturnsIt();
     void deleteThreadMovesEveryMessageAndRepaintsTheRootCard();
     void aFolderNameWithASpaceSurvivesTheRoundTrip();
     void deleteIsBoundToTheDeleteKey();
@@ -529,6 +535,11 @@ private slots:
     void anUnchangedMessageIsNotWrittenAgain();
     void closingInsideTheDebounceStillSavesTheDraft();
     void closingAfterASendWritesNoFurtherDraft();
+    void aSendRemovesADraftMbsyncHasRenamed();
+    void aForwardFlagsTheMessageItForwarded();
+    void aReplyFlagsTheMessageItAnswered();
+    void aResumedDraftFlagsNothing();
+    void aForwardWritesThePassedTagToTheIndex();
     void aCloseDuringTheCountdownIsRefused();
     void aFailedSendKeepsTheTextThatFailedToGo();
     void aSmallSizeLimitIsNotDescribedAsZeroMegabytes();
@@ -11286,7 +11297,7 @@ void TestMainWindow::undoOfADeleteRemovesTheOriginTagToo()
              0);
 }
 
-void TestMainWindow::deletingAThreadRootTwiceRestoresItRatherThanRedeleting()
+void TestMainWindow::deletingAThreadRootRemovesItFromTheInboxAndUndoReturnsIt()
 {
     // The toggle asked a THREAD ROW about its thread's tags, which notmuch
     // gives as a UNION over the conversation. Delete the root of a
@@ -11367,9 +11378,20 @@ void TestMainWindow::deletingAThreadRootTwiceRestoresItRatherThanRedeleting()
                                               "tag:deleted")),
              0);
 
-    // Second press on the row as it stands, no re-query.
-    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
-    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+    // There is no second press to make any more, and that is the point.
+    //
+    // Item 16's double-press-to-undelete existed because the deleted row
+    // STAYED in the view with nothing else to act on. Since 2026-08-26 Delete
+    // strips `inbox` too, so in this `tag:inbox` view the row LEAVES: the
+    // mitigation is unreachable here because the thing it mitigated is gone.
+    // Confirmed with the user, who chose this over keeping the toggle.
+    //
+    // Undo is what retracts now, and it must put back BOTH halves: the file
+    // and the tag travelled in one TagChange precisely so one Ctrl+Z returns
+    // them together.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 0, 15000);
+
+    window.findChild<QAction *>(QStringLiteral("undo"))->trigger();
 
     QTRY_VERIFY_WITH_TIMEOUT(
         folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
@@ -11380,6 +11402,16 @@ void TestMainWindow::deletingAThreadRootTwiceRestoresItRatherThanRedeleting()
         notmuchCount(cfg,
                      QStringLiteral("id:troot@example.org and tag:deleted"))
             == 0,
+        15000);
+
+    // The tag half of the same undo. Asserted separately because the file
+    // moving back and `inbox` coming back are two different failures, and a
+    // restore that returns the file without the tag is invisible in the view
+    // it was returned to.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg,
+                     QStringLiteral("id:troot@example.org and tag:inbox"))
+            == 1,
         15000);
 
     // Asked of notmuch directly: a UI query reads 0 rows for the whole
@@ -12171,9 +12203,17 @@ void TestMainWindow::twoDeletesToOneTrashBothGetTheirTags()
     // Both Deletes issued back to back, WITHOUT waiting for the first to be
     // confirmed. That is the whole point: waiting would serialise them and
     // the keyed table would have coped.
+    //
+    // Both take row 0, and that is not a typo. Delete strips `inbox`, and in
+    // this `tag:inbox` view the row it stripped it from LEAVES the list
+    // immediately, so what was row 1 becomes row 0 the moment the first
+    // Delete is triggered. Naming index(1, 0) here would select a row that no
+    // longer exists and the second message would never be deleted at all,
+    // which is exactly how this test failed when the removal was added.
     view->setCurrentIndex(model->index(0, 0, QModelIndex()));
     window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
-    view->setCurrentIndex(model->index(1, 0, QModelIndex()));
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
     window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
 
     const QString root = backed.fixture().maildirPath();
@@ -14441,6 +14481,260 @@ void TestMainWindow::closingAfterASendWritesNoFurtherDraft()
     // send that never happened leaving nothing behind either way.
     const QString sentCur = fixture.mailRoot() + QStringLiteral("/acct/Sent/cur");
     QCOMPARE(QDir(sentCur, {}, QDir::Name, QDir::Files).count(), 1u);
+}
+
+void TestMainWindow::aSendRemovesADraftMbsyncHasRenamed()
+{
+    // Measured on the user's own mail, 2026-08-26: a forward was sent, the
+    // recipient got it, the sent copy was filed, and the draft STAYED in the
+    // Drafts view carrying the `D` flag.
+    //
+    // mbsync renames an uploaded draft to add its `,U=<uid>` infix while
+    // m_draftPath still holds the name DraftStore::write() returned, so
+    // QFile::remove() ran against a path that no longer existed and failed
+    // silently. Item 163 added MaildirName::resolveRenamed() for exactly this
+    // rename and wired it into the three READ sites; this is the WRITE site,
+    // and it was missed.
+    //
+    // closingAfterASendWritesNoFurtherDraft() already asserts the drafts
+    // folder is empty after a send and passed throughout, because its draft is
+    // never renamed. The rename is the whole defect, so it has to be in the
+    // fixture.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=0")));
+
+    ComposeContext context = newContext();
+    context.to = { QStringLiteral("someone@example.org") };
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, fixture.config(), fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction =
+        window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(body && sendAction);
+
+    body->setPlainText(QStringLiteral("Text that is about to be sent."));
+    QVERIFY(window->saveDraftNow());
+    QCOMPARE(fixture.draftCount(), 1);
+
+    // Renamed exactly as mbsync renames it: the `,U=<uid>` infix goes before
+    // the `:2,` flag separator, so the stem the composer remembers is still a
+    // prefix of the real name and nothing but a directory scan can find it.
+    const QStringList before =
+        QDir(fixture.draftsCur(), {}, QDir::Name, QDir::Files).entryList();
+    QCOMPARE(before.size(), 1);
+    const QString original = before.first();
+    const int sep = original.indexOf(QStringLiteral(":2,"));
+    QVERIFY2(sep > 0, "the draft filename carries no :2, flag separator");
+    const QString renamed = original.left(sep) + QStringLiteral(",U=7")
+                            + original.mid(sep);
+    QVERIFY(QFile::rename(fixture.draftsCur() + QLatin1Char('/') + original,
+                          fixture.draftsCur() + QLatin1Char('/') + renamed));
+    QCOMPARE(fixture.draftCount(), 1);
+
+    sendAction->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 15000);
+
+    // The sent copy proves the send actually completed, so an empty drafts
+    // folder below means the removal worked rather than that nothing ran.
+    const QString sentCur =
+        fixture.mailRoot() + QStringLiteral("/acct/Sent/cur");
+    QCOMPARE(QDir(sentCur, {}, QDir::Name, QDir::Files).count(), 1u);
+
+    QCOMPARE(fixture.draftCount(), 0);
+}
+
+void TestMainWindow::aForwardFlagsTheMessageItForwarded()
+{
+    // Item 68. The signal that carries the P flag back to the source message.
+    // Asserted on the SIGNAL rather than on the tag, because the tag write is
+    // MainWindow's and needs a worker; what can go wrong here is the composer
+    // never emitting, which is what the user observed on 2026-08-26.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=0")));
+
+    ComposeContext context = newContext();
+    context.kind = ComposeContext::Kind::Forward;
+    context.to = { QStringLiteral("someone@example.org") };
+
+    // Set for a forward as well as a reply, and deliberately NOT inReplyTo:
+    // that header is empty on a forward, so keying the emit on it made this
+    // half dead code that compiled and never fired.
+    context.sourceMessageId = QStringLiteral("original@example.org");
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, fixture.config(), fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction =
+        window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(body && sendAction);
+
+    QString flaggedId;
+    QString flaggedTag;
+    connect(window.data(), &ComposeWindow::sourceMessageAnswered,
+            [&](const QString &id, const QString &tag) {
+                flaggedId = id;
+                flaggedTag = tag;
+            });
+
+    body->setPlainText(QStringLiteral("Passing this on."));
+    sendAction->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 15000);
+
+    // The sent copy proves the send completed, so an unset tag below is a
+    // missing emit rather than a send that never happened.
+    const QString sentCur =
+        fixture.mailRoot() + QStringLiteral("/acct/Sent/cur");
+    QCOMPARE(QDir(sentCur, {}, QDir::Name, QDir::Files).count(), 1u);
+
+    QCOMPARE(flaggedId, QStringLiteral("original@example.org"));
+    QCOMPARE(flaggedTag, QStringLiteral("passed"));
+}
+
+void TestMainWindow::aReplyFlagsTheMessageItAnswered()
+{
+    // The other half of item 68, and the one the measurement said was ALSO
+    // missing: all 317 `replied` in the developer's index came from other
+    // clients, because nothing here had ever written the R flag.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=0")));
+
+    ComposeContext context = newContext();
+    context.kind = ComposeContext::Kind::Reply;
+    context.to = { QStringLiteral("someone@example.org") };
+    context.sourceMessageId = QStringLiteral("original@example.org");
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, fixture.config(), fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction =
+        window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(body && sendAction);
+
+    QString flaggedTag;
+    connect(window.data(), &ComposeWindow::sourceMessageAnswered,
+            [&](const QString &, const QString &tag) { flaggedTag = tag; });
+
+    body->setPlainText(QStringLiteral("Answering."));
+    sendAction->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 15000);
+
+    QCOMPARE(flaggedTag, QStringLiteral("replied"));
+}
+
+void TestMainWindow::aResumedDraftFlagsNothing()
+{
+    // Kind::Draft records how the FILE was opened, not what the user is
+    // doing, so a draft that began as a reply cannot be told from one that
+    // began as a new message. Flagging on it would set R from a guess, and
+    // maildir.synchronize_flags carries a wrong flag to the server.
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=0")));
+
+    ComposeContext context = newContext();
+    context.kind = ComposeContext::Kind::Draft;
+    context.to = { QStringLiteral("someone@example.org") };
+
+    // Present, and must still be ignored: this is the case a guard keyed only
+    // on the id being non-empty would get wrong.
+    context.sourceMessageId = QStringLiteral("original@example.org");
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, fixture.config(), fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction =
+        window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(body && sendAction);
+
+    bool emitted = false;
+    connect(window.data(), &ComposeWindow::sourceMessageAnswered,
+            [&](const QString &, const QString &) { emitted = true; });
+
+    body->setPlainText(QStringLiteral("Finishing this off."));
+    sendAction->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 15000);
+
+    const QString sentCur =
+        fixture.mailRoot() + QStringLiteral("/acct/Sent/cur");
+    QCOMPARE(QDir(sentCur, {}, QDir::Name, QDir::Files).count(), 1u);
+
+    QVERIFY2(!emitted, "a resumed draft flagged a message it cannot know it "
+                       "was answering");
+}
+
+void TestMainWindow::aForwardWritesThePassedTagToTheIndex()
+{
+    // The END-TO-END half: aForwardFlagsTheMessageItForwarded() proves the
+    // composer emits, and this proves the tag actually reaches notmuch. The
+    // user forwarded real mail on 2026-08-26, the recipient got it, the sent
+    // copy was filed, and `tag:passed` never moved, so the gap is somewhere
+    // between the emit and the index and only a real worker can show which.
+    WorkerComposeFixture fixture;
+    QVERIFY2(fixture.seed({ { QStringLiteral("acct"), QStringLiteral("acct"),
+                              QStringLiteral("Trash"),
+                              QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org"),
+                              QStringLiteral("Drafts"),
+                              QStringLiteral("Sent") } },
+                          QStringLiteral("acct/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    QVERIFY(WorkerComposeFixture::selectTheMessage(window));
+
+    auto *forward = window.findChild<QAction *>(QStringLiteral("forward"));
+    QVERIFY(forward);
+
+    // Forward is gated on a message being DISPLAYED, not merely selected:
+    // updateComposeActions() enables it from the pane. A disabled action's
+    // trigger() is a silent no-op, so asserting this is what stops the test
+    // measuring nothing.
+    QTRY_VERIFY_WITH_TIMEOUT(forward->isEnabled(), 15000);
+    forward->trigger();
+
+    // Forward is ASYNCHRONOUS: composeReply() asks the worker to load the
+    // message and the composer opens when that reply lands. Calling
+    // openComposerForTest() straight after the trigger returns before the
+    // round trip finishes, and the first version of this test did exactly
+    // that, then asserted on a composer whose kind was New and whose
+    // sourceMessageId was empty. Waiting on the COUNT is what makes the
+    // composer under test the one Forward opened.
+    QTRY_VERIFY_WITH_TIMEOUT(window.openComposerCount() == 1, 15000);
+
+    // openComposersForTest(), NOT openComposerForTest(): the singular one
+    // OPENS a fresh Kind::New composer rather than returning an existing one,
+    // which is what the Compose action's tests want and is a trap here. The
+    // first version of this test used it, sent from the composer it had just
+    // created, and reported kind=0 with an empty sourceMessageId, reading
+    // exactly like the product defect it was written to reproduce.
+    const QList<ComposeWindow *> composers = window.openComposersForTest();
+    QCOMPARE(composers.size(), 1);
+    ComposeWindow *composer = composers.first();
+    QVERIFY2(composer, "Forward opened no composer");
+
+    auto *body = composer->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction =
+        composer->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(body && sendAction);
+
+    auto *to = composer->findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setText(QStringLiteral("someone@example.org"));
+    body->setPlainText(QStringLiteral("Passing this on."));
+
+    sendAction->trigger();
+
+    // The tag lands through the worker, so this waits on the DATABASE rather
+    // than on a signal: the whole question is whether the write arrives.
+    const QString cfg = fixture.backed.fixture().configPath();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:compose1@example.org and "
+                                         "tag:passed")) == 1,
+        15000);
 }
 
 void TestMainWindow::aCloseDuringTheCountdownIsRefused()

@@ -27,6 +27,9 @@ class TestThreadListModel : public QObject
 {
     Q_OBJECT
 private slots:
+    void aRowLeavesTheViewWhenItLosesTheViewsTag();
+    void rowsLosingTheTagAreRemovedInOneContiguousRun();
+    void theTrashViewDrawsNoDoomedFill();
     void messageNodeHoldsDisplayFacts();
     void rootRowsSurviveTheTreeConversion();
     void repliesBecomeChildRowsUnderTheirThread();
@@ -2163,6 +2166,100 @@ void TestThreadListModel::recipientsReplaceTheSenderWhenPresent()
     QCOMPARE(model.data(model.index(2, 0),
                         ThreadListModel::SendersRole).toString(),
              QStringLiteral("You"));
+}
+
+void TestThreadListModel::aRowLeavesTheViewWhenItLosesTheViewsTag()
+{
+    ThreadListModel model;
+    ThreadSummary a = makeThread(QStringLiteral("t1"), QStringLiteral("Keep"));
+    a.firstMessageId = QStringLiteral("m1");
+    ThreadSummary b = makeThread(QStringLiteral("t2"), QStringLiteral("Drop"));
+    b.firstMessageId = QStringLiteral("m2");
+    ThreadSummary c = makeThread(QStringLiteral("t3"), QStringLiteral("Keep2"));
+    c.firstMessageId = QStringLiteral("m3");
+    model.appendBatch({ a, b, c });
+    QCOMPARE(model.rowCount(), 3);
+
+    // The middle row loses `inbox`, as Delete strips it. Middle deliberately:
+    // a removal at either end can be right by accident while the index
+    // arithmetic is wrong.
+    model.applyMessageTagChange(QStringLiteral("m2"), {},
+                                { QStringLiteral("inbox") });
+    model.removeThreadsWithoutTag(QStringLiteral("inbox"));
+
+    QCOMPARE(model.rowCount(), 2);
+    QCOMPARE(model.index(0, 0, QModelIndex())
+                 .data(ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("Keep"));
+    QCOMPARE(model.index(1, 0, QModelIndex())
+                 .data(ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("Keep2"));
+}
+
+void TestThreadListModel::rowsLosingTheTagAreRemovedInOneContiguousRun()
+{
+    ThreadListModel model;
+    QList<ThreadSummary> batch;
+    for (int i = 1; i <= 5; ++i) {
+        ThreadSummary t = makeThread(QStringLiteral("t%1").arg(i),
+                                     QStringLiteral("S%1").arg(i));
+        t.firstMessageId = QStringLiteral("m%1").arg(i);
+        batch.append(t);
+    }
+    model.appendBatch(batch);
+
+    // Three adjacent rows go at once, which is the case a backwards walk in
+    // runs handles and a naive forward loop gets wrong by renumbering.
+    for (const QString &id : { QStringLiteral("m2"), QStringLiteral("m3"),
+                               QStringLiteral("m4") }) {
+        model.applyMessageTagChange(id, {}, { QStringLiteral("inbox") });
+    }
+    model.removeThreadsWithoutTag(QStringLiteral("inbox"));
+
+    QCOMPARE(model.rowCount(), 2);
+    QCOMPARE(model.index(0, 0, QModelIndex())
+                 .data(ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("S1"));
+    QCOMPARE(model.index(1, 0, QModelIndex())
+                 .data(ThreadListModel::SubjectRole).toString(),
+             QStringLiteral("S5"));
+}
+
+void TestThreadListModel::theTrashViewDrawsNoDoomedFill()
+{
+    ThreadListModel model;
+    ThreadSummary deleted = makeThread(QStringLiteral("t1"),
+                                       QStringLiteral("Thrown away"));
+    deleted.tags = QStringList{ QStringLiteral("deleted") };
+    ThreadSummary spam = makeThread(QStringLiteral("t2"),
+                                    QStringLiteral("Junk"));
+    spam.tags = QStringList{ QStringLiteral("deleted"), QStringLiteral("spam") };
+    model.appendBatch({ deleted, spam });
+
+    const QModelIndex first = model.index(0, 0, QModelIndex());
+    const QModelIndex second = model.index(1, 0, QModelIndex());
+
+    // Outside the trash both are filled, which is the guard proving the
+    // assertion below can fail.
+    QVERIFY(first.data(Qt::BackgroundRole).isValid());
+    QVERIFY(second.data(Qt::BackgroundRole).isValid());
+
+    model.setTrashView(true);
+
+    // A plainly deleted row loses the fill AND the white text that only reads
+    // against it; the strike-out is what still says deleted, and is asserted
+    // by the font role rather than by colour.
+    QVERIFY(!first.data(Qt::BackgroundRole).isValid());
+    QVERIFY(first.data(Qt::FontRole).value<QFont>().strikeOut());
+
+    // A spam row keeps its tint: the trash promises "thrown away", not
+    // "harmless".
+    QVERIFY(second.data(Qt::BackgroundRole).isValid());
+
+    // And the flag does not stick: leaving the trash restores the fill, which
+    // is the leak the setter's comment warns about.
+    model.setTrashView(false);
+    QVERIFY(first.data(Qt::BackgroundRole).isValid());
 }
 
 QTEST_MAIN(TestThreadListModel)

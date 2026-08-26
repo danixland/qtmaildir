@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Received forward: a shaft entering from upper left, turning down into an
+       arrow head at the bottom. Deliberately NOT a mirror of passed.svg, which
+       is the pair passed/replied and means "I acted on this". This one means
+       "someone forwarded this TO me", so it points down and inward rather than
+       sweeping away, and is derived from the subject line rather than from a
+       Maildir flag. -->
+  <path fill="currentColor" d="M 2.0,2.6
+    a 0.95,0.95 0 0 1 1.9,0
+    V 6.4
+    C 3.9,8.1 5.2,9.4 6.9,9.4
+    H 9.6
+    V 6.6
+    L 15.0,11.0
+    L 9.6,15.4
+    V 12.6
+    H 6.9
+    C 3.5,12.6 2.0,10.3 2.0,7.4
+    Z"/>
+</svg>

@@ -238,6 +238,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Il formato data &apos;%1&apos; non contiene campi di data o ora; verrà usato il formato di sistema.</translation>
     </message>
     <message>
+        <source>Forward prefix &apos;%1&apos; should be written without its colon; ignoring it.</source>
+        <translation>Il prefisso di inoltro &apos;%1&apos; va scritto senza i due punti; verrà ignorato.</translation>
+    </message>
+    <message>
         <source>Unknown sync_on_exit &apos;%1&apos;; expected ask, always or never. Using ask.</source>
         <translation>Valore sconosciuto per sync_on_exit &apos;%1&apos;; sono ammessi ask, always o never. Verrà usato ask.</translation>
     </message>
@@ -749,6 +753,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>The Maildir root is not known yet</source>
         <translation>La radice della Maildir non è ancora nota</translation>
+    </message>
+    <message>
+        <source>Mark forwarded</source>
+        <translation>Segna come inoltrato</translation>
+    </message>
+    <message>
+        <source>Mark replied</source>
+        <translation>Segna come risposto</translation>
     </message>
     <message>
         <source>That message&apos;s file could not be found</source>

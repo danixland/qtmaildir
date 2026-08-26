@@ -81,6 +81,8 @@ private slots:
     void aSingleLetterBeforeAColonIsNotAPrefix();
 
     // Account resolution.
+    void aReceivedForwardIsRecognisedFromItsSubject();
+    void configuredForwardPrefixesExtendTheBuiltInTable();
     void theReplyAccountComesFromTheMessagesMaildir();
     void anAccountIsNotMatchedByAPrefixOfItsMaildir();
     void anAmbiguousMessagePrefersTheMatchingRecipient();
@@ -806,6 +808,81 @@ void TestComposeContext::aSingleLetterBeforeAColonIsNotAPrefix()
              QStringLiteral("Fwd: I: notes"));
     QCOMPARE(ComposeContextBuilder::forwardSubject(QStringLiteral("F: results")),
              QStringLiteral("Fwd: F: results"));
+}
+
+void TestComposeContext::aReceivedForwardIsRecognisedFromItsSubject()
+{
+    using ComposeContextBuilder::subjectIsForwarded;
+
+    // Item 68. The display predicate behind the received-forward mark. It
+    // shares forwardSubject()'s prefix table deliberately, so the two cannot
+    // disagree about what a forward looks like.
+    QVERIFY(subjectIsForwarded(QStringLiteral("Fwd: budget")));
+    QVERIFY(subjectIsForwarded(QStringLiteral("Fw: budget")));
+    QVERIFY(subjectIsForwarded(QStringLiteral("FWD: budget")));
+    QVERIFY(subjectIsForwarded(QStringLiteral("WG: Angebot")));
+    QVERIFY(subjectIsForwarded(QStringLiteral("TR: document")));
+
+    // Anchored. "Fwd:" inside a subject is a quotation, not a marker, and the
+    // whole reason item 68's entry insisted on anchoring.
+    QVERIFY(!subjectIsForwarded(QStringLiteral("Notes fwd: budget")));
+    QVERIFY(!subjectIsForwarded(QStringLiteral("budget")));
+    QVERIFY(!subjectIsForwarded(QString()));
+
+    // The single-letter spellings stay unrecognised here for exactly the
+    // reason forwardSubject() rejects them: "I: notes" is an ordinary subject.
+    QVERIFY(!subjectIsForwarded(QStringLiteral("I: notes")));
+    QVERIFY(!subjectIsForwarded(QStringLiteral("F: results")));
+
+    // A reply to a forward is still a forward the user received, so the Re:
+    // chain is stripped first. Both orders, and a counted Outlook form.
+    QVERIFY(subjectIsForwarded(QStringLiteral("Re: Fwd: budget")));
+    QVERIFY(subjectIsForwarded(QStringLiteral("Re: Re: Fwd: budget")));
+    QVERIFY(subjectIsForwarded(QStringLiteral("Re[2]: Fwd: budget")));
+    QVERIFY(subjectIsForwarded(QStringLiteral("AW: WG: Angebot")));
+
+    // A plain reply is not a forward, however deep the chain.
+    QVERIFY(!subjectIsForwarded(QStringLiteral("Re: budget")));
+    QVERIFY(!subjectIsForwarded(QStringLiteral("Re: Re: Re: budget")));
+}
+
+void TestComposeContext::configuredForwardPrefixesExtendTheBuiltInTable()
+{
+    using ComposeContextBuilder::subjectIsForwarded;
+
+    // Item 68. [general] forward_prefixes ADDS to the table rather than
+    // replacing it: a user adding Dutch must not lose English.
+    const QStringList dutch = { QStringLiteral("Doorst") };
+    QVERIFY(subjectIsForwarded(QStringLiteral("Doorst: begroting"), dutch));
+    QVERIFY(subjectIsForwarded(QStringLiteral("Fwd: budget"), dutch));
+
+    // Case-insensitive and counted forms, like the built-ins.
+    QVERIFY(subjectIsForwarded(QStringLiteral("DOORST: begroting"), dutch));
+    QVERIFY(subjectIsForwarded(QStringLiteral("Doorst[2]: begroting"), dutch));
+    QVERIFY(subjectIsForwarded(QStringLiteral("Re: Doorst: begroting"), dutch));
+
+    // An unconfigured spelling stays unrecognised, which is what makes the
+    // key worth having rather than the predicate matching anything.
+    QVERIFY(!subjectIsForwarded(QStringLiteral("Doorst: begroting")));
+
+    // Non-word entries are ignored per entry. Measured 2026-08-26: escaping
+    // alone already makes punctuation inert, so what the guard actually buys
+    // is that a configured "-" does not make "-: x" a forward, and a digit
+    // does not make "2: x" one. Neither is a marker any client emits.
+    QVERIFY(!subjectIsForwarded(QStringLiteral("-: x"),
+                                { QStringLiteral("-") }));
+    QVERIFY(!subjectIsForwarded(QStringLiteral("2: x"),
+                                { QStringLiteral("2") }));
+
+    // An empty or blank entry contributes nothing rather than matching
+    // everything, which is the failure that would be silent and total.
+    const QStringList blank = { QString(), QStringLiteral("   ") };
+    QVERIFY(!subjectIsForwarded(QStringLiteral("budget"), blank));
+    QVERIFY(!subjectIsForwarded(QStringLiteral("anything at all"), blank));
+
+    // A configured "Re" must not turn every reply into a forward.
+    QVERIFY(!subjectIsForwarded(QStringLiteral("Re: budget"),
+                                { QStringLiteral("Re") }));
 }
 
 // ---------------------------------------------------------------------------

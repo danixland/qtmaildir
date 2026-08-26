@@ -18,6 +18,8 @@
 
 #include "threadlistmodel.h"
 
+#include "composecontext.h"
+
 #include <QSet>
 
 #include <QBrush>
@@ -175,6 +177,65 @@ void ThreadListModel::setFlatMode(bool flat)
     beginResetModel();
     m_flatMode = flat;
     endResetModel();
+}
+
+void ThreadListModel::setTrashView(bool trash)
+{
+    if (m_trashView == trash)
+        return;
+
+    m_trashView = trash;
+
+    // A repaint, NOT a reset: this changes two colour roles and nothing about
+    // the shape of the tree, so unlike setFlatMode() there are no child rows
+    // to invalidate and a reset would collapse every expanded thread for a
+    // change of paint. Emitted over the whole list including children, since
+    // the message-row branch reads the same flag.
+    if (m_threads.isEmpty())
+        return;
+    const QVector<int> roles{ Qt::BackgroundRole, Qt::ForegroundRole };
+    emit dataChanged(index(0, 0, QModelIndex()),
+                     index(m_threads.size() - 1, 0, QModelIndex()), roles);
+    for (int row = 0; row < m_threads.size(); ++row) {
+        const QModelIndex parent = index(row, 0, QModelIndex());
+        const int children = rowCount(parent);
+        if (children > 0) {
+            emit dataChanged(index(0, 0, parent),
+                             index(children - 1, 0, parent), roles);
+        }
+    }
+}
+
+void ThreadListModel::removeThreadsWithoutTag(const QString &tag)
+{
+    if (tag.isEmpty() || m_threads.isEmpty())
+        return;
+
+    // The tags a row is judged on are the ones its CARD draws: the loaded
+    // message's own when there is one, the thread's union otherwise. That is
+    // the same substitution data() makes for a thread row, and using the
+    // summary alone would keep a row whose displayed message lost the tag
+    // while a sibling still carries it.
+    const auto keeps = [&tag](const ThreadNode &node) {
+        if (!node.first.messageId.isEmpty())
+            return node.first.tags.contains(tag);
+        return node.summary.tags.contains(tag);
+    };
+
+    // Backwards, in contiguous runs, exactly as reconcile() removes: each
+    // beginRemoveRows renumbers everything after it, so walking forwards
+    // removes the wrong rows after the first deletion.
+    for (int row = m_threads.size() - 1; row >= 0; --row) {
+        if (keeps(m_threads.at(row)))
+            continue;
+        int first = row;
+        while (first > 0 && !keeps(m_threads.at(first - 1)))
+            --first;
+        beginRemoveRows({}, first, row);
+        m_threads.remove(first, row - first + 1);
+        endRemoveRows();
+        row = first;
+    }
 }
 
 int ThreadListModel::rowCount(const QModelIndex &parent) const
@@ -338,6 +399,9 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             return node.isFlagged();
         case IsPassedRole:
             return node.isPassed();
+        case IsReceivedForwardRole:
+            return ComposeContextBuilder::subjectIsForwarded(node.subject,
+                                                             m_forwardPrefixes);
         case IsRepliedRole:
             return node.isReplied();
         case ReplyCountRole:
@@ -352,9 +416,15 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             // thread row does. Without this branch a message-scoped Delete
             // repainted a reply identically to an undeleted one, so the
             // pending count moved and nothing on screen did.
-            if (node.isDoomed())
+            // Suppressed in the trash view, exactly as on a thread row: see
+            // the comment there. Both branches must agree, or an expanded
+            // thread in the trash paints its replies crimson under an
+            // untinted root.
+            if (node.isDoomed()
+                && !(m_trashView && node.isDeleted() && !node.isSpam())) {
                 return QBrush(node.isDeleted() ? deletedColour()
                                                : spamColour());
+            }
 
             // Tinted, so an expanded thread reads as one block rather than as
             // more table rows. Applied per cell here; ThreadListView fills the
@@ -401,8 +471,16 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             // read colour is mixed toward the BACKGROUND, so leaving it here
             // would compute a grey against the pane's base and then paint it
             // over red.
-            if (node.isDoomed())
+            //
+            // Tied to the FILL, not to isDoomed(): where the fill is
+            // suppressed in the trash view there is no red to sit on, and
+            // white text would land on the ordinary background unreadable.
+            // The strike-out below is deliberately NOT suppressed, since it
+            // is the cue that survives without colour at all.
+            if (node.isDoomed()
+                && !(m_trashView && node.isDeleted() && !node.isSpam())) {
                 return QBrush(QColor(Qt::white));
+            }
 
             // Dimmed whether read or not, for the same reason as the font: a
             // reply is subordinate content. An unread one is left undimmed so
@@ -611,6 +689,9 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         return thread.isFlagged();
     case IsPassedRole:
         return thread.isPassed();
+    case IsReceivedForwardRole:
+        return ComposeContextBuilder::subjectIsForwarded(thread.subject,
+                                                         m_forwardPrefixes);
     case IsRepliedRole:
         return thread.isReplied();
     case ReplyCountRole:
@@ -633,7 +714,15 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     // whole row: a cue on a single column disappears as soon as that column
     // scrolls out of view, which is exactly how the tag change used to go
     // unnoticed.
-    if (thread.isDoomed()) {
+    //
+    // In the TRASH view the deleted fill is suppressed: every row there is
+    // deleted, so a list painted entirely crimson tells the user nothing they
+    // did not ask for by opening the trash, and costs the legibility the fill
+    // borrows. Only `deleted` is suppressed; a SPAM row keeps its tint, since
+    // "this is junk" is still news in a folder that only promises "this is
+    // thrown away".
+    const bool suppressed = m_trashView && thread.isDeleted() && !thread.isSpam();
+    if (thread.isDoomed() && !suppressed) {
         if (role == Qt::BackgroundRole)
             return QBrush(thread.isDeleted() ? deletedColour() : spamColour());
         if (role == Qt::ForegroundRole)

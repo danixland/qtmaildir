@@ -21,6 +21,7 @@
 #include <QTemporaryDir>
 
 #include "draftstore.h"
+#include "maildirname.h"
 #include "messagebuilder.h"
 #include "mimeparser.h"
 #include "messagesender.h"
@@ -1418,9 +1419,60 @@ void ComposeWindow::send()
 
             dialog->setStage(SendDialog::Stage::RemovingDraft);
             if (!m_draftPath.isEmpty()) {
-                QFile::remove(m_draftPath);
-                emit draftRemoved(m_draftPath);
+                // Re-resolved, because mbsync renames an uploaded draft to add
+                // its `,U=<uid>` infix while m_draftPath still holds the name
+                // DraftStore::write() returned. Without this the remove is a
+                // silent no-op on a path that no longer exists: measured
+                // 2026-08-26 on the user's own mail, where a forwarded message
+                // was sent and filed correctly and its draft stayed in the
+                // Drafts view carrying the `D` flag.
+                //
+                // Item 163 added resolveRenamed() and wired it into the three
+                // READ sites (the pane, Reply/Forward, the draft reopen). This
+                // is the write site, and it was missed: the same rename, the
+                // same fix, one call site later.
+                //
+                // The unresolved path is emitted when nothing matches, so a
+                // draft that genuinely vanished still asks the worker to drop
+                // its index entry rather than leaving a ghost.
+                const QString actual = MaildirName::resolveRenamed(m_draftPath);
+                const QString target = actual.isEmpty() ? m_draftPath : actual;
+                QFile::remove(target);
+                emit draftRemoved(target);
                 m_draftPath.clear();
+            }
+
+            // Item 68. The Maildir R and P flags, recorded on the message this
+            // one answers. Both were measured missing on 2026-08-26: every one
+            // of the 317 `replied` and 6 `passed` in the developer's own index
+            // came from another client, because nothing here has ever written
+            // either.
+            //
+            // AFTER the send, never before: the flag asserts that the mail
+            // went, and an abandoned composer must leave no trace on the
+            // message it was answering.
+            //
+            // sourceMessageId, NOT inReplyTo: that header is deliberately
+            // empty on a Forward, so keying on it would have made the `passed`
+            // half dead code that compiles and never fires.
+            //
+            // A resumed Draft is deliberately excluded even when it carries a
+            // source id. Its kind records how the FILE was opened, not what the
+            // user is doing, so a draft that began as a reply cannot be told
+            // from one that began as a new message; flagging on that would set
+            // R from a guess. The cost is a missing flag on a reply finished in
+            // two sittings, which is the safe direction: maildir.synchronize_-
+            // flags is on, so a wrong flag reaches the server.
+            if (!m_context.sourceMessageId.isEmpty()) {
+                QString tag;
+                if (m_context.kind == ComposeContext::Kind::Reply
+                    || m_context.kind == ComposeContext::Kind::ReplyAll) {
+                    tag = QStringLiteral("replied");
+                } else if (m_context.kind == ComposeContext::Kind::Forward) {
+                    tag = QStringLiteral("passed");
+                }
+                if (!tag.isEmpty())
+                    emit sourceMessageAnswered(m_context.sourceMessageId, tag);
             }
 
             dialog->accept();

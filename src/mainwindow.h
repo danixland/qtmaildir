@@ -1104,6 +1104,16 @@ private:
 
     /// Confirms a move: applies the tags the move was asked to carry, with the
     /// origin placeholder resolved per message.
+    /// The single tag the CURRENT view's membership depends on, or empty.
+    ///
+    /// Only the three plain `tag:` filters (Unread, Inbox, Important) have
+    /// one: their query is exactly that tag, so a message losing it stops
+    /// belonging. Trash, Sent and Drafts are PATH queries, where a tag change
+    /// decides nothing, and a hand-typed query is not reasoned about at all.
+    /// Both answer empty, which is what keeps an optimistic row removal from
+    /// firing in a view it cannot judge.
+    QString viewFilterTag() const;
+
     void onMessagesMoved(const QMap<QString, QString> &originByMessageId,
                          const QString &destFolder);
 

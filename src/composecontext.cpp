@@ -487,6 +487,58 @@ QString ComposeContextBuilder::forwardSubject(const QString &original)
     return QStringLiteral("Fwd: ") + original;
 }
 
+bool ComposeContextBuilder::subjectIsForwarded(const QString &subject,
+                                               const QStringList &extraPrefixes)
+{
+    // Strip any Re: chain first, so "Re: Fwd: x" is recognised: a reply to a
+    // forward is still a forward the user received. Bounded rather than a
+    // while(true), since a crafted subject of ten thousand "Re:" is input from
+    // a stranger and this runs per row per repaint.
+    QString rest = subject;
+    for (int i = 0; i < 8; ++i) {
+        const QRegularExpressionMatch match = replyPrefix().match(rest);
+        if (!match.hasMatch())
+            break;
+        rest = rest.mid(match.capturedEnd());
+    }
+
+    if (forwardPrefix().match(rest).hasMatch())
+        return true;
+
+    if (extraPrefixes.isEmpty())
+        return false;
+
+    // The configured spellings, matched with the same shape as the built-in
+    // table: anchored, case-insensitive, tolerating the counted forms Outlook
+    // emits.
+    //
+    // Escaped, because this comes from a hand-edited config file. Measured
+    // 2026-08-26: escaping alone already makes a punctuation entry inert
+    // rather than invalid, so the word guard below is NOT about pattern
+    // validity. It is about what a non-word entry would legitimately match: a
+    // configured "-" matches "-: x", and a digit entry matches a subject
+    // opening with a number, neither of which is a forward marker in any
+    // client.
+    QStringList alternatives;
+    for (const QString &prefix : extraPrefixes) {
+        const QString trimmed = prefix.trimmed();
+        // A word only. A configured "Re" would swallow every reply, and a
+        // configured ":" or "" would match every subject in the mailbox.
+        static const QRegularExpression word(QStringLiteral("^[^\\W\\d_]+$"));
+        if (trimmed.isEmpty() || !word.match(trimmed).hasMatch())
+            continue;
+        alternatives << QRegularExpression::escape(trimmed);
+    }
+    if (alternatives.isEmpty())
+        return false;
+
+    const QRegularExpression extra(
+        QStringLiteral("^\\s*(%1)\\s*(\\[\\d+\\]|\\(\\d+\\))?\\s*:")
+            .arg(alternatives.join(QLatin1Char('|'))),
+        QRegularExpression::CaseInsensitiveOption);
+    return extra.match(rest).hasMatch();
+}
+
 ComposeContext ComposeContextBuilder::forDraft(const Config &config,
                                                const QString &path)
 {

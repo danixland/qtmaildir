@@ -189,6 +189,18 @@ signals:
     /// \p path is the file that was removed, absolute.
     void draftRemoved(const QString &path);
 
+    /// A send succeeded, and the message it answers should record that.
+    ///
+    /// Item 68. \p sourceMessageId is the Message-ID of the message replied to
+    /// or forwarded, \p tag is "replied" or "passed". The window emits rather
+    /// than writing, because a tag write belongs to the one applyTags path in
+    /// MainWindow and the composer owns no worker.
+    ///
+    /// Emitted only after the send itself succeeded: a failed send leaves the
+    /// source untouched, since the flag asserts that the mail went.
+    void sourceMessageAnswered(const QString &sourceMessageId,
+                               const QString &tag);
+
 protected:
     /// The one place the registry is told, whichever route closes the window.
     void closeEvent(QCloseEvent *event) override;

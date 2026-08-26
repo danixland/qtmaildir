@@ -252,7 +252,15 @@ struct ComposeContext
     QString accountKey;          ///< Which account sends. Plain data here; the resolution rules live with whatever builds this context.
     Kind kind = Kind::New;
     QString originalPath;        ///< The .eml being replied to or forwarded. Empty for New.
-    QString inReplyTo;           ///< Message-ID of the original.
+    QString inReplyTo;           ///< Message-ID of the original. EMPTY for a Forward: carrying In-Reply-To would file the forward under the thread it left, in the recipient's client.
+
+    /// Message-ID of the message being answered, for flagging it afterwards.
+    ///
+    /// Item 68. Separate from inReplyTo because that is a THREADING header and
+    /// is deliberately empty on a Forward, while the P flag still has to land
+    /// on the message that was forwarded. Set for Reply, ReplyAll and Forward;
+    /// empty for New and for a resumed Draft.
+    QString sourceMessageId;
     QStringList references;      ///< The original's References plus its Message-ID.
     QStringList to;              ///< Pre-filled, the user's own addresses already stripped.
     QStringList cc;

@@ -170,6 +170,13 @@ QString Account::inboxQuery() const
     return folderQuery(maildir, inboxFolder());
 }
 
+QString Config::generatorTagFor(const QString &generator)
+{
+    // Delegates to the file-local table rather than repeating it, so the
+    // question "which tag does this filter match" has one answer.
+    return generatorTag(generator);
+}
+
 QString Config::allSentQuery() const
 {
     return joinAccountQueries(m_accounts, &Account::sentQuery);
@@ -336,6 +343,31 @@ void Config::load(const QString &path)
         } else {
             m_dateFormat = dateFormat;
         }
+    }
+
+    // Extra subject prefixes that mark a message someone forwarded TO the
+    // user, added to the built-in table in composecontext.cpp rather than
+    // replacing it: the built-ins are the spellings that repo already
+    // measured, and a user adding Dutch should not have to restate English.
+    //
+    // Bare words, no colon. The predicate ignores anything else, so a
+    // malformed entry costs that entry and not the whole key.
+    const QStringList forwardPrefixes =
+        settings.value(QStringLiteral("forward_prefixes"))
+            .toStringList();
+    for (const QString &prefix : forwardPrefixes) {
+        const QString trimmed = prefix.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        // Warned rather than dropped silently: the user asked for something
+        // and is not getting it, the same reason message_zoom warns.
+        if (trimmed.contains(QLatin1Char(':'))) {
+            addProblem(tr("Forward prefix '%1' should be written without "
+                          "its colon; ignoring it.")
+                           .arg(trimmed));
+            continue;
+        }
+        m_forwardPrefixes << trimmed;
     }
 
     // Absent is silent, the default being 2000. Present but unparseable warns,

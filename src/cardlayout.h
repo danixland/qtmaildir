@@ -68,6 +68,9 @@ struct CardLayout
         bool hasAttachment = false;
         bool passed = false;
         bool replied = false;
+        /// Someone forwarded this message TO the user (item 68). Derived from
+        /// the subject, so unlike the three above it corresponds to no tag.
+        bool receivedForward = false;
     };
 
     /// Width of the account accent bar down a thread card's left edge.
@@ -111,7 +114,7 @@ struct CardLayout
     QRect flagRect;
 
     /// The state marks after the subject, in this order: attachment, passed,
-    /// replied. Each is empty when its state does not apply.
+    /// replied, received-forward. Each is empty when its state does not apply.
     ///
     /// Separate rects rather than one strip, because each is independently
     /// present or absent and a strip would have to encode which. They are laid
@@ -120,6 +123,7 @@ struct CardLayout
     QRect attachmentRect;
     QRect passedRect;
     QRect repliedRect;
+    QRect receivedForwardRect;
 
     /// The side of a square mark on line two, derived from the card's font so
     /// the marks scale with the user's text size rather than being pinned to a

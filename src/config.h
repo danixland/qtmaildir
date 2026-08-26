@@ -349,6 +349,14 @@ public:
     /// account that configures no sent folder would show the entire Maildir.
     static QString matchNothingQuery();
 
+    /// The tag a built-in generator matches, or empty for the folder-backed
+    /// ones (`sent`, `drafts`, `trash`) which compose from a path instead.
+    ///
+    /// Exposed so a caller asking "which tag decides membership of this view"
+    /// reads the same table the query generator does, rather than keeping a
+    /// second copy that can drift from it.
+    static QString generatorTagFor(const QString &generator);
+
     /// Empty when unset; the caller disables the Sync button in that case.
     QString syncCommand() const { return m_syncCommand; }
 
@@ -411,6 +419,13 @@ public:
     /// carrying no date field returns the pattern verbatim, which would print
     /// the same fixed string on every card rather than failing visibly.
     QString dateFormat() const { return m_dateFormat; }
+
+    /// Extra subject prefixes marking a forward the user RECEIVED (item 68).
+    ///
+    /// Added to the built-in table in composecontext.cpp, never replacing it,
+    /// so a user adding a locale keeps the measured English/German/Iberian/
+    /// French spellings. Bare words, no colon.
+    QStringList forwardPrefixes() const { return m_forwardPrefixes; }
 
     /// Interface language, or empty to follow the environment.
     ///
@@ -536,6 +551,7 @@ private:
     int m_toolbarIconSize = 24;
     QString m_notmuchConfig;
     QString m_dateFormat;
+    QStringList m_forwardPrefixes;
     QString m_language;
     qreal m_messageZoom = 1.0;
     bool m_completionOnFocus = false;

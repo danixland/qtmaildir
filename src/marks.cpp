@@ -57,6 +57,13 @@ QByteArray svg(Mark mark)
             "viewBox=\"0 0 16 16\"> <path fill=\"currentColor\" d=\"M 6.8,2.2 V 5.0 "
             "H 8.7 C 11.9,5.0 14.2,7.4 14.2,10.8 V 13.8 a 0.9,0.9 0 0 1 -1.75,0.28 C "
             "11.8,12.1 10.4,10.9 8.7,10.9 H 6.8 V 13.7 L 1.0,7.95 Z\"/> </svg>");
+    case Mark::ReceivedForward:
+        return QByteArray(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" "
+            "viewBox=\"0 0 16 16\"> <path fill=\"currentColor\" d=\"M 2.0,2.6 a "
+            "0.95,0.95 0 0 1 1.9,0 V 6.4 C 3.9,8.1 5.2,9.4 6.9,9.4 H 9.6 V 6.6 L "
+            "15.0,11.0 L 9.6,15.4 V 12.6 H 6.9 C 3.5,12.6 2.0,10.3 2.0,7.4 Z\"/> "
+            "</svg>");
     case Mark::ExpanderCollapsed:
         return QByteArray(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" "

@@ -260,6 +260,7 @@ CardLayout CardLayout::compute(const Input &input, const QRect &rect,
         target = QRect(markRight - side, markTop, side, side);
         markRight = target.left() - kMarkGap;
     };
+    placeMark(input.receivedForward, out.receivedForwardRect);
     placeMark(input.replied, out.repliedRect);
     placeMark(input.passed, out.passedRect);
     placeMark(input.hasAttachment, out.attachmentRect);

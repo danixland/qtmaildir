@@ -135,6 +135,12 @@ public:
         /// Item 69 draws this as a mark where it used to read as the word
         /// "passed" in the tag strip.
         IsPassedRole,
+        /// True when the SUBJECT reads as a forward someone sent the user.
+        ///
+        /// Item 68. Derived from the subject at query time, not from a tag or
+        /// a Maildir flag: `passed` means "I forwarded this", which is a
+        /// different fact. Nothing is stored and nothing reaches the server.
+        IsReceivedForwardRole,
 
         /// bool; the message was replied to, from the Maildir "R" flag.
         IsRepliedRole,
@@ -187,6 +193,16 @@ public:
     /// The pattern DateFormatRole answers with. Empty means the system format.
     void setDateFormat(const QString &format) { m_dateFormat = format; }
 
+    /// Extra subject prefixes counting as a received forward (item 68).
+    ///
+    /// Pushed in from the config exactly as setDateFormat() is, rather than
+    /// giving the model a Config: both are display values the window already
+    /// holds, and the model draws rather than resolves.
+    void setForwardPrefixes(const QStringList &prefixes)
+    {
+        m_forwardPrefixes = prefixes;
+    }
+
     /// One row per thread, with no expander and no reply count.
     ///
     /// For the Sent view, where a thread is the wrong unit: the user's model of
@@ -203,6 +219,29 @@ public:
     /// The children are not discarded, only hidden. Leaving flat mode restores
     /// the tree without reloading anything.
     void setFlatMode(bool flat);
+
+    /// Whether the list is showing the trash view.
+    ///
+    /// The doomed fill exists to tell the user a message is on its way out of
+    /// a view it is still sitting in. In the trash that is redundant: every
+    /// row is deleted, and a list painted entirely crimson says nothing while
+    /// costing legibility. Set on EVERY query run, like flat mode, so it
+    /// cannot leak into the next view.
+    void setTrashView(bool trash);
+
+    /// Drops any top-level row whose message no longer carries \p tag.
+    ///
+    /// The optimistic counterpart to a row simply vanishing at the next query.
+    /// Delete strips `inbox`, and in the Inbox view the row it stripped it
+    /// from stops belonging there; leaving it until the next sync is what made
+    /// a deleted message sit in the inbox looking undeleted.
+    ///
+    /// Top-level rows ONLY, and deliberately: a reply that no longer matches
+    /// still belongs to the conversation the user has open, and removing it
+    /// would collapse a thread under the reader's hands. \p tag is the tag the
+    /// CURRENT VIEW requires, so a caller passes what the query filters on and
+    /// nothing else.
+    void removeThreadsWithoutTag(const QString &tag);
     bool flatMode() const { return m_flatMode; }
 
     QModelIndex index(int row, int column,
@@ -414,5 +453,7 @@ private:
     QVector<ThreadNode> m_threads;
     const TagColors *m_tagColors = nullptr;
     QString m_dateFormat;
+    QStringList m_forwardPrefixes;
     bool m_flatMode = false;
+    bool m_trashView = false;
 };

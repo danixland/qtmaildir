@@ -52,6 +52,8 @@ CardLayout::Input inputFor(const QModelIndex &index)
     in.flagged = index.data(ThreadListModel::IsFlaggedRole).toBool();
     in.hasAttachment = index.data(ThreadListModel::HasAttachmentRole).toBool();
     in.passed = index.data(ThreadListModel::IsPassedRole).toBool();
+    in.receivedForward =
+        index.data(ThreadListModel::IsReceivedForwardRole).toBool();
     in.replied = index.data(ThreadListModel::IsRepliedRole).toBool();
     return in;
 }
@@ -256,6 +258,7 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     drawMark(card.flagRect, Marks::Mark::Flagged);
     drawMark(card.attachmentRect, Marks::Mark::Attachment);
     drawMark(card.passedRect, Marks::Mark::Passed);
+    drawMark(card.receivedForwardRect, Marks::Mark::ReceivedForward);
     drawMark(card.repliedRect, Marks::Mark::Replied);
 
     // The reply count, which is also the expander, drawn as a PILL.

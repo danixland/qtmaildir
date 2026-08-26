@@ -200,6 +200,17 @@ identity.
 ; pattern that contains no date or time field at all is refused with a message,
 ; since it would print the same fixed text on every card.
 ; date_format = yyyy-MM-dd hh:mm
+; Optional. Extra subject prefixes that mark a message someone forwarded TO
+; you, drawn on the card as a received-forward mark. ADDED to the built-in
+; list rather than replacing it, so adding your own locale does not lose
+; Fwd:, Fw:, WG:, ENC:, RV: and TR:.
+; Bare words, without the colon. A prefix is matched only at the START of the
+; subject, case-insensitively, after any Re: chain, so a reply to a forward
+; still counts. Entries that are not a plain word are ignored.
+; This is display only: nothing is written to the message and nothing reaches
+; your mail server. It is unrelated to the "passed" tag, which is the Maildir
+; P flag and means "I forwarded this".
+; forward_prefixes = Doorst, VS, VL
 
 [completion]
 ; Optional. Extra content types offered after mimetype:, APPENDED to the

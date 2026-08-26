@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "businesssenders.h"
 #include "tagchip.h"
 
 /// Paints a whole card: three lines, all of it, including the tag chips.
@@ -109,4 +110,31 @@ public:
     /// survived exactly that kind of test.
     static QSize chipSize(const QFontMetrics &metrics, const QString &text,
                           bool own);
+
+    /// The squircle for one row, resolved from what the model supplies.
+    ///
+    /// Falls back to the ACCOUNT when the row has no sender address, so every
+    /// card carries an avatar rather than a hole: the seed becomes the
+    /// account's own address and the letters come from its label.
+    static QPixmap avatarFor(const QString &senderAddress,
+                             const QString &senderName,
+                             const QString &accountAddress,
+                             const QString &accountLabel,
+                             bool isBusinessSender, int side,
+                             const QFont &font);
+
+    void setAccountAddress(const QString &address)
+    {
+        m_accountAddress = address;
+    }
+    void setAccountLabel(const QString &label) { m_accountLabel = label; }
+    void setBusinessSenders(const BusinessSenders::List &list)
+    {
+        m_businessSenders = list;
+    }
+
+private:
+    QString m_accountAddress;
+    QString m_accountLabel;
+    BusinessSenders::List m_businessSenders;
 };

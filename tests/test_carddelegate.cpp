@@ -38,6 +38,8 @@ private slots:
     void aSiblingChipsPaddingShrinksWithItsFont();
     void theFadeEndsAtSixtyPercentOfTheCard();
     void aReplyFadeStartsAtItsOwnSpine();
+    void theDelegateAsksForAScaledSquircle();
+    void aRowWithNoSenderFallsBackToTheAccount();
 };
 
 namespace {
@@ -282,6 +284,45 @@ void TestCardDelegate::aReplyFadeStartsAtItsOwnSpine()
     // as well as further right.
     QCOMPARE(reply.right(), CardDelegate::fadeRectFor(card, QRect()).right());
     QVERIFY(reply.width() < CardDelegate::fadeRectFor(card, QRect()).width());
+}
+
+void TestCardDelegate::theDelegateAsksForAScaledSquircle()
+{
+    // Asserted through the function the PRODUCTION path calls, not through
+    // Avatar::pixmapFor() directly: a test pointed at the function being
+    // called into proves what that function does and nothing about whether the
+    // delegate asks it for the right thing. CLAUDE.md records a mutation that
+    // survived exactly that mistake.
+    const QRect card(0, 0, 500, 60);
+    const QFont font;
+    const CardLayout layout =
+        CardLayout::compute(CardLayout::Input(), card, font);
+
+    const QPixmap pixmap = CardDelegate::avatarFor(
+        QStringLiteral("john@example.org"), QStringLiteral("John Doe"),
+        QStringLiteral("me@example.org"), QStringLiteral("Work"), false,
+        layout.avatarRect.width(), font);
+
+    QCOMPARE(pixmap.size(),
+             QSize(layout.avatarRect.width(), layout.avatarRect.width()));
+}
+
+void TestCardDelegate::aRowWithNoSenderFallsBackToTheAccount()
+{
+    const QFont font;
+    // No sender address at all: the squircle is still drawn, seeded from the
+    // account, so a card never shows a hole.
+    const QPixmap fallback = CardDelegate::avatarFor(
+        QString(), QString(), QStringLiteral("me@example.org"),
+        QStringLiteral("Work"), false, 44, font);
+    QVERIFY(!fallback.isNull());
+
+    // And it is the ACCOUNT's identity, not an arbitrary one: seeding from the
+    // same account twice agrees.
+    const QPixmap again = CardDelegate::avatarFor(
+        QString(), QString(), QStringLiteral("me@example.org"),
+        QStringLiteral("Work"), false, 44, font);
+    QCOMPARE(fallback.toImage(), again.toImage());
 }
 
 QTEST_MAIN(TestCardDelegate)

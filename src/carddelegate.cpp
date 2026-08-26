@@ -18,6 +18,8 @@
 
 #include "carddelegate.h"
 
+#include "avatar.h"
+#include "businesssenders.h"
 #include "cardlayout.h"
 #include "marks.h"
 #include "tagchip.h"
@@ -160,6 +162,21 @@ QSize CardDelegate::sizeHint(const QStyleOptionViewItem &option,
     return QSize(option.rect.width(), CardLayout::heightFor(option.font));
 }
 
+QPixmap CardDelegate::avatarFor(const QString &senderAddress,
+                                const QString &senderName,
+                                const QString &accountAddress,
+                                const QString &accountLabel,
+                                bool isBusinessSender, int side,
+                                const QFont &font)
+{
+    const bool haveSender = !senderAddress.trimmed().isEmpty();
+    const QString seed = haveSender ? senderAddress : accountAddress;
+    const QString initials =
+        Avatar::initialsFor(senderName, senderAddress, accountLabel);
+    const Avatar::Fill fill = Avatar::fillFor(senderName, isBusinessSender);
+    return Avatar::pixmapFor(seed, initials, fill, side, font);
+}
+
 void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                          const QModelIndex &index) const
 {
@@ -230,6 +247,22 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             lineColour.blueF() * kSpineWeight + base.blueF() * inverse);
         for (const QRect &spine : card.spines)
             painter->fillRect(spine, spineColour);
+    }
+
+    // The sender's squircle, in the layout's reserved gutter. Drawn before the
+    // text so a wide avatar can never overprint the sender line.
+    if (!card.avatarRect.isEmpty()) {
+        const QString senderAddress =
+            index.data(ThreadListModel::SenderAddressRole).toString();
+        const QString senderName =
+            index.data(ThreadListModel::SenderNameRole).toString();
+        painter->drawPixmap(
+            card.avatarRect,
+            avatarFor(senderAddress, senderName, m_accountAddress,
+                      m_accountLabel,
+                      BusinessSenders::contains(m_businessSenders,
+                                                senderAddress),
+                      card.avatarRect.width(), option.font));
     }
 
     // Selection outranks the model's foreground, and the order matters: a read

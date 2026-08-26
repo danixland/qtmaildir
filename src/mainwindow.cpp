@@ -5883,13 +5883,24 @@ void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
         // `<maildir>/<folder>`, and the account is resolved back from it
         // rather than captured above, where it belongs to the per-message loop
         // and is out of scope here.
+        //
+        // The destination FOLDER, taken from the key rather than from
+        // `origin` above: that is the finished TAG, `deleted-from:Inbox`,
+        // which never equals `Inbox` however the account spells it. The
+        // comparison was therefore always false and the `inbox` tag never came
+        // back, so a restored message sat in the inbox folder invisible to the
+        // Inbox view until the next hook run. The comment above says what this
+        // does; for one release the code did not do it.
         QStringList add;
         const QString destMaildir = it.key().section(QLatin1Char('/'), 0, 0);
+        const QString destFolder = it.key().section(QLatin1Char('/'), 1);
         for (const Account &candidate : m_config.accounts()) {
             if (candidate.maildir != destMaildir)
                 continue;
-            if (origin.compare(candidate.inboxFolder(), Qt::CaseInsensitive) == 0)
+            if (destFolder.compare(candidate.inboxFolder(),
+                                   Qt::CaseInsensitive) == 0) {
                 add.append(QStringLiteral("inbox"));
+            }
             break;
         }
 

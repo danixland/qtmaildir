@@ -11854,6 +11854,21 @@ void TestMainWindow::restoreReturnsAMessageToItsOriginFolder()
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ro1@example.org")), 1);
     QVERIFY(!folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
                                   stem));
+
+    // And the `inbox` TAG came back with it. Delete strips that tag so the
+    // message leaves the Inbox view, which makes restoring it the other half
+    // of the same change: without it the message sits in the inbox FOLDER
+    // carrying no `inbox` tag and the Inbox view cannot see it, which reads as
+    // "I restored it and it is gone".
+    //
+    // The file assertions above all passed while this was broken: the folder
+    // comparison that decides it was made against the finished TAG rather than
+    // against the destination folder, so it was always false. Nothing else
+    // here would have noticed.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:ro1@example.org and tag:inbox"))
+            == 1,
+        15000);
 }
 
 void TestMainWindow::restoreFallsBackToInboxWithoutAnOriginTag()

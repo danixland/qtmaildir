@@ -36,6 +36,8 @@ private slots:
     void aSiblingChipIsMutedButStaysLegibleAndRecognisable();
     void aSiblingChipFontIsSmallerThanItsOwnTier();
     void aSiblingChipsPaddingShrinksWithItsFont();
+    void theFadeEndsAtSixtyPercentOfTheCard();
+    void aReplyFadeStartsAtItsOwnSpine();
 };
 
 namespace {
@@ -257,6 +259,29 @@ void TestCardDelegate::aSiblingChipsPaddingShrinksWithItsFont()
     QVERIFY2(tiny.width() > siblingMetrics.horizontalAdvance(tag),
              "a zero scale left no horizontal padding at all, so the text sits "
              "on the chip's rounded end");
+}
+
+void TestCardDelegate::theFadeEndsAtSixtyPercentOfTheCard()
+{
+    const QRect card(0, 0, 500, 60);
+    const QRect root = CardDelegate::fadeRectFor(card, QRect());
+    QCOMPARE(root.left(), card.left());
+    QCOMPARE(root.width(), 300);
+}
+
+void TestCardDelegate::aReplyFadeStartsAtItsOwnSpine()
+{
+    const QRect card(0, 0, 500, 60);
+    // The innermost spine of a nested reply, which is its own coloured border.
+    const QRect spine(80, 0, 2, 60);
+    const QRect reply = CardDelegate::fadeRectFor(card, spine);
+
+    // It hangs off the spine, not off the card's edge.
+    QCOMPARE(reply.left(), spine.left());
+    // And still ends at 60% of the CARD, so a deeper reply's wash is shorter
+    // as well as further right.
+    QCOMPARE(reply.right(), CardDelegate::fadeRectFor(card, QRect()).right());
+    QVERIFY(reply.width() < CardDelegate::fadeRectFor(card, QRect()).width());
 }
 
 QTEST_MAIN(TestCardDelegate)

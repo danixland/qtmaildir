@@ -77,6 +77,21 @@ public:
     /// Falls back to threadLineColour() for a thread with no account tag.
     static QColor accentLineColour(const QColor &accountColour);
 
+    /// Where the account's fade runs, given the card and the row's innermost
+    /// spine (an empty rect for a thread root, which has none).
+    ///
+    /// A root's fade starts at the card's left edge; a reply's starts at its
+    /// own spine, which IS its coloured left border, so the wash steps right
+    /// with the nesting. Both end at 60% of the card's width, so a deeper
+    /// reply's wash is shorter as well as further right.
+    ///
+    /// Static and rect-in, rect-out so the geometry is assertable without a
+    /// painter, for the same reason CardLayout is.
+    static QRect fadeRectFor(const QRect &card, const QRect &innermostSpine);
+
+    /// How far across the card the account's colour reaches.
+    static constexpr qreal kFadeFraction = 0.60;
+
     /// A tag chip's colour, drained for the SIBLING tier (item 111).
     ///
     /// Saturation only: hue stays so the tag is still recognisable, and

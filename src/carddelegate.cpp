@@ -26,6 +26,7 @@
 #include <QApplication>
 #include <QDateTime>
 #include <QGuiApplication>
+#include <QLinearGradient>
 #include <QPainter>
 #include <QRegularExpression>
 #include <QStyle>
@@ -98,6 +99,18 @@ QColor CardDelegate::mutedChipColour(const QColor &chipColour)
     float h = 0, s = 0, l = 0, a = 0;
     chipColour.getHslF(&h, &s, &l, &a);
     return QColor::fromHslF(h, s * kSaturationScale, l, a);
+}
+
+QRect CardDelegate::fadeRectFor(const QRect &card, const QRect &innermostSpine)
+{
+    // The EXCLUSIVE right edge, then a rect built from it: QRect::right() is
+    // inclusive, which is the trap CardLayout already documents.
+    const int end = card.left() + int(card.width() * kFadeFraction);
+    const int start = innermostSpine.isEmpty() ? card.left()
+                                               : innermostSpine.left();
+    if (end <= start)
+        return QRect();
+    return QRect(start, card.top(), end - start, card.height());
 }
 
 QColor CardDelegate::accentLineColour(const QColor &accountColour)
@@ -177,6 +190,24 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const QColor accountColour =
         root.data(ThreadListModel::AccountColourRole).value<QColor>();
     const QColor lineColour = accentLineColour(accountColour);
+
+    // The account's fade. Under everything but the chrome, so the selection
+    // highlight and the doomed-row tint still cover it: a selected row reading
+    // mostly as selection is expected, not a fault.
+    const QRect fade =
+        fadeRectFor(option.rect,
+                    card.spines.isEmpty() ? QRect() : card.spines.last());
+    if (!fade.isEmpty() && accountColour.isValid()) {
+        QColor from = lineColour;
+        // A reply's wash is weaker than its root's, so an expanded thread
+        // reads as one block with the root leading it.
+        from.setAlphaF(card.accentRect.isEmpty() ? 0.14 : 0.30);
+        QLinearGradient gradient(fade.topLeft(), fade.topRight());
+        gradient.setColorAt(0.0, from);
+        from.setAlphaF(0.0);
+        gradient.setColorAt(1.0, from);
+        painter->fillRect(fade, gradient);
+    }
 
     // The accent bar, thread cards only. Drawn after the chrome so the
     // selection highlight cannot cover it: which account a card belongs to

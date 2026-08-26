@@ -166,6 +166,13 @@ struct MessageNode
     QString messageId;
     QString threadId;  ///< The thread this message belongs to.
     QString from;
+
+    /// The BARE address of the message's From, with any display name
+    /// discarded, like `ThreadSummary::firstMessageSender` is for a thread
+    /// row. `from` above is the raw header and usually carries a display
+    /// name, which is what the avatar's hash and the business-senders
+    /// lookup cannot take initials or match against.
+    QString senderAddress;
     QString subject;
     QDateTime date;
     QStringList tags;

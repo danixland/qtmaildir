@@ -102,6 +102,7 @@ private slots:
     void flatModeOffersNoExpanderAndNoReplyCount();
     void flatModeIsOffByDefaultAndReversible();
     void recipientsReplaceTheSenderWhenPresent();
+    void aRowCarriesItsSenderAndAccountAddress();
 };
 
 static ThreadSummary makeThread(const QString &id, const QString &subject)
@@ -508,6 +509,28 @@ void TestThreadListModel::reportsSubjectAndAuthors()
 
     QCOMPARE(model.data(card, ThreadListModel::TagsRole).toStringList(),
              QStringList({ QStringLiteral("inbox"), QStringLiteral("unread") }));
+}
+
+void TestThreadListModel::aRowCarriesItsSenderAndAccountAddress()
+{
+    // Task 8: the avatar needs the row's bare sender address to hash and to
+    // match against the business-senders list, and the display name to take
+    // initials from. Both come from the row itself, not from the load.
+    ThreadListModel model;
+    ThreadSummary summary;
+    summary.threadId = QStringLiteral("t1");
+    summary.subject = QStringLiteral("Subject");
+    summary.authors = QStringLiteral("John Doe");
+    summary.firstMessageId = QStringLiteral("m1");
+    summary.firstMessageSender = QStringLiteral("john@example.org");
+    model.appendBatch({ summary });
+
+    const QModelIndex index = model.index(0, 0);
+    QCOMPARE(index.data(ThreadListModel::SenderAddressRole).toString(),
+             QStringLiteral("john@example.org"));
+    // The display name comes from `authors`, which is all notmuch gives.
+    QCOMPARE(index.data(ThreadListModel::SenderNameRole).toString(),
+             QStringLiteral("John Doe"));
 }
 
 void TestThreadListModel::theReplyCountExcludesTheRootMessage()

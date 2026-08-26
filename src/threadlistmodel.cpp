@@ -383,6 +383,13 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         }
         case AccountLabelRole:
             return QString();
+        case SenderAddressRole:
+            // The REPLY's own sender, exactly as SendersRole serves the node's
+            // `from` and not the thread's summary. The bare address is what
+            // the avatar hashes and the business-senders list matches.
+            return node.senderAddress;
+        case SenderNameRole:
+            return node.from;
         case Qt::DisplayRole:
         case SubjectRole:
             return node.subject;
@@ -678,6 +685,16 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         if (!thread.recipients.isEmpty())
             return thread.recipients;
         return thread.authors;
+    case SenderAddressRole:
+        // The bare address of the message this card stands for, carried from
+        // the query. This is what the avatar's hash and the business-senders
+        // lookup consume; the display name below is what the card draws.
+        return thread.firstMessageSender;
+    case SenderNameRole:
+        // The same string the card's first line shows: recipients in a flat
+        // view, where `authors` is the user on every row and says nothing.
+        return !thread.recipients.isEmpty() ? thread.recipients
+                                            : thread.authors;
     case DateRole:
         // The QDateTime itself. Formatting belongs to the delegate now: the
         // card decides how much of a date it has room for, and a pre-formatted

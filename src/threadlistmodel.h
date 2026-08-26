@@ -52,6 +52,15 @@ public:
         /// Fill colour for that chip.
         AccountColourRole,
 
+        /// The bare address of the message this row stands for, for the
+        /// avatar's hash and for the business-senders lookup. Empty when the
+        /// query did not resolve one, which the delegate handles by falling
+        /// back to the account.
+        SenderAddressRole,
+        /// The display name to take initials from. `authors` for a thread row,
+        /// `recipients` in a flat view, matching what the card already shows.
+        SenderNameRole,
+
         /// Every tag on the thread, for the strip under the message pane.
         TagsRole,
 

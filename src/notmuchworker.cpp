@@ -222,6 +222,7 @@ void walkReplies(notmuch_messages_t *messages, int depth,
             QString::fromUtf8(notmuch_message_get_filename(message));
         node.from =
             QString::fromUtf8(notmuch_message_get_header(message, "from"));
+        node.senderAddress = senderAddressOf(message);
         node.subject =
             QString::fromUtf8(notmuch_message_get_header(message, "subject"));
         node.date =

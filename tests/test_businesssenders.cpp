@@ -16,6 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -32,6 +33,11 @@ private slots:
     void whitespaceAroundAnEntryIsIgnored();
     void matchingIsCaseInsensitive();
     void anAbsentFileMatchesNothing();
+    void candidatesAreAppendedCommentedOut();
+    void anAddressAlreadyPresentIsNeverReproposed();
+    void onlyBulkLookingLocalPartsAreProposed();
+    void theFirstRunScansEverything();
+    void alaterRunScansOnlyRecentMail();
 };
 
 void TestBusinessSenders::anExactAddressMatches()
@@ -95,6 +101,100 @@ void TestBusinessSenders::anAbsentFileMatchesNothing()
     const BusinessSenders::List list =
         BusinessSenders::load(dir.filePath(QStringLiteral("does-not-exist")));
     QVERIFY(!BusinessSenders::contains(list, QStringLiteral("a@example.org")));
+}
+
+void TestBusinessSenders::candidatesAreAppendedCommentedOut()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("business-senders"));
+
+    QHash<QString, int> counts;
+    counts.insert(QStringLiteral("noreply@cofidis.it"), 47);
+    BusinessSenders::appendCandidates(path, counts);
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString written = QString::fromUtf8(file.readAll());
+
+    // Commented, and carrying the count so the user can judge it.
+    QVERIFY(written.contains(QStringLiteral("# noreply@cofidis.it")));
+    QVERIFY(written.contains(QStringLiteral("47")));
+
+    // Nothing it wrote may take effect on its own.
+    const BusinessSenders::List list = BusinessSenders::load(path);
+    QVERIFY(!BusinessSenders::contains(list,
+                                       QStringLiteral("noreply@cofidis.it")));
+}
+
+void TestBusinessSenders::anAddressAlreadyPresentIsNeverReproposed()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("business-senders"));
+
+    // Both forms count as present: an active entry and a rejected one. The
+    // rejected case is the one that matters, since re-proposing it would undo
+    // the user's decision every ten minutes with no explanation.
+    QFile seed(path);
+    QVERIFY(seed.open(QIODevice::WriteOnly | QIODevice::Text));
+    seed.write("billing@example.org\n# noreply@cofidis.it (47 messages)\n");
+    seed.close();
+    const qint64 sizeBefore = QFileInfo(path).size();
+
+    QHash<QString, int> counts;
+    counts.insert(QStringLiteral("noreply@cofidis.it"), 51);
+    counts.insert(QStringLiteral("billing@example.org"), 12);
+    BusinessSenders::appendCandidates(path, counts);
+
+    QCOMPARE(QFileInfo(path).size(), sizeBefore);
+}
+
+void TestBusinessSenders::onlyBulkLookingLocalPartsAreProposed()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("business-senders"));
+
+    QHash<QString, int> counts;
+    counts.insert(QStringLiteral("noreply@a.org"), 3);
+    counts.insert(QStringLiteral("john.doe@b.org"), 3);
+    BusinessSenders::appendCandidates(path, counts);
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString written = QString::fromUtf8(file.readAll());
+    QVERIFY(written.contains(QStringLiteral("noreply@a.org")));
+    QVERIFY(!written.contains(QStringLiteral("john.doe@b.org")));
+}
+
+void TestBusinessSenders::theFirstRunScansEverything()
+{
+    QTemporaryDir dir;
+    const QString missing = dir.filePath(QStringLiteral("business-senders"));
+
+    // No file at all: a week of mail would propose almost nothing and the
+    // list would take months to become useful, so the first run pays for a
+    // full scan once.
+    QCOMPARE(BusinessSenders::scanQuery(missing), QStringLiteral("*"));
+
+    // A file holding ONLY rejected candidates is still a first run: nothing
+    // has been accepted yet. Rescanning re-proposes none of them, since
+    // appendCandidates skips anything already mentioned.
+    QFile rejected(missing);
+    QVERIFY(rejected.open(QIODevice::WriteOnly | QIODevice::Text));
+    rejected.write("# noreply@cofidis.it (47 messages)\n");
+    rejected.close();
+    QCOMPARE(BusinessSenders::scanQuery(missing), QStringLiteral("*"));
+}
+
+void TestBusinessSenders::alaterRunScansOnlyRecentMail()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("business-senders"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("billing@example.org\n");
+    file.close();
+
+    QCOMPARE(BusinessSenders::scanQuery(path), QStringLiteral("date:1week.."));
 }
 
 QTEST_MAIN(TestBusinessSenders)

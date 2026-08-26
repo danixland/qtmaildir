@@ -20,6 +20,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QStandardPaths>
 #include <QTextStream>
 
@@ -73,6 +74,86 @@ QString defaultPath()
         QStandardPaths::GenericConfigLocation);
     return QDir(base).filePath(
         QStringLiteral("qtmaildir/business-senders"));
+}
+
+bool looksLikeBulk(const QString &address)
+{
+    static const QStringList kBulkLocalParts {
+        QStringLiteral("noreply"),     QStringLiteral("no-reply"),
+        QStringLiteral("donotreply"),  QStringLiteral("do-not-reply"),
+        QStringLiteral("info"),        QStringLiteral("support"),
+        QStringLiteral("billing"),     QStringLiteral("newsletter"),
+        QStringLiteral("notifications"), QStringLiteral("mailer-daemon"),
+    };
+    const int at = address.indexOf(QLatin1Char('@'));
+    if (at <= 0)
+        return false;
+    const QString local = address.left(at).toLower();
+    for (const QString &candidate : kBulkLocalParts) {
+        if (local == candidate || local.startsWith(candidate))
+            return true;
+    }
+    return false;
+}
+
+void appendCandidates(const QString &path, const QHash<QString, int> &counts)
+{
+    // Every address the file MENTIONS, active or rejected. Parsed separately
+    // from parse() above, which deliberately drops comments: here a comment is
+    // exactly what must be remembered.
+    QSet<QString> mentioned;
+    QFile existing(path);
+    if (existing.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        const QStringList lines =
+            QString::fromUtf8(existing.readAll()).split(QLatin1Char('\n'));
+        for (const QString &raw : lines) {
+            QString line = raw.trimmed();
+            if (line.startsWith(QLatin1Char('#')))
+                line = line.mid(1).trimmed();
+            if (line.isEmpty())
+                continue;
+            // "noreply@cofidis.it (47 messages)" mentions the address before
+            // its count.
+            mentioned.insert(line.section(QLatin1Char(' '), 0, 0).toLower());
+        }
+        existing.close();
+    }
+
+    QStringList additions;
+    for (auto it = counts.constBegin(); it != counts.constEnd(); ++it) {
+        const QString address = it.key().trimmed().toLower();
+        if (address.isEmpty() || mentioned.contains(address))
+            continue;
+        if (!looksLikeBulk(address))
+            continue;
+        additions.append(QStringLiteral("# %1 (%2 messages)")
+                             .arg(address)
+                             .arg(it.value()));
+    }
+    if (additions.isEmpty())
+        return;
+
+    additions.sort();
+
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    if (!file.open(QIODevice::Append | QIODevice::Text))
+        return;
+    QTextStream out(&file);
+    for (const QString &line : additions)
+        out << line << '\n';
+}
+
+QString scanQuery(const QString &path)
+{
+    // "*" is notmuch's match-everything. An EMPTY string would also match
+    // everything, which is why Config::matchNothingQuery() exists elsewhere in
+    // this codebase; being explicit here means a reader never has to wonder
+    // which of the two an empty return meant.
+    const List existing = load(path);
+    if (existing.addresses.isEmpty() && existing.domains.isEmpty())
+        return QStringLiteral("*");
+    return QStringLiteral("date:1week..");
 }
 
 } // namespace BusinessSenders

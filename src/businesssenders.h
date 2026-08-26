@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QHash>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -54,5 +55,34 @@ bool contains(const List &list, const QString &address);
 /// `~/.config/qtmaildir/business-senders`, built from
 /// QStandardPaths::GenericConfigLocation.
 QString defaultPath();
+
+/// True when a local part looks like bulk mail rather than a person.
+///
+/// A GUESS, and openly one. It misses senders and proposes wrong ones, which
+/// is exactly why nothing it produces takes effect until the user uncomments
+/// it.
+bool looksLikeBulk(const QString &address);
+
+/// Appends anything in `counts` that looks like bulk and is not already in the
+/// file, COMMENTED OUT, with its message count.
+///
+/// Two rules, both load-bearing. It never writes an uncommented entry, so
+/// nothing on screen changes until the user acts. And it skips an address
+/// already present in ANY form, commented or not, so an entry the user
+/// rejected is never re-proposed, and one they deleted only returns if that
+/// sender writes again.
+void appendCandidates(const QString &path, const QHash<QString, int> &counts);
+
+/// The query the candidate scan should run.
+///
+/// A week of mail once the file exists, so the step stays incremental and
+/// cheap. EVERYTHING when the file is missing or holds no entries, because
+/// that is the first run: a week's mail proposes almost nothing, and the file
+/// would then take months to become useful. The whole-database scan is
+/// affordable precisely because it happens once, measured at 76 ms over 5105
+/// messages.
+///
+/// Returns notmuch query syntax, which is wire format and is never translated.
+QString scanQuery(const QString &path);
 
 } // namespace BusinessSenders

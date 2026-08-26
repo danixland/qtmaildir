@@ -142,6 +142,16 @@ struct CardLayout
     /// without ever drawing two lines. Empty on a reply.
     QRect accentRect;
 
+    /// The sender's avatar squircle, in its own gutter before the text.
+    ///
+    /// On EVERY row, thread and reply alike: a reply is where the sender
+    /// actually changes, so it is the row whose author is most worth seeing.
+    /// Square, and inset vertically so it does not touch the card's edges.
+    QRect avatarRect;
+
+    /// Space between the avatar and the text that follows it.
+    static constexpr int kAvatarGap = 8;
+
     /// One full-height vertical line per depth level, outermost first.
     QVector<QRect> spines;
 

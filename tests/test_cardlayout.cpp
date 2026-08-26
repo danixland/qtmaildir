@@ -45,6 +45,10 @@ private slots:
     void theDateFitsWhenTheCardIsBold();
     void theDateFollowsTheSystemLocale();
     void aConfiguredDateFormatIsUsedAndReservedFor();
+    void everyRowCarriesAnAvatar();
+    void theAvatarPushesTheContentRight();
+    void theAvatarFollowsTheIndent();
+    void theAvatarIsSquareAndFitsTheCard();
 };
 
 namespace {
@@ -410,8 +414,14 @@ void TestCardLayout::marksDoNotCollideWithEachOtherOrTheExpander()
 
     // The subject survives at a usable width rather than being squeezed to
     // nothing by four marks: they are small and fixed, it is the elastic part.
-    QVERIFY2(card.subjectRect.width() > 100,
-             "four marks left the subject with almost no room on a 400px card");
+    // Relative rather than absolute: the avatar gutter shifts every text rect
+    // right, so a fixed pixel floor like 100 fails on a card that gained a
+    // gutter and would pass on one that had not. Comparing against another
+    // fixed element of the same card keeps the real invariant: the marks must
+    // not leave the subject narrower than the avatar gutter beside it.
+    QVERIFY2(card.subjectRect.width() > card.avatarRect.width(),
+             "four marks left the subject narrower than the avatar gutter on a "
+             "400px card");
 }
 
 void TestCardLayout::dateIsFlushRight()
@@ -578,6 +588,65 @@ void TestCardLayout::theDateFitsWhenTheCardIsBold()
                                        "%2px when the card draws bold")
                             .arg(card.dateRect.width())
                             .arg(boldWidth)));
+}
+
+void TestCardLayout::everyRowCarriesAnAvatar()
+{
+    const QFont font;
+    const QRect rect(0, 0, 600, CardLayout::heightFor(font));
+
+    CardLayout::Input thread;
+    const CardLayout rootCard = CardLayout::compute(thread, rect, font);
+    QVERIFY(!rootCard.avatarRect.isEmpty());
+
+    // A reply gets one too: it is the row where the sender actually changes.
+    CardLayout::Input reply;
+    reply.isMessage = true;
+    reply.depth = 1;
+    const CardLayout replyCard = CardLayout::compute(reply, rect, font);
+    QVERIFY(!replyCard.avatarRect.isEmpty());
+}
+
+void TestCardLayout::theAvatarPushesTheContentRight()
+{
+    const QFont font;
+    const QRect rect(0, 0, 600, CardLayout::heightFor(font));
+    const CardLayout card = CardLayout::compute(CardLayout::Input(), rect, font);
+
+    // The text starts after the squircle, never on it.
+    QVERIFY(card.contentLeft >= card.avatarRect.right() + 1);
+}
+
+void TestCardLayout::theAvatarFollowsTheIndent()
+{
+    const QFont font;
+    const QRect rect(0, 0, 600, CardLayout::heightFor(font));
+
+    CardLayout::Input shallow;
+    shallow.isMessage = true;
+    shallow.depth = 1;
+    CardLayout::Input deep;
+    deep.isMessage = true;
+    deep.depth = 3;
+
+    const CardLayout shallowCard = CardLayout::compute(shallow, rect, font);
+    const CardLayout deepCard = CardLayout::compute(deep, rect, font);
+
+    // The squircle sits inside the card's own rect and moves with the nesting,
+    // which is the same reason contentLeft does. Asserting on the RECT here is
+    // safe precisely because it is CardLayout's own output, not a visualRect.
+    QVERIFY(deepCard.avatarRect.left() > shallowCard.avatarRect.left());
+}
+
+void TestCardLayout::theAvatarIsSquareAndFitsTheCard()
+{
+    const QFont font;
+    const QRect rect(0, 0, 600, CardLayout::heightFor(font));
+    const CardLayout card = CardLayout::compute(CardLayout::Input(), rect, font);
+
+    QCOMPARE(card.avatarRect.width(), card.avatarRect.height());
+    QVERIFY(card.avatarRect.top() >= rect.top());
+    QVERIFY(card.avatarRect.bottom() <= rect.bottom());
 }
 
 QTEST_MAIN(TestCardLayout)

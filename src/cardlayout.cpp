@@ -175,6 +175,16 @@ CardLayout CardLayout::compute(const Input &input, const QRect &rect,
     const int indent = depth * kIndentStep;
     out.contentLeft = textLeft + kPaddingX + indent;
 
+    // The avatar, square, in the gutter between the indent and the text.
+    // Sized from the card's HEIGHT rather than from a pixel constant, so it
+    // follows the desktop's font exactly as markSide() does.
+    const int avatarSide = qMax(0, rect.height() - kPaddingY * 2);
+    out.avatarRect = QRect(out.contentLeft, rect.top() + kPaddingY,
+                           avatarSide, avatarSide);
+    // Everything after it starts past the squircle. This is what the item's
+    // cost is: a deep reply loses the gutter on top of its indent.
+    out.contentLeft = out.avatarRect.right() + 1 + kAvatarGap;
+
     // One spine per level actually indented, each running the card's full
     // height so an expansion reads as one continuous block.
     for (int level = 0; level < depth; ++level) {

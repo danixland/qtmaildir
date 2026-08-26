@@ -84,10 +84,12 @@ The query row and the message-pane header are **built inline in `MainWindow` and
 listed `QueryBar`, `SavedQueryBar`, `HeaderWidget` and `AttachmentBar`; none of
 those types have ever existed, and looking for them wastes a search. The widget
 classes that do exist are `MessageView`, `ThreadListView`, `TagStrip`,
-`TagDialog`, `MessageDetailsDialog`, `RowStyleDelegate`, `CardDelegate`,
-`ComposeWindow`, `SendDialog` and `BusyIndicator`; `TagChip` is a namespace of
+`TagDialog`, `MessageDetailsDialog`, `PendingChangesDialog`,
+`RowStyleDelegate`, `CardDelegate`, `ComposeWindow`, `SendDialog` and
+`BusyIndicator`; `TagChip` is a namespace of
 painting helpers, not a widget, `SearchTerm` is a namespace of query builders,
-and `ThreadCidMap`, `CardLayout`, `SearchOffer` and `HeaderRow` are structs.
+and `ThreadCidMap`, `CardLayout`, `SearchOffer`, `HeaderRow` and
+`PendingChangeRow` are structs.
 `SubjectDelegate` existed until item 53 and is gone.
 
 **The compose units are mostly NAMESPACES, and the same warning applies to
@@ -575,6 +577,43 @@ message-scoped write to a root card repainted nothing, and the strip refresh set
 the pane's chips to the empty node the lookup returned, destroying a strip that
 had been correct. Item 108 made that the ordinary gesture rather than an edge
 case: the two changes were each correct and broken together.
+
+**A defensive counter for an unreachable case is worse than nothing, because
+it blocks the feature that needs the data.** `pendingEditCount()` summed a
+fourth term, a bare int for confirmed changes carrying no message ids, added
+on the sound reasoning that an edit which cannot be netted must not be lost.
+It made the count impossible to LIST: three groups could name what they held
+and the remainder could not, so item 119 sat open for a week carrying "a list
+cannot be complete without changing how the count is kept".
+
+The remainder was empty. `NotmuchWorker::applyTags()` is the only emitter of
+`tagsApplied()` and returns early on an empty id list, which is the exact
+condition the counter required. Reading the code said it was reachable, and
+that reading was wrong twice before it was measured: a `qFatal` in the branch
+fired in 4 of 70 `test_mainwindow` cases, all four building a `TagChange` by
+hand and invoking the slot directly, and a `Q_ASSERT` before the worker's own
+emit never fired across the whole suite. **Instrument the branch and run the
+suite; do not conclude reachability by reading.** The tests that exercised it
+were the evidence it was live, and they were driving it from outside the
+production path.
+
+**`PendingChangesDialog` groups by a RUN, not by a map**, and the snapshot it
+consumes is sorted with `std::stable_sort` for that reason: the actions under
+one message have to keep the order they were made in, and `QHash` has no order
+of its own, so a map would reshuffle the list between openings.
+`PendingChangeRow::startsMessage` is carried rather than inferred from a
+non-empty subject, because an id the index no longer holds has an EMPTY
+subject and must still open a run; inferring it folds a stale row's actions
+under the message above it, which is a worse lie than "subject unknown".
+
+**A queued call carrying a container needs the same suspicion as a `Q_ENUM`.**
+An unregistered metatype is dropped at runtime with a warning and the slot
+runs with a default. Measured on Qt 6.11: `QList<bool>` and `QList<int>` both
+cross `resolvePendingSubjects()` intact with no registration, but a standalone
+probe showed `QMetaType::fromName("QList<int>")` invalid while
+`QList<bool>` resolved, so the property is not obvious from the type. The test
+that drives it across a real thread is what says it works, and what fails if
+it stops.
 
 **`ThreadSummary::tags` is notmuch's UNION over the thread, and a card that
 stands for one message must not draw it.** A four-message thread whose third

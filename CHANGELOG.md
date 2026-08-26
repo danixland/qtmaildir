@@ -13,6 +13,15 @@ point at which they are stable.
 
 ### Added
 
+- **The unsynced-changes count opens.** Clicking `N unsynced changes` in the
+  status bar lists what those changes are: each message with the actions
+  waiting on it beneath it, and a whole-thread action shown as one entry with
+  the number of messages it covers. The list is read-only and is a snapshot
+  taken when it is opened, so it does not rewrite itself while you read it. A
+  change whose message has since left the index is still listed, saying so,
+  rather than being dropped: the number you clicked always matches the number
+  of entries you get.
+
 - **The composer says when it saved a draft.** A status bar reports the age of
   the last autosave, and an `unsaved content` cue sits beside it whenever
   there is text newer than that save. The window title carries the platform's

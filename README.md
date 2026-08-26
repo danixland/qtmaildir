@@ -691,6 +691,17 @@ that a sync has not yet carried over, and clears the count when one succeeds. A
 **failed** sync leaves the count standing, since the changes really are still
 unsynced.
 
+**Click the count to see what it holds.** The list names each message with
+the actions waiting on it beneath it, so a message you tagged twice appears
+once with both. An action taken on a whole thread is one entry, saying how
+many messages it covers, because that is what you asked for; an action on a
+single message names that message, whether or not it sits in a thread.
+
+The list is read-only, and it is a snapshot taken when you open it: it does
+not rewrite itself while you read it. A change whose message has since left
+the index is still listed, saying so, rather than quietly disappearing, so
+the number you clicked always matches the number of entries you get.
+
 The count is a lower bound rather than a guarantee: an external `notmuch new`
 from your own cron can carry changes over without this application noticing.
 

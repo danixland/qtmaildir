@@ -33,6 +33,7 @@ private slots:
     void aDisplayNameMeansAPerson();
     void theListOverridesADisplayName();
     void aColourIsStablePerAddress();
+    void aPixmapIsStableAndDiffersPerSeed();
 };
 
 void TestAvatar::twoWordNameTakesOneLetterFromEach()
@@ -117,6 +118,35 @@ void TestAvatar::aColourIsStablePerAddress()
     QCOMPARE(first, again);
     QVERIFY(first.isValid());
     QVERIFY(Avatar::colourFor(QStringLiteral("b@example.org")) != first);
+}
+
+void TestAvatar::aPixmapIsStableAndDiffersPerSeed()
+{
+    const QFont font;
+    const QPixmap first = Avatar::pixmapFor(QStringLiteral("a@example.org"),
+                                            QStringLiteral("AE"),
+                                            Avatar::Fill::Identicon, 44, font);
+    QCOMPARE(first.size(), QSize(44, 44));
+    QVERIFY(!first.isNull());
+
+    const QPixmap again = Avatar::pixmapFor(QStringLiteral("a@example.org"),
+                                            QStringLiteral("AE"),
+                                            Avatar::Fill::Identicon, 44, font);
+    // Same seed, same image, byte for byte: the identity must not drift
+    // between repaints.
+    QCOMPARE(first.toImage(), again.toImage());
+
+    const QPixmap other = Avatar::pixmapFor(QStringLiteral("b@example.org"),
+                                            QStringLiteral("AE"),
+                                            Avatar::Fill::Identicon, 44, font);
+    // Different sender, different image, even with identical initials.
+    QVERIFY(first.toImage() != other.toImage());
+
+    const QPixmap twoTone = Avatar::pixmapFor(QStringLiteral("a@example.org"),
+                                              QStringLiteral("AE"),
+                                              Avatar::Fill::TwoTone, 44, font);
+    // The two fills are actually different renderings, not one with a flag.
+    QVERIFY(first.toImage() != twoTone.toImage());
 }
 
 QTEST_MAIN(TestAvatar)

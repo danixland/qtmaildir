@@ -26,6 +26,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -65,6 +66,7 @@
 #include "searchterm.h"
 #include "tagchip.h"
 #include "tagdialog.h"
+#include "pendingchangesdialog.h"
 #include "savequerydialog.h"
 #include "tagrulesdialog.h"
 #include "threadlistmodel.h"
@@ -490,6 +492,20 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         // cannot fail.
     }
 
+    // The unsynced-changes indicator opens its list on a click (item 119). A
+    // QLabel has no clicked signal, so the press is taken here rather than
+    // replacing the label with a flat QToolButton: a button would inherit the
+    // style's button metrics inside a status bar, and the label already sits
+    // correctly.
+    if (watched == m_pendingLabel
+        && event->type() == QEvent::MouseButtonRelease) {
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        if (mouse->button() == Qt::LeftButton) {
+            showPendingChanges();
+            return true;
+        }
+    }
+
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -682,6 +698,11 @@ void MainWindow::buildUi()
     // them together.
     m_pendingLabel = new QLabel(this);
     m_pendingLabel->setObjectName(QStringLiteral("pendingEdits"));
+    // Clickable, opening the list of what it counts (item 119). The cursor is
+    // the only affordance a status-bar label can carry, so it is what says
+    // this one can be opened.
+    m_pendingLabel->setCursor(Qt::PointingHandCursor);
+    m_pendingLabel->installEventFilter(this);
     m_pendingLabel->hide();
     statusBar()->addPermanentWidget(m_pendingLabel);
 
@@ -2618,6 +2639,8 @@ void MainWindow::wireWorker()
     // unrelated error would roll back a change that actually succeeded.
     connect(m_worker, &NotmuchWorker::tagsApplied,
             this, &MainWindow::onTagsApplied);
+    connect(m_worker, &NotmuchWorker::pendingSubjectsResolved,
+            this, &MainWindow::onPendingSubjectsResolved);
 
     // messagesMovedFrom rather than messagesMoved: the tags a move carries can
     // only be resolved once the origins are known, and that signal is the one
@@ -5106,6 +5129,59 @@ QVector<PendingChange> MainWindow::pendingChangeSnapshot() const
                          return a.id < b.id;
                      });
     return rows;
+}
+
+void MainWindow::showPendingChanges()
+{
+    // The snapshot is taken HERE, at the click, and is what the dialog shows
+    // however long it stays open. Nothing refreshes it: the count the user
+    // clicked is the list they get.
+    m_pendingChangeRequest = pendingChangeSnapshot();
+
+    if (m_pendingChangeRequest.isEmpty() || !m_worker) {
+        // Nothing to resolve. Shown anyway rather than silently ignoring the
+        // click, since a window saying "nothing is waiting" is an answer and a
+        // dead click is not.
+        PendingChangesDialog(m_pendingChangeRequest, this).exec();
+        m_pendingChangeRequest.clear();
+        return;
+    }
+
+    QStringList ids;
+    QList<bool> areThreads;
+    ids.reserve(m_pendingChangeRequest.size());
+    areThreads.reserve(m_pendingChangeRequest.size());
+    for (const PendingChange &change : m_pendingChangeRequest) {
+        ids.append(change.id);
+        areThreads.append(change.isThread);
+    }
+
+    QMetaObject::invokeMethod(m_worker, "resolvePendingSubjects",
+                              Qt::QueuedConnection,
+                              Q_ARG(QStringList, ids),
+                              Q_ARG(QList<bool>, areThreads));
+}
+
+void MainWindow::onPendingSubjectsResolved(const QStringList &subjects,
+                                           const QList<int> &messageCounts)
+{
+    // Positional, so the two must line up. A mismatch means the answer is not
+    // this request's, which is not something to render half of.
+    if (m_pendingChangeRequest.isEmpty()
+        || subjects.size() != m_pendingChangeRequest.size()
+        || messageCounts.size() != m_pendingChangeRequest.size()) {
+        m_pendingChangeRequest.clear();
+        return;
+    }
+
+    QVector<PendingChange> changes = m_pendingChangeRequest;
+    m_pendingChangeRequest.clear();
+    for (int i = 0; i < changes.size(); ++i) {
+        changes[i].subject = subjects.at(i);
+        changes[i].messageCount = messageCounts.at(i);
+    }
+
+    PendingChangesDialog(changes, this).exec();
 }
 
 void MainWindow::updatePendingIndicator()

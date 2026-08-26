@@ -123,6 +123,13 @@ public:
 
     QVector<PendingChange> pendingChangeSnapshot() const;
 
+    /// Opens the list behind the unsynced-changes count.
+    ///
+    /// Takes the snapshot, asks the worker to resolve its subjects, and shows
+    /// the dialog when they arrive. Q_INVOKABLE so a test can open it without
+    /// synthesising a click on a status-bar label.
+    Q_INVOKABLE void showPendingChanges();
+
     /// Whether the undo stack still holds anything. Exposed so a test can show
     /// that a rejected write did not take unrelated history down with it.
     bool canUndo() const { return m_undoStack.canUndo(); }
@@ -618,6 +625,10 @@ private slots:
     /// A tag mutation the worker has confirmed reached the database. Counts it
     /// as unsynced, since reaching the index is not reaching the mail store.
     void onTagsApplied(const TagChange &change);
+
+    /// The subjects for the pending-changes list arrived; show the dialog.
+    void onPendingSubjectsResolved(const QStringList &subjects,
+                                   const QList<int> &messageCounts);
     void onAllTagsReady(const QStringList &tags);
 
     /// The Maildir root, answered once at startup. Enables nothing on its own:
@@ -1574,6 +1585,13 @@ private:
         QString action;  ///< Translated, from TagChange::description.
     };
     QHash<QString, PendingEdit> m_pendingTagEdits;
+
+    /// The snapshot taken when the user clicked the indicator, held while the
+    /// worker resolves its subjects. Empty when no such request is in flight.
+    ///
+    /// One request at a time: a second click before the first answers replaces
+    /// it, which is right because both would show the same thing.
+    QVector<PendingChange> m_pendingChangeRequest;
 
     /// Marks the open thread read once it has been on screen long enough.
     ///

@@ -35,6 +35,7 @@ add_library(qtmaildir_lib STATIC
     threadcidmap.cpp
     messageview.cpp
     messagedetailsdialog.cpp
+    pendingchangesdialog.cpp
     mainwindow.cpp
     querycompleter.cpp
     rulequery.cpp

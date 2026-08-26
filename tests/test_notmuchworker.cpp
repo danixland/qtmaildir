@@ -58,6 +58,7 @@ private slots:
     void applyTagsToThreadsSpansMultipleThreads();
     void applyTagsToThreadsWithNoThreadsDoesNothing();
 
+    void pendingSubjectsCrossAQueuedCall();
     void pendingSubjectsAnswerPositionally();
     void aMissingPendingIdYieldsAnEmptySubject();
     void requestAllTagsReturnsSortedTags();
@@ -962,6 +963,40 @@ void TestNotmuchWorker::applyTagsToThreadsWithNoThreadsDoesNothing()
 
     QVERIFY(applied.isEmpty());
     QVERIFY(errors.isEmpty());
+}
+
+void TestNotmuchWorker::pendingSubjectsCrossAQueuedCall()
+{
+    // The dialog reaches the worker over a QUEUED connection, and a container
+    // whose metatype is not registered under the name invokeMethod resolves is
+    // DROPPED at runtime with a warning, leaving the slot to run with a
+    // default. CLAUDE.md records that trap for Q_ENUM; QList<int> is the same
+    // trap in a different shape, and it is the type this signal answers with.
+    //
+    // Driven through invokeMethod on a real thread rather than by calling the
+    // slot directly: a direct call proves nothing about the queued path, which
+    // is the only one production uses.
+    NotmuchWorker worker(m_fixture.configPath());
+    QThread thread;
+    worker.moveToThread(&thread);
+    thread.start();
+
+    QSignalSpy spy(&worker, &NotmuchWorker::pendingSubjectsResolved);
+    QVERIFY(QMetaObject::invokeMethod(
+        &worker, "resolvePendingSubjects", Qt::QueuedConnection,
+        Q_ARG(QStringList, QStringList{ QStringLiteral("b1@example.org") }),
+        Q_ARG(QList<bool>, QList<bool>{ false })));
+
+    QVERIFY2(spy.wait(5000),
+             "the queued call never produced an answer: a container argument "
+             "was most likely dropped for want of a registered metatype");
+    QCOMPARE(spy.first().at(0).toStringList().size(), 1);
+    QVERIFY(!spy.first().at(0).toStringList().at(0).isEmpty());
+    // And the counts survived the crossing as a real list, not a default.
+    QCOMPARE(spy.first().at(1).value<QList<int>>().size(), 1);
+
+    thread.quit();
+    QVERIFY(thread.wait(5000));
 }
 
 void TestNotmuchWorker::pendingSubjectsAnswerPositionally()

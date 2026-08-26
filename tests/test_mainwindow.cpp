@@ -47,6 +47,7 @@
 #include "config.h"
 #include "keymap.h"
 #include "mainwindow.h"
+#include "pendingchangesdialog.h"
 #include "messageview.h"
 #include "mimeparser.h"
 #include "notmuchworker.h"
@@ -418,6 +419,7 @@ private slots:
     void everyPendingChangeCanNameItsMessages();
     void theSnapshotGroupsActionsUnderTheirMessage();
     void theSnapshotKeepsAThreadActionThreadScoped();
+    void theIndicatorOpensItsListOnAClick();
     void anEditDuringABackgroundSyncIsNotSentYet();
     void aHeldEditIsSentWhenTheBackgroundSyncEnds();
     void aHeldEditCountsAsUnsynced();
@@ -6572,6 +6574,52 @@ void TestMainWindow::theSnapshotKeepsAThreadActionThreadScoped()
     // The count and the list agree, which is the property the whole dialog
     // rests on.
     QCOMPARE(rows.size(), window.pendingEditCount());
+}
+
+void TestMainWindow::theIndicatorOpensItsListOnAClick()
+{
+    // The label is a QLabel and has no clicked signal, so the click is taken
+    // by an event filter. A test that called showPendingChanges() directly
+    // would pass with that filter never installed, which is the whole gesture.
+    const Config config;
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    TagChange change;
+    change.messageIds = { QStringLiteral("click@example.org") };
+    change.added = { QStringLiteral("deleted") };
+    change.description = QStringLiteral("Delete");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+    QVERIFY(!label->isHidden());
+
+    // With no worker the dialog opens directly and modally, so it is closed
+    // from a timer rather than by driving exec() to return some other way.
+    // Polled rather than checked once: exec() parents the dialog and spins its
+    // own event loop, so a single-shot timer can fire before it exists.
+    bool sawDialog = false;
+    auto *poll = new QTimer(&window);
+    poll->setInterval(1);
+    QObject::connect(poll, &QTimer::timeout, &window, [&window, &sawDialog]() {
+        if (auto *dialog = window.findChild<PendingChangesDialog *>()) {
+            sawDialog = true;
+            QCOMPARE(dialog->rows().size(), 1);
+            QCOMPARE(dialog->rows().at(0).action, QStringLiteral("Delete"));
+            dialog->reject();
+        }
+    });
+    poll->start();
+
+    QMouseEvent press(QEvent::MouseButtonRelease, QPointF(1, 1),
+                      QPointF(1, 1), Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(label, &press);
+
+    // The subjects are resolved on the worker thread, so the dialog appears a
+    // round trip after the click rather than inside sendEvent().
+    QTRY_VERIFY_WITH_TIMEOUT(sawDialog, 15000);
 }
 
 // Item 37. A tag edit made while a background sync holds notmuch's write lock

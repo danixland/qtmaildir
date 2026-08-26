@@ -1622,6 +1622,32 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     </message>
 </context>
 <context>
+    <name>PendingChangesDialog</name>
+    <message>
+        <source>Unsynced changes</source>
+        <translation>Modifiche non sincronizzate</translation>
+    </message>
+    <message>
+        <source>Changes made here that a sync has not yet carried to the mail store. This list is a snapshot taken when it was opened.</source>
+        <translation>Modifiche fatte qui che una sincronizzazione non ha ancora portato all'archivio di posta. Questo elenco è un'istantanea presa al momento dell'apertura.</translation>
+    </message>
+    <message>
+        <source>(no longer in the index)</source>
+        <translation>(non più nell'indice)</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 (whole thread, %n message(s))</source>
+        <translation>
+            <numerusform>%1 (intera conversazione, %n messaggio)</numerusform>
+            <numerusform>%1 (intera conversazione, %n messaggi)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Nothing is waiting to be synced.</source>
+        <translation>Non c'è nulla in attesa di sincronizzazione.</translation>
+    </message>
+</context>
+<context>
     <name>QObject</name>
     <message>
         <source>qtmaildir</source>

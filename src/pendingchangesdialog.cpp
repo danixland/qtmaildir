@@ -117,5 +117,15 @@ PendingChangesDialog::PendingChangesDialog(
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
 
-    resize(600, 380);
+    // Sized to the content rather than to a fixed guess: a handful of pending
+    // changes is the common case and a 380px box left most of itself empty.
+    // The cap is what keeps a long list scrollable instead of taller than the
+    // screen; the floor keeps the dialog from collapsing around one row.
+    //
+    // sizeHint() on the content is the whole grid's, so this asks the layout
+    // what it needs rather than multiplying a row height by a count.
+    const int wanted = content->sizeHint().height()
+                       + intro->sizeHint().height()
+                       + buttons->sizeHint().height() + 60;
+    resize(620, qBound(180, wanted, 560));
 }

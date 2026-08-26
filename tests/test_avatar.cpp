@@ -30,6 +30,9 @@ private slots:
     void bareAddressTakesLocalAndDomain();
     void nothingUsableFallsBackToTheAccountLabel();
     void initialsAreAlwaysTwoLetters();
+    void aDisplayNameMeansAPerson();
+    void theListOverridesADisplayName();
+    void aColourIsStablePerAddress();
 };
 
 void TestAvatar::twoWordNameTakesOneLetterFromEach()
@@ -89,6 +92,31 @@ void TestAvatar::initialsAreAlwaysTwoLetters()
             QCOMPARE(initials.size(), 2);
         }
     }
+}
+
+void TestAvatar::aDisplayNameMeansAPerson()
+{
+    // The case the user asked for by name: a corporate address that presents
+    // itself as a person reads as a person.
+    QCOMPARE(Avatar::fillFor(QStringLiteral("Ian Farrell"), false),
+             Avatar::Fill::Identicon);
+    QCOMPARE(Avatar::fillFor(QString(), false), Avatar::Fill::TwoTone);
+}
+
+void TestAvatar::theListOverridesADisplayName()
+{
+    // A listed address stays a business even when it sets a friendly name.
+    QCOMPARE(Avatar::fillFor(QStringLiteral("Cofidis"), true),
+             Avatar::Fill::TwoTone);
+}
+
+void TestAvatar::aColourIsStablePerAddress()
+{
+    const QColor first = Avatar::colourFor(QStringLiteral("a@example.org"));
+    const QColor again = Avatar::colourFor(QStringLiteral("a@example.org"));
+    QCOMPARE(first, again);
+    QVERIFY(first.isValid());
+    QVERIFY(Avatar::colourFor(QStringLiteral("b@example.org")) != first);
 }
 
 QTEST_MAIN(TestAvatar)

@@ -75,4 +75,26 @@ QString initialsFor(const QString &displayName, const QString &address,
     return QStringLiteral("??");
 }
 
+Fill fillFor(const QString &displayName, bool isBusinessSender)
+{
+    // The list first: it is the user's explicit override and must beat the
+    // heuristic, or a listed sender could never be pinned.
+    if (isBusinessSender)
+        return Fill::TwoTone;
+    return displayName.trimmed().isEmpty() ? Fill::TwoTone : Fill::Identicon;
+}
+
+QColor colourFor(const QString &address)
+{
+    // The same construction TagColors::colourFor() uses for a tag with nothing
+    // configured: hashed so it is stable, at a fixed saturation and lightness
+    // so it cannot come out neon and cannot lose its contrast with the
+    // initials. The lightness differs from that function's deliberately: a
+    // chip carries dark text, a squircle carries white.
+    const QByteArray digest =
+        QCryptographicHash::hash(address.toUtf8(), QCryptographicHash::Md5);
+    const int hue = static_cast<quint8>(digest.at(0)) * 360 / 256;
+    return QColor::fromHsl(hue, 110, 95);
+}
+
 } // namespace Avatar

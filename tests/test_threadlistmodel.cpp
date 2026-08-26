@@ -103,6 +103,7 @@ private slots:
     void flatModeIsOffByDefaultAndReversible();
     void recipientsReplaceTheSenderWhenPresent();
     void aRowCarriesItsSenderAndAccountAddress();
+    void aMessageRowCarriesItsOwnSenderAndAddress();
 };
 
 static ThreadSummary makeThread(const QString &id, const QString &subject)
@@ -531,6 +532,32 @@ void TestThreadListModel::aRowCarriesItsSenderAndAccountAddress()
     // The display name comes from `authors`, which is all notmuch gives.
     QCOMPARE(index.data(ThreadListModel::SenderNameRole).toString(),
              QStringLiteral("John Doe"));
+}
+
+void TestThreadListModel::aMessageRowCarriesItsOwnSenderAndAddress()
+{
+    // Task 8 counterpart of aRowCarriesItsSenderAndAccountAddress: that test
+    // covers the thread-row branch, and a role added to one branch and not the
+    // other is silently absent with nothing to flag it. A selected reply's
+    // avatar reads these, so the row that actually answers must carry them.
+    ThreadListModel model;
+    model.appendBatch({ makeThread(QStringLiteral("t1"),
+                                   QStringLiteral("A subject")) });
+
+    MessageNode root = makeNode(QStringLiteral("m0@example.org"), 0);
+    MessageNode reply = makeNode(QStringLiteral("m1@example.org"), 1,
+                                 QStringLiteral("Bob <bob@example.org>"));
+    reply.senderAddress = QStringLiteral("bob@example.org");
+    model.setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    const QModelIndex replyIndex =
+        model.index(0, 0, model.index(0, 0, QModelIndex()));
+    QVERIFY(model.isMessageRow(replyIndex));
+
+    QCOMPARE(replyIndex.data(ThreadListModel::SenderAddressRole).toString(),
+             QStringLiteral("bob@example.org"));
+    QCOMPARE(replyIndex.data(ThreadListModel::SenderNameRole).toString(),
+             QStringLiteral("Bob <bob@example.org>"));
 }
 
 void TestThreadListModel::theReplyCountExcludesTheRootMessage()

@@ -34,6 +34,7 @@ private slots:
     void matchingIsCaseInsensitive();
     void anAbsentFileMatchesNothing();
     void candidatesAreAppendedCommentedOut();
+    void appendingDoesNotCorruptALineThatLacksATrailingNewline();
     void anAddressAlreadyPresentIsNeverReproposed();
     void onlyBulkLookingLocalPartsAreProposed();
     void theFirstRunScansEverything();
@@ -124,6 +125,36 @@ void TestBusinessSenders::candidatesAreAppendedCommentedOut()
     const BusinessSenders::List list = BusinessSenders::load(path);
     QVERIFY(!BusinessSenders::contains(list,
                                        QStringLiteral("noreply@cofidis.it")));
+}
+
+void TestBusinessSenders::appendingDoesNotCorruptALineThatLacksATrailingNewline()
+{
+    // Hand-editing, the documented workflow, can leave the file without a
+    // trailing newline. Appending then glued the first candidate onto the last
+    // existing line, silently breaking the user's own active entry so it
+    // stopped matching. The guard writes a newline before the additions.
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("business-senders"));
+    QFile seed(path);
+    QVERIFY(seed.open(QIODevice::WriteOnly | QIODevice::Text));
+    seed.write("billing@example.org");   // deliberately no trailing newline
+    seed.close();
+
+    QHash<QString, int> counts;
+    counts.insert(QStringLiteral("noreply@a.org"), 3);
+    BusinessSenders::appendCandidates(path, counts);
+
+    // The original entry is intact and still matches.
+    const BusinessSenders::List list = BusinessSenders::load(path);
+    QVERIFY(BusinessSenders::contains(list,
+                                      QStringLiteral("billing@example.org")));
+
+    // ...and the candidate sits on its own commented line, not glued onto it.
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString written = QString::fromUtf8(file.readAll());
+    QVERIFY(written.contains(QStringLiteral(
+        "billing@example.org\n# noreply@a.org (3 messages)")));
 }
 
 void TestBusinessSenders::anAddressAlreadyPresentIsNeverReproposed()

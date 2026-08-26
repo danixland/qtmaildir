@@ -391,6 +391,30 @@ name shown in your own language (`In arrivo`). The English one is the safer
 choice: it is the filter's identity rather than its label, so a config written
 that way keeps working whatever `LANG` is set to.
 
+### `~/.config/qtmaildir/business-senders`
+
+Addresses that should read as businesses rather than people, one per line.
+A card's avatar takes its pattern from this: a listed address gets the
+two-tone fill, anything presenting a display name gets the identicon.
+
+    # a comment, and the form the application itself writes
+    # noreply@cofidis.it (47 messages)
+    billing@example.org
+    @newsletter.example.com
+
+An entry is either an exact address or a whole domain written `@example.com`.
+Comments and blank lines are ignored.
+
+After each sync the application appends addresses that look like bulk mail,
+**always commented out**, so nothing changes appearance until you uncomment
+it. Anything already in the file, commented or not, is never proposed again:
+commenting a line out is therefore the permanent way to reject it, while
+deleting it lets that sender be proposed again if they write to you.
+
+The first scan, when the file does not exist or holds no active entry, covers
+the whole database so the list is useful straight away. Afterwards it covers
+the last week's mail.
+
 ### Sent mail
 
 A **Sent** button appears beside the saved queries once at least one account
@@ -428,30 +452,6 @@ Sent mail is presented differently from the rest, because it reads differently:
 
 This applies only to the Sent button. The same query typed into the bar by hand
 behaves like any other query, threads and all.
-
-### `~/.config/qtmaildir/business-senders`
-
-Addresses that should read as businesses rather than people, one per line.
-A card's avatar takes its pattern from this: a listed address gets the
-two-tone fill, anything presenting a display name gets the identicon.
-
-    # a comment, and the form the application itself writes
-    # noreply@cofidis.it (47 messages)
-    billing@example.org
-    @newsletter.example.com
-
-An entry is either an exact address or a whole domain written `@example.com`.
-Comments and blank lines are ignored.
-
-After each sync the application appends addresses that look like bulk mail,
-**always commented out**, so nothing changes appearance until you uncomment
-it. Anything already in the file, commented or not, is never proposed again:
-commenting a line out is therefore the permanent way to reject it, while
-deleting it lets that sender be proposed again if they write to you.
-
-The first scan, when the file does not exist or holds no active entry, covers
-the whole database so the list is useful straight away. Afterwards it covers
-the last week's mail.
 
 ## The query bar
 

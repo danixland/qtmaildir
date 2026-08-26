@@ -102,10 +102,17 @@ void appendCandidates(const QString &path, const QHash<QString, int> &counts)
     // from parse() above, which deliberately drops comments: here a comment is
     // exactly what must be remembered.
     QSet<QString> mentioned;
+    bool needsLeadingNewline = false;
     QFile existing(path);
     if (existing.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        const QStringList lines =
-            QString::fromUtf8(existing.readAll()).split(QLatin1Char('\n'));
+        const QString contents = QString::fromUtf8(existing.readAll());
+        // Hand-editing (the documented workflow) can leave the file without a
+        // trailing newline; appending then glues the first addition onto the
+        // last entry and silently breaks it. Write a newline before the
+        // additions in that case.
+        if (!contents.isEmpty() && !contents.endsWith(QLatin1Char('\n')))
+            needsLeadingNewline = true;
+        const QStringList lines = contents.split(QLatin1Char('\n'));
         for (const QString &raw : lines) {
             QString line = raw.trimmed();
             if (line.startsWith(QLatin1Char('#')))
@@ -140,6 +147,8 @@ void appendCandidates(const QString &path, const QHash<QString, int> &counts)
     if (!file.open(QIODevice::Append | QIODevice::Text))
         return;
     QTextStream out(&file);
+    if (needsLeadingNewline)
+        out << '\n';
     for (const QString &line : additions)
         out << line << '\n';
 }

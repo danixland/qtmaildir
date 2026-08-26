@@ -107,12 +107,20 @@ QRect CardDelegate::fadeRectFor(const QRect &card, const QRect &innermostSpine)
 {
     // The EXCLUSIVE right edge, then a rect built from it: QRect::right() is
     // inclusive, which is the trap CardLayout already documents.
-    const int end = card.left() + int(card.width() * kFadeFraction);
-    const int start = innermostSpine.isEmpty() ? card.left()
-                                               : innermostSpine.left();
-    if (end <= start)
+    // Right to left: the wash is opaque at the card's RIGHT edge, where a
+    // hard stop is the card's own boundary, and fades out before reaching the
+    // accent bar, which already states the account. Drawing it the other way
+    // put the hard stop mid-card and read as a slab.
+    //
+    // A reply's left limit is its own spine rather than the card's edge, so
+    // the wash steps right with the nesting and stays shorter.
+    const int left = innermostSpine.isEmpty() ? card.left()
+                                              : innermostSpine.left();
+    const int start = card.right() + 1 - int(card.width() * kFadeFraction);
+    if (card.right() + 1 <= qMax(start, left))
         return QRect();
-    return QRect(start, card.top(), end - start, card.height());
+    return QRect(qMax(start, left), card.top(),
+                 card.right() + 1 - qMax(start, left), card.height());
 }
 
 QColor CardDelegate::accentLineColour(const QColor &accountColour)
@@ -219,7 +227,13 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         // A reply's wash is weaker than its root's, so an expanded thread
         // reads as one block with the root leading it.
         from.setAlphaF(card.accentRect.isEmpty() ? 0.14 : 0.30);
-        QLinearGradient gradient(fade.topLeft(), fade.topRight());
+        // Right to left: opaque at the fade's far end, transparent where the
+        // accent bar already carries the colour. Drawing it the other way put
+        // the strongest wash under the bar, which is the one place the account
+        // is already stated.
+        QLinearGradient gradient(fade.topRight(), fade.topLeft());
+        // Opaque at the right edge, gone at the left, so the only hard stop
+        // is the card's own boundary.
         gradient.setColorAt(0.0, from);
         from.setAlphaF(0.0);
         gradient.setColorAt(1.0, from);

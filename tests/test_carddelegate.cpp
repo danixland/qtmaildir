@@ -267,7 +267,9 @@ void TestCardDelegate::theFadeEndsAtSixtyPercentOfTheCard()
 {
     const QRect card(0, 0, 500, 60);
     const QRect root = CardDelegate::fadeRectFor(card, QRect());
-    QCOMPARE(root.left(), card.left());
+    // Anchored at the card's RIGHT edge: the hard stop belongs where the card
+    // ends, not 60% across it, which read as a slab.
+    QCOMPARE(root.right(), card.right());
     QCOMPARE(root.width(), 300);
 }
 
@@ -276,14 +278,21 @@ void TestCardDelegate::aReplyFadeStartsAtItsOwnSpine()
     const QRect card(0, 0, 500, 60);
     // The innermost spine of a nested reply, which is its own coloured border.
     const QRect spine(80, 0, 2, 60);
-    const QRect reply = CardDelegate::fadeRectFor(card, spine);
+    // A spine deep enough to cut into the wash, which starts at 40% here.
+    const QRect deep(300, 0, 2, 60);
+    const QRect reply = CardDelegate::fadeRectFor(card, deep);
 
-    // It hangs off the spine, not off the card's edge.
-    QCOMPARE(reply.left(), spine.left());
-    // And still ends at 60% of the CARD, so a deeper reply's wash is shorter
-    // as well as further right.
+    // Clamped at the spine, so the wash never runs under a reply's own border.
+    QCOMPARE(reply.left(), deep.left());
+    // Still anchored at the card's right edge, so a deeper reply's wash is
+    // shorter rather than displaced.
     QCOMPARE(reply.right(), CardDelegate::fadeRectFor(card, QRect()).right());
     QVERIFY(reply.width() < CardDelegate::fadeRectFor(card, QRect()).width());
+
+    // A shallow spine sits left of where the wash begins and changes nothing.
+    const QRect shallow(80, 0, 2, 60);
+    QCOMPARE(CardDelegate::fadeRectFor(card, shallow),
+             CardDelegate::fadeRectFor(card, QRect()));
 }
 
 void TestCardDelegate::theDelegateAsksForAScaledSquircle()

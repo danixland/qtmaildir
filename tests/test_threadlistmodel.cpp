@@ -104,6 +104,7 @@ private slots:
     void recipientsReplaceTheSenderWhenPresent();
     void aRowCarriesItsSenderAndAccountAddress();
     void aMessageRowCarriesItsOwnSenderAndAddress();
+    void aFlatViewsAvatarFollowsTheRecipient();
 };
 
 static ThreadSummary makeThread(const QString &id, const QString &subject)
@@ -558,6 +559,36 @@ void TestThreadListModel::aMessageRowCarriesItsOwnSenderAndAddress()
              QStringLiteral("bob@example.org"));
     QCOMPARE(replyIndex.data(ThreadListModel::SenderNameRole).toString(),
              QStringLiteral("Bob <bob@example.org>"));
+}
+
+void TestThreadListModel::aFlatViewsAvatarFollowsTheRecipient()
+{
+    // In a Sent or Drafts view firstMessageSender is the USER on every row, so
+    // hashing it gives one pattern for the whole list. The recipient is what
+    // the row is about, and SendersRole already follows the same rule.
+    ThreadListModel model;
+    ThreadSummary summary;
+    summary.threadId = QStringLiteral("t1");
+    summary.subject = QStringLiteral("Subject");
+    summary.authors = QStringLiteral("Me");
+    summary.firstMessageId = QStringLiteral("m1");
+    summary.firstMessageSender = QStringLiteral("me@example.org");
+    summary.recipients = QStringLiteral("John Doe");
+    summary.firstMessageRecipient = QStringLiteral("john@example.org");
+    model.appendBatch({ summary });
+
+    QCOMPARE(model.index(0, 0).data(ThreadListModel::SenderAddressRole)
+                 .toString(),
+             QStringLiteral("john@example.org"));
+
+    // No usable To: the sender is the fallback rather than a blank seed.
+    ThreadListModel bare;
+    summary.recipients.clear();
+    summary.firstMessageRecipient.clear();
+    bare.appendBatch({ summary });
+    QCOMPARE(bare.index(0, 0).data(ThreadListModel::SenderAddressRole)
+                 .toString(),
+             QStringLiteral("me@example.org"));
 }
 
 void TestThreadListModel::theReplyCountExcludesTheRootMessage()

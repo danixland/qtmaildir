@@ -81,16 +81,18 @@ public:
     /// Where the account's fade runs, given the card and the row's innermost
     /// spine (an empty rect for a thread root, which has none).
     ///
-    /// A root's fade starts at the card's left edge; a reply's starts at its
-    /// own spine, which IS its coloured left border, so the wash steps right
-    /// with the nesting. Both end at 60% of the card's width, so a deeper
-    /// reply's wash is shorter as well as further right.
+    /// Runs RIGHT to left: opaque at the card's right edge and gone 60% of the
+    /// width in, so the only hard stop is the card's own boundary and the
+    /// accent bar is left to state the account on its own. A reply is clamped
+    /// at its own spine, which IS its coloured left border, so its wash is
+    /// shorter as well as further right.
     ///
     /// Static and rect-in, rect-out so the geometry is assertable without a
     /// painter, for the same reason CardLayout is.
     static QRect fadeRectFor(const QRect &card, const QRect &innermostSpine);
 
-    /// How far across the card the account's colour reaches.
+    /// How far back across the card, from its right edge, the account's
+    /// colour reaches.
     static constexpr qreal kFadeFraction = 0.60;
 
     /// A tag chip's colour, drained for the SIBLING tier (item 111).

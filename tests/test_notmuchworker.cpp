@@ -76,6 +76,7 @@ private slots:
     void recipientsAreAbsentUnlessAskedFor();
     void recipientsAreFoldedWhenAskedFor();
     void recipientsCrossAQueuedCall();
+    void theFirstRecipientsAddressCrossesForTheAvatar();
 
     void requestCountsAnswersOneCountPerQuery();
     void requestCountsKeepsPositionOnAnInvalidQuery();
@@ -1076,6 +1077,35 @@ void TestNotmuchWorker::recipientsAreFoldedWhenAskedFor()
     QVERIFY2(summary.endsWith(QStringLiteral("+1")),
              qPrintable(QStringLiteral("three recipients did not collapse to "
                                        "two plus one: %1").arg(summary)));
+}
+
+void TestNotmuchWorker::theFirstRecipientsAddressCrossesForTheAvatar()
+{
+    // Item 169's flat-view avatar. `recipients` is a DISPLAY summary and
+    // carries no address at all when every recipient has a name, so the hash
+    // needs the bare one; it rides the same fold, so it costs nothing extra.
+    const QVector<ThreadSummary> one =
+        runQuery(QStringLiteral("subject:Preventivo"),
+                 NotmuchWorker::NewestFirst, true);
+    QCOMPARE(one.size(), 1);
+    QCOMPARE(one.at(0).firstMessageRecipient,
+             QStringLiteral("mario@example.org"));
+
+    // A quoted display name containing a comma must not defeat the parse, for
+    // the same reason it must not defeat the summary.
+    const QVector<ThreadSummary> many =
+        runQuery(QStringLiteral("subject:Riunione"),
+                 NotmuchWorker::NewestFirst, true);
+    QCOMPARE(many.size(), 1);
+    QCOMPARE(many.at(0).firstMessageRecipient,
+             QStringLiteral("mario@example.org"));
+
+    // And it stays empty when the query never asked, exactly as `recipients`
+    // does: it is behind the same performance contract.
+    const QVector<ThreadSummary> unasked =
+        runQuery(QStringLiteral("subject:Preventivo"));
+    QCOMPARE(unasked.size(), 1);
+    QVERIFY(unasked.at(0).firstMessageRecipient.isEmpty());
 }
 
 void TestNotmuchWorker::recipientsCrossAQueuedCall()

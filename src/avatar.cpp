@@ -26,6 +26,42 @@
 
 namespace {
 
+/// The bare display name from whatever the card's first line holds.
+///
+/// That string is the RAW header for a reply row (`Name <addr>`) and a
+/// comma-joined author summary for a thread row, so a naive space split gives
+/// `T<` for one and one letter from each of two different people for the
+/// other. Take the first entry, drop the angle-addr and any quoting, and
+/// report nothing when what remains is itself an address: the caller's address
+/// branch reads that far better than the local part would.
+QString displayNameOf(const QString &raw)
+{
+    QString name = raw.trimmed();
+
+    // `Name <addr>`: everything before the bracket is the name. When there is
+    // nothing before it, the address itself is not a name.
+    const int bracket = name.indexOf(QLatin1Char('<'));
+    if (bracket >= 0)
+        name = name.left(bracket).trimmed();
+
+    // A comma joins either two authors or a `"Rossi, Mario"` quoted name. The
+    // quotes tell them apart, so strip them only after splitting.
+    if (!name.startsWith(QLatin1Char('"'))) {
+        const int comma = name.indexOf(QLatin1Char(','));
+        if (comma >= 0)
+            name = name.left(comma).trimmed();
+    }
+    if (name.size() >= 2 && name.startsWith(QLatin1Char('"'))
+        && name.endsWith(QLatin1Char('"'))) {
+        name = name.mid(1, name.size() - 2).trimmed();
+    }
+
+    // A bare address left standing is not a name.
+    if (name.contains(QLatin1Char('@')))
+        return QString();
+    return name;
+}
+
 QString twoFrom(const QString &text)
 {
     const QString trimmed = text.trimmed();
@@ -43,8 +79,19 @@ namespace Avatar {
 QString initialsFor(const QString &displayName, const QString &address,
                     const QString &accountLabel)
 {
-    const QStringList words = displayName.split(QLatin1Char(' '),
-                                                Qt::SkipEmptyParts);
+    // Words, and a separator is not one. `INE - Expert IT Training` split on
+    // spaces alone gave `I-`, because the dash counted as the second word.
+    QStringList words;
+    const QStringList parts = displayNameOf(displayName)
+                                  .split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    for (const QString &part : parts) {
+        // Trim leading punctuation so `(Team)` still contributes its `T`.
+        int at = 0;
+        while (at < part.size() && !part.at(at).isLetterOrNumber())
+            ++at;
+        if (at < part.size())
+            words.append(part.mid(at));
+    }
     if (words.size() >= 2) {
         return (words.at(0).left(1) + words.at(1).left(1)).toUpper();
     }
@@ -83,7 +130,10 @@ Fill fillFor(const QString &displayName, bool isBusinessSender)
     // heuristic, or a listed sender could never be pinned.
     if (isBusinessSender)
         return Fill::TwoTone;
-    return displayName.trimmed().isEmpty() ? Fill::TwoTone : Fill::Identicon;
+    // The same normalisation initialsFor() uses: a raw `<addr>` header or a
+    // bare address is not a display name, so it must not read as a person.
+    return displayNameOf(displayName).isEmpty() ? Fill::TwoTone
+                                                : Fill::Identicon;
 }
 
 QColor colourFor(const QString &address)
@@ -150,9 +200,18 @@ QPixmap pixmapFor(const QString &seed, const QString &initials, Fill fill,
         // behind the letters stays large and flat, which is the whole reason
         // this fill exists beside the identicon.
         const int angle = static_cast<quint8>(digest.at(1)) * 360 / 256;
-        QLineF axis = QLineF::fromPolar(side, angle);
+        // The axis must span the DIAMETER through the centre, not a radius
+        // from it. fromPolar() starts at the origin, so translating by half
+        // the side put p1 at the centre and the 0.5 colour stop on the
+        // squircle's edge: one hue filled almost the whole face and the fill
+        // read as flat. The diagonal, so the split still crosses the shape at
+        // any angle.
+        const qreal reach = side * 0.71;
+        QLineF axis = QLineF::fromPolar(reach, angle);
         axis.translate(side / 2.0, side / 2.0);
-        QLinearGradient gradient(axis.p2(), axis.p1());
+        QLineF back = QLineF::fromPolar(reach, angle + 180.0);
+        back.translate(side / 2.0, side / 2.0);
+        QLinearGradient gradient(back.p2(), axis.p2());
         gradient.setColorAt(0.0, base);
         gradient.setColorAt(0.499, base);
         gradient.setColorAt(0.5, base.darker(135));

@@ -113,6 +113,18 @@ struct ThreadSummary
     /// row and carries nothing.
     QString recipients;
 
+    /// The FIRST recipient's bare address, for the avatar in a flat view.
+    ///
+    /// Filled by the same walk as `recipients` and under the same flag, so it
+    /// costs nothing extra: the To header is already parsed there.
+    ///
+    /// A Sent or Drafts card's `firstMessageSender` is the user on every row,
+    /// so every card would carry one pattern and only the initials would vary.
+    /// The avatar answers "who is this row about", and there that is the
+    /// recipient. `firstMessageSender` stays the fallback for a row with no
+    /// usable To.
+    QString firstMessageRecipient;
+
     bool isUnread() const { return tags.contains(QStringLiteral("unread")); }
     bool isFlagged() const { return tags.contains(QStringLiteral("flagged")); }
     /// True when this message was forwarded. The Maildir "P" (passed) flag,

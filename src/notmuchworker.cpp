@@ -81,6 +81,51 @@ QStringList tagsOf(notmuch_thread_t *thread)
     return result;
 }
 
+/// The first mailbox address in a raw address header, display names dropped.
+///
+/// Parsed with GMime rather than split: the header is untrusted and a display
+/// name may legally contain an `@`, so "Ian <a@b>" split on `@` yields
+/// nonsense.
+QString firstMailboxOf(const QString &rawHeader)
+{
+    // GMime must be initialised once per process before any parse, or the
+    // first internet_address_list_parse() call dereferences an uninitialised
+    // type registry and SEGVs. Function-local static, exactly as the other
+    // gmime-using units do, so this file does not lean on libnotmuch having
+    // initialised it as a side effect (measured 2026-08-26: it currently
+    // does, but that is not documented anywhere).
+    static const bool initialised = [] {
+        g_mime_init();
+        return true;
+    }();
+    Q_UNUSED(initialised);
+
+    const QByteArray utf8 = rawHeader.trimmed().toUtf8();
+    if (utf8.isEmpty())
+        return QString();
+
+    InternetAddressList *list =
+        internet_address_list_parse(nullptr, utf8.constData());
+    if (!list)
+        return QString();
+
+    QString address;
+    const int count = internet_address_list_length(list);
+    for (int i = 0; i < count; ++i) {
+        InternetAddress *entry = internet_address_list_get_address(list, i);
+        if (!entry || !INTERNET_ADDRESS_IS_MAILBOX(entry))
+            continue;
+        const char *addr =
+            internet_address_mailbox_get_addr(INTERNET_ADDRESS_MAILBOX(entry));
+        if (addr && *addr) {
+            address = QString::fromUtf8(addr);
+            break;
+        }
+    }
+    g_object_unref(list);
+    return address;
+}
+
 /// Who a thread's messages were addressed to, summarised for one line.
 ///
 /// EXPENSIVE, and only called when a query asks. "To" is not served from
@@ -94,7 +139,7 @@ QStringList tagsOf(notmuch_thread_t *thread)
 /// frees again, and the walk finishes before the caller drops the thread. This
 /// is the same rule walkReplies follows, and getting it wrong is a double-free
 /// rather than a leak.
-QString recipientsOf(notmuch_thread_t *thread)
+QString recipientsOf(notmuch_thread_t *thread, QString *firstAddress)
 {
     // The first message with a usable To wins. A thread is one conversation,
     // and the alternative, folding every message's recipients together, is the
@@ -114,8 +159,14 @@ QString recipientsOf(notmuch_thread_t *thread)
             continue;
 
         const QString summary = recipientSummary(QString::fromUtf8(to));
-        if (!summary.isEmpty())
+        if (!summary.isEmpty()) {
+            // The same header, for the avatar's hash (item 169). Parsed rather
+            // than split for the reason senderAddressOf() documents: a display
+            // name may legally contain an `@`.
+            if (firstAddress)
+                *firstAddress = firstMailboxOf(QString::fromUtf8(to));
             return summary;
+        }
     }
     return QString();
 }
@@ -129,41 +180,10 @@ QString recipientsOf(notmuch_thread_t *thread)
 /// may legally contain an `@`, and "Ian <a@b>" split on `@` yields nonsense.
 QString senderAddressOf(notmuch_message_t *message)
 {
-    // GMime must be initialised once per process before any parse, or the
-    // first internet_address_list_parse() call dereferences an uninitialised
-    // type registry and SEGVs. Function-local static, exactly as the other
-    // gmime-using units do, so this file does not lean on libnotmuch having
-    // initialised it as a side effect (measured 2026-08-26: it currently
-    // does, but that is not documented anywhere).
-    static const bool initialised = [] {
-        g_mime_init();
-        return true;
-    }();
-    Q_UNUSED(initialised);
-
     const char *from = notmuch_message_get_header(message, "From");
     if (!from || !*from)
         return QString();
-
-    InternetAddressList *list = internet_address_list_parse(nullptr, from);
-    if (!list)
-        return QString();
-
-    QString address;
-    const int count = internet_address_list_length(list);
-    for (int i = 0; i < count; ++i) {
-        InternetAddress *entry = internet_address_list_get_address(list, i);
-        if (!entry || !INTERNET_ADDRESS_IS_MAILBOX(entry))
-            continue;
-        const char *addr =
-            internet_address_mailbox_get_addr(INTERNET_ADDRESS_MAILBOX(entry));
-        if (addr && *addr) {
-            address = QString::fromUtf8(addr);
-            break;
-        }
-    }
-    g_object_unref(list);
-    return address;
+    return firstMailboxOf(QString::fromUtf8(from));
 }
 
 /// Collects the message ids a query matches. Returns false if the query could
@@ -455,7 +475,8 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
         summary.matchedCount = notmuch_thread_get_matched_messages(thread.get());
         summary.tags = tagsOf(thread.get());
         if (withRecipients)
-            summary.recipients = recipientsOf(thread.get());
+            summary.recipients =
+                recipientsOf(thread.get(), &summary.firstMessageRecipient);
 
         // The message the row's card stands for. Raw pointers on purpose:
         // messages reached through a thread are owned by the THREAD and freed

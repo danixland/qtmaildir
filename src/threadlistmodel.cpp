@@ -689,6 +689,13 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
         // The bare address of the message this card stands for, carried from
         // the query. This is what the avatar's hash and the business-senders
         // lookup consume; the display name below is what the card draws.
+        //
+        // The recipient first in a flat view, matching SendersRole below and
+        // for the same reason: the sender there is the user on every row, so
+        // every card would hash to one pattern. Falls back to the sender when
+        // the fold found no usable To.
+        if (!thread.firstMessageRecipient.isEmpty())
+            return thread.firstMessageRecipient;
         return thread.firstMessageSender;
     case SenderNameRole:
         // The same string the card's first line shows: recipients in a flat

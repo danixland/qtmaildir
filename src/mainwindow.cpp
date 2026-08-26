@@ -520,6 +520,17 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
     buildUi();
     registerActions();
 
+    // Both need the delegate, which buildUi() just created. The list is loaded
+    // once at startup and again only on an explicit reload, never per repaint:
+    // the painting path runs on every row of every scroll.
+    loadBusinessSenders();
+    applyCurrentAccountToDelegate();
+    // A change takes effect without a restart. Its own connect, not the one in
+    // buildSavedQueryRow(), which belongs to the filter-buttons row and is
+    // rebuilt with it.
+    connect(m_accountBox, &QComboBox::currentIndexChanged, this,
+            [this]() { applyCurrentAccountToDelegate(); });
+
     // After registerActions(), not inside buildUi(): the query bar exists by
     // then but the action does not, so wiring this where the field is built
     // silently connected nothing and left Save query enabled on an empty
@@ -831,7 +842,8 @@ void MainWindow::buildUi()
     // delegate is confined to one column's rectangle.
     m_threadView = new ThreadListView(central);
     m_threadView->setModel(m_model);
-    m_threadView->setItemDelegate(new CardDelegate(this));
+    m_cardDelegate = new CardDelegate(this);
+    m_threadView->setItemDelegate(m_cardDelegate);
     m_threadView->setHeaderHidden(true);
     m_threadView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_threadView->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -2792,6 +2804,27 @@ void MainWindow::selectAccountForTesting(const QString &key)
     const int index = m_accountBox->findData(key);
     if (index >= 0)
         m_accountBox->setCurrentIndex(index);
+}
+
+void MainWindow::loadBusinessSenders(const QString &path)
+{
+    m_businessSenders = BusinessSenders::load(
+        path.isEmpty() ? BusinessSenders::defaultPath() : path);
+    m_cardDelegate->setBusinessSenders(m_businessSenders);
+}
+
+void MainWindow::applyCurrentAccountToDelegate()
+{
+    const QString key = m_accountBox->currentData().toString();
+    if (key.isEmpty()) {
+        m_cardDelegate->setAccountAddress(QString());
+        m_cardDelegate->setAccountLabel(QString());
+        return;
+    }
+    const Account account = m_config.account(key);
+    m_cardDelegate->setAccountAddress(account.address);
+    m_cardDelegate->setAccountLabel(
+        account.name.isEmpty() ? account.key : account.name);
 }
 
 void MainWindow::onRulePreviewRequested(const QString &query)

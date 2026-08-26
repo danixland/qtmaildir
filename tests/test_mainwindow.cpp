@@ -543,6 +543,7 @@ private slots:
     void aCloseDuringTheCountdownIsRefused();
     void aFailedSendKeepsTheTextThatFailedToGo();
     void aSmallSizeLimitIsNotDescribedAsZeroMegabytes();
+    void theBusinessSenderListIsLoadedAtStartup();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -14884,6 +14885,23 @@ void TestMainWindow::aSmallSizeLimitIsNotDescribedAsZeroMegabytes()
     QVERIFY2(ComposeWindow::humanSize(1024 * 1024 * 3 / 2)
                  .contains(QStringLiteral(".")),
              "1.5 MB lost its decimal");
+}
+
+void TestMainWindow::theBusinessSenderListIsLoadedAtStartup()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("business-senders"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("@cofidis.it\n");
+    file.close();
+
+    const Config config;
+    MainWindow window(config);
+    window.loadBusinessSenders(path);
+
+    QVERIFY(window.businessSendersForTest().domains.contains(
+        QStringLiteral("cofidis.it")));
 }
 
 #include "test_mainwindow.moc"

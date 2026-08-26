@@ -43,6 +43,10 @@
 #include "tagcolors.h"
 #include "types.h"
 
+// Held by value: the parsed business-senders list is a member, and the load is
+// asserted through it without reaching into the delegate.
+#include "businesssenders.h"
+
 class QAction;
 class QLineEdit;
 class QMenu;
@@ -57,6 +61,7 @@ class QToolButton;
 class QVBoxLayout;
 
 class BusyIndicator;
+class CardDelegate;
 class ThreadListModel;
 class MessageView;
 class MailSync;
@@ -358,6 +363,20 @@ public:
     /// The Maildir root as the worker reported it, for the split-index test.
     QString mailRootForTesting() const { return m_mailRoot; }
 
+    /// Reads the business-senders list and hands it to the delegate.
+    ///
+    /// Once at startup and on an explicit reload, never per repaint and never
+    /// stat-per-row: the file is small and the painting path runs on every
+    /// row of every scroll.
+    void loadBusinessSenders(const QString &path = QString());
+
+    /// Test accessor, so the load can be asserted without reaching into the
+    /// delegate.
+    const BusinessSenders::List &businessSendersForTest() const
+    {
+        return m_businessSenders;
+    }
+
     /// Runs save_message into \p directory instead of asking for one.
     ///
     /// The file dialog is a modal the offscreen platform cannot click, and the
@@ -624,6 +643,11 @@ private slots:
 
 private:
     void buildUi();
+
+    /// Pushes the selected account's identity into the card delegate, so the
+    /// fallback avatar is seeded from it. Empty selection ("All accounts")
+    /// clears both: the delegate then falls back to "??".
+    void applyCurrentAccountToDelegate();
 
     /// Restores window geometry, splitter and thread-list header widths.
     /// A missing or rejected blob leaves the buildUi() defaults in place.
@@ -1278,6 +1302,13 @@ private:
     /// expander column are ThreadListView's, and holding the base here only
     /// hid that from every reader.
     ThreadListView *m_threadView = nullptr;
+    /// The card delegate, stored rather than discarded so the window can hand
+    /// it the account identity and the business-senders list.
+    CardDelegate *m_cardDelegate = nullptr;
+
+    /// The parsed business-senders list, for the delegate. Empty until
+    /// loadBusinessSenders() runs.
+    BusinessSenders::List m_businessSenders;
 
     /// Right-click menu for the thread list, holding the same QActions the
     /// menu bar does.

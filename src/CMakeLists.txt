@@ -10,6 +10,7 @@ add_library(qtmaildir_lib STATIC
     cardlayout.cpp
     avatar.cpp
     busyindicator.cpp
+    businesssenders.cpp
     marks.cpp
     carddelegate.cpp
     notmuchworker.cpp

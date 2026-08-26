@@ -988,7 +988,41 @@ void TestBusinessSenders::onlyBulkLookingLocalPartsAreProposed()
 }
 ```
 
-Declare all three in `private slots:` and add `#include <QFileInfo>` to the test's includes.
+```cpp
+void TestBusinessSenders::theFirstRunScansEverything()
+{
+    QTemporaryDir dir;
+    const QString missing = dir.filePath(QStringLiteral("business-senders"));
+
+    // No file at all: a week of mail would propose almost nothing and the
+    // list would take months to become useful, so the first run pays for a
+    // full scan once.
+    QCOMPARE(BusinessSenders::scanQuery(missing), QStringLiteral("*"));
+
+    // A file holding ONLY rejected candidates is still a first run: nothing
+    // has been accepted yet. Rescanning re-proposes none of them, since
+    // appendCandidates skips anything already mentioned.
+    QFile rejected(missing);
+    QVERIFY(rejected.open(QIODevice::WriteOnly | QIODevice::Text));
+    rejected.write("# noreply@cofidis.it (47 messages)\n");
+    rejected.close();
+    QCOMPARE(BusinessSenders::scanQuery(missing), QStringLiteral("*"));
+}
+
+void TestBusinessSenders::alaterRunScansOnlyRecentMail()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("business-senders"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("billing@example.org\n");
+    file.close();
+
+    QCOMPARE(BusinessSenders::scanQuery(path), QStringLiteral("date:1week.."));
+}
+```
+
+Declare all five in `private slots:` and add `#include <QFileInfo>` to the test's includes.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1019,6 +1053,18 @@ bool looksLikeBulk(const QString &address);
 /// rejected is never re-proposed, and one they deleted only returns if that
 /// sender writes again.
 void appendCandidates(const QString &path, const QHash<QString, int> &counts);
+
+/// The query the candidate scan should run.
+///
+/// A week of mail once the file exists, so the step stays incremental and
+/// cheap. EVERYTHING when the file is missing or holds no entries, because
+/// that is the first run: a week's mail proposes almost nothing, and the file
+/// would then take months to become useful. The whole-database scan is
+/// affordable precisely because it happens once, measured at 76 ms over 5105
+/// messages.
+///
+/// Returns notmuch query syntax, which is wire format and is never translated.
+QString scanQuery(const QString &path);
 ```
 
 Add `#include <QHash>` to the header.
@@ -1097,7 +1143,27 @@ void appendCandidates(const QString &path, const QHash<QString, int> &counts)
 }
 ```
 
+```cpp
+QString scanQuery(const QString &path)
+{
+    // "*" is notmuch's match-everything. An EMPTY string would also match
+    // everything, which is why Config::matchNothingQuery() exists elsewhere in
+    // this codebase; being explicit here means a reader never has to wonder
+    // which of the two an empty return meant.
+    const List existing = load(path);
+    if (existing.addresses.isEmpty() && existing.domains.isEmpty())
+        return QStringLiteral("*");
+    return QStringLiteral("date:1week..");
+}
+```
+
 Add `#include <QFileInfo>` to `src/businesssenders.cpp`.
+
+Note what the emptiness test is deliberately NOT: it asks whether the file holds
+any usable ENTRY, not whether the file exists or has bytes. A file holding only
+rejected candidates, every line commented out, is still a first run as far as
+this is concerned, and rescanning it costs 76 ms and re-proposes nothing, since
+`appendCandidates` skips everything already mentioned.
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -1105,7 +1171,7 @@ Add `#include <QFileInfo>` to `src/businesssenders.cpp`.
 cmake --build build && QT_QPA_PLATFORM=offscreen ctest --test-dir build -R businesssenders --output-on-failure
 ```
 
-Expected: PASS, 9 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -1785,7 +1851,11 @@ In `MainWindow`, where a sync completes (search for where the unsynced count is 
             });
 ```
 
-Request the counts scoped to recently indexed mail rather than the whole database, so the step stays incremental: `countSenders(QStringLiteral("date:1week.."))`.
+Scope the request with `BusinessSenders::scanQuery()`, added below: a week of mail once the file exists, and everything on the first run.
+
+```cpp
+    countSenders(BusinessSenders::scanQuery(BusinessSenders::defaultPath()));
+```
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -1853,6 +1923,10 @@ After each sync the application appends addresses that look like bulk mail,
 it. Anything already in the file, commented or not, is never proposed again:
 commenting a line out is therefore the permanent way to reject it, while
 deleting it lets that sender be proposed again if they write to you.
+
+The first scan, when the file does not exist or holds no active entry, covers
+the whole database so the list is useful straight away. Afterwards it covers
+the last week's mail.
 ```
 
 - [ ] **Step 4: Update the changelog**

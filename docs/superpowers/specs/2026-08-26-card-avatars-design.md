@@ -217,6 +217,16 @@ of the newly arrived mail and appends CANDIDATES, commented out:
 # noreply@cofidis.it (47 messages)
 ```
 
+**How much mail the scan covers** depends on whether the list has ever been
+used. With no file, or a file holding no active entry, it scans the WHOLE
+database; afterwards it scans the last week. The first run is exactly when a
+full scan earns its cost: a week of mail proposes almost nothing, so a
+week-only rule would leave the list taking months to become useful. It is
+affordable because it happens once, measured at 76 ms over 5105 messages.
+
+A file holding only rejected candidates still counts as unused. Rescanning it
+re-proposes none of them, since anything already mentioned is skipped.
+
 A candidate is an address whose local part is in a small built-in word list
 (`noreply`, `no-reply`, `donotreply`, `info`, `support`, `billing`,
 `newsletter`, `notifications`, `mailer-daemon`), or one that recurs with no

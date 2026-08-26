@@ -4312,7 +4312,6 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         // assert the edits had reached the mail store when the sync is exactly
         // what failed to put them there.
         m_pendingTagEdits.clear();
-        m_unnettablePendingEdits = 0;
 
         // Only what this run actually carried, per the snapshot above. An
         // account added by flushHeldEdits() stays, because its edit reaches the
@@ -4444,14 +4443,6 @@ void MainWindow::onTagsApplied(const TagChange &change)
             recordPendingEdit(messageId, tag, true);
         for (const QString &tag : change.removed)
             recordPendingEdit(messageId, tag, false);
-    }
-
-    // A change carrying no message ids cannot be netted against anything, and
-    // must still register: losing an edit understates the indicator, which is
-    // the direction that costs the user work.
-    if (change.messageIds.isEmpty()
-        && !(change.added.isEmpty() && change.removed.isEmpty())) {
-        ++m_unnettablePendingEdits;
     }
 
     updatePendingIndicator();
@@ -4808,7 +4799,6 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
         // is the absence of evidence rather than evidence of success.
         if (MailSync::lastRunOutcome(m_config.syncLog()) == SyncOutcome::Ok) {
             m_pendingTagEdits.clear();
-            m_unnettablePendingEdits = 0;
 
             // Cleared HERE, before flushHeldEdits() below, and the ordering is
             // load-bearing for the reason spelled out on the local path at
@@ -5051,6 +5041,14 @@ int MainWindow::pendingEditCount() const
     // an edit waiting on a lock is precisely the work quitting would lose.
     // Each held edit counts as one whatever its size, since it carries thread
     // ids rather than message ids and cannot be netted against the map.
+    //
+    // There is no fourth term. A counter for confirmed changes carrying no
+    // message ids stood here until item 119 looked for what it held and found
+    // nothing: NotmuchWorker::applyTags() is the only emitter of tagsApplied()
+    // and returns early on an empty id list, so the change that counter
+    // existed for cannot reach this window. Every pending change can name the
+    // messages it touches, which is what lets the indicator be opened and
+    // listed in full.
     const int held = int(m_heldEdits.size());
     // Held MOVES count for exactly the same reason, and were missed. With no
     // tag edit queued the count was 0, so the indicator stayed hidden and
@@ -5059,8 +5057,7 @@ int MainWindow::pendingEditCount() const
     // is item 106's data loss, and worse here, because a dropped move leaves
     // the file in the folder the user asked it out of.
     const int heldMoves = int(m_heldMoves.size());
-    return m_pendingTagEdits.size() + m_unnettablePendingEdits + held
-           + heldMoves;
+    return m_pendingTagEdits.size() + held + heldMoves;
 }
 
 void MainWindow::updatePendingIndicator()

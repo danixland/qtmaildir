@@ -1541,11 +1541,6 @@ private:
     /// behind and the map cannot grow without bound.
     QHash<QString, bool> m_pendingTagEdits;
 
-    /// Confirmed changes carrying no message ids, which cannot be netted
-    /// against anything. Counted separately rather than dropped: understating
-    /// the indicator is the direction that costs the user work.
-    int m_unnettablePendingEdits = 0;
-
     /// Marks the open thread read once it has been on screen long enough.
     ///
     /// Single-shot and RESTARTED on every selection change, never stacked:

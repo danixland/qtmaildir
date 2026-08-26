@@ -415,7 +415,7 @@ private slots:
     void theSelectionCountIsStateAndDoesNotExpire();
     void anEditUndoneNettsBackToZero();
     void aDifferentTagOnTheSameMessageStillCounts();
-    void anEditWithNoMessageIdsStillCounts();
+    void everyPendingChangeCanNameItsMessages();
     void anEditDuringABackgroundSyncIsNotSentYet();
     void aHeldEditIsSentWhenTheBackgroundSyncEnds();
     void aHeldEditCountsAsUnsynced();
@@ -2239,6 +2239,9 @@ void TestMainWindow::pendingEditCountSurvivesAQuery()
     // Confirm a write the way the worker really does, by emitting the signal
     // the window listens to. No test-only entry point on MainWindow.
     TagChange change;
+    // A real edit always names the messages it touched: the worker's only
+    // emitter of tagsApplied() returns early without them (item 119).
+    change.messageIds = { QStringLiteral("pq1@example.org") };
     change.added = { QStringLiteral("deleted") };
     change.description = QStringLiteral("Delete");
     QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
@@ -2271,6 +2274,8 @@ void TestMainWindow::aFailedSyncDoesNotClearThePendingCount()
     QVERIFY(label);
 
     TagChange change;
+    // See item 119: a change with no message ids never reaches this slot.
+    change.messageIds = { QStringLiteral("fs1@example.org") };
     change.added = { QStringLiteral("flagged") };
     QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
                                       Q_ARG(TagChange, change)));
@@ -2362,6 +2367,8 @@ void TestMainWindow::syncOnExitNeverClosesSilently()
     // Give it something to lose, so this is not passing for the same reason
     // the previous test does.
     TagChange change;
+    // See item 119: a change with no message ids never reaches this slot.
+    change.messageIds = { QStringLiteral("se1@example.org") };
     change.added = { QStringLiteral("deleted") };
     QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
                                       Q_ARG(TagChange, change)));
@@ -6437,26 +6444,49 @@ void TestMainWindow::aDifferentTagOnTheSameMessageStillCounts()
              "two different tags on one message cancelled each other");
 }
 
-void TestMainWindow::anEditWithNoMessageIdsStillCounts()
+void TestMainWindow::everyPendingChangeCanNameItsMessages()
 {
-    // A TagChange carrying no message ids cannot be netted against anything,
-    // and must still register rather than silently counting as zero. Losing an
-    // edit understates the indicator, which is the direction that costs the
-    // user work.
+    // Item 119. The count summed a fourth term, a bare int for confirmed
+    // changes carrying no message ids, and that term is what made the count
+    // impossible to open and list: three groups could name what they held and
+    // the remainder could not.
+    //
+    // The remainder was empty. NotmuchWorker::applyTags() is the only emitter
+    // of tagsApplied() and returns early on an empty id list, which is the
+    // exact condition the counter required, so the change it existed for
+    // cannot reach this window. Measured before removing it: a qFatal in the
+    // branch fired in 4 of 70 cases here, all four invoking the slot directly
+    // with a hand-built TagChange, and an assertion before the worker's emit
+    // never fired across the whole suite.
+    //
+    // The guard itself is pinned in test_notmuchworker by
+    // applyTagsWithNoIdsDoesNothing(), which is where it lives. What this test
+    // holds is the consequence: a change that reaches the indicator names its
+    // messages, so the indicator can be listed in full.
     const Config config;
     MainWindow window(config);
 
     auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
     QVERIFY(label);
+    QVERIFY(label->isHidden());
 
+    // A change with ids counts, and the count is the number of (message, tag)
+    // pairs it carries rather than one per signal.
     TagChange change;
-    change.added = { QStringLiteral("deleted") };
-    change.description = QStringLiteral("Delete");
+    change.messageIds = { QStringLiteral("a@example.org"),
+                          QStringLiteral("b@example.org") };
+    change.added = { QStringLiteral("flagged") };
+    change.description = QStringLiteral("Mark important");
     QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
                                       Q_ARG(TagChange, change)));
+    QVERIFY(!label->isHidden());
 
-    QVERIFY2(!label->isHidden(),
-             "an edit with no message ids was not counted at all");
+    // And its inverse nets it back to nothing, which is the property the
+    // fourth term could never have: an unnettable count only ever grew.
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change.inverted())));
+    QVERIFY2(label->isHidden(),
+             "an edit and its inverse left the indicator claiming work");
 }
 
 // Item 37. A tag edit made while a background sync holds notmuch's write lock

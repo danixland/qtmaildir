@@ -213,6 +213,22 @@ public slots:
     /// whatever the current view happens to be showing.
     void resolveQueryMessages(const QString &query, const QString &requestTag);
 
+    /// Subjects for the list behind the unsynced-changes count (item 119).
+    ///
+    /// Takes the snapshot's ids in order, each flagged as a thread id or a
+    /// message id, and answers POSITIONALLY: one subject per input, plus a
+    /// message count for a thread id and -1 for a message id. Positional
+    /// because the caller has already decided what its rows are and in what
+    /// order; a set-based answer would make it match them back up by id, and
+    /// one id can legitimately appear on several rows.
+    ///
+    /// An id the index no longer holds yields an EMPTY subject rather than
+    /// being dropped. The dialog still shows that row: the count the user
+    /// clicked has to equal the list they are shown, and silently dropping a
+    /// row would break that for the one case where it matters most.
+    void resolvePendingSubjects(const QStringList &ids,
+                                const QList<bool> &areThreads);
+
 private:
     /// The shared walk behind resolveMessages() and resolveThreadMessages():
     /// runs `query` and emits threadMessagesResolved() with each match's id,
@@ -340,6 +356,12 @@ signals:
                                 const QStringList &paths,
                                 const QStringList &tags,
                                 const QString &requestTag);
+    /// One subject per requested id, in the SAME ORDER, and one count beside
+    /// it: the thread's message total, or -1 for a message id. An empty
+    /// subject means the index no longer holds that id.
+    void pendingSubjectsResolved(const QStringList &subjects,
+                                 const QList<int> &messageCounts);
+
     void allTagsReady(const QStringList &tags, quint64 generation);
 
     /// One entry per requested query, in the order they were asked for. A query

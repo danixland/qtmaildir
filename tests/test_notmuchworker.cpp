@@ -58,6 +58,8 @@ private slots:
     void applyTagsToThreadsSpansMultipleThreads();
     void applyTagsToThreadsWithNoThreadsDoesNothing();
 
+    void pendingSubjectsAnswerPositionally();
+    void aMissingPendingIdYieldsAnEmptySubject();
     void requestAllTagsReturnsSortedTags();
     void requestAllTagsOnUnreadableConfigEmitsError();
 
@@ -960,6 +962,71 @@ void TestNotmuchWorker::applyTagsToThreadsWithNoThreadsDoesNothing()
 
     QVERIFY(applied.isEmpty());
     QVERIFY(errors.isEmpty());
+}
+
+void TestNotmuchWorker::pendingSubjectsAnswerPositionally()
+{
+    // Item 119. The dialog has already decided what its rows are and in what
+    // order, so the answer is positional: one subject per input id, in the
+    // same order, whatever those ids are.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::pendingSubjectsResolved);
+
+    // The SAME message id twice, which is what a message with two outstanding
+    // actions produces. A combined query would return it once and the rows
+    // would no longer line up.
+    const QStringList ids { QStringLiteral("b1@example.org"),
+                            QStringLiteral("b1@example.org") };
+    worker.resolvePendingSubjects(ids, { false, false });
+
+    QCOMPARE(spy.size(), 1);
+    const QStringList subjects = spy.first().at(0).toStringList();
+    const QList<int> counts = spy.first().at(1).value<QList<int>>();
+    QCOMPARE(subjects.size(), 2);
+    QCOMPARE(counts.size(), 2);
+
+    // Both rows carry the subject, and neither claims a message count: a
+    // message id is not a thread.
+    QVERIFY2(!subjects.at(0).isEmpty(), "the subject did not resolve");
+    QCOMPARE(subjects.at(0), subjects.at(1));
+    QCOMPARE(counts.at(0), -1);
+    QCOMPARE(counts.at(1), -1);
+}
+
+void TestNotmuchWorker::aMissingPendingIdYieldsAnEmptySubject()
+{
+    // A stale row: the id is no longer in the index. It must come back EMPTY
+    // rather than being dropped, because the dialog still has to show it. The
+    // count the user clicked has to equal the list they are shown, and a
+    // dropped row breaks that in the one case where it matters most.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::pendingSubjectsResolved);
+
+    worker.resolvePendingSubjects(
+        { QStringLiteral("b1@example.org"),
+          QStringLiteral("gone@example.org") },
+        { false, false });
+
+    QCOMPARE(spy.size(), 1);
+    const QStringList subjects = spy.first().at(0).toStringList();
+    QCOMPARE(subjects.size(), 2);
+    QVERIFY(!subjects.at(0).isEmpty());
+    QVERIFY2(subjects.at(1).isEmpty(),
+             "a missing id must answer empty, not drop its row");
+
+    // A thread id resolves to its subject AND its message count, which is what
+    // a thread-scoped row reports.
+    QSignalSpy threadSpy(&worker, &NotmuchWorker::pendingSubjectsResolved);
+    const QVector<ThreadSummary> threads =
+        runQuery(QStringLiteral("subject:Preventivo"));
+    QCOMPARE(threads.size(), 1);
+    worker.resolvePendingSubjects({ threads.first().threadId }, { true });
+
+    QCOMPARE(threadSpy.size(), 1);
+    QCOMPARE(threadSpy.first().at(0).toStringList().size(), 1);
+    QVERIFY(!threadSpy.first().at(0).toStringList().at(0).isEmpty());
+    QCOMPARE(threadSpy.first().at(1).value<QList<int>>().at(0),
+             threads.first().totalCount);
 }
 
 void TestNotmuchWorker::requestAllTagsReturnsSortedTags()

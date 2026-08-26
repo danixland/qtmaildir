@@ -1232,6 +1232,88 @@ void NotmuchWorker::resolveThreadMessages(const QStringList &threadIds,
     resolveQuery(terms.join(QStringLiteral(" or ")), requestTag);
 }
 
+void NotmuchWorker::resolvePendingSubjects(const QStringList &ids,
+                                           const QList<bool> &areThreads)
+{
+    if (ids.isEmpty() || ids.size() != areThreads.size())
+        return;
+
+    QStringList subjects;
+    QList<int> counts;
+    subjects.reserve(ids.size());
+    counts.reserve(ids.size());
+
+    if (!openReadOnly()) {
+        // Answer anyway, one empty subject per row. The dialog must be able to
+        // show the user their pending changes even when the index cannot be
+        // opened: the ids and the actions are known without it, and only the
+        // subjects are missing.
+        for (int i = 0; i < ids.size(); ++i) {
+            subjects.append(QString());
+            counts.append(-1);
+        }
+        emit pendingSubjectsResolved(subjects, counts);
+        return;
+    }
+
+    // One lookup per id rather than one combined query, deliberately. The
+    // answer is POSITIONAL, and a combined query returns a set: it would lose
+    // both the order and the duplicates, and a message with two outstanding
+    // actions is exactly two rows carrying one id.
+    //
+    // The cost is bounded by what the user can have pending, which is what
+    // they did by hand since the last sync. This is not a query-sized walk.
+    for (int i = 0; i < ids.size(); ++i) {
+        QString subject;
+        int count = -1;
+
+        if (areThreads.at(i)) {
+            NmQuery query(notmuch_query_create(
+                m_db,
+                QStringLiteral("thread:%1").arg(ids.at(i)).toUtf8().constData()));
+            notmuch_threads_t *raw = nullptr;
+            if (query
+                && notmuch_query_search_threads(query.get(), &raw)
+                       == NOTMUCH_STATUS_SUCCESS) {
+                NmThreads threads(raw);
+                if (notmuch_threads_valid(threads.get())) {
+                    NmThread thread(notmuch_threads_get(threads.get()));
+                    if (thread) {
+                        subject = QString::fromUtf8(
+                            notmuch_thread_get_subject(thread.get()));
+                        // At snapshot time, which is what the row reports. A
+                        // held thread edit applies when the sync ends, and a
+                        // reply landing in between makes the real number
+                        // larger; the number describes what the user is
+                        // looking at, not what the write will touch.
+                        count = notmuch_thread_get_total_messages(thread.get());
+                    }
+                }
+            }
+        } else {
+            notmuch_message_t *raw = nullptr;
+            // find_message reports SUCCESS with a null message for an id that
+            // is not there, so both have to be checked. A missing id is not an
+            // error here: it is the stale row the dialog exists to show.
+            if (notmuch_database_find_message(
+                    m_db, ids.at(i).toUtf8().constData(), &raw)
+                    == NOTMUCH_STATUS_SUCCESS
+                && raw) {
+                NmMessage message(raw);
+                const char *header =
+                    notmuch_message_get_header(message.get(), "Subject");
+                if (header)
+                    subject = QString::fromUtf8(header);
+            }
+        }
+
+        subjects.append(subject);
+        counts.append(count);
+    }
+
+    emit pendingSubjectsResolved(subjects, counts);
+}
+
 void NotmuchWorker::resolveQuery(const QString &query,
                                  const QString &requestTag)
 {

@@ -62,6 +62,25 @@ struct ThreadSummary
     /// file. Do not move it behind a flag by analogy with `recipients`.
     QStringList firstMessageTags;
 
+    /// That message's sender, as a BARE ADDRESS with no display name.
+    ///
+    /// `authors` above is notmuch's own summarised string and carries display
+    /// names ONLY: measured against the real index, 'Ryanair' and 'The Hacker
+    /// News tramite LinkedIn', with no `@` anywhere. A card therefore has no
+    /// address to hash for its avatar and nothing for the business-sender list
+    /// to match, which is why this exists (item 169).
+    ///
+    /// Hashing the display name instead was rejected: notmuch BUILDS those
+    /// strings, so one sender's identity varies as the string does.
+    ///
+    /// Free, for the same reason `firstMessageId` and `firstMessageTags` are:
+    /// the walk that finds that message is already happening and From is
+    /// served from the INDEX, not the message file. Measured 2026-08-26 on the
+    /// developer's database: 1322 distinct senders in 12 ms, 5105 messages
+    /// enumerated in 76 ms. Do not move it behind a flag by analogy with
+    /// `recipients`.
+    QString firstMessageSender;
+
     /// That message's file, RELATIVE to the database path, which is what says
     /// which ACCOUNT it belongs to.
     ///

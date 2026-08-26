@@ -65,6 +65,7 @@ private slots:
     void loadMessageOnAnUnknownIdReturnsNothing();
     void aQueryCarriesEachThreadsFirstMessageId();
     void aSentQueryCarriesTheMatchedMessageNotTheThreadsFirst();
+    void queryCarriesTheFirstMessageSender();
     void loadThreadTreeReportsReplyDepth();
     void loadThreadTreeCarriesTheFactsARowNeeds();
 
@@ -513,6 +514,41 @@ void TestNotmuchWorker::aSentQueryCarriesTheMatchedMessageNotTheThreadsFirst()
         if (t.subject == QStringLiteral("Release notes"))
             QCOMPARE(t.firstMessageId, QStringLiteral("a1@example.org"));
     }
+}
+
+void TestNotmuchWorker::queryCarriesTheFirstMessageSender()
+{
+    // Item 169. The card has no address to hash: `authors` is notmuch's own
+    // summarised string and carries display names only, measured on the real
+    // index as 'Ryanair' and 'The Hacker News tramite LinkedIn', with no `@`
+    // anywhere. firstMessageSender is the BARE address of the one message the
+    // root card stands for.
+    //
+    // The From header carries a display name on purpose: a wrong
+    // implementation returning the display name or the authors string fails
+    // this test.
+    NotmuchFixture fixture;
+    QVERIFY(fixture.isValid());
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("sender-probe@example.org"),
+                               QStringLiteral("Probe subject"),
+                               QStringLiteral("Probe <sender-probe@example.org>"),
+                               QStringLiteral("Mon, 8 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body")));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    NotmuchWorker worker(fixture.configPath());
+
+    QSignalSpy spy(&worker, &NotmuchWorker::threadsReady);
+    worker.runQuery(QStringLiteral("subject:\"Probe subject\""), 1,
+                    NotmuchWorker::NewestFirst, false);
+    QVERIFY(spy.count() > 0);
+
+    const auto threads = spy.first().at(0).value<QVector<ThreadSummary>>();
+    QCOMPARE(threads.size(), 1);
+    // The bare address, not the display name and not notmuch's authors string.
+    QCOMPARE(threads.first().firstMessageSender,
+             QStringLiteral("sender-probe@example.org"));
 }
 
 void TestNotmuchWorker::loadThreadTreeReportsReplyDepth()

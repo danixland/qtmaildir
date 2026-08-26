@@ -16,6 +16,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+// gmime.h pulls in glib's gio headers, which declare a struct field named
+// "signals". Qt's <QtCore/qnamespace.h> #defines "signals" to "Q_SIGNALS"
+// (unless QT_NO_KEYWORDS is set), so gmime.h must be included before any Qt
+// header in this translation unit to avoid a macro collision. That means
+// before notmuchworker.h too, which includes Qt headers.
+#include <gmime/gmime.h>
+
 #include "notmuchworker.h"
 
 #include <notmuch.h>
@@ -111,6 +118,52 @@ QString recipientsOf(notmuch_thread_t *thread)
             return summary;
     }
     return QString();
+}
+
+/// The bare address of a message's From, with any display name discarded.
+///
+/// Index-served, unlike recipientsOf() above, which is why this is not behind
+/// the withRecipients flag: `From` is in notmuch's index and `To` is not.
+///
+/// The header is untrusted, so it is parsed rather than split: a display name
+/// may legally contain an `@`, and "Ian <a@b>" split on `@` yields nonsense.
+QString senderAddressOf(notmuch_message_t *message)
+{
+    // GMime must be initialised once per process before any parse, or the
+    // first internet_address_list_parse() call dereferences an uninitialised
+    // type registry and SEGVs. Function-local static, exactly as the other
+    // gmime-using units do, so this file does not lean on libnotmuch having
+    // initialised it as a side effect (measured 2026-08-26: it currently
+    // does, but that is not documented anywhere).
+    static const bool initialised = [] {
+        g_mime_init();
+        return true;
+    }();
+    Q_UNUSED(initialised);
+
+    const char *from = notmuch_message_get_header(message, "From");
+    if (!from || !*from)
+        return QString();
+
+    InternetAddressList *list = internet_address_list_parse(nullptr, from);
+    if (!list)
+        return QString();
+
+    QString address;
+    const int count = internet_address_list_length(list);
+    for (int i = 0; i < count; ++i) {
+        InternetAddress *entry = internet_address_list_get_address(list, i);
+        if (!entry || !INTERNET_ADDRESS_IS_MAILBOX(entry))
+            continue;
+        const char *addr =
+            internet_address_mailbox_get_addr(INTERNET_ADDRESS_MAILBOX(entry));
+        if (addr && *addr) {
+            address = QString::fromUtf8(addr);
+            break;
+        }
+    }
+    g_object_unref(list);
+    return address;
 }
 
 /// Collects the message ids a query matches. Returns false if the query could
@@ -434,6 +487,9 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
                     // The card's own tags, beside the thread's union above.
                     // Same walk, same index read, no extra query.
                     summary.firstMessageTags = tagsOf(message);
+                    // The card's sender, for the avatar hash (item 169). Same
+                    // walk, and From is in the index like the tags.
+                    summary.firstMessageSender = senderAddressOf(message);
                     // Which account this belongs to, for Delete's destination.
                     summary.firstMessagePath = QDir(dbRoot).relativeFilePath(
                         QString::fromUtf8(
@@ -450,6 +506,9 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
                     // The card's own tags, beside the thread's union above.
                     // Same walk, same index read, no extra query.
                     summary.firstMessageTags = tagsOf(first);
+                    // The card's sender, for the avatar hash (item 169). Same
+                    // walk, and From is in the index like the tags.
+                    summary.firstMessageSender = senderAddressOf(first);
                     // Which account this belongs to, for Delete's destination.
                     summary.firstMessagePath = QDir(dbRoot).relativeFilePath(
                         QString::fromUtf8(

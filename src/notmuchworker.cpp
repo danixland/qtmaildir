@@ -321,10 +321,19 @@ QString folderOfMessageFile(const QString &root, const QString &filePath)
 static const int kSortOrderMetaType =
     qRegisterMetaType<NotmuchWorker::SortOrder>("NotmuchWorker::SortOrder");
 
+/// The same registration for the sender-count map. The QHash crosses the
+/// queued senderCountsReady connection from the worker thread to the UI, and
+/// an unregistered type is dropped there with a warning, exactly like
+/// SortOrder above. Registered with the name invokeMethod/moc resolve, so a
+/// caller that never builds a worker still gets the type.
+static const int kSenderCountsMetaType =
+    qRegisterMetaType<QHash<QString, int>>("QHash<QString,int>");
+
 NotmuchWorker::NotmuchWorker(const QString &notmuchConfigPath, QObject *parent)
     : QObject(parent), m_configPath(notmuchConfigPath)
 {
     Q_UNUSED(kSortOrderMetaType);
+    Q_UNUSED(kSenderCountsMetaType);
 }
 
 NotmuchWorker::~NotmuchWorker()
@@ -1379,6 +1388,46 @@ void NotmuchWorker::requestMessageCounts(const QStringList &queries,
     }
 
     emit messageCountsReady(counts, generation);
+}
+
+void NotmuchWorker::countSenders(const QString &query)
+{
+    if (!openReadOnly()) {
+        // Answered anyway, with an empty map, so the sync path that asked is
+        // not left waiting on a signal it can never receive.
+        emit senderCountsReady({});
+        return;
+    }
+
+    QHash<QString, int> counts;
+    NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+    if (!nmQuery) {
+        emit senderCountsReady(counts);
+        return;
+    }
+
+    notmuch_messages_t *raw = nullptr;
+    if (notmuch_query_search_messages(nmQuery.get(), &raw)
+        != NOTMUCH_STATUS_SUCCESS) {
+        emit senderCountsReady(counts);
+        return;
+    }
+
+    NmMessages messages(raw);
+    for (; notmuch_messages_valid(messages.get());
+           notmuch_messages_move_to_next(messages.get())) {
+        notmuch_message_t *message = notmuch_messages_get(messages.get());
+        if (!message)
+            continue;
+        // The BARE address, lower-cased, because that is the key
+        // BusinessSenders matches on: a display name would defeat the
+        // bulk-sender guess and a mixed-case key would duplicate one sender.
+        const QString sender = senderAddressOf(message);
+        if (!sender.isEmpty())
+            counts[sender.toLower()] += 1;
+    }
+
+    emit senderCountsReady(counts);
 }
 
 void NotmuchWorker::requestMailRoot()

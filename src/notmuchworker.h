@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QHash>
 #include <QMap>
 #include <QObject>
 #include <QStringList>
@@ -281,6 +282,16 @@ public slots:
     /// root does not change while the application runs.
     void requestMailRoot();
 
+    /// Counts messages per sender address over `query`.
+    ///
+    /// Index-served, so it is cheap: measured 2026-08-26 on the developer's
+    /// database, 1322 distinct senders in 12 ms over 5105 messages. It does
+    /// NOT touch m_generation, which is the QUERY generation: bumping it would
+    /// discard a thread load in flight and blank the message pane because the
+    /// user synced. Item 169, following the same rule requestMessageCounts
+    /// already follows.
+    void countSenders(const QString &query);
+
 signals:
     void threadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void queryFinished(int totalThreads, quint64 generation);
@@ -355,6 +366,10 @@ signals:
     /// one. Empty when the database could not be opened, which a consumer must
     /// treat as "cannot compose a path yet" rather than as the root being "".
     void mailRootReady(const QString &mailRoot);
+
+    /// One sender per entry, lower-cased, with how many messages over `query`
+    /// came from it. The candidate list for the business-senders file.
+    void senderCountsReady(const QHash<QString, int> &counts);
 
     void errorOccurred(const QString &message);
 

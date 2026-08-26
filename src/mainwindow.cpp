@@ -2589,6 +2589,20 @@ void MainWindow::wireWorker()
     connect(m_worker, &NotmuchWorker::messageCountsReady,
             this, &MainWindow::onRuleCountsReady);
 
+    // Sender counts feed the business-senders candidate list after a sync.
+    // The connection is queued, so the QHash argument must be a registered
+    // metatype; notmuchworker.cpp registers it beside SortOrder.
+    connect(m_worker, &NotmuchWorker::senderCountsReady, this,
+            [this](const QHash<QString, int> &counts) {
+                // Never applies anything: appendCandidates writes commented
+                // lines only, so nothing on screen changes until the user
+                // uncomments one. The list is then reloaded so an entry they
+                // uncommented by hand takes effect without a restart.
+                BusinessSenders::appendCandidates(
+                    BusinessSenders::defaultPath(), counts);
+                loadBusinessSenders();
+            });
+
     // The rules dialog is the only consumer, and it may have been closed while
     // the scan was in flight. No generation counter: the tree on disk does not
     // change under a query, so a late answer is still the right one.
@@ -4351,6 +4365,14 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         refreshCurrentQuery();
         // A sync is the usual way new tags enter the database.
         requestAllTags();
+
+        // Propose new business-sender candidates from the mail this sync
+        // delivered. Scoped by scanQuery: a week of mail once the file
+        // exists, everything on the first run.
+        QMetaObject::invokeMethod(
+            m_worker, "countSenders", Qt::QueuedConnection,
+            Q_ARG(QString,
+                  BusinessSenders::scanQuery(BusinessSenders::defaultPath())));
     } else if (exitCode == kSyncSkippedExitCode) {
         // Skipped means the lock was never ours: some other run holds it. If
         // both started inside the same poll interval the monitor will have

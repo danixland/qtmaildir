@@ -66,6 +66,7 @@ private slots:
     void aQueryCarriesEachThreadsFirstMessageId();
     void aSentQueryCarriesTheMatchedMessageNotTheThreadsFirst();
     void queryCarriesTheFirstMessageSender();
+    void sendersAreCountedForTheCandidateList();
     void loadThreadTreeReportsReplyDepth();
     void loadThreadTreeCarriesTheFactsARowNeeds();
 
@@ -549,6 +550,44 @@ void TestNotmuchWorker::queryCarriesTheFirstMessageSender()
     // The bare address, not the display name and not notmuch's authors string.
     QCOMPARE(threads.first().firstMessageSender,
              QStringLiteral("sender-probe@example.org"));
+}
+
+void TestNotmuchWorker::sendersAreCountedForTheCandidateList()
+{
+    // The counts that BusinessSenders::appendCandidates() consumes: per-sender
+    // totals over a query, keyed by the lower-cased BARE address (a display
+    // name would defeat the bulk-sender guess). Two messages from one sender
+    // must count twice.
+    NotmuchFixture fixture;
+    QVERIFY(fixture.isValid());
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("n1@example.org"),
+                               QStringLiteral("Receipt one"),
+                               QStringLiteral("noreply@shop.example"),
+                               QStringLiteral("Mon, 8 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body")));
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("n2@example.org"),
+                               QStringLiteral("Receipt two"),
+                               QStringLiteral("noreply@shop.example"),
+                               QStringLiteral("Tue, 9 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body")));
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("j1@example.org"),
+                               QStringLiteral("Hello"),
+                               QStringLiteral("john@example.org"),
+                               QStringLiteral("Wed, 10 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body")));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::senderCountsReady);
+    worker.countSenders(QStringLiteral("*"));
+    QVERIFY(spy.count() > 0);
+
+    const auto counts = spy.first().at(0).value<QHash<QString, int>>();
+    QCOMPARE(counts.value(QStringLiteral("noreply@shop.example")), 2);
+    QCOMPARE(counts.value(QStringLiteral("john@example.org")), 1);
 }
 
 void TestNotmuchWorker::loadThreadTreeReportsReplyDepth()

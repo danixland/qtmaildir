@@ -18,6 +18,8 @@
 
 #include "mainwindow.h"
 
+#include <algorithm>
+
 #include "maildirname.h"
 
 #include <QAction>
@@ -4440,9 +4442,9 @@ void MainWindow::onTagsApplied(const TagChange &change)
     // message are two independent changes and must not cancel each other.
     for (const QString &messageId : change.messageIds) {
         for (const QString &tag : change.added)
-            recordPendingEdit(messageId, tag, true);
+            recordPendingEdit(messageId, tag, true, change.description);
         for (const QString &tag : change.removed)
-            recordPendingEdit(messageId, tag, false);
+            recordPendingEdit(messageId, tag, false, change.description);
     }
 
     updatePendingIndicator();
@@ -4989,7 +4991,7 @@ void MainWindow::runAutoSync()
 }
 
 void MainWindow::recordPendingEdit(const QString &messageId, const QString &tag,
-                                   bool added)
+                                   bool added, const QString &action)
 {
     const QString key = messageId + QLatin1Char('\n') + tag;
 
@@ -4998,12 +5000,12 @@ void MainWindow::recordPendingEdit(const QString &messageId, const QString &tag,
     // long session of tagging and untagging.
     const auto existing = m_pendingTagEdits.constFind(key);
     if (existing != m_pendingTagEdits.constEnd()) {
-        if (*existing != added)
+        if (existing->added != added)
             m_pendingTagEdits.erase(m_pendingTagEdits.find(key));
         return;
     }
 
-    m_pendingTagEdits.insert(key, added);
+    m_pendingTagEdits.insert(key, PendingEdit{ added, action });
 }
 
 QStringList MainWindow::pendingSyncChannels() const
@@ -5058,6 +5060,52 @@ int MainWindow::pendingEditCount() const
     // the file in the folder the user asked it out of.
     const int heldMoves = int(m_heldMoves.size());
     return m_pendingTagEdits.size() + held + heldMoves;
+}
+
+QVector<PendingChange> MainWindow::pendingChangeSnapshot() const
+{
+    QVector<PendingChange> rows;
+
+    // The netted per-(message, tag) edits. The key is `messageId\ntag`, built
+    // by recordPendingEdit(), so the id is everything before the first
+    // newline: a TAG may contain almost anything, but a message id cannot
+    // contain a newline and neither separator can be confused for the other.
+    for (auto it = m_pendingTagEdits.cbegin(); it != m_pendingTagEdits.cend();
+         ++it) {
+        const QString id = it.key().section(QLatin1Char('\n'), 0, 0);
+        rows.append(PendingChange{ id, false, it->action, QString(), -1 });
+    }
+
+    // Held THREAD edits, which stay thread-scoped: a `*_thread` action is what
+    // made them, and reporting the messages instead would claim the user acted
+    // on each one. One row per thread the edit named, since a single edit can
+    // cover a multi-row selection.
+    for (const HeldEdit &edit : m_heldEdits) {
+        for (const QString &threadId : edit.threadIds) {
+            rows.append(PendingChange{ threadId, true, edit.change.description,
+                                       QString(), -1 });
+        }
+    }
+
+    // Held MOVES, which are message-scoped. A move is not a tag change and is
+    // queued separately for that reason, but it is the same kind of row here:
+    // one message, one action the user took.
+    for (const HeldMove &move : m_heldMoves) {
+        for (const QString &messageId : move.messageIds)
+            rows.append(PendingChange{ messageId, false, move.description,
+                                       QString(), -1 });
+    }
+
+    // Grouped by id so a message with several outstanding actions appears
+    // ONCE with its actions beneath it, which is the layout the user asked
+    // for. A stable sort, so the actions under one message keep the order
+    // they were made in rather than an arbitrary one; QHash has no order of
+    // its own, so without this the list reshuffles between openings.
+    std::stable_sort(rows.begin(), rows.end(),
+                     [](const PendingChange &a, const PendingChange &b) {
+                         return a.id < b.id;
+                     });
+    return rows;
 }
 
 void MainWindow::updatePendingIndicator()

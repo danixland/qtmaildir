@@ -416,6 +416,8 @@ private slots:
     void anEditUndoneNettsBackToZero();
     void aDifferentTagOnTheSameMessageStillCounts();
     void everyPendingChangeCanNameItsMessages();
+    void theSnapshotGroupsActionsUnderTheirMessage();
+    void theSnapshotKeepsAThreadActionThreadScoped();
     void anEditDuringABackgroundSyncIsNotSentYet();
     void aHeldEditIsSentWhenTheBackgroundSyncEnds();
     void aHeldEditCountsAsUnsynced();
@@ -6487,6 +6489,89 @@ void TestMainWindow::everyPendingChangeCanNameItsMessages()
                                       Q_ARG(TagChange, change.inverted())));
     QVERIFY2(label->isHidden(),
              "an edit and its inverse left the indicator claiming work");
+}
+
+void TestMainWindow::theSnapshotGroupsActionsUnderTheirMessage()
+{
+    // The layout the user asked for: a message appears ONCE with its actions
+    // beneath it. That is a property of the row ORDER, so it is asserted on
+    // the snapshot rather than on a rendered dialog.
+    const Config config;
+    MainWindow window(config);
+
+    // Two actions on one message, one on another, interleaved so a snapshot
+    // that simply reported insertion order would fail.
+    const auto apply = [&window](const QString &id, const QString &tag,
+                                 const QString &description) {
+        TagChange change;
+        change.messageIds = { id };
+        change.added = { tag };
+        change.description = description;
+        QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                          Q_ARG(TagChange, change)));
+    };
+    apply(QStringLiteral("b@example.org"), QStringLiteral("flagged"),
+          QStringLiteral("Mark important"));
+    apply(QStringLiteral("a@example.org"), QStringLiteral("deleted"),
+          QStringLiteral("Delete"));
+    apply(QStringLiteral("b@example.org"), QStringLiteral("spam"),
+          QStringLiteral("Mark spam"));
+
+    const QVector<PendingChange> rows = window.pendingChangeSnapshot();
+    QCOMPARE(rows.size(), 3);
+
+    // One message per contiguous run: b's two actions are adjacent, so the
+    // dialog can draw the subject once and the actions under it.
+    QCOMPARE(rows.at(0).id, QStringLiteral("a@example.org"));
+    QCOMPARE(rows.at(1).id, QStringLiteral("b@example.org"));
+    QCOMPARE(rows.at(2).id, QStringLiteral("b@example.org"));
+
+    // Each row says what the user did, in the words the action itself used.
+    QCOMPARE(rows.at(0).action, QStringLiteral("Delete"));
+    QVERIFY(rows.at(1).action != rows.at(2).action);
+
+    // And every row here is message-scoped: none of these was a thread action.
+    for (const PendingChange &row : rows)
+        QVERIFY(!row.isThread);
+}
+
+void TestMainWindow::theSnapshotKeepsAThreadActionThreadScoped()
+{
+    // Scope follows the ACTION, not the storage. A held thread edit stays one
+    // thread row: reporting its messages instead would claim the user acted on
+    // each one, and the count they clicked would disagree with the list.
+    //
+    // Driven through the held queue because that is the only thing that
+    // carries thread ids; a confirmed edit is message-scoped by construction.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(model && view);
+    model->appendBatch({ makeThread(QStringLiteral("t1"), {}) });
+    selectThreadRow(view, 0);
+
+    // A cron sync takes the lock, which is what makes the edit HELD rather
+    // than sent, and a held edit is the only thing that carries thread ids.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag_thread"));
+    QVERIFY(action);
+    action->trigger();
+    QVERIFY(window.hasEditAwaitingSend());
+
+    const QVector<PendingChange> rows = window.pendingChangeSnapshot();
+    QCOMPARE(rows.size(), 1);
+    QVERIFY2(rows.at(0).isThread,
+             "a thread action was reported as a message change");
+    QCOMPARE(rows.at(0).id, QStringLiteral("t1"));
+
+    // The count and the list agree, which is the property the whole dialog
+    // rests on.
+    QCOMPARE(rows.size(), window.pendingEditCount());
 }
 
 // Item 37. A tag edit made while a background sync holds notmuch's write lock

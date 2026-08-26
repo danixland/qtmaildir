@@ -105,6 +105,24 @@ public:
     /// the worker, which test_mainwindow has no database to drive.
     bool hasEditAwaitingSend() const { return !m_heldEdits.isEmpty(); }
 
+    /// Every outstanding change, as rows, for the list behind the count.
+    ///
+    /// A SNAPSHOT: taken once when the user opens the list and never refreshed
+    /// under them. Subjects are empty here, filled by the resolve step, so
+    /// this is testable with no worker and no database.
+    ///
+    /// Scope follows the ACTION. The three queues already encode it: a held
+    /// thread edit carries thread ids because a `*_thread` action made it,
+    /// while a netted tag edit and a held move both carry message ids. Nothing
+    /// is expanded, and nothing is escalated.
+    /// Net changes the index holds that a sync has not carried over.
+    ///
+    /// Public beside pendingChangeSnapshot(), which must agree with it: the
+    /// count the user clicks is the count the list has to account for.
+    int pendingEditCount() const;
+
+    QVector<PendingChange> pendingChangeSnapshot() const;
+
     /// Whether the undo stack still holds anything. Exposed so a test can show
     /// that a rejected write did not take unrelated history down with it.
     bool canUndo() const { return m_undoStack.canUndo(); }
@@ -853,11 +871,14 @@ private:
 
     /// Records one confirmed (message, tag) change, cancelling it against an
     /// opposite change already outstanding for the same pair.
+    ///
+    /// `action` is the name the user would recognise, carried through so the
+    /// list behind the count can say what each change was. It is the
+    /// TagChange's own description rather than anything derived from the tag.
     void recordPendingEdit(const QString &messageId, const QString &tag,
-                           bool added);
+                           bool added, const QString &action);
 
-    /// Net changes the index holds that a sync has not carried over.
-    int pendingEditCount() const;
+
 
     /// Shows or hides the "syncing" state: the progress bar and a disabled
     /// Sync button.
@@ -1539,7 +1560,20 @@ private:
     /// value true for added and false for removed; a pair that reverts is
     /// erased rather than stored, so an edit and its inverse leave nothing
     /// behind and the map cannot grow without bound.
-    QHash<QString, bool> m_pendingTagEdits;
+    /// What one pending (message, tag) edit is: its direction, and the name of
+    /// the action that made it.
+    ///
+    /// The direction alone was enough while this only had to be counted. The
+    /// list behind the count (item 119) has to SAY what each change was, and
+    /// only the action that made it knows: `+deleted` is a Delete and
+    /// `-unread` is a Mark read, but deriving that here would be a second
+    /// table of tag names to labels, drifting from the one the actions already
+    /// pass as TagChange::description.
+    struct PendingEdit {
+        bool added = false;
+        QString action;  ///< Translated, from TagChange::description.
+    };
+    QHash<QString, PendingEdit> m_pendingTagEdits;
 
     /// Marks the open thread read once it has been on screen long enough.
     ///

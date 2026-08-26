@@ -264,6 +264,45 @@ struct TagChange
     }
 };
 
+/// One outstanding change, for the list behind the unsynced-changes count.
+///
+/// A SNAPSHOT taken when the user opens the list, then frozen: the count they
+/// clicked is the count the list accounts for, and a dialog left open for
+/// twenty minutes must not keep rewriting itself under them.
+///
+/// The scope follows the ACTION, never the storage. A thread action names its
+/// thread and reports how many messages it covered at snapshot time; a
+/// message action names its message. That distinction is already kept, since a
+/// held thread edit carries thread ids and everything else carries message
+/// ids, so nothing has to be expanded to reconstruct it.
+struct PendingChange
+{
+    /// The message or thread this change is about. Wire format, for resolving
+    /// a subject; never shown.
+    QString id;
+
+    /// True when `id` is a THREAD id and the change covers the conversation.
+    bool isThread = false;
+
+    /// What the user did, translated and ready to show ("Delete", "Mark
+    /// read"). Built where the change is recorded, since only there is the
+    /// direction of a tag write still known.
+    QString action;
+
+    /// The subject, filled by the resolve step. Empty until then, and left
+    /// empty for an id the index no longer holds: the row still appears, since
+    /// dropping it would make the list disagree with the count.
+    QString subject;
+
+    /// How many messages a thread change covered, at snapshot time. -1 for a
+    /// message change and for a thread whose resolve found nothing.
+    ///
+    /// At snapshot time and not at write time: a held thread edit applies when
+    /// the sync ends, and a reply landing in between makes the real number
+    /// larger. The number describes what the user is looking at.
+    int messageCount = -1;
+};
+
 /// Database-level facts for the Maildir overview.
 ///
 /// Every field is -1 until answered, so a dialog opened against a database that

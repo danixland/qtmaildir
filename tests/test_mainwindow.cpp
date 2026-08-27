@@ -13753,8 +13753,12 @@ void TestMainWindow::anAutosaveWritesADraftAndClearsTheDirtyFlag()
     QVERIFY(written.open(QIODevice::ReadOnly));
     const QByteArray bytes = written.readAll();
     QVERIFY2(bytes.contains("Draft body."), "the draft does not carry the body");
-    // Written with the Maildir draft flag, not left bare.
-    QVERIFY2(files.first().endsWith(QStringLiteral(":2,D")),
+    // Written with the Maildir draft flag, not left bare. The flag SET is not
+    // pinned here: a draft also carries S, asserted by
+    // TestComposeWindow::aSavedDraftIsFlaggedSeen(), and an endsWith(":2,D")
+    // here would fail against that correct behaviour.
+    QVERIFY2(files.first().section(QStringLiteral(":2,"), 1)
+                 .contains(QLatin1Char('D')),
              qPrintable(QStringLiteral("wrong maildir flags: ") + files.first()));
 }
 

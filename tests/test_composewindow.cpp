@@ -20,6 +20,7 @@
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QSignalSpy>
@@ -62,6 +63,7 @@ private slots:
     void onlyTheSetterWritesTheDirtyFlag();
     void theMenuBarReachesEveryComposerAction();
     void saveDraftWritesAndReports();
+    void aSavedDraftIsFlaggedSeen();
     void theMenusReuseTheToolbarActions();
     void theHtmlMenuItemTracksTheToolbarButton();
     void theAgeLineFollowsTheClock();
@@ -744,6 +746,58 @@ void TestComposeWindow::saveDraftWritesAndReports()
     QVERIFY(age);
     QVERIFY2(!age->text().isEmpty(), "a manual save must report like an autosave");
     QVERIFY2(!window.isWindowModified(), "a manual save must clear the marker");
+}
+
+/// A draft is authored by the user, so it is SEEN by definition and must never
+/// be tagged `unread`.
+///
+/// `maildir.synchronize_flags` is on, so the tag is decided by the filename:
+/// notmuch tags any message lacking the `S` flag `unread`. Writing a draft as
+/// `:2,D` therefore puts it in the Unread view until the folder next syncs,
+/// at which point mbsync round-trips the file and the `S` appears. That is
+/// what made the defect look intermittent: only the newest draft, in a folder
+/// that has not synced since, shows the symptom. Measured on the user's own
+/// mail 2026-08-27, where two drafts written two minutes apart differed only
+/// in whether their folder had synced afterwards.
+///
+/// Asserting on the FILENAME rather than on a notmuch tag is deliberate: the
+/// flags are what the code here controls, and a tag assertion would need an
+/// indexed database to say the same thing less directly.
+void TestComposeWindow::aSavedDraftIsFlaggedSeen()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("A draft the user wrote."));
+
+    QSignalSpy saved(&window, &ComposeWindow::draftSaved);
+    auto *save = window.findChild<QAction *>(QStringLiteral("compose_save"));
+    QVERIFY(save);
+    save->trigger();
+
+    QCOMPARE(saved.size(), 1);
+    const QString path = saved.first().first().toString();
+    QVERIFY2(!path.isEmpty(), "the save reported no path");
+
+    // The guard the probe needs: without it a rename that dropped the info
+    // suffix entirely would pass the S check below by never reaching it.
+    const QString name = QFileInfo(path).fileName();
+    QVERIFY2(name.contains(QStringLiteral(":2,")),
+             qPrintable(QStringLiteral("no Maildir info suffix in %1").arg(name)));
+
+    const QString flags = name.section(QStringLiteral(":2,"), 1);
+    QVERIFY2(flags.contains(QLatin1Char('D')),
+             qPrintable(QStringLiteral("a draft must carry the D flag, got %1")
+                            .arg(flags)));
+    QVERIFY2(flags.contains(QLatin1Char('S')),
+             qPrintable(QStringLiteral("a draft must carry the S flag or notmuch "
+                                       "tags it unread, got %1").arg(flags)));
 }
 
 /// The same QAction objects, shown twice over, exactly as item 140 required

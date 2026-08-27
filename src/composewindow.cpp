@@ -1227,8 +1227,15 @@ bool ComposeWindow::saveDraftNow()
         account.maildir + QLatin1Char('/') + account.drafts);
 
     const QString previousPath = m_draftPath;
+
+    // "DS", not "D". `maildir.synchronize_flags` is on, so notmuch tags any
+    // message lacking the `S` flag `unread`, and a draft the user just wrote
+    // is seen by definition. Without the S it lands in the Unread view until
+    // the folder next syncs, at which point mbsync round-trips the file and
+    // the flag appears on its own; that self-healing is what made the defect
+    // look intermittent rather than constant.
     const DraftStore::Result written =
-        DraftStore::write(folder, built.bytes, QStringLiteral("D"), m_draftPath);
+        DraftStore::write(folder, built.bytes, QStringLiteral("DS"), m_draftPath);
 
     if (!written.ok()) {
         // A PERSISTENT banner, not a modal and not a status-bar line that

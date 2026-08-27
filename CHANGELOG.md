@@ -96,6 +96,13 @@ point at which they are stable.
 
 ### Fixed
 
+- **A draft you wrote was marked unread.** Drafts were written to disk without
+  the Maildir "seen" flag, and notmuch tags anything without it `unread`, so a
+  draft you had just typed appeared in the Unread view. It corrected itself
+  the next time that folder synced, which is why it seemed to happen only
+  sometimes: only the newest draft, in a folder that had not synced since,
+  showed it.
+
 - **New mail reached the index but not the window.** The worker never reopened
   its read-only notmuch handle, so nothing indexed after startup appeared in
   any query and the application looked like it had stopped syncing.

@@ -8,6 +8,26 @@
         <translation>Componi[*]</translation>
     </message>
     <message>
+        <source>Forwarded message, sent as it arrived:</source>
+        <translation>Messaggio inoltrato, inviato come è arrivato:</translation>
+    </message>
+    <message>
+        <source>Forwarded message</source>
+        <translation>Messaggio inoltrato</translation>
+    </message>
+    <message>
+        <source>Shows the message being forwarded beside what you are writing.</source>
+        <translation>Mostra il messaggio che stai inoltrando accanto a quello che stai scrivendo.</translation>
+    </message>
+    <message>
+        <source>Strip remote content from the forwarded message</source>
+        <translation>Rimuovi i contenuti remoti dal messaggio inoltrato</translation>
+    </message>
+    <message>
+        <source>Images and styles loaded from the internet are removed, so the sender of the original cannot tell that you forwarded it. Uncheck only for a sender you trust.</source>
+        <translation>Le immagini e gli stili caricati da internet vengono rimossi, così il mittente dell&apos;originale non può sapere che lo hai inoltrato. Togli la spunta solo per un mittente di cui ti fidi.</translation>
+    </message>
+    <message>
         <source>The forwarded attachments could not be extracted.</source>
         <translation>Non è stato possibile estrarre gli allegati inoltrati.</translation>
     </message>
@@ -1629,11 +1649,11 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     </message>
     <message>
         <source>Changes made here that a sync has not yet carried to the mail store. This list is a snapshot taken when it was opened.</source>
-        <translation>Modifiche fatte qui che una sincronizzazione non ha ancora portato all'archivio di posta. Questo elenco è un'istantanea presa al momento dell'apertura.</translation>
+        <translation>Modifiche fatte qui che una sincronizzazione non ha ancora portato all&apos;archivio di posta. Questo elenco è un&apos;istantanea presa al momento dell&apos;apertura.</translation>
     </message>
     <message>
         <source>(no longer in the index)</source>
-        <translation>(non più nell'indice)</translation>
+        <translation>(non più nell&apos;indice)</translation>
     </message>
     <message numerus="yes">
         <source>%1 (whole thread, %n message(s))</source>
@@ -1644,7 +1664,7 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     </message>
     <message>
         <source>Nothing is waiting to be synced.</source>
-        <translation>Non c'è nulla in attesa di sincronizzazione.</translation>
+        <translation>Non c&apos;è nulla in attesa di sincronizzazione.</translation>
     </message>
 </context>
 <context>

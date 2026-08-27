@@ -378,6 +378,21 @@ struct OutgoingMessage
     QStringList attachments;     ///< Local paths, read at build time.
     QString inReplyTo;
     QStringList references;
+
+    /// Item 171. The forwarded original's HTML, already sanitised, appended to
+    /// the HTML alternative below the user's own text.
+    ///
+    /// Empty for everything but a Forward of a message that had an HTML part.
+    /// Carrying it here rather than re-parsing at build time keeps
+    /// MessageBuilder a pure function of this struct, which is what lets the
+    /// MIME nesting be tested without a file on disk.
+    ///
+    /// **Sanitised by the CALLER**, with HtmlSanitiser::stripRemoteContent(),
+    /// because whether to strip is the user's per-forward choice and a
+    /// builder cannot see a checkbox. The one exception to that rule is the
+    /// user deliberately unchecking it.
+    QString forwardedHtml;
+
 };
 
 Q_DECLARE_METATYPE(ThreadSummary)

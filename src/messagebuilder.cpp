@@ -320,7 +320,40 @@ Result build(const OutgoingMessage &message, const Account &account)
     // second renderer whose output could disagree with the HTML one.
     GMimeObject *body = GMIME_OBJECT(makeTextPart("plain", message.markdownBody));
 
-    if (message.sendHtml) {
+    // Item 171. A FORWARD sends one part, not an alternative, at the user's
+    // decision 2026-08-27: the Send-as-HTML toggle chooses which. A forward is
+    // a message whose shape the user has already decided by flipping that
+    // toggle, and sending both halves hands the choice to the recipient's
+    // client instead.
+    //
+    // The toggle is honoured even when the original had no plain-text part:
+    // with it off, an HTML-only original goes out as the text fallback that
+    // quoteBody() produced, and the formatting is lost. Chosen over forcing
+    // HTML for those messages, so the toggle means what it says.
+    //
+    // The markup arrives ALREADY SANITISED: whether to strip remote content is
+    // the user's per-forward choice, which a builder cannot see. Nothing is
+    // escaped here, deliberately, because this IS markup and escaping it would
+    // ship a message full of visible tags.
+    const bool forwarding = !message.forwardedHtml.isEmpty();
+
+    if (forwarding && message.sendHtml) {
+        // The original below the user's own text, separated by a rule so the
+        // two read as different messages. The plain part built above is
+        // discarded: this replaces it rather than joining it.
+        // `markdownBody` is the user's own note ALONE: the composer does not
+        // seed a text quote on an HTML forward, precisely so that what it
+        // shows and what it sends are the same thing (item 171). An earlier
+        // build seeded the quote and stripped it again here, which meant the
+        // user could edit a quote whose edits were discarded; the fix belongs
+        // at the composer, not in a subtraction here.
+        const QString htmlSource = MarkdownRenderer::toHtml(message.markdownBody)
+                                   + QStringLiteral("\n<hr>\n")
+                                   + message.forwardedHtml;
+        GMimePart *html = makeTextPart("html", htmlSource);
+        g_object_unref(body);
+        body = GMIME_OBJECT(html);
+    } else if (!forwarding && message.sendHtml) {
         GMimePart *html = makeTextPart("html", MarkdownRenderer::toHtml(message.markdownBody));
         GMimeMultipart *alternative = g_mime_multipart_new_with_subtype("alternative");
         // Least-rich FIRST. A client renders the LAST alternative it

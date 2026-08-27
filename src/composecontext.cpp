@@ -30,6 +30,7 @@
 #include <QDir>
 #include <QSet>
 #include <QRegularExpression>
+#include <QTextDocumentFragment>
 
 namespace {
 
@@ -630,10 +631,28 @@ QString ComposeContextBuilder::quoteBody(const ParsedMessage &message)
                       .arg(message.date, message.from));
     quoted.append(QString());
 
+    // Item 171's silent half. An HTML-only original has an EMPTY plainBody, so
+    // quoting it produced an attribution line and nothing else: the content
+    // was gone with nothing to say so. Measured 2026-08-27, ~9% of the
+    // developer's inbox declares text/html with no text/plain.
+    //
+    // Only when there is no plain part. Rendering the HTML over a real plain
+    // part would change every ordinary reply, and the sender's own plain text
+    // is what they meant a text reader to see.
+    //
+    // QTextDocumentFragment, not a hand-written stripper: it is already
+    // linked, it decodes entities and collapses whitespace the way a reader
+    // expects, and reaching for a regex here would be re-implementing a parser
+    // badly. This restores the WORDS only; preserving the formatting is the
+    // multipart/alternative half of item 171.
+    QString source = message.plainBody;
+    if (source.isEmpty() && !message.htmlBody.isEmpty())
+        source = QTextDocumentFragment::fromHtml(message.htmlBody).toPlainText();
+
     // Normalised to LF first. A CRLF body split on '\n' alone leaves a
     // carriage return at the end of every line, which survives into the sent
     // message as a stray CR in the middle of a quoted line.
-    QString body = message.plainBody;
+    QString body = source;
     body.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     body.replace(QLatin1Char('\r'), QLatin1Char('\n'));
 

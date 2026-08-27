@@ -96,6 +96,27 @@ point at which they are stable.
 
 ### Fixed
 
+- **Forwarding an HTML message kept its formatting.** A forward carried only
+  the plain-text version of the original, so tables, emphasis and layout were
+  flattened, and a message with no plain-text part at all (about one in eleven
+  of the mail measured here) forwarded as an empty quote with its content
+  silently gone. A forward now carries the original's own HTML when **Send as
+  HTML** is on, and the text version when it is off: one or the other, chosen
+  by that toggle, rather than both.
+
+  On a forward that carries HTML, the message being forwarded is shown in its
+  own pane beside what you are writing, at a 60/40 split, with a toggle under
+  **Format** to close it. The editor holds your own note only, so everything
+  you can edit is something that gets sent. A plain-text forward is unchanged
+  and still quotes into the editor as before.
+
+  **Remote content is stripped by default.** Images and styles loaded from the
+  internet are removed before the forward is sent, so the sender of the
+  original cannot learn that you forwarded it or that your recipient opened
+  it. A checkbox on the forward lets you keep them for a sender you trust; it
+  appears only when there is something to strip. Inline images that travel
+  inside the message itself are unaffected and still display.
+
 - **A draft you wrote was marked unread.** Drafts were written to disk without
   the Maildir "seen" flag, and notmuch tags anything without it `unread`, so a
   draft you had just typed appeared in the Unread view. It corrected itself

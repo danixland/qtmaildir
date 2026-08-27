@@ -34,6 +34,7 @@
 
 class QAction;
 class QCheckBox;
+class QSplitter;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -223,6 +224,15 @@ private:
     /// MessageBuilder refuses a build naming any path that later vanishes, so
     /// a silently wrong send is not among the outcomes.
     void extractForwardedAttachments();
+
+    /// Reads the forwarded original's HTML, before the body is seeded.
+    void readForwardedHtml();
+
+    /// Creates the strip-remote-content checkbox, for a forward that needs it.
+    void buildStripRemoteControl();
+
+    /// Creates the read-only preview of what an HTML forward will carry.
+    void buildForwardPreview();
     void seedBody();
 
     /// Applies \p name to the buffer, replacing whatever is there.
@@ -300,6 +310,27 @@ private:
     QComboBox *m_from = nullptr;
     QPlainTextEdit *m_body = nullptr;
     QToolButton *m_sendHtml = nullptr;
+
+    /// Item 171. Strips remote content from the forwarded original, checked by
+    /// default. Only created for a Forward whose original carries remote
+    /// content, so an ordinary message gains no control.
+    QCheckBox *m_stripRemote = nullptr;
+
+    /// Read-only view of the original an HTML forward will carry. Item 171:
+    /// the buffer holds the user's note only, so this is what makes the rest
+    /// of the message visible without pretending it can be edited.
+    QWidget *m_forwardPreview = nullptr;
+
+    /// Holds the editor, and the forward preview beside it when there is one.
+    QSplitter *m_split = nullptr;
+
+    /// Shows and hides the forwarded-message pane. Only for a forward.
+    QAction *m_showForwardAction = nullptr;
+
+    /// The forwarded original's HTML, as read from `originalPath` at
+    /// construction. Held raw; the stripping happens at currentMessage(),
+    /// so toggling the control does not need a re-parse.
+    QString m_forwardedHtmlRaw;
     QToolButton *m_signatureSwitch = nullptr;
     QString m_signatureDir;
     QString m_signatureName;  ///< The selected signature, empty for None.

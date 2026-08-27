@@ -21,6 +21,10 @@
 #include <QTemporaryDir>
 
 #include "draftstore.h"
+#include "htmlsanitiser.h"
+#include <QCheckBox>
+#include <QTextBrowser>
+#include <QSplitter>
 #include "maildirname.h"
 #include "messagebuilder.h"
 #include "mimeparser.h"
@@ -134,6 +138,16 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
 
     buildUi();
     buildFormatToolbar();
+
+    // BEFORE buildMenuBar() and seedBody(). The menus show the pane toggle, so
+    // the preview that owns it must exist first; and seedBody() needs to know
+    // whether this forward carries markup, because an HTML forward does not
+    // seed a text quote at all (the buffer would then show something the sent
+    // message does not contain).
+    readForwardedHtml();
+    buildStripRemoteControl();
+    buildForwardPreview();
+
     // AFTER buildFormatToolbar(): the menus show its actions, so they must
     // exist before a menu can hold them.
     buildMenuBar();
@@ -146,6 +160,7 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
     // to that list, so listing first would show a Forward with no attachments
     // on it, which is precisely the defect this fixes.
     extractForwardedAttachments();
+
 
     refreshAttachmentList();
 
@@ -172,6 +187,127 @@ ComposeWindow::ComposeWindow(const ComposeContext &context,
 
 
 ComposeWindow::~ComposeWindow() = default;
+
+void ComposeWindow::readForwardedHtml()
+{
+    if (m_context.kind != ComposeContext::Kind::Forward
+        || m_context.originalPath.isEmpty()) {
+        return;
+    }
+
+    MimeParser parser;
+    const ParsedMessage original = parser.parse(m_context.originalPath);
+    if (original.ok)
+        m_forwardedHtmlRaw = original.htmlBody;
+}
+
+void ComposeWindow::buildForwardPreview()
+{
+    if (m_forwardedHtmlRaw.isEmpty())
+        return;
+
+    m_forwardPreview = new QWidget(centralWidget());
+    m_forwardPreview->setObjectName(QStringLiteral("forwardPreview"));
+    auto *previewLayout = new QVBoxLayout(m_forwardPreview);
+    previewLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto *label = new QLabel(
+        tr("Forwarded message, sent as it arrived:"), m_forwardPreview);
+    label->setObjectName(QStringLiteral("forwardPreviewLabel"));
+    previewLayout->addWidget(label);
+
+    // **QTextBrowser, not a QWebEngineView.** A web view would mean a second
+    // Chromium render process per composer window and a second copy of
+    // MessageView's protections (the off-the-record profile, JavaScript off,
+    // the interceptor that fails closed), which is a lot of security surface
+    // for a preview. QTextBrowser renders Qt's own HTML subset, is read-only,
+    // and fetches nothing on its own.
+    //
+    // The consequence is deliberate and must be said in the UI rather than
+    // hidden: this shows the original ROUGHLY. Qt's subset is narrower than a
+    // mail client's, so the preview is an indication of content, not a
+    // faithful rendering of what the recipient will see. The label above says
+    // the message is sent as it arrived, so the user is not led to think this
+    // pane is what travels.
+    auto *view = new QTextBrowser(m_forwardPreview);
+    view->setObjectName(QStringLiteral("forwardPreviewBody"));
+    view->setOpenExternalLinks(false);
+    view->setOpenLinks(false);
+
+    // The SANITISED markup when stripping is on, so the preview shows what
+    // will actually be sent rather than the original's own remote content.
+    // Re-rendered when the checkbox moves, for the same reason.
+    view->setHtml(HtmlSanitiser::stripRemoteContent(m_forwardedHtmlRaw));
+    previewLayout->addWidget(view);
+
+    m_split->addWidget(m_forwardPreview);
+
+    // 60/40, the user's ratio. Set as STRETCH FACTORS rather than as pixel
+    // sizes: the window has no meaningful width yet at construction, and a
+    // setSizes() against a zero-width splitter divides nothing. Stretch
+    // survives the first real resize, which pixels would not.
+    m_split->setStretchFactor(0, 6);
+    m_split->setStretchFactor(1, 4);
+    m_split->setSizes({ 600, 400 });
+
+    // The toggle, on the View half of the menus so it sits with the other
+    // things that show and hide. Only created for a forward that has a pane to
+    // toggle: an action that can never do anything is worse than none, which
+    // is the same reasoning the attachment row's Remove button follows.
+    m_showForwardAction = new QAction(tr("Forwarded message"), this);
+    m_showForwardAction->setObjectName(QStringLiteral("compose_show_forward"));
+    m_showForwardAction->setCheckable(true);
+    m_showForwardAction->setChecked(true);
+    m_showForwardAction->setToolTip(
+        tr("Shows the message being forwarded beside what you are writing."));
+    connect(m_showForwardAction, &QAction::toggled, m_forwardPreview,
+            &QWidget::setVisible);
+    // Placed by buildMenuBar(), which runs after this.
+
+    if (m_stripRemote) {
+        connect(m_stripRemote, &QCheckBox::toggled, view,
+                [this, view](bool strip) {
+                    view->setHtml(strip ? HtmlSanitiser::stripRemoteContent(
+                                              m_forwardedHtmlRaw)
+                                        : m_forwardedHtmlRaw);
+                });
+    }
+}
+
+void ComposeWindow::buildStripRemoteControl()
+{
+    if (m_forwardedHtmlRaw.isEmpty()
+        || !HtmlSanitiser::hasRemoteContent(m_forwardedHtmlRaw)) {
+        return;
+    }
+
+    m_stripRemote = new QCheckBox(
+        tr("Strip remote content from the forwarded message"), this);
+    m_stripRemote->setObjectName(QStringLiteral("stripRemote"));
+
+    // **Checked by default, and that default is the security property.** The
+    // markup leaves this process and is rendered by the recipient's client,
+    // where none of MessageView's protections apply: forwarding a tracking
+    // pixel forwards the tracking, and the original sender learns that the
+    // forwarded copy was opened and by how many people.
+    m_stripRemote->setChecked(true);
+    m_stripRemote->setToolTip(
+        tr("Images and styles loaded from the internet are removed, so the "
+           "sender of the original cannot tell that you forwarded it. Uncheck "
+           "only for a sender you trust."));
+
+    connect(m_stripRemote, &QCheckBox::toggled, this, &ComposeWindow::markDirty);
+
+    // Above the attachment row, which is where the other per-message controls
+    // sit. Inserted rather than appended: the body must keep its stretch.
+    if (auto *layout = qobject_cast<QVBoxLayout *>(centralWidget()->layout())) {
+        const int at = layout->indexOf(m_attachmentRow);
+        if (at >= 0)
+            layout->insertWidget(at, m_stripRemote);
+        else
+            layout->addWidget(m_stripRemote);
+    }
+}
 
 void ComposeWindow::extractForwardedAttachments()
 {
@@ -353,7 +489,17 @@ void ComposeWindow::buildUi()
 
     m_body = new QPlainTextEdit(central);
     m_body->setObjectName(QStringLiteral("body"));
-    layout->addWidget(m_body, 1);
+
+    // The editor lives in a splitter so an HTML forward can put the forwarded
+    // message BESIDE it rather than under it (item 171, the user's choice
+    // 2026-08-27). With nothing to show the splitter holds one widget and is
+    // indistinguishable from the plain editor it replaces, so every other
+    // composer is unaffected.
+    m_split = new QSplitter(Qt::Horizontal, central);
+    m_split->setObjectName(QStringLiteral("composeSplit"));
+    m_split->setChildrenCollapsible(false);
+    m_split->addWidget(m_body);
+    layout->addWidget(m_split, 1);
 
     // The attachment list, with Remove beside it: the control acts on the
     // list, so it lives with it, and both appear only once something is
@@ -719,6 +865,13 @@ void ComposeWindow::buildMenuBar()
     // copy of its entries would go stale on the next rebuild.
     QAction *signature = format->addMenu(m_signatureSwitch->menu());
     signature->setText(tr("Signature"));
+
+    // Item 171. Only on a forward that has a pane to toggle; an action that
+    // can never do anything is worse than no action at all.
+    if (m_showForwardAction) {
+        format->addSeparator();
+        format->addAction(m_showForwardAction);
+    }
 }
 
 void ComposeWindow::seedFields()
@@ -790,6 +943,17 @@ void ComposeWindow::seedBody()
 
     if (m_context.quotedBody.isEmpty())
         return;
+
+    // Item 171. An HTML forward carries the original as MARKUP, so seeding the
+    // text quote here would put something in the buffer that the sent message
+    // does not contain: the user could edit it and the edits would be
+    // discarded silently. The preview below the editor shows what is actually
+    // carried. A PLAIN forward is untouched, because there the quote in the
+    // buffer IS what gets sent.
+    if (m_context.kind == ComposeContext::Kind::Forward
+        && !m_forwardedHtmlRaw.isEmpty()) {
+        return;
+    }
 
     // Applied when the window opens and never again. The buffer is text the
     // user owns after that, and there is deliberately no live toggle:
@@ -1016,6 +1180,18 @@ OutgoingMessage ComposeWindow::currentMessage() const
     message.subject = m_subject->text();
     message.markdownBody = m_body->toPlainText();
     message.sendHtml = m_sendHtml->isChecked();
+
+    // Item 171. Sanitised HERE rather than at parse time, so the control can
+    // be toggled without re-reading the file, and so the raw markup is never
+    // what reaches OutgoingMessage by default. The checkbox only exists when
+    // there is remote content to strip; without it the raw markup IS the safe
+    // markup, which is why the fallback is `true` rather than `false`.
+    if (!m_forwardedHtmlRaw.isEmpty()) {
+        const bool strip = m_stripRemote ? m_stripRemote->isChecked() : true;
+        message.forwardedHtml =
+            strip ? HtmlSanitiser::stripRemoteContent(m_forwardedHtmlRaw)
+                  : m_forwardedHtmlRaw;
+    }
     message.attachments = m_attachments;
     message.inReplyTo = m_context.inReplyTo;
     message.references = m_context.references;

@@ -6,6 +6,7 @@ add_library(qtmaildir_lib STATIC
     messagebuilder.cpp
     requestinterceptor.cpp
     htmlbuilder.cpp
+    htmlsanitiser.cpp
     cidschemehandler.cpp
     cardlayout.cpp
     avatar.cpp

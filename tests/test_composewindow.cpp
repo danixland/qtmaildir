@@ -18,12 +18,14 @@
 
 #include <QtTest>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QSignalSpy>
+#include <QSplitter>
 #include <QLabel>
 #include <QMenuBar>
 #include <QToolBar>
@@ -64,6 +66,8 @@ private slots:
     void theMenuBarReachesEveryComposerAction();
     void saveDraftWritesAndReports();
     void aSavedDraftIsFlaggedSeen();
+    void aForwardCarriesTheOriginalHtmlAndStripsRemoteContent();
+    void anHtmlForwardPreviewsTheOriginalInsteadOfQuotingIt();
     void theMenusReuseTheToolbarActions();
     void theHtmlMenuItemTracksTheToolbarButton();
     void theAgeLineFollowsTheClock();
@@ -798,6 +802,201 @@ void TestComposeWindow::aSavedDraftIsFlaggedSeen()
     QVERIFY2(flags.contains(QLatin1Char('S')),
              qPrintable(QStringLiteral("a draft must carry the S flag or notmuch "
                                        "tags it unread, got %1").arg(flags)));
+}
+
+/// Item 171, the composer half. A forward of an HTML message carries the
+/// original's markup, with remote content stripped BY DEFAULT and a control to
+/// keep it.
+///
+/// The default is the security-relevant half: forwarding a tracking pixel
+/// forwards the tracking, and the original sender learns the recipient opened
+/// it. The user chose "ask per forward, default to strip" over always
+/// stripping and over keeping everything.
+void TestComposeWindow::aForwardCarriesTheOriginalHtmlAndStripsRemoteContent()
+{
+    const Config config = configWithDrafts();
+
+    // A real file on disk: the composer reads originalPath itself, exactly as
+    // extractForwardedAttachments() does, so a fixture built in memory would
+    // not exercise the path that runs.
+    const QString path = m_dir->path() + QStringLiteral("/original.eml");
+    writeFile(path, QStringLiteral(
+        "From: Sender <sender@example.org>\r\n"
+        "To: someone@example.org\r\n"
+        "Subject: Quarterly report\r\n"
+        "Date: Wed, 26 Aug 2026 10:00:00 +0200\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "\r\n"
+        "<p>Revenue rose <b>12%</b>.</p>"
+        "<img src=\"https://tracker.example/px?id=abc\">\r\n"));
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::Forward;
+    context.accountKey = QStringLiteral("work");
+    context.originalPath = path;
+    context.subject = QStringLiteral("Fwd: Quarterly report");
+
+    ComposeWindow window(context, config, m_dir->path());
+
+    auto *strip = window.findChild<QCheckBox *>(QStringLiteral("stripRemote"));
+    QVERIFY2(strip, "there is no strip-remote-content control on a forward");
+    QVERIFY2(strip->isChecked(),
+             "stripping must be the DEFAULT: a forward must not leak a "
+             "tracking pixel to the recipient unless the user asks for it");
+
+    // Checked: the markup survives, the beacon does not.
+    const OutgoingMessage stripped = window.currentMessage();
+    QVERIFY2(stripped.forwardedHtml.contains(QStringLiteral("Revenue rose")),
+             qPrintable(QStringLiteral("the original's markup was lost:\n%1")
+                            .arg(stripped.forwardedHtml)));
+    QVERIFY2(stripped.forwardedHtml.contains(QStringLiteral("<b>")),
+             "the formatting was flattened, which is the defect being fixed");
+    QVERIFY2(!stripped.forwardedHtml.contains(QStringLiteral("tracker.example")),
+             qPrintable(QStringLiteral("a tracking pixel survived:\n%1")
+                            .arg(stripped.forwardedHtml)));
+
+    // Unchecked: the user's explicit choice is honoured.
+    strip->setChecked(false);
+    const OutgoingMessage kept = window.currentMessage();
+    QVERIFY2(kept.forwardedHtml.contains(QStringLiteral("tracker.example")),
+             "unchecking the control must actually keep the remote content");
+
+    // A New message has neither the control nor any forwarded markup.
+    ComposeContext fresh;
+    fresh.kind = ComposeContext::Kind::New;
+    fresh.accountKey = QStringLiteral("work");
+    ComposeWindow plain(fresh, config, m_dir->path());
+    QVERIFY2(plain.currentMessage().forwardedHtml.isEmpty(),
+             "a new message must carry no forwarded markup");
+}
+
+/// Item 171, the WYSIWYG half. **What the composer shows must be what gets
+/// sent**, and for an HTML forward the editable buffer cannot be that.
+///
+/// The first build seeded the text quote into the buffer and then dropped it
+/// when building the HTML part, so the user could edit a quote whose edits
+/// were silently discarded. That is worse than the defect it replaced: the
+/// previous version at least sent what it displayed.
+///
+/// So on an HTML forward the buffer holds the user's own note ONLY, and the
+/// original appears in a read-only preview instead. Nothing shown is
+/// editable-but-ignored, and nothing sent is unshown. The user chose this over
+/// a rich-text composer (recorded as item 173, which is the real WYSIWYG
+/// answer and a much larger piece of work) and over attaching the original.
+void TestComposeWindow::anHtmlForwardPreviewsTheOriginalInsteadOfQuotingIt()
+{
+    const Config config = configWithDrafts();
+
+    const QString path = m_dir->path() + QStringLiteral("/original.eml");
+    writeFile(path, QStringLiteral(
+        "From: Sender <sender@example.org>\r\n"
+        "To: someone@example.org\r\n"
+        "Subject: Quarterly report\r\n"
+        "Date: Wed, 26 Aug 2026 10:00:00 +0200\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "\r\n"
+        "<p>Revenue rose <b>12%</b>.</p>\r\n"));
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::Forward;
+    context.accountKey = QStringLiteral("work");
+    context.originalPath = path;
+    context.subject = QStringLiteral("Fwd: Quarterly report");
+    context.quotedBody = QStringLiteral(
+        "On Wed, sender@example.org wrote:\n\n> Revenue rose 12%.");
+
+    ComposeWindow window(context, config, m_dir->path());
+
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+
+    // The buffer carries the user's note only: no quote to edit in vain.
+    QVERIFY2(!body->toPlainText().contains(QStringLiteral("Revenue rose")),
+             qPrintable(QStringLiteral("the original was seeded into the "
+                                       "editable buffer:\n%1").arg(body->toPlainText())));
+
+    // The preview says what will be carried, and is NOT editable.
+    auto *preview = window.findChild<QWidget *>(QStringLiteral("forwardPreview"));
+    QVERIFY2(preview, "an HTML forward must show what it will carry");
+    QVERIFY2(preview->isVisibleTo(&window),
+             "the preview must not be hidden on an HTML forward");
+
+    // **Beside the editor, not under it**, at the user's request 2026-08-27:
+    // a vertical split, editor 60 and preview 40, so the note being written
+    // and the message being forwarded are read side by side.
+    auto *split = window.findChild<QSplitter *>(QStringLiteral("composeSplit"));
+    QVERIFY2(split, "the preview must share a splitter with the editor");
+    QCOMPARE(split->orientation(), Qt::Horizontal);
+    QCOMPARE(split->count(), 2);
+    QCOMPARE(split->widget(0), static_cast<QWidget *>(body));
+    QCOMPARE(split->widget(1), preview);
+
+    // **The ratio is asserted as STRETCH FACTORS, not as resulting pixels.**
+    // CLAUDE.md records that the offscreen platform cannot test window sizing:
+    // it prints "This plugin does not support propagateSizeHints()" and the
+    // splitter here has no real width to divide, so sizes() reports an equal
+    // 49/49 whatever the code asks for. Measured: a pixel assertion fails
+    // against correct code. The stretch factors are what the layout stores and
+    // what survives the first real resize, so they are the testable intent;
+    // the appearance is a hand test.
+    // QSplitter has no stretchFactor() getter: setStretchFactor() writes the
+    // value into the CHILD's size policy, which is where it can be read back.
+    QCOMPARE(body->sizePolicy().horizontalStretch(), 6);
+    QCOMPARE(preview->sizePolicy().horizontalStretch(), 4);
+
+    // A toggle closes and reopens it.
+    auto *toggle = window.findChild<QAction *>(QStringLiteral("compose_show_forward"));
+    QVERIFY2(toggle, "there is no toggle for the forwarded-message pane");
+    QVERIFY2(toggle->isCheckable(), "the pane toggle must be checkable");
+    QVERIFY2(toggle->isChecked(), "the pane starts open on an HTML forward");
+
+    toggle->trigger();
+    QVERIFY2(!preview->isVisibleTo(&window),
+             "unchecking the toggle must hide the forwarded-message pane");
+    toggle->trigger();
+    QVERIFY2(preview->isVisibleTo(&window),
+             "re-checking the toggle must bring the pane back");
+
+    // What is sent still contains the original, from the markup rather than
+    // from the buffer.
+    const OutgoingMessage message = window.currentMessage();
+    QVERIFY2(message.forwardedHtml.contains(QStringLiteral("Revenue rose")),
+             "the forward must still carry the original");
+
+    // A PLAIN forward is unchanged: the quote goes in the buffer, where it is
+    // both editable and sent, so WYSIWYG already held there and must not be
+    // broken by this.
+    const QString plainPath = m_dir->path() + QStringLiteral("/plain.eml");
+    writeFile(plainPath, QStringLiteral(
+        "From: Sender <sender@example.org>\r\n"
+        "Subject: Plain report\r\n"
+        "Date: Wed, 26 Aug 2026 10:00:00 +0200\r\n"
+        "\r\n"
+        "Revenue rose 12%.\r\n"));
+
+    ComposeContext plainContext;
+    plainContext.kind = ComposeContext::Kind::Forward;
+    plainContext.accountKey = QStringLiteral("work");
+    plainContext.originalPath = plainPath;
+    plainContext.quotedBody = QStringLiteral("> Revenue rose 12%.");
+
+    ComposeWindow plainWindow(plainContext, config, m_dir->path());
+    auto *plainBody = plainWindow.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(plainBody);
+    QVERIFY2(plainBody->toPlainText().contains(QStringLiteral("Revenue rose")),
+             qPrintable(QStringLiteral("a plain forward lost its quote:\n%1")
+                            .arg(plainBody->toPlainText())));
+
+    auto *noPreview = plainWindow.findChild<QWidget *>(QStringLiteral("forwardPreview"));
+    QVERIFY2(!noPreview || !noPreview->isVisibleTo(&plainWindow),
+             "a plain forward needs no preview: its quote is in the buffer");
+
+    auto *noToggle = plainWindow.findChild<QAction *>(
+        QStringLiteral("compose_show_forward"));
+    QVERIFY2(!noToggle || !noToggle->isVisible(),
+             "a plain forward must not offer a pane toggle that does nothing");
 }
 
 /// The same QAction objects, shown twice over, exactly as item 140 required

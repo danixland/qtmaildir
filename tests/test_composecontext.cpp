@@ -96,6 +96,7 @@ private slots:
 
     // Quoting.
     void aQuotedBodyPrefixesEveryLine();
+    void anHtmlOnlyBodyIsQuotedAsText();
 
 private:
     QString writeConfig(const QString &contents);
@@ -1122,6 +1123,58 @@ void TestComposeContext::aQuotedBodyPrefixesEveryLine()
     QVERIFY2(!quotedCrlf.contains(QLatin1Char('\r')),
              qPrintable(QStringLiteral("a carriage return survived quoting: %1")
                             .arg(quotedCrlf)));
+}
+
+/// Item 171's silent half. An HTML-only original has an EMPTY `plainBody`, so
+/// quoting it produced an attribution line and nothing else: the content was
+/// gone and nothing said so. Measured on the developer's own inbox 2026-08-27,
+/// 30 of 342 sampled messages (~9%) declare text/html with no text/plain, so
+/// this is not an edge case.
+///
+/// The fallback renders the HTML down to text. It does NOT preserve
+/// formatting, which is the separate half of item 171 and is answered by the
+/// multipart/alternative build; this only guarantees the words survive.
+void TestComposeContext::anHtmlOnlyBodyIsQuotedAsText()
+{
+    ParsedMessage message;
+    message.from = QStringLiteral("Sender <sender@example.org>");
+    message.date = QStringLiteral("Thu, 20 Aug 2026 10:00:00 +0200");
+    message.htmlBody = QStringLiteral(
+        "<p>Revenue rose <b>12%</b> against forecast.</p><ul><li>Region A</li></ul>");
+    // plainBody deliberately empty: this is the shape that lost the content.
+
+    const QString quoted = ComposeContextBuilder::quoteBody(message);
+
+    QVERIFY2(quoted.contains(QStringLiteral("Revenue rose")),
+             qPrintable(QStringLiteral("the body was lost:\n%1").arg(quoted)));
+    QVERIFY2(quoted.contains(QStringLiteral("Region A")),
+             qPrintable(QStringLiteral("list content was lost:\n%1").arg(quoted)));
+    QVERIFY2(quoted.contains(QStringLiteral("12%")),
+             qPrintable(QStringLiteral("emphasised text was lost:\n%1").arg(quoted)));
+
+    // Quoted like any other body, not dumped raw.
+    QVERIFY2(quoted.contains(QStringLiteral("> Revenue rose")),
+             qPrintable(QStringLiteral("the fallback is not quoted:\n%1").arg(quoted)));
+
+    // Text, not markup: the plain half of a message must not carry tags.
+    QVERIFY2(!quoted.contains(QStringLiteral("<b>")),
+             qPrintable(QStringLiteral("markup reached the plain quote:\n%1").arg(quoted)));
+    QVERIFY2(!quoted.contains(QStringLiteral("<p>")),
+             qPrintable(QStringLiteral("markup reached the plain quote:\n%1").arg(quoted)));
+
+    // A message WITH a plain part must keep using it, untouched: the fallback
+    // is for the empty case only, and rendering HTML over a real plain part
+    // would change every ordinary reply.
+    ParsedMessage both;
+    both.plainBody = QStringLiteral("the real plain part");
+    both.htmlBody = QStringLiteral("<p>the html part</p>");
+    const QString preferred = ComposeContextBuilder::quoteBody(both);
+    QVERIFY2(preferred.contains(QStringLiteral("> the real plain part")),
+             qPrintable(QStringLiteral("the plain part was not preferred:\n%1")
+                            .arg(preferred)));
+    QVERIFY2(!preferred.contains(QStringLiteral("the html part")),
+             qPrintable(QStringLiteral("the html part was used anyway:\n%1")
+                            .arg(preferred)));
 }
 
 QTEST_MAIN(TestComposeContext)

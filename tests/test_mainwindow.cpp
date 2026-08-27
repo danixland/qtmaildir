@@ -12955,15 +12955,23 @@ void TestMainWindow::theComposerSplitsItsToolbarByScope()
     auto *column = qobject_cast<QVBoxLayout *>(central->layout());
     QVERIFY2(column, "the composer is not laid out in a vertical column");
 
-    int barIndex = -1;
-    int bodyIndex = -1;
-    for (int i = 0; i < column->count(); ++i) {
-        QLayoutItem *item = column->itemAt(i);
-        if (item->widget() == editorBar)
-            barIndex = i;
-        else if (item->widget() == body)
-            bodyIndex = i;
-    }
+    // The editor sits inside a QSplitter since item 171, so its position in
+    // the column is the SPLITTER's: a forward puts the forwarded message
+    // beside the editor, and the toolbar must stay above both. Walking up to
+    // whichever child of the column contains the body keeps this test about
+    // the toolbar's position rather than about the editor's parentage.
+    const auto columnChildOf = [column](QWidget *widget) {
+        for (QWidget *w = widget; w; w = w->parentWidget()) {
+            for (int i = 0; i < column->count(); ++i) {
+                if (column->itemAt(i)->widget() == w)
+                    return i;
+            }
+        }
+        return -1;
+    };
+
+    const int barIndex = columnChildOf(editorBar);
+    const int bodyIndex = columnChildOf(body);
     QVERIFY2(barIndex >= 0 && bodyIndex >= 0,
              "the editor bar or the body is not in the composer's column");
     QVERIFY2(barIndex < bodyIndex, "the editor bar is not above the editor");

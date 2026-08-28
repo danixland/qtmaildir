@@ -478,6 +478,7 @@ private slots:
     void twoDeletesToOneTrashBothGetTheirTags();
     void deletingTwiceLeavesNoOriginTagBehind();
     void undoOfADeleteRemovesTheOriginTagToo();
+    void undoingAMarkReadRestoresOnlyWhatWasUnread();
     void deletingALoneMessageRemovesItFromTheInboxAndUndoReturnsIt();
     void deleteThreadMovesEveryMessageAndRepaintsTheRootCard();
     void aFolderNameWithASpaceSurvivesTheRoundTrip();
@@ -2079,6 +2080,19 @@ void TestMainWindow::markAllReadActsOnEveryRowAndUndoesInOneStep()
     // also pass if three commands had been pushed and the model happened to
     // recover on the first.
     QCOMPARE(window.undoDepthForTesting(), 1);
+
+    // The confirmation the real worker sends back, which since item 176 is
+    // what tells the command WHICH messages it moved. There is no worker in
+    // this window, so it is delivered by hand; without it the command knows
+    // of no change and correctly undoes nothing.
+    const TagChange confirmed{ { QStringLiteral("t1-first@example.org"),
+                                 QStringLiteral("t2-first@example.org"),
+                                 QStringLiteral("t3-first@example.org") },
+                               {},
+                               { QStringLiteral("unread") },
+                               QStringLiteral("Mark all read") };
+    QMetaObject::invokeMethod(&window, "onTagsApplied",
+                              Q_ARG(TagChange, confirmed));
 
     auto *undo = window.findChild<QAction *>(QStringLiteral("undo"));
     QVERIFY(undo);
@@ -15403,6 +15417,80 @@ void TestMainWindow::aConversationLeavesWhenItsUnionEmpties()
 
     QCOMPARE(model->rowCount(QModelIndex()), 1);
     QCOMPARE(model->threadAt(0).threadId, QStringLiteral("t1"));
+}
+
+void TestMainWindow::undoingAMarkReadRestoresOnlyWhatWasUnread()
+{
+    // Item 176, end to end. The thread has messages in DISAGREEING states:
+    // two in the same state answer identically whichever way the code
+    // resolves them, so a test built on agreement passes against the bug.
+    //
+    // Measured on the user's real mail before the fix: a thread of 44 with 2
+    // unread was marked read, undone, and came back with 43 unread. Because
+    // maildir.synchronize_flags is on, that rewrote the files and would have
+    // reached the server.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("ur0@example.org"),
+        QStringLiteral("UR root"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Root body."), false));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("ur1@example.org"),
+        QStringLiteral("Re: UR root"), QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Already read."), false,
+        QStringLiteral("ur0@example.org")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("ur2@example.org"),
+        QStringLiteral("Re: UR root"), QStringLiteral("third@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 12:00:00 +0200"),
+        QStringLiteral("The only unread one."), true,
+        QStringLiteral("ur0@example.org")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString cfg = backed.fixture().configPath();
+    const QString thread = QStringLiteral("thread:{id:ur0@example.org}");
+
+    // A `thread:` query, not `tag:unread`: the row must survive the write for
+    // the undo to be driven through the interface at all.
+    queryEdit->setText(thread);
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    QCOMPARE(notmuchCount(cfg, thread), 3);
+    QCOMPARE(notmuchCount(cfg, thread + QStringLiteral(" and tag:unread")), 1);
+
+    // A conversation row, so this is the thread-scoped write.
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    QVERIFY(model->isConversationRow(model->index(0, 0, QModelIndex())));
+    window.findChild<QAction *>(QStringLiteral("toggle_unread"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:unread")) == 0,
+        15000);
+
+    window.findChild<QAction *>(QStringLiteral("undo"))->trigger();
+
+    // ONE message unread again, the one that was. Before the fix this was 3.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:unread")) == 1,
+        15000);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ur2@example.org and "
+                                              "tag:unread")),
+             1);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ur0@example.org and "
+                                              "tag:unread")),
+             0);
 }
 
 #include "test_mainwindow.moc"

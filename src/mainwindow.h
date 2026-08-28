@@ -60,6 +60,8 @@ class QTimer;
 class QToolButton;
 class QVBoxLayout;
 
+class TagCommand;
+
 class BusyIndicator;
 class CardDelegate;
 class ThreadListModel;
@@ -1029,10 +1031,41 @@ private:
     /// Invokable so a test can record an edit against a known account without a
     /// worker: this is where m_editedAccounts is populated, and item 54's
     /// draining of it cannot be observed otherwise.
+    ///
+    /// `onlyMessageIds`, when non-empty, is the exact set of messages to
+    /// WRITE, while the repaint still covers `threadIds`. Item 176: an undo
+    /// covers what the write actually moved, and only the worker knows which
+    /// messages that was, so the command carries them back here. The two
+    /// scopes differ on purpose: the rows being put back are the conversation
+    /// rows the original write changed, so the card is repainted as a whole.
     Q_INVOKABLE void sendThreadTagChange(const QStringList &threadIds,
                              const QStringList &add,
                              const QStringList &remove,
-                             const QString &description);
+                             const QString &description,
+                             const QStringList &onlyMessageIds = {});
+
+    /// Names the command the next confirmed write belongs to.
+    ///
+    /// Item 176. A command must undo what the write CHANGED, not what it
+    /// asked for, and only the worker knows which. Armed immediately before
+    /// the send and read in onTagsApplied().
+    ///
+    /// A QUEUE, not one slot. One gesture over a mixed selection sends a
+    /// thread write and a message write, both queued to the worker, so two
+    /// confirmations come back in the order they were sent; a single slot
+    /// would credit the first arrival to the second command. A confirmation
+    /// arriving with the queue empty has no command to inform, which is the
+    /// case for every write that never goes on the stack (the automatic
+    /// mark-read, a move's tags).
+    ///
+    /// `first` says this command opens a new gesture, which discards anything
+    /// a previous one stranded.
+    void awaitTagConfirmation(TagCommand *command, bool first = true)
+    {
+        if (first)
+            m_awaitingTagConfirmation.clear();
+        m_awaitingTagConfirmation.append(command);
+    }
 
     /// The same for individual MESSAGES, without touching the undo stack.
     /// Both tagSelected() and MessageTagCommand route through this.
@@ -1680,6 +1713,18 @@ private:
     TagChange m_pendingChange;
     QStringList m_pendingThreadIds;
 
+    /// The undo entries the confirmations still in flight belong to, oldest
+    /// first. See awaitTagConfirmation().
+    ///
+    /// Raw pointers, and the undo stack owns them. Cleared whenever the stack
+    /// is, and drained in order by onTagsApplied(). An entry can be left
+    /// stranded by a write that never confirms (one held for a sync, or one
+    /// the worker found nothing to change), so a gesture clears whatever is
+    /// left before arming its own: crediting a fresh confirmation to a dead
+    /// command would put the wrong ids on the wrong undo entry, which is the
+    /// class of defect item 176 is about.
+    QVector<TagCommand *> m_awaitingTagConfirmation;
+
     /// Account keys whose mail store has edits a sync has not yet carried,
     /// for item 49's per-account sync.
     ///
@@ -1703,17 +1748,58 @@ private:
     Q_INVOKABLE QStringList pendingSyncChannels() const;
 };
 
+/// What a tag command needs from the worker's confirmation.
+///
+/// Item 176. A command is pushed with what the user ASKED for, and the worker
+/// is the only thing that knows what actually moved: `applyTags()` holds each
+/// message open and compares. Undoing the request rather than the effect is
+/// what turned "mark 44 read" into "mark 44 unread", measured on real mail as
+/// 2 unread becoming 43, and `maildir.synchronize_flags` carried it to the
+/// files. `MainWindow::onTagsApplied()` hands the effective ids to whichever
+/// command is waiting for them.
+class TagCommand : public QUndoCommand
+{
+public:
+    using QUndoCommand::QUndoCommand;
+
+    /// Records the messages whose tags the write really moved.
+    ///
+    /// Accumulated rather than assigned: a thread-scoped write and a
+    /// message-scoped one can be in flight together from one gesture, and a
+    /// redo of a batch arrives as more than one confirmation.
+    void addChangedMessageIds(const QStringList &ids)
+    {
+        for (const QString &id : ids) {
+            if (!m_changedMessageIds.contains(id))
+                m_changedMessageIds.append(id);
+        }
+    }
+
+    QStringList changedMessageIds() const { return m_changedMessageIds; }
+
+protected:
+    /// Cleared before each re-send, so a redo learns what IT moved rather than
+    /// undoing the effect of the run before it.
+    void forgetChangedMessageIds() { m_changedMessageIds.clear(); }
+
+private:
+    QStringList m_changedMessageIds;
+};
+
 /// Undo entry for a tag change over a set of threads.
 ///
-/// Stores thread ids rather than message ids, so undo re-resolves them on the
-/// worker and stays correct even if the selection has moved on.
-class ThreadTagCommand : public QUndoCommand
+/// Stores thread ids rather than message ids, so a REDO re-resolves them on
+/// the worker and stays correct even if the selection has moved on. The UNDO
+/// does not: it covers the messages the write actually changed, which the
+/// worker reports, because inverting over the whole thread rewrites messages
+/// the user never touched (item 176).
+class ThreadTagCommand : public TagCommand
 {
 public:
     ThreadTagCommand(MainWindow *window, const QStringList &threadIds,
                      const QStringList &add, const QStringList &remove,
                      const QString &description)
-        : QUndoCommand(description), m_window(window), m_threadIds(threadIds),
+        : TagCommand(description), m_window(window), m_threadIds(threadIds),
           m_add(add), m_remove(remove), m_description(description) {}
 
     /// The stack calls redo() when the command is pushed. The change has
@@ -1724,15 +1810,28 @@ public:
             m_firstRedo = false;
             return;
         }
+        forgetChangedMessageIds();
+        m_window->awaitTagConfirmation(this);
         m_window->sendThreadTagChange(m_threadIds, m_add, m_remove,
                                       m_description);
     }
 
     void undo() override
     {
-        // Inverted: what was added is removed and vice versa.
-        m_window->sendThreadTagChange(m_threadIds, m_remove, m_add,
-                                      QStringLiteral("Undo %1").arg(m_description));
+        // Inverted: what was added is removed and vice versa. The WRITE is
+        // scoped to the messages that moved rather than to the threads, which
+        // is item 176; the repaint stays thread-wide, since a conversation row
+        // is what is being put back.
+        //
+        // Nothing confirmed means nothing reached the database: the write was
+        // held for a sync, or the worker found nothing to change. Undoing it
+        // would write tags no message ever had, which is the defect itself.
+        const QStringList ids = changedMessageIds();
+        if (ids.isEmpty())
+            return;
+        m_window->sendThreadTagChange(
+            m_threadIds, m_remove, m_add,
+            QStringLiteral("Undo %1").arg(m_description), ids);
     }
 
 private:
@@ -1750,13 +1849,13 @@ private:
 /// point rather than an inconsistency: a message row acts on one message, so
 /// re-resolving its thread on undo would restore tags across every sibling the
 /// action never touched.
-class MessageTagCommand : public QUndoCommand
+class MessageTagCommand : public TagCommand
 {
 public:
     MessageTagCommand(MainWindow *window, const QStringList &messageIds,
                       const QStringList &add, const QStringList &remove,
                       const QString &description)
-        : QUndoCommand(description), m_window(window),
+        : TagCommand(description), m_window(window),
           m_messageIds(messageIds), m_add(add), m_remove(remove),
           m_description(description) {}
 
@@ -1768,14 +1867,22 @@ public:
             m_firstRedo = false;
             return;
         }
+        forgetChangedMessageIds();
+        m_window->awaitTagConfirmation(this);
         m_window->sendMessageTagChange(m_messageIds, m_add, m_remove,
                                        m_description);
     }
 
+    /// Scoped to what the write MOVED, for the reason TagCommand gives.
+    /// Harmless on one message, where asked and changed agree, and the same
+    /// defect as the thread case on a multi-row selection (item 176).
     void undo() override
     {
+        const QStringList ids = changedMessageIds();
+        if (ids.isEmpty())
+            return;
         m_window->sendMessageTagChange(
-            m_messageIds, m_remove, m_add,
+            ids, m_remove, m_add,
             QStringLiteral("Undo %1").arg(m_description));
     }
 

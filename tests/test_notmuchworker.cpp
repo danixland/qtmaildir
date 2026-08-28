@@ -51,6 +51,8 @@ private slots:
     void applyTagsEmitsTheChange();
     void applyTagsIgnoresUnknownMessageIds();
     void applyTagsWithNoIdsDoesNothing();
+    void applyTagsReportsOnlyTheMessagesItChanged();
+    void applyTagsThatChangeNothingEmitNothing();
     void queryStillWorksAfterWrite();
     void aThreadCarriesItsCardMessagesOwnTags();
 
@@ -884,6 +886,69 @@ void TestNotmuchWorker::applyTagsWithNoIdsDoesNothing()
 
     QVERIFY(applied.isEmpty());
     QVERIFY(errors.isEmpty());
+}
+
+void TestNotmuchWorker::applyTagsReportsOnlyTheMessagesItChanged()
+{
+    // Item 176. Undo inverts the tags and keeps the scope, so the inverse of
+    // "remove unread from 44 messages" was "add unread to 44 messages",
+    // whether or not they carried it. Measured on real mail: a thread of 44
+    // with 2 unread came back with 43 unread.
+    NotmuchFixture fixture;
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("u0@example.org"),
+                               QStringLiteral("Read one"),
+                               QStringLiteral("alice@example.org"),
+                               QStringLiteral("Mon, 24 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Body."), false));
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("u1@example.org"),
+                               QStringLiteral("Unread one"),
+                               QStringLiteral("bob@example.org"),
+                               QStringLiteral("Tue, 25 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Body."), true));
+    QVERIFY(fixture.index());
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::tagsApplied);
+
+    worker.applyTags(TagChange{
+        { QStringLiteral("u0@example.org"), QStringLiteral("u1@example.org") },
+        {}, { QStringLiteral("unread") }, QStringLiteral("Mark read") });
+
+    QCOMPARE(spy.count(), 1);
+    const TagChange applied = spy.at(0).at(0).value<TagChange>();
+    QCOMPARE(applied.messageIds,
+             QStringList{ QStringLiteral("u1@example.org") });
+}
+
+void TestNotmuchWorker::applyTagsThatChangeNothingEmitNothing()
+{
+    // The companion to the case above: when the reduced list is EMPTY the
+    // write moved nothing, so there is nothing to record as pending, nothing
+    // to sync and nothing to undo. Emitting an empty change would push an
+    // undo entry whose inverse would then add a tag no message ever had,
+    // which is the same defect one step later.
+    NotmuchFixture fixture;
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("n0@example.org"),
+                               QStringLiteral("Already read"),
+                               QStringLiteral("alice@example.org"),
+                               QStringLiteral("Mon, 24 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Body."), false));
+    QVERIFY(fixture.index());
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::tagsApplied);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.applyTags(TagChange{ { QStringLiteral("n0@example.org") },
+                                {},
+                                { QStringLiteral("unread") },
+                                QStringLiteral("Mark read") });
+
+    QVERIFY(spy.isEmpty());
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
 }
 
 void TestNotmuchWorker::queryStillWorksAfterWrite()

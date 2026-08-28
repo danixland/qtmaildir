@@ -811,6 +811,16 @@ void NotmuchWorker::applyTags(const TagChange &change)
         return;
     }
 
+    // Item 176. What the caller ASKED for is not what the write does: a
+    // "remove unread" over a whole thread touches only the messages that
+    // carried it. The undo entry is built from this list, so reporting the
+    // request instead made the inverse of "mark 44 read" into "mark 44
+    // unread", measured on real mail as 2 unread becoming 43. With
+    // maildir.synchronize_flags on, that rewrites filenames and reaches the
+    // server.
+    QStringList changedIds;
+    changedIds.reserve(change.messageIds.size());
+
     for (const QString &id : change.messageIds) {
         notmuch_message_t *raw = nullptr;
         // find_message reports SUCCESS with a null message when the id is not
@@ -821,6 +831,20 @@ void NotmuchWorker::applyTags(const TagChange &change)
             continue;
         }
         NmMessage message(raw);
+
+        // Read BEFORE the freeze, so the comparison is against the message as
+        // it stands. A tag already present that is being added, or absent and
+        // being removed, is a no-op notmuch reports no differently from a real
+        // write, so the only way to know is to look first.
+        const QStringList before = tagsOf(message.get());
+
+        bool moves = false;
+        for (const QString &tag : change.removed)
+            moves = moves || before.contains(tag);
+        for (const QString &tag : change.added)
+            moves = moves || !before.contains(tag);
+        if (moves)
+            changedIds.append(id);
 
         notmuch_message_freeze(message.get());
         for (const QString &tag : change.removed)
@@ -837,7 +861,16 @@ void NotmuchWorker::applyTags(const TagChange &change)
     notmuch_database_close(db);
     notmuch_database_destroy(db);
 
-    emit tagsApplied(change);
+    // Nothing moved, so there is nothing to record as pending, nothing to sync
+    // and nothing to undo. Emitting an empty change would push an undo entry
+    // whose inverse adds a tag no message ever carried, which is item 176 one
+    // step further along. The same silence as the empty-id early return above,
+    // for the same reason.
+    if (changedIds.isEmpty())
+        return;
+
+    emit tagsApplied(TagChange{ changedIds, change.added, change.removed,
+                                change.description });
 }
 
 void NotmuchWorker::moveMessages(const QStringList &messageIds,

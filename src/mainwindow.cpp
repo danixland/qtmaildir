@@ -3415,6 +3415,9 @@ void MainWindow::runQuery(FlatResult flat, AccountScope scope)
     // update they invert would be a no-op against the new result set, leaving
     // undo half-applied: the database would change and the list would not.
     m_undoStack.clear();
+
+    // The queue holds pointers the stack owned. See awaitTagConfirmation().
+    m_awaitingTagConfirmation.clear();
     m_pendingChange = {};
     m_pendingThreadIds.clear();
 
@@ -3582,14 +3585,17 @@ void MainWindow::markAllRead()
     m_markReadMessageId.clear();
 
     const QString description = tr("Mark all read");
+    // ONE command for the batch, exactly as tagSelected does: a user who marks
+    // 400 threads read expects a single Ctrl+Z to put them back. Built and
+    // armed before the send so the worker's confirmation can tell it which
+    // messages actually moved (item 176).
+    auto *command = new ThreadTagCommand(this, threadIds, {},
+                                         { QStringLiteral("unread") },
+                                         description);
+    awaitTagConfirmation(command);
     sendThreadTagChange(threadIds, {}, { QStringLiteral("unread") },
                         description);
-
-    // ONE command for the batch, exactly as tagSelected does: a user who marks
-    // 400 threads read expects a single Ctrl+Z to put them back.
-    m_undoStack.push(new ThreadTagCommand(this, threadIds, {},
-                                          { QStringLiteral("unread") },
-                                          description));
+    m_undoStack.push(command);
 
     showTransientStatus(
         tr("%1: %n thread(s)", "", threadIds.size()).arg(description));
@@ -4303,6 +4309,10 @@ void MainWindow::revertPendingTagChange()
     if (m_undoStack.canUndo())
         m_undoStack.undo();
 
+    // The write never landed, so no confirmation is coming for it. Left in
+    // place it would be credited the NEXT write's ids.
+    m_awaitingTagConfirmation.clear();
+
     m_pendingChange = {};
     m_pendingThreadIds.clear();
 }
@@ -4548,6 +4558,16 @@ void MainWindow::onTagsApplied(const TagChange &change)
 {
     m_pendingChange = {};
     m_pendingThreadIds.clear();
+
+    // Item 176. The ids the worker reports are the ones whose tags really
+    // moved, which is what the undo entry has to invert. Inverting the REQUEST
+    // instead turned the undo of "mark 44 read" into "mark 44 unread": 2
+    // unread became 43, on real mail, and maildir.synchronize_flags carried it
+    // into the filenames.
+    if (!m_awaitingTagConfirmation.isEmpty()) {
+        TagCommand *command = m_awaitingTagConfirmation.takeFirst();
+        command->addChangedMessageIds(change.messageIds);
+    }
 
     // Recorded here, where a write is CONFIRMED, rather than where one is sent:
     // an optimistic update the worker later rejects must not leave the
@@ -5555,18 +5575,28 @@ void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,
         return;
 
     if (!scope.threadIds.isEmpty()) {
+        // Constructed and armed BEFORE the send, not after: the confirmation
+        // names the messages the write moved, and the command has to be
+        // reachable when it arrives (item 176).
+        auto *command = new ThreadTagCommand(this, scope.threadIds, add,
+                                             remove, description);
+        awaitTagConfirmation(command);
         sendThreadTagChange(scope.threadIds, add, remove, description);
 
-        // Pushed for undo. The inverse re-resolves the same threads, so it
-        // works whether or not those rows are still selected.
-        m_undoStack.push(new ThreadTagCommand(this, scope.threadIds, add,
-                                              remove, description));
+        // Pushed for undo. A redo re-resolves the same threads, so it works
+        // whether or not those rows are still selected.
+        m_undoStack.push(command);
     }
 
     if (!scope.messageIds.isEmpty()) {
+        auto *command = new MessageTagCommand(this, scope.messageIds, add,
+                                              remove, description);
+        // Not the first when the thread branch above already armed one: both
+        // halves of one gesture are in flight together and their
+        // confirmations come back in send order.
+        awaitTagConfirmation(command, scope.threadIds.isEmpty());
         sendMessageTagChange(scope.messageIds, add, remove, description);
-        m_undoStack.push(new MessageTagCommand(this, scope.messageIds, add,
-                                               remove, description));
+        m_undoStack.push(command);
     }
 
     // The scope named after the fact, since the selection may well be gone by
@@ -5982,11 +6012,13 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
         // The tag comes off so the row stops claiming to be deleted, but no
         // file moves, since guessing a folder would put the message somewhere
         // the user never had it.
+        auto *command = new MessageTagCommand(this, unknown, {},
+                                              { QStringLiteral("deleted") },
+                                              tr("Undelete thread"));
+        awaitTagConfirmation(command);
         sendMessageTagChange(unknown, {}, { QStringLiteral("deleted") },
                              tr("Undelete thread"));
-        m_undoStack.push(new MessageTagCommand(this, unknown, {},
-                                               { QStringLiteral("deleted") },
-                                               tr("Undelete thread")));
+        m_undoStack.push(command);
     }
 
     for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
@@ -6393,11 +6425,13 @@ void MainWindow::restoreSelected(bool fallbackToInbox)
                        "configured account.", "", int(stranded.size())));
             }
         } else {
+            auto *command = new MessageTagCommand(
+                this, unknown, {}, { QStringLiteral("deleted") },
+                tr("Undelete"));
+            awaitTagConfirmation(command);
             sendMessageTagChange(unknown, {}, { QStringLiteral("deleted") },
                                  tr("Undelete"));
-            m_undoStack.push(new MessageTagCommand(
-                this, unknown, {}, { QStringLiteral("deleted") },
-                tr("Undelete")));
+            m_undoStack.push(command);
         }
     }
 
@@ -6801,7 +6835,8 @@ void MainWindow::onMessagesMoved(const QMap<QString, QString> &originByMessageId
 void MainWindow::sendThreadTagChange(const QStringList &threadIds,
                                      const QStringList &add,
                                      const QStringList &remove,
-                                     const QString &description)
+                                     const QString &description,
+                                     const QStringList &onlyMessageIds)
 {
     // Optimistic: the rows change now, so a bulk archive of hundreds of threads
     // feels instant. Recorded so onWorkerError() can put them back.
@@ -6847,7 +6882,8 @@ void MainWindow::sendThreadTagChange(const QStringList &threadIds,
     // what the user asked for and it is going to be applied.
     if (aSyncHoldsTheWriteLock()) {
         m_heldEdits.append(HeldEdit{
-            threadIds, TagChange{ {}, add, remove, description } });
+            onlyMessageIds.isEmpty() ? threadIds : QStringList{},
+            TagChange{ onlyMessageIds, add, remove, description } });
 
         // NOT transient. This describes state that lasts until the sync ends,
         // and a message that expired would leave the user with rows showing a
@@ -6862,7 +6898,18 @@ void MainWindow::sendThreadTagChange(const QStringList &threadIds,
     }
 
     m_pendingThreadIds = threadIds;
-    m_pendingChange = TagChange{ {}, add, remove, description };
+    m_pendingChange = TagChange{ onlyMessageIds, add, remove, description };
+
+    // Item 176. An UNDO names the messages the original write actually moved,
+    // so it writes those and no others: inverting over the whole thread is
+    // what turned "mark 44 read" into "mark 44 unread". The repaint above is
+    // still thread-scoped, and correctly so, because the rows being put back
+    // are the conversation rows the write changed.
+    if (!onlyMessageIds.isEmpty()) {
+        QMetaObject::invokeMethod(m_worker, "applyTags", Qt::QueuedConnection,
+                                  Q_ARG(TagChange, m_pendingChange));
+        return;
+    }
 
     // The worker resolves thread ids to message ids: the UI does not hold
     // message ids for rows it never opened.

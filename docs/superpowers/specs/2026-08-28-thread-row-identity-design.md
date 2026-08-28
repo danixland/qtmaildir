@@ -139,10 +139,12 @@ one action replaces Reply, **Reply to this thread**:
 - It quotes NOTHING. "We just add an answer to the thread."
 - It is `Kind::ReplyAll` with `quote == false`, which `composeReply()` already
   supports (the existing `reply_no_quote` action uses the same path), so no new
-  compose machinery is needed. Reply-all rather than reply-to-sender because a
-  conversation is multi-party by definition; answering one participant of a
-  four-person discussion is the unusual case, and it stays available on an
-  individual message.
+  compose machinery is needed. Reply-all rather than reply-to-sender, and the
+  user's reasoning is what settles it: replying to the sender alone in a
+  multi-person thread SILENTLY DROPS everyone else from a conversation they are
+  part of. It reads as a reply to the thread and is not one. Reply-to-sender
+  remains on an individual message row, where the user has picked one message
+  and one correspondent deliberately.
 - Its threading headers come from the thread's **newest** message, so
   `In-Reply-To` and `References` land the answer at the end of the conversation
   and the recipients are the current ones.

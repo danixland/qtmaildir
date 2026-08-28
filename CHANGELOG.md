@@ -13,6 +13,18 @@ point at which they are stable.
 
 ### Added
 
+- **A dashboard for a conversation.** Selecting a thread of more than one
+  message now shows the conversation itself rather than one of its messages:
+  the subject, how many people wrote and over how many days, the account, the
+  thread's tags in one row, the message and unread counts with a bar showing
+  how much of it you have read, and an activity line reading `first → last`
+  with the busiest stretch named. "Waiting for you" lists the unread messages
+  newest first, capped at five with a `+N more` link that expands the thread
+  in the list beside it. Mark all read, Archive and Delete sit in a strip
+  pinned to the bottom, so they stay reachable on a long conversation.
+  Selecting a conversation does NOT mark anything read, since no single
+  message is on display to mark.
+
 - **The unsynced-changes count opens.** Clicking `N unsynced changes` in the
   status bar lists what those changes are: each message with the actions
   waiting on it beneath it, and a whole-thread action shown as one entry with
@@ -69,11 +81,40 @@ point at which they are stable.
   same whichever direction it would take; it is now "Mark as read" on unread
   mail and "Mark as unread" on read mail, and it is hidden entirely when the
   selection holds both, where no label would be true.
-- **Marking a whole thread read or unread is now two entries**, both under
-  Whole thread, replacing the single toggle. A thread's unread state is the
-  union over its messages, so a thread with one unread reply always answered
-  "unread" and the toggle could only ever mark it read. Neither entry carries
-  a shortcut, and `Ctrl+Alt+U` is now unbound.
+- **A row in the list is now either a conversation or a message, and it says
+  which.** A thread with more than one message is the CONVERSATION: selecting
+  it shows a dashboard of the whole thread rather than one message pulled out
+  of it, and every action on it covers every message in it. A thread of one
+  message is unchanged, opening its message on a single click exactly as
+  before. Replies inside an expanded thread are still individual messages and
+  still act on themselves alone.
+- **The "Whole thread" submenu is gone, and the ordinary actions name their
+  scope.** The row already decides what an action covers, so a second set of
+  entries was a second answer to a settled question. On a conversation the
+  entries read "Delete thread", "Archive thread", "Mark thread as read",
+  "Mark thread as spam", "Important thread" and "Restore thread from trash";
+  on a message they read as they always did. The five `*_thread` action names
+  are removed, see Upgrading.
+- **Delete and Archive are conversation-level only.** They are absent, not
+  disabled, on a reply inside an expanded thread: removing one reply from a
+  conversation is not something the interface offers. A thread of one message
+  keeps both, because there deleting the message and deleting the conversation
+  are the same act. Forward and Save disappear on a conversation row for the
+  same reason, and Reply becomes one entry, "Reply to this thread", which
+  replies to all and quotes nothing.
+- **A mixed conversation reads as unread.** Any conversation holding an unread
+  message offers "Mark thread as read" and marks every message read; only a
+  fully read selection offers "Mark thread as unread". The action is no longer
+  hidden on a selection that disagrees with itself: with the absolute entries
+  gone that would have left no way to act at all, and two presses now reach
+  either state from anywhere. `Ctrl+Alt+U` is unbound.
+- **A conversation stays in a view while any of its messages still match it.**
+  Reading one message of five no longer takes the conversation out of Unread.
+  A row is never removed while it is the current one, so the automatic
+  mark-read cannot pull a row out from under you, and a write you asked for
+  removes the row at once while an automatic one waits until you move on.
+  Reading the last unread message of a long conversation is the one case that
+  still waits for the next query or sync.
 - **Delete and Restore appear only where they apply.** Delete is hidden on
   mail already in the trash, where it reported success and did nothing, and
   Restore is hidden on mail that was never deleted.
@@ -95,6 +136,24 @@ point at which they are stable.
   "thrown away".
 
 ### Fixed
+
+- **Undo no longer rewrites messages the action never touched.** Undoing a
+  thread-scoped action inverted its tags while keeping the whole thread as its
+  scope, so undoing "mark thread read" on a conversation of 44 messages that
+  held 2 unread added `unread` to all 44 and left 43 of them unread. Because
+  `maildir.synchronize_flags` is on, that rewrote the files on disk and the
+  next sync would have carried it to the mail server. An action now records
+  which messages its write actually changed, and its undo covers only those; a
+  write that changed nothing pushes no undo entry at all. The same defect was
+  present on a multi-row message selection and is fixed with it.
+- **A row now leaves a view as soon as it stops belonging to it.** Marking a
+  message read left it sitting in the Unread view, un-flagging left it in
+  Flagged, and removing `inbox` by hand left it in the Inbox, each correcting
+  itself only at the next query or sync. Every tag write is checked now, and
+  the reverse case too: a write that puts the view's tag back refreshes the
+  list, so an undone mark-read is visible again in the view it was undone in.
+  Views defined by a folder rather than a tag, and hand-written queries, are
+  deliberately left alone.
 
 - **Forwarding an HTML message kept its formatting.** A forward carried only
   the plain-text version of the original, so tables, emphasis and layout were
@@ -149,6 +208,25 @@ point at which they are stable.
   in that case, the sender's copy and the recipient's, and the `post-new`
   hook's sent-mail carve-out matched the sent copy and stripped the tag from
   both.
+
+### Upgrading
+
+**The five whole-thread action names are removed.** A `[keys]` section that
+binds any of them names an action that no longer exists, and qtmaildir will
+report it as unknown at startup. Delete the binding: the ordinary action now
+does whatever the selected row means, so one binding covers both cases.
+
+| Removed | Replaced by |
+|---|---|
+| `archive_thread` | `archive` |
+| `delete_thread` | `delete` |
+| `spam_thread` | `spam` |
+| `flag_thread` | `flag` |
+| `mark_thread_read` / `mark_thread_unread` | `toggle_unread` |
+
+Their default bindings go with them: `Ctrl+Alt+E`, `Ctrl+Alt+D`, `Ctrl+Alt+S`
+and `Ctrl+Alt+I` are unbound, and so is `Ctrl+Alt+U`, which the two
+mark-thread entries had already given up. Nothing needs adding in their place.
 
 ## [0.27.0] - 2026-08-25
 

@@ -319,9 +319,32 @@ load in flight, which is the trap item 119's rule-count work already recorded.
    Delete and Archive absent on reply rows.
 3. **Worker.** `loadThreadDigest`, the value struct, its own generation.
 4. **Pane.** The dashboard widget, stacked with the message view.
-5. **Item 176.** The undo fix, which this makes easier: a thread action's undo
-   covering the whole thread is now honestly what the user asked for, so the
-   remaining exposure is only the multi-row message case.
+5. **Item 176.** The undo fix.
+
+   **This step's reasoning was wrong, and what shipped is the opposite of what
+   is written below. Corrected 2026-08-28, after the work was done.** The
+   paragraph said: a thread action's undo covering the whole thread is now
+   honestly what the user asked for, so the remaining exposure is only the
+   multi-row message case. That reads as sound and is not, which is why it is
+   corrected here rather than deleted: someone will otherwise reason their way
+   back to it.
+
+   The flaw is that "what the user asked for" is the SCOPE of the write, and an
+   undo is not the inverse of a scope, it is the inverse of an EFFECT. The user
+   asking to mark a whole conversation read does not make it honest to mark the
+   whole conversation unread afterwards, because most of it was already read
+   before they touched anything. Item 177 makes the thread the honest scope of
+   the WRITE and changes nothing about the undo: measured on a conversation of
+   44 messages holding 2 unread, the undo left 43 unread either way. Making a
+   row mean a conversation does not reduce the exposure, it makes the largest
+   case reachable by the ordinary gesture rather than by a submenu entry.
+
+   So `ThreadTagCommand::undo()` restricts its write to the ids
+   `NotmuchWorker::applyTags()` reported as actually changed, exactly as
+   `MessageTagCommand` does. The two share a `TagCommand` base for that reason.
+   `sendThreadTagChange` keeps the thread as its REPAINT scope while taking
+   `onlyMessageIds` for the write, because the card that changed on screen and
+   the messages that changed on disk are genuinely different sets.
 
 This is one coherent change rather than a decomposition candidate. Splitting it
 across releases would ship a state where rows mean one thing and actions

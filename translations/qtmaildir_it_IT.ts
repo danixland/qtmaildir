@@ -2150,6 +2150,100 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     </message>
 </context>
 <context>
+    <name>ThreadDashboard</name>
+    <message>
+        <source>just now</source>
+        <translation>proprio ora</translation>
+    </message>
+    <message>
+        <source>%1 min ago</source>
+        <translation>%1 min fa</translation>
+    </message>
+    <message>
+        <source>%1 h ago</source>
+        <translation>%1 h fa</translation>
+    </message>
+    <message>
+        <source>%1 d ago</source>
+        <translation>%1 g fa</translation>
+    </message>
+    <message>
+        <source>Waiting for you</source>
+        <translation>In attesa di te</translation>
+    </message>
+    <message>
+        <source>All caught up</source>
+        <translation>Tutto letto</translation>
+    </message>
+    <message>
+        <source>Mark all read</source>
+        <translation>Segna tutti come letti</translation>
+    </message>
+    <message>
+        <source>Archive</source>
+        <translation>Archivia</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>Elimina</translation>
+    </message>
+    <message>
+        <source>(no subject)</source>
+        <translation>(nessun oggetto)</translation>
+    </message>
+    <message>
+        <source>today</source>
+        <translation>oggi</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n day(s)</source>
+        <translation>
+            <numerusform>%n giorno</numerusform>
+            <numerusform>%n giorni</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n person(s)</source>
+        <translation>
+            <numerusform>%n persona</numerusform>
+            <numerusform>%n persone</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1 · %2</source>
+        <translation>%1 · %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s)</source>
+        <translation>
+            <numerusform>%n messaggio</numerusform>
+            <numerusform>%n messaggi</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n unread</source>
+        <translation>
+            <numerusform>%n non letto</numerusform>
+            <numerusform>%n non letti</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1 → %2</source>
+        <translation>%1 → %2</translation>
+    </message>
+    <message>
+        <source>busiest %1</source>
+        <translation>più attivo %1</translation>
+    </message>
+    <message numerus="yes">
+        <source>+%n more</source>
+        <translation>
+            <numerusform>+%n altro</numerusform>
+            <numerusform>+%n altri</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
     <name>ThreadListModel</name>
     <message>
         <source>Important</source>

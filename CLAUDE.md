@@ -62,7 +62,9 @@ MainWindow                         NotmuchWorker
  │   saved-query QPushButtons
  ├ ThreadListView (QTreeView) ── ThreadListModel (QAbstractItemModel)
  │   ONE column of cards; CardDelegate paints each whole, from CardLayout
- └ MessageView (header QLabel, QWebEngineView, attachment bar, TagStrip)
+ └ MessageView (a QStackedWidget over two pages)
+    ├ the message page (header QLabel, QWebEngineView, attachment bar, TagStrip)
+    └ ThreadDashboard (a conversation, from a ThreadDigest; its own TagStrip)
 
 ComposeWindow (its own top-level window, one per message being written)
  ├ MarkdownFormat (namespace: what the formatting buttons do to a selection)
@@ -85,11 +87,11 @@ listed `QueryBar`, `SavedQueryBar`, `HeaderWidget` and `AttachmentBar`; none of
 those types have ever existed, and looking for them wastes a search. The widget
 classes that do exist are `MessageView`, `ThreadListView`, `TagStrip`,
 `TagDialog`, `MessageDetailsDialog`, `PendingChangesDialog`,
-`RowStyleDelegate`, `CardDelegate`, `ComposeWindow`, `SendDialog` and
-`BusyIndicator`; `TagChip` is a namespace of
+`RowStyleDelegate`, `CardDelegate`, `ComposeWindow`, `SendDialog`,
+`ThreadDashboard` and `BusyIndicator`; `TagChip` is a namespace of
 painting helpers, not a widget, `SearchTerm` is a namespace of query builders,
-and `ThreadCidMap`, `CardLayout`, `SearchOffer`, `HeaderRow` and
-`PendingChangeRow` are structs.
+and `ThreadCidMap`, `CardLayout`, `SearchOffer`, `HeaderRow`, `ThreadDigest`
+and `PendingChangeRow` are structs.
 `SubjectDelegate` existed until item 53 and is gone.
 
 **The compose units are mostly NAMESPACES, and the same warning applies to
@@ -239,6 +241,35 @@ open handle per process, so that close-first ordering is required, not stylistic
 `mailctl` CLI, where they restrained an agent; a human at a GUI gets **undo** instead — every
 mutation pushes its inverse (`TagChange::inverted()`) onto a `QUndoStack`. Do not add
 confirmation dialogs for tag mutations.
+
+**An undo covers what the write CHANGED, never what it asked for, and getting
+this wrong rewrote real mail.** Item 176. `ThreadTagCommand::undo()` inverted
+the tags and kept the THREAD as its scope, so undoing "mark thread read" on a
+conversation of 44 messages that held 2 unread added `unread` to all 44 and left
+43 unread. `maildir.synchronize_flags` is on, so the Maildir filenames were
+rewritten and the next sync would have carried it to the mail server; it was
+repaired by hand. The undo stack is this application's substitute for a
+confirmation dialog, so an undo that damages state is worse than the dialog it
+replaces.
+
+`NotmuchWorker::applyTags()` is the only place that can know: it reads each
+message's tags before writing and reports only the ids whose tags actually
+moved. A `TagCommand` base carries that effective set for both
+`ThreadTagCommand` and `MessageTagCommand`, which had the same shape and the
+same defect on a multi-row selection. Two consequences that look like details
+and are not:
+
+- **`tagsApplied` does NOT fire when the effective list is empty.** Emitting an
+  empty change would push an undo entry whose inverse adds a tag no message ever
+  carried, which is the same bug one step later.
+- **`sendThreadTagChange` takes an `onlyMessageIds` parameter** so it keeps its
+  thread-scoped REPAINT while restricting the WRITE. Those two scopes differ on
+  purpose: the conversation card is what changed on screen, and a subset of its
+  messages is what changed on disk. Do not collapse them.
+
+A test for this needs a thread whose messages DISAGREE about the tag, for the
+same reason item 87 records: two messages in the same state answer identically
+whichever way the code resolves them.
 
 **There is exactly ONE exception, and its shape is the rule's own logic rather
 than a hole in it.** `empty_trash` (item 118) destroys files and index entries,
@@ -615,51 +646,29 @@ probe showed `QMetaType::fromName("QList<int>")` invalid while
 that drives it across a real thread is what says it works, and what fails if
 it stops.
 
-**`ThreadSummary::tags` is notmuch's UNION over the thread, and a card that
-stands for one message must not draw it.** A four-message thread whose third
-message is `signed` reads as signed, so the root card and the message pane both
-claimed a tag the displayed message did not have (item 110). `MessageRef`
-carries the message's own tags and arrives on every load;
-`ThreadListModel::setRootMessageTags()` records them on `ThreadNode::first`, and
-a thread row's `data()` substitutes `first.tags` for the summary's when that
-node exists. Only the TAGS are substituted: the subject, authors, date and reply
-count describe the thread and are correct. The summary itself is never
-rewritten, because the thread-scoped actions and the query read it.
+**`ThreadSummary::tags` is notmuch's UNION over the thread, and a conversation
+row draws exactly that.** This REVERSES items 110 and 111, deliberately, under
+item 177 on 2026-08-28, and the reversal is the point rather than a regression:
+both of those solved the problem of a card standing for one message while
+carrying its thread's tags, and item 177 removed the premise instead. A row
+with replies IS the conversation, so the union is the honest answer and needs
+no correction. A row with `totalCount == 1` has a union that IS its message, so
+the union is honest there too. There is no case left where a card claims a tag
+its subject does not have.
 
-That was also why a root card could not repaint: with no per-message tags, a
-message-scoped write had nothing to change. `applyMessageTagChange` keeps the
+What went with them: `setRootMessageTags()`, `ThreadSummary::firstMessageTags`,
+the two-tier `PillTagsRole` / `PillOwnCountRole` split, `CardLayout::siblingFont()`
+and `CardDelegate::mutedChipColour()`. The chips are one tier, in one font, in
+one colour treatment. **The user was asked and confirmed they are happy to lose
+the second tier**, so do not restore it on the reasoning that item 111 recorded:
+that reasoning was sound for a card that stood for one message, and no card does
+any more. Restoring it would reintroduce a per-message identity on a row that
+has none, which is exactly the ambiguity item 177 exists to remove.
+
+The one thing to keep from that history: `applyMessageTagChange` keeps the
 summary in step only when `totalCount <= 1`, where the union IS the message.
-
-**The card shows BOTH tiers, and that is item 111 rather than a leftover.**
-`PillTagsRole` returns the displayed message's tags first and the thread's other
-tags after; `PillOwnCountRole` is the boundary the delegate switches fonts at.
-The second tier is drawn in `CardLayout::siblingFont()` and
-`CardDelegate::mutedChipColour()`.
-
-**The split comes from the QUERY, not from the message load**, and that
-distinction was worth a whole round trip. `ThreadSummary::firstMessageTags` is
-read by the same worker walk that finds `firstMessageId`, so an UNOPENED row
-already knows which tags are its own. Deriving it from the load instead left
-every unopened row drawing one tier and correcting itself on selection, which is
-most of the list and is exactly the "chip changed when I clicked" the feature
-exists to remove. `nodeFor()` seeds the node on arrival; `reconcile()` must
-refresh it AND compare it, since a survivor keeps its node and a sync can move
-the root's tags while the thread's union stands still.
-
-**A size step must be a FRACTION, not a subtraction, and the padding has to
-follow it.** One point off a 14pt desktop font is a 7% step and reads as the
-same size; the user reported exactly that. `CardLayout::siblingFont()` is 0.70
-of the card font. `TagChip::kPaddingX` is a fixed 9px a side, so an unscaled
-sibling chip is 18px of padding around ~30px of text and stays wide while its
-letters shrink: `TagChip::sizeFor()` takes a scale, and
-`CardDelegate::chipSize()` is where the tier chooses it. Assert on ratios rather
-than sizes, so the test is about the distinction and not the constant.
-
-Muting is **saturation only**. Hue stays so the tag is recognisable; lightness
-stays so `TagColors::textColourOn()` keeps its choice and the chip cannot become
-unreadable. Do not blend toward the background here: `accentLineColour()`
-records what that costs on a dark theme, and a chip is worse because its fill
-carries text.
+On a longer thread it deliberately leaves the summary alone, which is why the
+membership rule below has a documented lag.
 
 **`TagStrip::visibleTags()` measures the LAYOUT, not the data.** It is one row
 that collapses the overflow into a trailing "+N" chip, and an unshown window
@@ -667,6 +676,12 @@ under the offscreen platform has no width, so nearly everything lands in
 `hiddenTags()`. A test asserting on `visibleTags()` alone passes or fails on how
 many tags happened to fit; two shipped that way before it was noticed. Assert on
 `visibleTags() + hiddenTags()`.
+
+**The message pane holds TWO `TagStrip`s since item 177**, one in the message
+view and one in the dashboard, so an unqualified `findChild<TagStrip *>()`
+returns whichever the object tree happens to yield first and a test written that
+way asserts about the wrong widget. Both carry object names:
+`messageTagStrip` and `dashboardTagStrip`. Find by name.
 
 **A message-scoped write repaints the MESSAGE's row, never the thread's.**
 `ThreadListModel::applyMessageTagChange()` is the counterpart to
@@ -677,22 +692,75 @@ should repaint, so Delete and Toggle unread on a reply moved the pending count
 and changed nothing on screen (item 105). The thread card deliberately stays
 put; one deleted reply does not doom the conversation.
 
-**A thread ROW means the one message its card displays, not the conversation.**
-Item 108, 2026-08-16. `ThreadListModel::messageScopeFor()` is what the ordinary
-tag actions resolve through; `scopeFor()` still returns whole threads and is
-what the five `*_thread` actions use. A thread row's message is
-`ThreadSummary::firstMessageId`, carried from the query, so no expansion is
-needed; in the Sent view that is the first MATCHED message, which is right for
-the same reason it is right on the card. A row with no id contributes NOTHING
-rather than falling back to its thread: that fallback is the silent escalation
-this removed.
+**A row is either a CONVERSATION or a MESSAGE, and one question decides which.**
+Item 177, 2026-08-28. This REVERSES item 108, which had made a thread row mean
+the one message its card displayed. That was a coherent answer to a real
+ambiguity and it did not hold: a row that means a message needs a second set of
+actions to reach its thread, and the two sets then disagree about what the
+gesture the user just made was for. Item 177 answers it at the row instead.
 
-The automatic mark-read follows the same rule (item 87): `m_markReadMessageId`,
-armed for a reply as well as a root. One approximation is deliberate and
-documented at the call site: a thread row arms from `ThreadSummary::isUnread()`,
-a union over the conversation, so it can arm for a thread whose displayed
-message is already read. The write is still scoped to that message, so the cost
-is a no-op rather than a wrong write.
+`ThreadListModel::isConversationRow()` is the single predicate. A summary with
+replies is the conversation; a summary with `totalCount == 1` is its message and
+behaves exactly as it always has, opening on one click; a reply row inside an
+expanded thread is its own message. `scopeForSelection()` is the ONE resolver,
+replacing the `scopeFor()` / `messageScopeFor()` pair, because a pair made the
+CALLER choose and that choice was the ambiguity. It resolves per row, so a mixed
+selection carries both kinds.
+
+**Do not restore `messageScopeFor()`, the five `*_thread` action names or the
+"Whole thread" submenu.** They are removed, with an `### Upgrading` note in the
+changelog. A second set of actions is a second answer to a settled question, and
+`ThreadSummary::firstMessageId` no longer decides a thread row's scope at all
+(it survives for other callers). A new action asks `isConversationRow()`; it
+does not add a `_thread` twin.
+
+**Delete and Archive are ABSENT on a reply row, not disabled**, at the user's
+own decision: removing one reply from a conversation is not offered. A thread of
+one keeps them, since there the two acts are the same, so the test in
+`refreshActionLabels()` is "is this a reply", which only a message row can be.
+Forward and Save disappear on a conversation row, and Reply is one entry,
+"Reply to this thread", which is reply-all and quotes nothing.
+
+**The unread toggle is a CATCH-ALL, and that reverses item 112's hiding rule.**
+Item 112 hid the toggle whenever the selection disagreed with itself, on the
+correct reasoning that a union is not a state. That was affordable only because
+the `Whole thread` submenu carried absolute entries beside it; with the submenu
+gone, hiding leaves no way to act at all. So: ANY unread message, a mixed
+conversation included, reads "Mark thread as read" and marks every message read;
+only a fully read selection reads "Mark thread as unread". Two presses reach
+either state from anywhere. **The write direction must move with the label**, or
+a mixed conversation gets marked unread under a label promising read.
+
+The automatic mark-read still follows item 87's rule for a message row
+(`m_markReadMessageId`, scoped to the displayed message). It is NOT armed for a
+conversation row, because a conversation puts no single message on display and
+there is nothing to mark.
+
+**Membership is the union, with no exceptions.** A thread belongs to a view
+while ANY of its messages match it, so reading one message of five does not take
+the conversation out of Unread. `MainWindow::syncViewMembership()` is the guard
+and is called from all three funnels (message, thread, move). Three properties
+of it are decisions rather than implementation:
+
+- A row is **never evicted while it is current.** The automatic mark-read fires
+  two seconds after selection, so evicting would take the row out from under the
+  user mid-read.
+- A write the user **asked for** evicts at once; an **automatic** one defers
+  until the selection moves (`m_deferredEvictions`). The deferral keys on the
+  write being automatic, so a test that calls the send path directly exercises
+  the opposite branch: drive it through the mark-read TIMER.
+- The inverse case **refreshes rather than inserting.** The model holds no
+  summary for a thread the query never returned, so a row that starts matching
+  cannot be inserted optimistically. Without this an undone mark-read stayed
+  invisible in the view it was undone in.
+
+**One lag is deliberate and is not a wrong answer.** Reading the LAST unread
+message of a long conversation does not evict it immediately, because
+`applyMessageTagChange` leaves a long thread's summary alone (see the union rule
+above), so the union the model holds is stale and judging on it would be wrong
+in BOTH directions. `threadCountFor()` is the question a message-scoped write
+asks before judging: a thread of one has a union that moved, a longer one does
+not. The row leaves at the next query or sync.
 
 **Adding an action is FIVE places, and three of them are enforced by tests that
 fail in confusing ways.** `KeyMap::knownActions()` (a `Q_ASSERT` in the
@@ -702,9 +770,12 @@ since item 132: a shortcut is a chosen subset, not a requirement, so an action
 nobody would press a chord for simply gets no entry and the shortcut reference
 prints it as `(unbound)`), the icon table (every action must carry one), and
 a MENU. The no-duplicate-icons rule is narrowed to actions that can reach the
-toolbar, by a named exception list; the five thread actions share their twins'
-icons because a submenu entry always carries text, and the test asserts none of
-them is on the toolbar so the exemption cannot be abused.
+toolbar, by a named exception list, and the test asserts none of the exempt
+actions is on the toolbar so the exemption cannot be abused. The list held six
+whole-thread actions until item 177 deleted them; it is down to
+`reply_no_quote`, which is a menu entry that always carries its text. Note it is
+named for the PROPERTY that earns the exemption, not for the tier that first
+needed one, which is why it survived that tier's deletion unchanged.
 
 **The menu was the fifth place, and this document said four until item 103.**
 Nothing enforced it, so `restore` shipped on the trash branch reachable by
@@ -802,17 +873,41 @@ measuring nothing:
   children are populated by the expansion. `hasChildren()` is the pre-expansion
   question and falls back to `summary.totalCount > 1`. An assertion on
   `rowCount` fails against correct code.
-- **A `ThreadSummary` fixture needs `firstMessageId`.** Since item 108 an
-  ordinary tag action resolves a thread row to that id, so a summary without one
-  names no message and every action on it silently does nothing. Ten tests
-  failed this way at once, all reporting "the action did not happen", which
-  reads as a defect in the action rather than a gap in the fixture.
-  `makeThread()` sets it; a hand-built summary must too.
+- **A `ThreadSummary` fixture needs `totalCount` set to what it MEANS**, since
+  item 177 reads exactly that to decide whether a row is a conversation or a
+  message. A summary left at the default is a message row, so a test meaning to
+  exercise a conversation quietly exercises the other branch and passes for the
+  wrong reason. `makeThread()` sets it; a hand-built summary must too.
+  `firstMessageId` still matters for a `totalCount == 1` row, which resolves to
+  its message: without one it names nothing and every action on it silently does
+  nothing. Ten tests failed that way at once under item 108, all reporting "the
+  action did not happen", which reads as a defect in the action rather than a
+  gap in the fixture.
 - **`currentThreadId()` reports INTENT, not content.** It is assigned
   synchronously in the selection handler before any worker round-trip, so a test
   asserting on it passes with `onThreadLoaded()` disabled entirely, measured.
   `MessageView::showingPlaceholder()` is what the user sees; assert the pane is
   blank BEFORE the gesture so the check after it means something.
+- **A `QStackedWidget` takes the LARGEST minimum width of all its pages**, so a
+  page that is not showing can inflate the pane's minimum and squeeze the widget
+  beside it. The dashboard raised the message pane's minimum to 395px over
+  `MainWindow`'s own 300px floor, and the thread list lost the difference. Fixed
+  with `setMinimumWidth(0)` and `QSizePolicy::Ignored` on the stack. An existing
+  resize test caught it, which is the argument for keeping resize tests that
+  look like they assert nothing interesting.
+
+**Five tests changed under item 177 and must not be restored as they were.**
+Two are RETIRED because the behaviour they asserted is the behaviour that was
+reversed: `selectingARootCardKeepsItsThreadForMarkRead` (replaced by
+`selectingAConversationArmsNoMarkRead`, since a conversation arms no mark-read
+at all) and `anUnexpandedRootRendersOneMessageNotTheConversation` (replaced by
+`anUnexpandedRootShowsTheDashboardLikeAnExpandedOne`, which keeps item 66's real
+value, consistency across the expansion boundary, and inverts only which way
+that consistency runs). Three are RETARGETED to `totalCount == 1` rows, where
+their assertions still hold and still matter:
+`autoMarkReadTouchesOnlyTheMessageOnDisplay` (item 87's data-safety property,
+still asserted), `theStaleNoticeKeepsTheMessageOfAThreadRootToo` and
+`aLoadedMessageCorrectsTheStripFromTheThreadsUnion`.
 
 **A queued load can outlive the state that started it.** `loadThread` crosses to the worker
 on a queued connection, so its reply lands after whatever the UI did in the meantime. The

@@ -35,12 +35,6 @@
 
 namespace {
 
-/// How much of a full-size chip's padding a SIBLING chip keeps.
-///
-/// Matched to CardLayout::siblingFont()'s own scale, so the chip shrinks as a
-/// whole rather than keeping full-size margins around smaller letters.
-constexpr qreal kSiblingPaddingScale = 0.70;
-
 CardLayout::Input inputFor(const QModelIndex &index)
 {
     CardLayout::Input in;
@@ -70,37 +64,9 @@ QRect CardDelegate::expanderRectFor(const QStyleOptionViewItem &option,
         .expanderRect;
 }
 
-QSize CardDelegate::chipSize(const QFontMetrics &metrics, const QString &text,
-                             bool own)
+QSize CardDelegate::chipSize(const QFontMetrics &metrics, const QString &text)
 {
-    // The padding shrinks with the font for a sibling chip. Left fixed it is
-    // 18px around roughly 30px of text, so the chip stays wide while its
-    // letters shrink and the tier reads as "same chip, smaller text".
-    return own ? TagChip::sizeFor(metrics, text)
-               : TagChip::sizeFor(metrics, text, kSiblingPaddingScale);
-}
-
-QColor CardDelegate::mutedChipColour(const QColor &chipColour)
-{
-    if (!chipColour.isValid())
-        return chipColour;
-
-    // Saturation only, and NOT a blend toward the background. The accent bar
-    // above records what blending toward Base costs: on a dark theme it lands
-    // on the background and the thing disappears. A chip is worse, because its
-    // fill also has to carry legible text on top of it.
-    //
-    // Hue is untouched, so a muted `signed` is still recognisably the same
-    // colour as a full-size `signed` elsewhere in the list. Lightness is
-    // untouched too, which is what keeps TagColors::textColourOn() picking the
-    // same text colour: draining saturation alone moves the fill toward grey
-    // without moving it toward either black or white, so contrast is preserved
-    // by construction rather than by hoping.
-    constexpr float kSaturationScale = 0.45f;
-
-    float h = 0, s = 0, l = 0, a = 0;
-    chipColour.getHslF(&h, &s, &l, &a);
-    return QColor::fromHslF(h, s * kSaturationScale, l, a);
+    return TagChip::sizeFor(metrics, text);
 }
 
 QRect CardDelegate::fadeRectFor(const QRect &card, const QRect &innermostSpine)
@@ -427,39 +393,24 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 
     // One tier since item 177: a conversation row draws the thread's own tags
     // and a message row draws its message's, so nothing on a card belongs to
-    // anything but the row. The sibling tier this switched fonts at is Task
-    // 3's to remove.
-    const int ownCount = tags.size();
-
+    // anything but the row.
     const QFont ownFont = CardLayout::smallFont(chrome.font);
-    const QFont siblingFont = CardLayout::siblingFont(chrome.font);
     const QFontMetrics ownMetrics(ownFont);
-    const QFontMetrics siblingMetrics(siblingFont);
 
     painter->save();
+    painter->setFont(ownFont);
     int x = card.tagRect.left();
     for (int i = 0; i < tags.size(); ++i) {
-        const bool own = i < ownCount;
-        const QFontMetrics &metrics = own ? ownMetrics : siblingMetrics;
-
-        const QSize size = chipSize(metrics, tags.at(i), own);
+        const QSize size = chipSize(ownMetrics, tags.at(i));
         if (x + size.width() > card.tagRect.right())
             break;  // Out of room; a clipped chip reads as a rendering fault.
 
         QColor colour = i < colours.size() ? colours.at(i).value<QColor>()
                                            : QColor(0x55, 0x55, 0x5f);
-        if (!own)
-            colour = mutedChipColour(colour);
 
-        // Bottom-aligned, so a smaller chip sits on the same baseline as its
-        // neighbours rather than floating in the middle of the row. Top
-        // alignment would step the tier down and read as a layout fault.
-        const int top = card.tagRect.top()
-                        + (ownMetrics.height() - metrics.height());
-
-        painter->setFont(own ? ownFont : siblingFont);
-        TagChip::paint(painter, QRect(QPoint(x, top), size), tags.at(i),
-                       colour);
+        TagChip::paint(painter,
+                       QRect(QPoint(x, card.tagRect.top()), size),
+                       tags.at(i), colour);
         x += size.width() + TagChip::kSpacing;
     }
     painter->restore();

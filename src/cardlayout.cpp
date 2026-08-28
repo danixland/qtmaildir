@@ -107,32 +107,6 @@ QFont CardLayout::smallFont(const QFont &cardFont)
     return small;
 }
 
-QFont CardLayout::siblingFont(const QFont &cardFont)
-{
-    // A FRACTION of the card's font, not a fixed number of points off it.
-    //
-    // Subtracting one point was the first attempt and the user reported the
-    // tiers as indistinguishable. The reason is arithmetic: their desktop is
-    // 14pt, so the two chip tiers were 13 and 12, a 7% step. Subtraction gives
-    // a step whose size depends on the desktop font, which is exactly backwards
-    // — it is largest where the text is already small enough to be fragile.
-    //
-    // 0.70 of the card font, against smallFont()'s one point off, so on a 14pt
-    // desktop the tiers are 13 and 10. Chosen with the user against rendered
-    // sizes rather than picked.
-    constexpr qreal kSiblingScale = 0.70;
-
-    QFont small = cardFont;
-    // pointSizeF() returns -1 for a font set in PIXELS, which qt6ct does, and
-    // scaling -1 asks for an invalid size that Qt silently ignores, leaving
-    // both tiers identical. Same split as smallFont(), same reason.
-    if (small.pointSizeF() > 0.0)
-        small.setPointSizeF(qMax(6.0, cardFont.pointSizeF() * kSiblingScale));
-    else if (small.pixelSize() > 0)
-        small.setPixelSize(qMax(8, qRound(cardFont.pixelSize() * kSiblingScale)));
-    return small;
-}
-
 int CardLayout::heightFor(const QFont &font)
 {
     const QFontMetrics metrics(font);

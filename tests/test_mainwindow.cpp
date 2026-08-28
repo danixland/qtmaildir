@@ -554,6 +554,10 @@ private slots:
     void replyToAConversationAnswersItsNewestMessage();
     void replyIsUntouchedOnAMessageRow();
 
+    // Item 177, task 6: membership is the union over the conversation.
+    void aConversationStaysWhileAnyMessageMatches();
+    void aConversationLeavesWhenItsUnionEmpties();
+
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
     /// rather than a value because it is rebuilt per test, and QTemporaryDir
@@ -5560,6 +5564,17 @@ void TestMainWindow::aMixedThreadIsMarkedReadAndTheSecondPressIsTheWayBack()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
+
+    // A query with no filter tag, so viewFilterTag() answers empty and the
+    // membership sync (item 177, task 6) stays out of this. Under the default
+    // startup query the first press correctly EVICTS the row it just marked
+    // read, and the assertions below would then be reading a list that no
+    // longer holds the thread. What is under test here is the toggle's
+    // direction, which membership neither helps nor hinders.
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("thread:T1"));
 
     // MIXED: the union carries `unread` because some message is unread, while
     // others are not. A thread whose messages are all in one state answers
@@ -15291,6 +15306,103 @@ void TestMainWindow::replyIsUntouchedOnAMessageRow()
              qPrintable(QStringLiteral("a reply row's Reply claims to answer "
                                        "the thread: %1")
                             .arg(replyAction->text())));
+}
+
+void TestMainWindow::aConversationStaysWhileAnyMessageMatches()
+{
+    // The reported case: a 44-message thread with two replies still unread.
+    // Reading one message must not evict the conversation.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && queryEdit);
+
+    queryEdit->setText(
+        config.resolvedQuery(Config::builtinFilter(QStringLiteral("unread")),
+                             QString()));
+
+    ThreadSummary other = makeThread(QStringLiteral("t1"),
+                                     QStringList{ QStringLiteral("unread") });
+    other.totalCount = 1;
+    ThreadSummary big = makeThread(QStringLiteral("t2"),
+                                   QStringList{ QStringLiteral("unread") });
+    big.totalCount = 44;
+    model->appendBatch({ other, big });
+
+    // One message of the conversation is read, and specifically the one its
+    // ROW displays: naming any other id makes the model answer "no thread" and
+    // the test measures nothing, passing against an eviction that judges on
+    // the card's own tags. The union still says unread, so the row stays.
+    window.sendMessageTagChangeForTesting({ big.firstMessageId }, {},
+                                          { QStringLiteral("unread") },
+                                          QStringLiteral("Mark read"));
+
+    QCOMPARE(model->rowCount(QModelIndex()), 2);
+    QCOMPARE(model->threadAt(1).threadId, QStringLiteral("t2"));
+
+    // The same question put to the judgement ITSELF, which is where the union
+    // rule lives. The send path above reaches it only for a thread of one, so
+    // asserting through that path alone would let an eviction judging the
+    // card's own tags pass: the long thread is filtered out before the model
+    // is ever asked. Here the row is named directly, and the only thing
+    // keeping it is that its union still carries `unread` while the message
+    // its card draws no longer does.
+    QVERIFY2(!model->messageById(big.firstMessageId)
+                  .tags.contains(QStringLiteral("unread")),
+             "the fixture's card message is still unread, so this assertion "
+             "cannot tell the union apart from the card's own tags");
+    model->removeThreadsWithoutTag(QStringList{ QStringLiteral("t2") },
+                                   QStringLiteral("unread"));
+    QCOMPARE(model->rowCount(QModelIndex()), 2);
+
+    // And the counterpart, so the test is about the union and not about
+    // nothing ever being evicted: a one-message row's union IS its message, so
+    // reading it takes the row out at once.
+    window.sendMessageTagChangeForTesting({ other.firstMessageId }, {},
+                                          { QStringLiteral("unread") },
+                                          QStringLiteral("Mark read"));
+
+    QCOMPARE(model->rowCount(QModelIndex()), 1);
+    QCOMPARE(model->threadAt(0).threadId, QStringLiteral("t2"));
+}
+
+void TestMainWindow::aConversationLeavesWhenItsUnionEmpties()
+{
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<QTreeView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(
+        config.resolvedQuery(Config::builtinFilter(QStringLiteral("unread")),
+                             QString()));
+
+    ThreadSummary keep = makeThread(QStringLiteral("t1"),
+                                    QStringList{ QStringLiteral("unread") });
+    keep.totalCount = 1;
+    ThreadSummary go = makeThread(QStringLiteral("t2"),
+                                  QStringList{ QStringLiteral("unread") });
+    go.totalCount = 4;
+    model->appendBatch({ keep, go });
+
+    // Selected elsewhere, so the never-evict-the-current-row rule is not what
+    // is being measured here.
+    selectThreadRow(view, 0);
+    QApplication::processEvents();
+
+    window.sendThreadTagChangeForTesting({ QStringLiteral("t2") }, {},
+                                         { QStringLiteral("unread") },
+                                         QStringLiteral("Mark thread read"));
+
+    QCOMPARE(model->rowCount(QModelIndex()), 1);
+    QCOMPARE(model->threadAt(0).threadId, QStringLiteral("t1"));
 }
 
 #include "test_mainwindow.moc"

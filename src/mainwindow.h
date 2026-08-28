@@ -235,6 +235,16 @@ public:
         sendMessageTagChange(messageIds, add, remove, description);
     }
 
+    /// Sends a thread-scoped tag change directly. The counterpart seam to
+    /// sendMessageTagChangeForTesting, for the same reason.
+    void sendThreadTagChangeForTesting(const QStringList &threadIds,
+                                       const QStringList &add,
+                                       const QStringList &remove,
+                                       const QString &description)
+    {
+        sendThreadTagChange(threadIds, add, remove, description);
+    }
+
     /// The ids the last tag change was sent for, and whether they were thread
     /// ids or message ids.
     ///
@@ -1190,6 +1200,29 @@ private:
     /// Both answer empty, which is what keeps an optimistic row removal from
     /// firing in a view it cannot judge.
     QString viewFilterTag() const;
+
+    /// Keeps the current view's membership in step with a write: drops a row
+    /// whose UNION has stopped matching, and refreshes when one starts
+    /// matching, which the model cannot express on its own. No-op unless the
+    /// view has a filter tag and the write touched it.
+    void syncViewMembership(const QStringList &threadIds,
+                            bool aRowIsMissing,
+                            const QStringList &added,
+                            const QStringList &removed);
+
+    /// Removes the rows that stopped matching the view while the user was
+    /// sitting on them. Called when the selection moves.
+    void flushDeferredEviction();
+
+    /// Threads that have stopped matching the view but were selected when it
+    /// happened, so evicting them would have moved the list under the user.
+    QStringList m_deferredEvictions;
+
+    /// True only while an AUTOMATIC write is being sent. A write the user
+    /// asked for evicts its row at once; one a timer made must not, or the row
+    /// leaves under an open context menu two seconds after it was selected.
+    /// The distinction is who initiated it, not what it does (item 177).
+    bool m_automaticWrite = false;
 
     void onMessagesMoved(const QMap<QString, QString> &originByMessageId,
                          const QString &destFolder);

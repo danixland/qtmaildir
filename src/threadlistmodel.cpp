@@ -206,6 +206,34 @@ void ThreadListModel::setTrashView(bool trash)
     }
 }
 
+void ThreadListModel::removeThreadsWithoutTag(const QStringList &threadIds,
+                                              const QString &tag)
+{
+    if (tag.isEmpty() || threadIds.isEmpty())
+        return;
+
+    // Backwards for the same reason the sweeping form below is: each removal
+    // renumbers everything after it.
+    for (int row = m_threads.size() - 1; row >= 0; --row) {
+        const ThreadNode &node = m_threads.at(row);
+        if (!threadIds.contains(node.summary.threadId))
+            continue;
+
+        // The SUMMARY, which is notmuch's union over the conversation, and
+        // never `first.tags`. A thread belongs to a view while ANY of its
+        // messages match it (item 177), so reading the message a 44-message
+        // card happens to draw must not evict the conversation while two of
+        // its replies are still unread. `first.tags` is right for what the
+        // card PAINTS and wrong for whether the row belongs here at all.
+        if (node.summary.tags.contains(tag))
+            continue;
+
+        beginRemoveRows({}, row, row);
+        m_threads.remove(row);
+        endRemoveRows();
+    }
+}
+
 void ThreadListModel::removeThreadsWithoutTag(const QString &tag)
 {
     if (tag.isEmpty() || m_threads.isEmpty())
@@ -995,12 +1023,38 @@ MessageNode ThreadListModel::messageAt(const QModelIndex &index) const
 QString ThreadListModel::threadIdForMessage(const QString &messageId) const
 {
     for (const ThreadNode &node : m_threads) {
+        // The ROOT first. A thread's first message is not among its children
+        // (item 109: setThreadMessages drops depth 0 because the root row
+        // stands for it), so a search over children alone answers "no thread"
+        // for every thread row's own message, which is the id an ordinary tag
+        // action resolves to since item 108.
+        if (node.first.messageId == messageId
+            || node.summary.firstMessageId == messageId) {
+            return node.summary.threadId;
+        }
         for (const MessageNode &child : node.children) {
             if (child.messageId == messageId)
                 return node.summary.threadId;
         }
     }
     return {};
+}
+
+bool ThreadListModel::hasThread(const QString &threadId) const
+{
+    return std::any_of(m_threads.cbegin(), m_threads.cend(),
+                       [&threadId](const ThreadNode &node) {
+                           return node.summary.threadId == threadId;
+                       });
+}
+
+int ThreadListModel::threadCountFor(const QString &threadId) const
+{
+    for (const ThreadNode &node : m_threads) {
+        if (node.summary.threadId == threadId)
+            return node.summary.totalCount;
+    }
+    return 0;
 }
 
 MessageNode ThreadListModel::messageById(const QString &messageId) const

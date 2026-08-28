@@ -3847,6 +3847,11 @@ void MainWindow::onSelectionChanged()
     // emitted BEFORE the selection model is updated, so a handler reading
     // selectedRows() there sees the PREVIOUS selection and would label the
     // action for the rows the user just left (CLAUDE.md, verified Qt 6.11).
+    //
+    // Before anything else reads the model: the user has moved off whatever
+    // row they were on, so a row held back by syncViewMembership() leaves now.
+    flushDeferredEviction();
+
     refreshUnreadAction();
     refreshScopedActionLabels();
     refreshTrashActions();
@@ -5365,8 +5370,15 @@ void MainWindow::markCurrentThreadRead()
     // It still funnels through the one applyTags path, per CLAUDE.md; what
     // differs is only whether the inverse is pushed, which is a window-level
     // decision above the worker.
+    //
+    // Flagged as AUTOMATIC for syncViewMembership(): the user did not ask for
+    // this write, so the row it changes must not be taken out from under them.
+    // A write they DID ask for evicts at once; the distinction is who
+    // initiated it, not what it does (item 177).
+    m_automaticWrite = true;
     sendMessageTagChange(messageIds, {}, { QStringLiteral("unread") },
                          tr("Mark read"));
+    m_automaticWrite = false;
 }
 
 QString MainWindow::currentThreadFirstMessageId() const
@@ -5604,6 +5616,40 @@ void MainWindow::sendMessageTagChange(const QStringList &messageIds,
         m_messageView->setTags(
             m_model->messageById(m_currentMessageId).tags);
     }
+
+    // A row that no longer belongs in the view LEAVES it, rather than sitting
+    // there repainted until the next query. Beside the repaint above and
+    // before the sync hold below, since a held edit is applied optimistically
+    // too and its row is just as wrong to keep.
+    //
+    // The threads the touched messages belong to, with no filter on which
+    // message the card draws: a row is the conversation, so it is the UNION
+    // that decides, and the union is what removeThreadsWithoutTag() reads. A
+    // message the model does not hold names no thread, and is what the refresh
+    // inside the sync is for.
+    //
+    // Named only when this write MOVED the union, which is the one case a
+    // message edit can. applyMessageTagChange() keeps the summary in step for
+    // a thread of one, where the union IS the message, and deliberately leaves
+    // a longer thread's summary alone because one message's edit does not
+    // describe the conversation. Putting a longer thread up for eviction here
+    // would judge it on a union this write never touched: a stale answer, and
+    // wrong in both directions. A conversation leaves the view when a
+    // THREAD-scoped write empties its union, which is the other call site.
+    QStringList touchedThreads;
+    bool aRowIsMissing = false;
+    for (const QString &messageId : messageIds) {
+        const QString threadId = m_model->threadIdForMessage(messageId);
+        if (threadId.isEmpty()) {
+            aRowIsMissing = true;
+            continue;
+        }
+        if (m_model->threadCountFor(threadId) > 1)
+            continue;
+        if (!touchedThreads.contains(threadId))
+            touchedThreads.append(threadId);
+    }
+    syncViewMembership(touchedThreads, aRowIsMissing, add, remove);
 
     // The accounts this touches, resolved through the containing threads: the
     // account is a property of the thread, and the sync needs the channel
@@ -6488,6 +6534,130 @@ void MainWindow::sendMove(const QStringList &messageIds,
                               Q_ARG(QString, destFolder));
 }
 
+void MainWindow::syncViewMembership(const QStringList &threadIds,
+                                    bool aRowIsMissing,
+                                    const QStringList &added,
+                                    const QStringList &removed)
+{
+    // Item 177. The optimistic REPAINT has always been universal; the
+    // optimistic MEMBERSHIP was not, and lived on the move path alone. So
+    // marking a thread read in the Unread view repainted its row and left it
+    // in a list defined by `tag:unread` that it no longer matched, until the
+    // next query or sync took it away.
+    //
+    // Membership is the UNION, one rule and no exceptions: a thread belongs
+    // to a view while any of its messages match it. The judgement itself is
+    // in removeThreadsWithoutTag(), which reads `summary.tags`; what happens
+    // here is only deciding WHICH rows to put to it and WHEN.
+    //
+    // Guarded on the VIEW's own tag, resolved from the query rather than
+    // assumed: a plain `tag:<x>` query is the only shape whose membership one
+    // tag decides. A path query (Trash, Sent, Drafts) is unaffected by a tag
+    // going away, and an arbitrary query the user typed cannot be reasoned
+    // about at all, so both are left alone and correct at the next sync.
+    // Without that guard, marking read in an `id:` view would empty the list.
+    //
+    // The exposure this accepts, deliberately and unchanged from the move
+    // path: revertPendingTagChange() repaints a rejected write but cannot
+    // REINSERT a row, so a write that fails leaves the row gone until the next
+    // query. Waiting for confirmation instead would give back exactly the lag
+    // this removes, and a rejected tag write is the rare case while the lag
+    // was every keystroke.
+    const QString viewTag = viewFilterTag();
+    if (viewTag.isEmpty())
+        return;
+
+    // The INVERSE, which the model cannot do on its own: a row that starts
+    // matching cannot be inserted optimistically, since the model holds no
+    // summary for a thread the query never returned. A refresh is what
+    // expresses it, exactly as the trash view already does after a restore.
+    // It matters most for UNDO: undoing a mark-read in the Unread view adds
+    // the tag back, and without this the row stayed gone, which would make an
+    // undone action invisible in the view it was undone in.
+    // refreshCurrentQuery() clears nothing, so the selection, the expansions
+    // and the undo stack all survive.
+    //
+    // Only when the row is genuinely ABSENT, which is the whole cost of the
+    // branch. Adding the view's tag to a row still in the list is the ordinary
+    // case, and refreshing there re-runs the query on every such keystroke.
+    if (added.contains(viewTag)) {
+        if (aRowIsMissing)
+            refreshCurrentQuery();
+        return;
+    }
+
+    if (!removed.contains(viewTag))
+        return;
+
+    // A row is never evicted while the user is sitting on it. The automatic
+    // mark-read fires two seconds after selection, so evicting on it takes the
+    // row out from under them, with a context menu possibly open on it, before
+    // they can mark it spam or important. The row leaves when the selection
+    // moves, which flushDeferredEviction() does, so the view still empties as
+    // they work. A write the user ASKED for evicts at once: the distinction is
+    // who initiated it, not what it does.
+    QStringList onScreen;
+    if (m_automaticWrite) {
+        const QModelIndexList selectedRows =
+            m_threadView->selectionModel()->selectedRows();
+        for (const QModelIndex &row : selectedRows)
+            onScreen.append(m_model->threadFor(row).threadId);
+        const QModelIndex current = m_threadView->currentIndex();
+        if (current.isValid())
+            onScreen.append(m_model->threadFor(current).threadId);
+    }
+
+    QStringList evictable;
+    for (const QString &threadId : threadIds) {
+        if (onScreen.contains(threadId)) {
+            if (!m_deferredEvictions.contains(threadId))
+                m_deferredEvictions.append(threadId);
+            continue;
+        }
+        evictable.append(threadId);
+    }
+
+    m_model->removeThreadsWithoutTag(evictable, viewTag);
+}
+
+void MainWindow::flushDeferredEviction()
+{
+    // The rows that stopped matching while the user was on them, taken out now
+    // that they have moved on. Re-checked against the model rather than
+    // trusted: the tag may have come back (an undo, a sync), in which case
+    // removeThreadsWithoutTag() correctly keeps the row.
+    if (m_deferredEvictions.isEmpty())
+        return;
+
+    const QString viewTag = viewFilterTag();
+    if (viewTag.isEmpty()) {
+        m_deferredEvictions.clear();
+        return;
+    }
+
+    // Every thread the user is on, from the SELECTION rather than from
+    // currentIndex(): a click calls select() before setCurrentIndex(), so at
+    // the moment selectionChanged arrives the current index still names the
+    // row being left, and reading it would hold the eviction back for ever.
+    QStringList onScreen;
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    for (const QModelIndex &row : rows)
+        onScreen.append(m_model->threadFor(row).threadId);
+
+    QStringList ready;
+    QStringList stillSelected;
+    for (const QString &threadId : m_deferredEvictions) {
+        if (onScreen.contains(threadId))
+            stillSelected.append(threadId);
+        else
+            ready.append(threadId);
+    }
+    m_deferredEvictions = stillSelected;
+
+    m_model->removeThreadsWithoutTag(ready, viewTag);
+}
+
 QString MainWindow::viewFilterTag() const
 {
     const QString query = m_queryEdit->text().trimmed();
@@ -6657,6 +6827,15 @@ void MainWindow::sendThreadTagChange(const QStringList &threadIds,
         if (current.isValid())
             m_messageView->setTags(m_model->threadFor(current).tags);
     }
+
+    // Same as the message path: a thread whose union stops matching the view
+    // leaves it now rather than at the next query. A thread-scoped write moves
+    // the summary, which is what the membership judgement reads, so a thread
+    // marked read is emptied of `unread` in one step and correctly evicted.
+    bool aRowIsMissing = false;
+    for (const QString &threadId : threadIds)
+        aRowIsMissing = aRowIsMissing || !m_model->hasThread(threadId);
+    syncViewMembership(threadIds, aRowIsMissing, add, remove);
 
     // A sync holds notmuch's exclusive write lock, and the worker's read-write
     // open BLOCKS on it rather than failing: measured 9.158s against a 12s

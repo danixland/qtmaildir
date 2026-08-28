@@ -236,6 +236,21 @@ public:
     /// CURRENT VIEW requires, so a caller passes what the query filters on and
     /// nothing else.
     void removeThreadsWithoutTag(const QString &tag);
+
+    /// Drops only the NAMED threads, and only those whose UNION no longer
+    /// carries \p tag.
+    ///
+    /// Two differences from the sweeping form, both deliberate. It judges the
+    /// named rows alone, because the sweeping form is right after a move (the
+    /// query itself is what changed) and wrong after a tag write: a list can
+    /// legitimately hold rows that never matched, and one write must not evict
+    /// rows it did not touch. And it judges `summary.tags`, which is notmuch's
+    /// union over the conversation, never the displayed message's own tags: a
+    /// thread belongs to a view while ANY of its messages match it (item 177),
+    /// so reading one message of a 44-message thread leaves the conversation
+    /// in the Unread view and reading the last one takes it out.
+    void removeThreadsWithoutTag(const QStringList &threadIds,
+                                 const QString &tag);
     bool flatMode() const { return m_flatMode; }
 
     QModelIndex index(int row, int column,
@@ -325,6 +340,18 @@ public:
     /// thread holds it. Only expanded threads have message rows at all, so a
     /// message the user could select is always findable here.
     QString threadIdForMessage(const QString &messageId) const;
+
+    /// Whether a row for this thread is still in the list.
+    bool hasThread(const QString &threadId) const;
+
+    /// How many messages the thread holds, from its summary, or 0 when the
+    /// list has no row for it.
+    ///
+    /// The question a message-scoped write asks before judging membership: a
+    /// thread of one has a union that IS its message, so the write moved it
+    /// and the row can be judged, while a longer thread's union is untouched
+    /// and judging it would be judging a stale answer.
+    int threadCountFor(const QString &threadId) const;
 
     /// A loaded message row's node, found by id rather than by position.
     ///

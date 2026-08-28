@@ -18,6 +18,7 @@
 
 #include "cardlayout.h"
 
+#include <QCoreApplication>
 #include <QFontMetrics>
 #include <QLocale>
 
@@ -52,9 +53,9 @@ int CardLayout::markSide(const QFont &font)
     return qMax(8, side);
 }
 
-QString CardLayout::expanderLabel(int replyCount, bool expanded)
+QString CardLayout::expanderLabel(int messageCount, bool expanded)
 {
-    // "3 replies", not a bare "3". The count alone reads as an unexplained
+    // "5 messages", not a bare "5". The count alone reads as an unexplained
     // number beside the subject, and the word is what says the card opens.
     //
     // The triangle is NO LONGER part of this string. Item 70 made it a drawn
@@ -65,14 +66,20 @@ QString CardLayout::expanderLabel(int replyCount, bool expanded)
     // when the card opens, and a caller that stopped passing the state would
     // hide that requirement rather than satisfy it.
     //
-    // Not translated through tr() here because CardLayout is a plain struct
-    // rather than a QObject; the delegate is where a translated build would
-    // wrap this, and the string is deliberately kept in one place so there is
-    // exactly one thing to change.
+    // CardLayout is a plain struct rather than a QObject, so this cannot use
+    // tr(); QCoreApplication::translate() with an explicit context is the
+    // equivalent, and the literal context string is what lupdate extracts
+    // under. The word is translated rather than the whole "%1 %2", because
+    // %n's untranslated fallback on this Qt does not pluralise (measured:
+    // "%n message(s)" stays literally "(s)"), and the two forms read cleanly
+    // in the .ts.
     Q_UNUSED(expanded);
-    const QString word = replyCount == 1 ? QStringLiteral("reply")
-                                         : QStringLiteral("replies");
-    return QStringLiteral("%1 %2").arg(replyCount).arg(word);
+    const QString word = messageCount == 1
+                             ? QCoreApplication::translate("CardLayout",
+                                                           "message")
+                             : QCoreApplication::translate("CardLayout",
+                                                           "messages");
+    return QStringLiteral("%1 %2").arg(messageCount).arg(word);
 }
 
 QString CardLayout::widestDateSample(const QString &format)
@@ -196,18 +203,18 @@ CardLayout CardLayout::compute(const Input &input, const QRect &rect,
                                        - kPaddingX),
                            metrics.height());
 
-    // The expander is the reply count as a PILL, on line two and on the right.
+    // The expander is the message count as a PILL, on line two and on the right.
     //
     // Sized from the label actually drawn rather than from a fixed sample, so
     // the background and the text inside it cannot disagree. Both states of the
     // glyph are measured because the rect must not change width when the card
     // is expanded: a pill that resized on click would shift the subject's
     // elision under the pointer.
-    if (input.replyCount > 0) {
+    if (input.messageCount > 0) {
         const int collapsed = smallMetrics.horizontalAdvance(
-            expanderLabel(input.replyCount, false));
+            expanderLabel(input.messageCount, false));
         const int expanded = smallMetrics.horizontalAdvance(
-            expanderLabel(input.replyCount, true));
+            expanderLabel(input.messageCount, true));
         // The triangle is a drawn mark since item 70, so the pill has to
         // reserve its width explicitly. It came free from the text metrics
         // while it was a glyph in the label, which is exactly the kind of

@@ -439,7 +439,7 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
                                                              m_forwardPrefixes);
         case IsRepliedRole:
             return node.isReplied();
-        case ReplyCountRole:
+        case MessageCountRole:
             // A reply never offers an expander: nesting past the first level is
             // drawn from depth, not from further parent-child structure.
             return 0;
@@ -714,15 +714,19 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
                                                          m_forwardPrefixes);
     case IsRepliedRole:
         return thread.isReplied();
-    case ReplyCountRole:
+    case MessageCountRole:
         // Zero in a flat list, so the card draws no expander pill. The count
-        // and hasChildren() must agree: a card advertising "3 replies" that
-        // cannot be opened is the inert-glyph defect this project has already
-        // shipped once.
+        // and hasChildren() must agree: a card advertising a count for a thread
+        // that cannot be opened is the inert-glyph defect this project has
+        // already shipped once.
         if (m_flatMode)
             return 0;
-        // totalCount includes the root message, which is the card itself.
-        return qMax(0, thread.totalCount - 1);
+        // The number of MESSAGES in the conversation, not the replies alone:
+        // the row stands for the conversation now (item 177), so a thread of
+        // one message and four replies reads "5 messages". A thread of one
+        // shows nothing: its row is the message, there is nothing to expand,
+        // and the pill is the expander.
+        return thread.totalCount > 1 ? thread.totalCount : 0;
     case DateFormatRole:
         return m_dateFormat;
     default:

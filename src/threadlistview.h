@@ -40,7 +40,7 @@ public:
     using QTreeView::QTreeView;
 
 protected:
-    /// Toggles a thread when its reply count is clicked.
+    /// Toggles a thread when its message count is clicked.
     ///
     /// Being VISIBLE and being CLICKABLE are separate properties:
     /// setRootIsDecorated(false), needed to stop the style drawing its own

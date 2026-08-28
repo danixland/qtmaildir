@@ -35,7 +35,7 @@
 /// The card is three lines, always:
 ///
 ///     sender ................................ date      <- senderRect/dateRect
-///     * subject                    @   v 3 replies      <- subjectRect/expanderRect
+///     * subject                    @   v 5 messages     <- subjectRect/expanderRect
 ///     [tag] [tag]                                       <- tagRect
 struct CardLayout
 {
@@ -45,7 +45,7 @@ struct CardLayout
     {
         bool isMessage = false;
         int depth = 0;       ///< 0 for a thread root, 1 for a direct reply.
-        int replyCount = 0;  ///< 0 means no expander.
+        int messageCount = 0;  ///< Messages in the conversation; 0 means no expander.
 
         /// A QDateTime::toString() pattern from [general] date_format, or empty
         /// for the system's short format.
@@ -105,8 +105,8 @@ struct CardLayout
     QRect subjectRect;
     QRect tagRect;
 
-    /// The reply count's rect, and the click target that toggles the thread.
-    /// Empty when the row has no replies.
+    /// The message count's rect, and the click target that toggles the thread.
+    /// Empty when the row has no expander.
     QRect expanderRect;
 
     /// The flagged mark, at the start of line two before the subject. Empty
@@ -197,15 +197,18 @@ struct CardLayout
     /// The widest string formatDate() can return, for reserving space.
     static QString widestDateSample(const QString &format = QString());
 
-    /// The expander's label: the reply count with its glyph, as drawn.
+    /// The expander's label: the message count with its word, as drawn.
     ///
     /// Shared with the layout for the same reason as formatDate: the rect
     /// reserved for the pill and the text put inside it must come from one
     /// place, or a count wider than the sample the layout guessed at spills
     /// out of its own background.
     ///
-    /// `expanded` chooses which way the triangle points.
-    static QString expanderLabel(int replyCount, bool expanded);
+    /// `expanded` chooses which way the triangle points. The word is
+    /// translated: a pill reading a foreign count in English next to an
+    /// otherwise local interface is a tiny broken window, and this is the one
+    /// user-facing string this plain struct owns.
+    static QString expanderLabel(int messageCount, bool expanded);
 
     /// Padding inside the expander pill, matching a tag chip's, so the two read
     /// as the same kind of object on the card.

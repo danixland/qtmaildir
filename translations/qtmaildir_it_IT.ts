@@ -2,6 +2,17 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="it_IT">
 <context>
+    <name>CardLayout</name>
+    <message>
+        <source>message</source>
+        <translation>messaggio</translation>
+    </message>
+    <message>
+        <source>messages</source>
+        <translation>messaggi</translation>
+    </message>
+</context>
+<context>
     <name>ComposeWindow</name>
     <message>
         <source>Compose[*]</source>

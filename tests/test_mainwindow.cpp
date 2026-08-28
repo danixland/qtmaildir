@@ -1396,10 +1396,11 @@ void TestMainWindow::aThreadWithRepliesDrawsAVisibleExpander()
     const QModelIndex first = model->index(0, 0, QModelIndex());
     const QModelIndex second = model->index(1, 0, QModelIndex());
 
-    // Guards: the model agrees about which thread has replies, and only that
-    // one is offered an expander at all.
-    QCOMPARE(model->data(first, ThreadListModel::ReplyCountRole).toInt(), 2);
-    QCOMPARE(model->data(second, ThreadListModel::ReplyCountRole).toInt(), 0);
+    // Guards: the model agrees about which thread has an expander, and only
+    // that one is offered one at all. The count is MESSAGES: the three-message
+    // thread reads 3, the lone message reads 0.
+    QCOMPARE(model->data(first, ThreadListModel::MessageCountRole).toInt(), 3);
+    QCOMPARE(model->data(second, ThreadListModel::MessageCountRole).toInt(), 0);
 
     const QFont font = view->font();
     const int height = CardLayout::heightFor(font);

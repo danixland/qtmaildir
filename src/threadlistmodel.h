@@ -83,7 +83,8 @@ public:
         MessageIdRole,
 
         /// The message's reply depth, for the view's indentation. 1 for a
-        /// direct reply, since depth 0 is the root row itself.
+        /// direct reply; 0 is the thread's first message, which sits under the
+        /// conversation row unindented.
         MessageDepthRole,
 
         /// True when the row is a thread that has replies to show.
@@ -138,7 +139,8 @@ public:
 
         /// bool; the message was replied to, from the Maildir "R" flag.
         IsRepliedRole,
-        ReplyCountRole,    ///< int; 0 when a thread has no replies.
+        MessageCountRole,  ///< int; messages in the conversation, 0 when the
+                           ///< thread has one message and nothing to expand.
 
         /// The [general] date_format pattern, or empty for the system's short
         /// format. Same row value for every row.
@@ -207,7 +209,7 @@ public:
     /// that is what keeps it from leaking: it is off by default, only the Sent
     /// button turns it on, and every other query turns it off again. The
     /// expander already comes from hasChildren() and the card's count from
-    /// ReplyCountRole, so flat mode is those two answering differently and
+    /// MessageCountRole, so flat mode is those two answering differently and
     /// nothing else changes.
     ///
     /// The children are not discarded, only hidden. Leaving flat mode restores

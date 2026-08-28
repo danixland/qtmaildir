@@ -58,7 +58,7 @@ CardLayout::Input threadInput()
     CardLayout::Input in;
     in.isMessage = false;
     in.depth = 0;
-    in.replyCount = 3;
+    in.messageCount = 3;
     return in;
 }
 
@@ -67,7 +67,7 @@ CardLayout::Input replyInput(int depth)
     CardLayout::Input in;
     in.isMessage = true;
     in.depth = depth;
-    in.replyCount = 0;
+    in.messageCount = 0;
     return in;
 }
 
@@ -91,7 +91,7 @@ void TestCardLayout::everyCardIsTheSameHeight()
     const CardLayout deepReply =
         CardLayout::compute(replyInput(3), QRect(0, 0, 400, thread), font);
     CardLayout::Input noRepliesIn = threadInput();
-    noRepliesIn.replyCount = 0;
+    noRepliesIn.messageCount = 0;
     const CardLayout noReplies =
         CardLayout::compute(noRepliesIn, QRect(0, 0, 400, thread), font);
 
@@ -225,7 +225,7 @@ void TestCardLayout::expanderIsEmptyWithoutReplies()
     const QFont font;
     const int h = CardLayout::heightFor(font);
     CardLayout::Input in = threadInput();
-    in.replyCount = 0;
+    in.messageCount = 0;
 
     const CardLayout card = CardLayout::compute(in, QRect(0, 0, 400, h), font);
     QVERIFY(card.expanderRect.isEmpty());
@@ -240,12 +240,12 @@ void TestCardLayout::theExpanderReadsAsAPillWithAWord()
     // NO triangle in the label since item 70: it is a drawn mark now, and a
     // glyph left here would be a second triangle beside the drawn one. The
     // label is the words alone, and the state no longer changes it.
-    QCOMPARE(CardLayout::expanderLabel(3, false), QStringLiteral("3 replies"));
-    QCOMPARE(CardLayout::expanderLabel(3, true), QStringLiteral("3 replies"));
+    QCOMPARE(CardLayout::expanderLabel(3, false), QStringLiteral("3 messages"));
+    QCOMPARE(CardLayout::expanderLabel(3, true), QStringLiteral("3 messages"));
 
-    // Singular, because "1 replies" is the kind of detail that makes an
+    // Singular, because "1 messages" is the kind of detail that makes an
     // interface look unfinished.
-    QCOMPARE(CardLayout::expanderLabel(1, false), QStringLiteral("1 reply"));
+    QCOMPARE(CardLayout::expanderLabel(1, false), QStringLiteral("1 message"));
 
     // The glyphs are gone from the label entirely. Asserted rather than assumed,
     // because a stray one would draw underneath the mark and look like a
@@ -377,7 +377,11 @@ void TestCardLayout::marksDoNotCollideWithEachOtherOrTheExpander()
     // densest line two can get. Nothing may overlap anything.
     const QFont font;
     const int h = CardLayout::heightFor(font);
-    const QRect rect(0, 0, 400, h);
+    // 460 rather than 400: the pill reads "3 messages" now, a character wider
+    // than "3 replies" was, and 400 left the elastic subject narrower than the
+    // avatar gutter with all four marks out. The width is a stress value, not
+    // a spec.
+    const QRect rect(0, 0, 460, h);
 
     CardLayout::Input in = threadInput();
     in.flagged = true;
@@ -421,7 +425,7 @@ void TestCardLayout::marksDoNotCollideWithEachOtherOrTheExpander()
     // not leave the subject narrower than the avatar gutter beside it.
     QVERIFY2(card.subjectRect.width() > card.avatarRect.width(),
              "four marks left the subject narrower than the avatar gutter on a "
-             "400px card");
+             "460px card");
 }
 
 void TestCardLayout::dateIsFlushRight()

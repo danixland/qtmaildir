@@ -190,9 +190,9 @@ struct MessageNode
     QStringList tags;
     QString filePath;
 
-    /// Reply depth within the thread. 0 is the thread's first message, which
-    /// occupies the ROOT row rather than a child row: the user's model is
-    /// "N replies", so a thread of 7 shows 1 root and 6 descendants.
+    /// Reply depth within the thread. 0 is the thread's first message: since
+    /// item 177 a conversation lists it as a child row too, but it carries no
+    /// nesting. 1 is a direct reply.
     int depth = 0;
 
     bool isUnread() const { return tags.contains(QStringLiteral("unread")); }

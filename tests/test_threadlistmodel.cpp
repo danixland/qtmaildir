@@ -49,7 +49,7 @@ private slots:
     void appendingEmptyBatchIsNoOp();
     void clearResetsModel();
     void reportsSubjectAndAuthors();
-    void theReplyCountExcludesTheRootMessage();
+    void thePillCountsTheThreadsMessages();
     void unreadThreadsRenderBold();
     void readThreadsAreDimmedAndUnreadAreNot();
     void flaggedThreadsShowAStar();
@@ -519,7 +519,7 @@ void TestThreadListModel::aFlatViewsAvatarFollowsTheRecipient()
              QStringLiteral("me@example.org"));
 }
 
-void TestThreadListModel::theReplyCountExcludesTheRootMessage()
+void TestThreadListModel::thePillCountsTheThreadsMessages()
 {
     ThreadListModel model;
 
@@ -530,12 +530,14 @@ void TestThreadListModel::theReplyCountExcludesTheRootMessage()
     model.appendBatch({ single, multi });
 
     // The count used to be a "(4)" suffix on the subject. It is the expander
-    // on the card's second line now, and it counts REPLIES: totalCount
-    // includes the root message, which is the card itself.
+    // on the card's second line now, and it counts MESSAGES: the row stands
+    // for the conversation since item 177, so a thread of one message and
+    // three replies reads "4 messages". A thread of one shows nothing to
+    // expand, so its count stays 0.
     QCOMPARE(model.data(model.index(0, 0),
-                        ThreadListModel::ReplyCountRole).toInt(), 0);
+                        ThreadListModel::MessageCountRole).toInt(), 0);
     QCOMPARE(model.data(model.index(1, 0),
-                        ThreadListModel::ReplyCountRole).toInt(), 3);
+                        ThreadListModel::MessageCountRole).toInt(), 4);
 
     // And the subject is bare, with no count spliced into it.
     QCOMPARE(model.data(model.index(1, 0),
@@ -1483,9 +1485,9 @@ void TestThreadListModel::modelHasOneColumn()
              QStringLiteral("alice@example.org"));
     QVERIFY(index.data(ThreadListModel::DateRole).toDateTime().isValid());
 
-    // A single-message thread offers no expander: totalCount includes the root
-    // message, which is the card itself.
-    QCOMPARE(index.data(ThreadListModel::ReplyCountRole).toInt(), 0);
+    // A single-message thread offers no expander: it is its own message and
+    // has nothing to open onto.
+    QCOMPARE(index.data(ThreadListModel::MessageCountRole).toInt(), 0);
 }
 
 void TestThreadListModel::aFlatThreadStillListsItsReplies()
@@ -1520,12 +1522,11 @@ void TestThreadListModel::aFlatThreadStillListsItsReplies()
                  .toString(),
              QStringLiteral("m1@example.org"));
 
-    // The pill counts REPLIES while the rows are MESSAGES, so since item 177
-    // the rows are one more than the pill: the conversation lists its first
-    // message too. They must still move together, or the expander opens onto a
-    // number the card never promised.
-    QCOMPARE(root.data(ThreadListModel::ReplyCountRole).toInt(),
-             model.rowCount(root) - 1);
+    // The pill counts MESSAGES, which is exactly what the rows are: since item
+    // 177 a conversation lists every message under itself, so the number on
+    // the card and the number of rows it opens onto agree.
+    QCOMPARE(root.data(ThreadListModel::MessageCountRole).toInt(),
+             model.rowCount(root));
 }
 
 void TestThreadListModel::theRootCardKnowsItsOwnMessage()
@@ -1893,7 +1894,7 @@ void TestThreadListModel::flatModeOffersNoExpanderAndNoReplyCount()
     // the replies they received under a view that claims to be their outbox.
     //
     // Deliberately not a second model or a filtered query. The expander is
-    // driven by hasChildren() and the card's count by ReplyCountRole, both
+    // driven by hasChildren() and the card's count by MessageCountRole, both
     // already here, so flat mode is those two answering differently.
     ThreadListModel model;
     model.appendBatch({ makeThread(QStringLiteral("t1"),
@@ -1906,13 +1907,13 @@ void TestThreadListModel::flatModeOffersNoExpanderAndNoReplyCount()
     // below: a test whose subject was already flat would pass either way.
     QVERIFY2(model.hasChildren(thread),
              "the fixture thread is not expandable, so this proves nothing");
-    QCOMPARE(model.data(thread, ThreadListModel::ReplyCountRole).toInt(), 1);
+    QCOMPARE(model.data(thread, ThreadListModel::MessageCountRole).toInt(), 2);
 
     model.setFlatMode(true);
 
     QVERIFY2(!model.hasChildren(thread),
              "a flat list still offered an expander");
-    QCOMPARE(model.data(thread, ThreadListModel::ReplyCountRole).toInt(), 0);
+    QCOMPARE(model.data(thread, ThreadListModel::MessageCountRole).toInt(), 0);
 
     // rowCount has to agree, or the view draws an expander it cannot open, or
     // opens onto rows the card said were not there.
@@ -1943,7 +1944,7 @@ void TestThreadListModel::flatModeIsOffByDefaultAndReversible()
     model.setFlatMode(false);
     QVERIFY2(model.hasChildren(thread),
              "leaving flat mode did not restore the tree");
-    QCOMPARE(model.data(thread, ThreadListModel::ReplyCountRole).toInt(), 1);
+    QCOMPARE(model.data(thread, ThreadListModel::MessageCountRole).toInt(), 2);
 }
 
 void TestThreadListModel::recipientsReplaceTheSenderWhenPresent()

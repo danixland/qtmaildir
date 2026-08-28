@@ -115,6 +115,12 @@ point at which they are stable.
   removes the row at once while an automatic one waits until you move on.
   Reading the last unread message of a long conversation is the one case that
   still waits for the next query or sync.
+- **A conversation's card counts its MESSAGES, not its replies.** The pill
+  that opens the thread read "N replies" against the total the row actually
+  lists: a thread of one message and four replies said "4 replies" over rows
+  for all five messages. It now reads "5 messages", which is what the
+  conversation is. A thread of one message still shows no count at all, since
+  there is nothing for the pill to open.
 - **Delete and Restore appear only where they apply.** Delete is hidden on
   mail already in the trash, where it reported success and did nothing, and
   Restore is hidden on mail that was never deleted.

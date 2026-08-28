@@ -40,7 +40,7 @@ CardLayout::Input inputFor(const QModelIndex &index)
     CardLayout::Input in;
     in.isMessage = index.data(ThreadListModel::IsMessageRole).toBool();
     in.depth = index.data(ThreadListModel::MessageDepthRole).toInt();
-    in.replyCount = index.data(ThreadListModel::ReplyCountRole).toInt();
+    in.messageCount = index.data(ThreadListModel::MessageCountRole).toInt();
     in.dateFormat = index.data(ThreadListModel::DateFormatRole).toString();
 
     // Item 70's marks. The layout reserves a rect for each, so these have to
@@ -305,14 +305,14 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     drawMark(card.receivedForwardRect, Marks::Mark::ReceivedForward);
     drawMark(card.repliedRect, Marks::Mark::Replied);
 
-    // The reply count, which is also the expander, drawn as a PILL.
+    // The message count, which is also the expander, drawn as a PILL.
     //
     // A bare "3" on the card's own background read as an unexplained number
     // beside the subject and gave no hint that it could be clicked. The chip
     // shape says "this is a control", matching the tag chips on line 3, and the
     // word says what the number counts.
     if (!card.expanderRect.isEmpty()) {
-        const int count = index.data(ThreadListModel::ReplyCountRole).toInt();
+        const int count = index.data(ThreadListModel::MessageCountRole).toInt();
         const QString label = CardLayout::expanderLabel(
             count, option.state & QStyle::State_Open);
 

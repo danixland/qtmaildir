@@ -27,10 +27,10 @@ void ThreadListView::mousePressEvent(QMouseEvent *event)
 {
     const QModelIndex index = indexAt(event->pos());
 
-    // The reply count IS the expander. Anything outside its rect selects the
+    // The message count IS the expander. Anything outside its rect selects the
     // card and opens it, which is what the rest of the card is for.
     if (event->button() == Qt::LeftButton && index.isValid()
-        && index.data(ThreadListModel::ReplyCountRole).toInt() > 0) {
+        && index.data(ThreadListModel::MessageCountRole).toInt() > 0) {
 
         QStyleOptionViewItem option;
         initViewItemOption(&option);

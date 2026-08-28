@@ -1062,7 +1062,10 @@ void TestMainWindow::childRowsAreIndentedUnderTheirThread()
     // visualRect reported an indent the text did not have; here it reports
     // none while the text is indented.
     const QModelIndex rootCell = model->index(0, 0, QModelIndex());
-    const QModelIndex child = model->index(0, 0, root);
+    // Child 1, not child 0: since item 177 a conversation lists its FIRST
+    // message as a child too, so child 0 is m0 (depth 0) and the reply whose
+    // nesting is being measured is the one after it.
+    const QModelIndex child = model->index(1, 0, root);
     QVERIFY(child.isValid());
 
     // Guards before the claim: a probe that cannot see both rows can report
@@ -1635,7 +1638,10 @@ void TestMainWindow::anActionOnAMessageRowTagsThatMessageNotTheThread()
     view->expand(threadRow);
     QApplication::processEvents();
 
-    const QModelIndex messageRow = model->index(0, 0, threadRow);
+    // Child 1, not child 0: since item 177 a conversation lists its first
+    // message as a child too, so child 0 is m0 and the reply this test acts on
+    // is the one after the card's own message.
+    const QModelIndex messageRow = model->index(1, 0, threadRow);
     QVERIFY(model->isMessageRow(messageRow));
 
     view->selectionModel()->select(
@@ -3227,7 +3233,10 @@ void TestMainWindow::theStaleNoticeCarriesTheMessageBeingRead()
     model->setThreadMessages(QStringLiteral("T1"), { root, reply });
 
     const QModelIndex threadIndex = model->index(0, 0, QModelIndex());
-    const QModelIndex replyIndex = model->index(0, 0, threadIndex);
+    // Child 1, not child 0: since item 177 a conversation lists its first
+    // message as a child too, so the reply being read is the one after the
+    // card's own message.
+    const QModelIndex replyIndex = model->index(1, 0, threadIndex);
     QVERIFY(replyIndex.isValid());
     view->setCurrentIndex(replyIndex);
 
@@ -4008,9 +4017,12 @@ void TestMainWindow::recoveryFromAnExpandedThreadRestoresTheReply()
 
     const QModelIndex threadIndex = model->index(0, 0, QModelIndex());
     view->expand(threadIndex);
-    QCOMPARE(model->rowCount(threadIndex), 3);
+    // All four messages are children since item 177: a conversation lists its
+    // first message under itself like every other.
+    QCOMPARE(model->rowCount(threadIndex), 4);
 
-    const QModelIndex fourth = model->index(2, 0, threadIndex);
+    // The fourth message, now at child index 3 behind the first three.
+    const QModelIndex fourth = model->index(3, 0, threadIndex);
     QVERIFY(fourth.isValid());
     QCOMPARE(model->messageAt(fourth).messageId,
              QStringLiteral("m3@example.org"));
@@ -4045,7 +4057,7 @@ void TestMainWindow::recoveryFromAnExpandedThreadRestoresTheReply()
 
     QVERIFY2(view->isExpanded(back),
              "the thread collapsed again once its replies arrived");
-    QCOMPARE(model->rowCount(back), 3);
+    QCOMPARE(model->rowCount(back), 4);
 
     const QModelIndex current = view->currentIndex();
     QVERIFY2(current.isValid(), "recovery left nothing selected");
@@ -4917,13 +4929,20 @@ static QModelIndex expandSecondThreadAndSelectItsReply(
     const QModelIndex threadRow = model->index(1, 0, QModelIndex());
     view->expand(threadRow);
 
-    const QModelIndex replyRow = model->index(0, 0, threadRow);
+    // Child 1, not child 0. Since item 177 a conversation lists its FIRST
+    // message as a child too, so child 0 is m0 and the reply this helper
+    // promises is the one after it. Every caller is about a reply
+    // specifically, and handing them the root message instead makes each one
+    // assert about the wrong message while still looking correct.
+    const QModelIndex replyRow = model->index(1, 0, threadRow);
     if (!replyRow.isValid() || !model->isMessageRow(replyRow))
         return {};
 
-    // Row 0 under its parent, which is the trap: the number is a plausible
-    // top-level row and threadAt() cannot tell the difference.
-    if (replyRow.row() != 0)
+    // A child row number that is also a plausible top-level one, which is the
+    // trap: threadAt() cannot tell the difference. Child 1 sits under the
+    // thread at top-level row 1, so threadAt() reading it still lands on the
+    // wrong object, which is what these tests exist to catch.
+    if (replyRow.row() != 1)
         return {};
 
     view->selectionModel()->select(
@@ -5831,8 +5850,10 @@ void TestMainWindow::taggingAnUnrelatedReplyLeavesTheStripAlone()
     const QModelIndex threadRow = model->index(0, 0, QModelIndex());
     view->expand(threadRow);
 
-    // The FIRST reply is the one on display.
-    const QModelIndex displayed = model->index(0, 0, threadRow);
+    // The FIRST reply is the one on display. Child 1, not child 0: since item
+    // 177 a conversation lists its first message as a child too, so child 0 is
+    // m0 (the card's own message) and the reply the strip describes is m1.
+    const QModelIndex displayed = model->index(1, 0, threadRow);
     view->selectionModel()->select(
         displayed,
         QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
@@ -12268,9 +12289,12 @@ void TestMainWindow::deleteOnAReplyMovesThatReplyOnly()
     QVERIFY2(conversation.isValid(), "no multi-message thread in the list");
 
     view->expand(conversation);
-    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(conversation) == 1, 15000);
+    // Both messages are children since item 177: the conversation lists its
+    // first message under itself too.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(conversation) == 2, 15000);
 
-    const QModelIndex replyIndex = model->index(0, 0, conversation);
+    // The reply is child 1, behind the thread's first message.
+    const QModelIndex replyIndex = model->index(1, 0, conversation);
     QVERIFY(model->isMessageRow(replyIndex));
     QCOMPARE(model->messageAt(replyIndex).messageId,
              QStringLiteral("reply@example.org"));

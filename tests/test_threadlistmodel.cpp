@@ -106,6 +106,8 @@ private slots:
     void aRowNamingNoMessageIsSkippedNotEscalated();
     void aLoneMessageRowResolvesToItsMessage();
     void aReplyRowResolvesToItsMessage();
+    void aConversationListsItsFirstMessageAsAChild();
+    void aMessageRowDoesNotListItselfBeneathItself();
     void aMixedSelectionCarriesBothScopes();
 };
 
@@ -142,19 +144,20 @@ void TestThreadListModel::repliesBecomeChildRowsUnderTheirThread()
     model.appendBatch({ makeThread(QStringLiteral("t1"),
                                    QStringLiteral("A subject")) });
 
-    // Depth 0 is the thread's FIRST message and belongs on the root row, not in
-    // the children: the user's model is "N replies", so a thread of three shows
-    // one root and two children.
+    // EVERY message sits under a conversation row, the first included. This
+    // read "one root and two children" until item 177, when the root stopped
+    // meaning the first message and started meaning the conversation; the
+    // first message then had no row anywhere and the user could not reach it.
     model.setThreadMessages(QStringLiteral("t1"),
                             { makeNode(QStringLiteral("m0@example.org"), 0),
                               makeNode(QStringLiteral("m1@example.org"), 1),
                               makeNode(QStringLiteral("m2@example.org"), 2) });
 
     const QModelIndex root = model.index(0, 0, QModelIndex());
-    QCOMPARE(model.rowCount(root), 2);
+    QCOMPARE(model.rowCount(root), 3);
 
     const QModelIndex child =
-        model.index(0, 0, root);
+        model.index(1, 0, root);
     QVERIFY(child.isValid());
     QCOMPARE(model.parent(child), model.index(0, 0, QModelIndex()));
 
@@ -196,7 +199,7 @@ void TestThreadListModel::messageRowsShowTheirOwnSenderAndSubject()
                    QStringLiteral("Re: A subject")) });
 
     const QModelIndex root = model.index(0, 0, QModelIndex());
-    const QModelIndex reply = model.index(0, 0, root);
+    const QModelIndex reply = model.index(1, 0, root);
 
     QCOMPARE(model.data(reply, ThreadListModel::SendersRole).toString(),
              QStringLiteral("Bob <bob@example.org>"));
@@ -222,12 +225,15 @@ void TestThreadListModel::reloadingAThreadReplacesItsRepliesRatherThanRepeatingT
         makeNode(QStringLiteral("m1@example.org"), 1)
     };
 
+    // Two messages, two rows, both times. The number is what item 177 changed;
+    // the property under test is that a reload REPLACES rather than appends, so
+    // what matters is that the second call does not double it.
     model.setThreadMessages(QStringLiteral("t1"), nodes);
     const QModelIndex root = model.index(0, 0, QModelIndex());
-    QCOMPARE(model.rowCount(root), 1);
+    QCOMPARE(model.rowCount(root), 2);
 
     model.setThreadMessages(QStringLiteral("t1"), nodes);
-    QCOMPARE(model.rowCount(root), 1);
+    QCOMPARE(model.rowCount(root), 2);
 
     QAbstractItemModelTester tester(
         &model, QAbstractItemModelTester::FailureReportingMode::Warning);
@@ -474,7 +480,7 @@ void TestThreadListModel::aMessageRowCarriesItsOwnSenderAndAddress()
     model.setThreadMessages(QStringLiteral("t1"), { root, reply });
 
     const QModelIndex replyIndex =
-        model.index(0, 0, model.index(0, 0, QModelIndex()));
+        model.index(1, 0, model.index(0, 0, QModelIndex()));
     QVERIFY(model.isMessageRow(replyIndex));
 
     QCOMPARE(replyIndex.data(ThreadListModel::SenderAddressRole).toString(),
@@ -882,7 +888,7 @@ void TestThreadListModel::invalidIndexesReturnNothing()
     QVERIFY(!model.index(-1, 0).isValid());
 
     // A child index must yield nothing: this is a table, not a tree.
-    const QModelIndex child = model.index(0, 0, model.index(0, 0));
+    const QModelIndex child = model.index(1, 0, model.index(0, 0));
     QVERIFY(!child.isValid());
     QVERIFY(!model.data(child, Qt::DisplayRole).isValid());
 }
@@ -900,18 +906,25 @@ void TestThreadListModel::threadAtOutOfRangeIsSafe()
 void TestThreadListModel::threadForResolvesAReplyThroughItsParent()
 {
     // Item 88. threadAt() takes a top-level row and a tree numbers rows per
-    // parent, so the first reply of ANY thread has row() == 0 and threadAt(0)
-    // answers "t1" for a reply of t2. threadFor() resolves through the parent
-    // instead, which is what every caller holding an index needs.
+    // parent, so a child's row() indexes its siblings and threadAt() reads it
+    // as a position in the top-level list. threadFor() resolves through the
+    // parent instead, which is what every caller holding an index needs.
+    //
+    // THREE threads, and the message taken from the LAST one. The child row
+    // and the thread's own row have to differ, or threadAt() returns the right
+    // answer by coincidence and the test proves nothing. With the conversation
+    // at top-level row 2 and its message at child row 0, threadAt(0) names the
+    // first thread while the message belongs to the third.
     ThreadListModel model;
     model.appendBatch({ makeThread(QStringLiteral("t1"), QStringLiteral("one")),
-                        makeThread(QStringLiteral("t2"), QStringLiteral("two")) });
-    model.setThreadMessages(QStringLiteral("t2"),
+                        makeThread(QStringLiteral("t2"), QStringLiteral("two")),
+                        makeThread(QStringLiteral("t3"), QStringLiteral("three")) });
+    model.setThreadMessages(QStringLiteral("t3"),
                             { makeNode(QStringLiteral("m0@example.org"), 0),
                               makeNode(QStringLiteral("m1@example.org"), 1) });
 
-    const QModelIndex second = model.index(1, 0, QModelIndex());
-    QCOMPARE(model.threadFor(second).threadId, QStringLiteral("t2"));
+    const QModelIndex second = model.index(2, 0, QModelIndex());
+    QCOMPARE(model.threadFor(second).threadId, QStringLiteral("t3"));
 
     const QModelIndex reply = model.index(0, 0, second);
     QVERIFY(reply.isValid());
@@ -919,11 +932,16 @@ void TestThreadListModel::threadForResolvesAReplyThroughItsParent()
              "the fixture did not produce a message row");
     QCOMPARE(reply.row(), 0);   // The trap: a plausible top-level row number.
 
-    QCOMPARE(model.threadFor(reply).threadId, QStringLiteral("t2"));
+    QCOMPARE(model.threadFor(reply).threadId, QStringLiteral("t3"));
 
     // And the row-taking overload still does the wrong thing for that index,
     // which is why it is documented as unsafe rather than merely deprecated.
+    // threadAt() reads a top-level row number and this index carries a child's.
     QCOMPARE(model.threadAt(reply.row()).threadId, QStringLiteral("t1"));
+    QVERIFY2(model.threadAt(reply.row()).threadId
+                 != model.threadFor(reply).threadId,
+             "threadAt() and threadFor() agree for this index, so the test no "
+             "longer demonstrates why the row-taking overload is unsafe");
 
     // An invalid index gives an empty summary, which every caller treats as
     // "nothing to do" rather than acting on row 0.
@@ -946,7 +964,7 @@ void TestThreadListModel::applyMessageTagChangeRepaintsThatReplyAlone()
     model.setThreadMessages(QStringLiteral("t1"), { root, reply });
 
     const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
-    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+    const QModelIndex replyIndex = model.index(1, 0, threadIndex);
     QVERIFY(model.isMessageRow(replyIndex));
 
     const QStringList threadTagsBefore =
@@ -971,7 +989,7 @@ void TestThreadListModel::applyMessageTagChangeRepaintsThatReplyAlone()
     // the missing update was avoiding, and it must stay avoided.
     QCOMPARE(model.data(threadIndex, ThreadListModel::TagsRole).toStringList(),
              threadTagsBefore);
-    QCOMPARE(model.messageAt(model.index(0, 0, threadIndex)).messageId,
+    QCOMPARE(model.messageAt(model.index(1, 0, threadIndex)).messageId,
              QStringLiteral("m1@example.org"));
 
     // An unknown message is a no-op rather than a wrong row repainted.
@@ -995,7 +1013,7 @@ void TestThreadListModel::aDeletedReplyIsPaintedAsDoomed()
     model.setThreadMessages(QStringLiteral("t1"), { root, reply });
 
     const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
-    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+    const QModelIndex replyIndex = model.index(1, 0, threadIndex);
 
     const QVariant plainBackground =
         model.data(replyIndex, Qt::BackgroundRole);
@@ -1033,7 +1051,7 @@ void TestThreadListModel::aDeletedReplyIsStruckThrough()
                               makeNode(QStringLiteral("m1@example.org"), 1) });
 
     const QModelIndex replyIndex =
-        model.index(0, 0, model.index(0, 0, QModelIndex()));
+        model.index(1, 0, model.index(0, 0, QModelIndex()));
 
     QVERIFY(!model.data(replyIndex, Qt::FontRole).value<QFont>().strikeOut());
 
@@ -1069,7 +1087,7 @@ void TestThreadListModel::markingAReplyReadChangesItsForeground()
     model.setThreadMessages(QStringLiteral("t1"), { root, reply });
 
     const QModelIndex replyIndex =
-        model.index(0, 0, model.index(0, 0, QModelIndex()));
+        model.index(1, 0, model.index(0, 0, QModelIndex()));
 
     const QVariant unreadForeground =
         model.data(replyIndex, Qt::ForegroundRole);
@@ -1109,7 +1127,7 @@ void TestThreadListModel::anUnreadReplyIsBoldAndStillSmallerThanItsThread()
     model.setThreadMessages(QStringLiteral("t1"), { root, reply });
 
     const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
-    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+    const QModelIndex replyIndex = model.index(1, 0, threadIndex);
 
     const QFont unreadFont =
         model.data(replyIndex, Qt::FontRole).value<QFont>();
@@ -1152,7 +1170,7 @@ void TestThreadListModel::aThreadTagChangeReachesItsLoadedReplies()
     model.setThreadMessages(QStringLiteral("t1"), { root, reply });
 
     const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
-    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+    const QModelIndex replyIndex = model.index(1, 0, threadIndex);
     QVERIFY(model.messageAt(replyIndex).isUnread());
 
     QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
@@ -1491,17 +1509,23 @@ void TestThreadListModel::aFlatThreadStillListsItsReplies()
 
     const QModelIndex root = model.index(0, 0);
 
-    // Two children, not zero: the FIRST message is the root card itself, and
-    // the rest are its replies however flat the thread is.
-    QCOMPARE(model.rowCount(root), 2);
+    // Three children, not zero: a flat thread's messages all arrive at depth 0,
+    // and selecting on depth would list none of them. Position is the rule, and
+    // since item 177 it starts at the first message rather than after it.
+    QCOMPARE(model.rowCount(root), 3);
     QCOMPARE(model.index(0, 0, root).data(ThreadListModel::MessageIdRole)
+                 .toString(),
+             QStringLiteral("m0@example.org"));
+    QCOMPARE(model.index(1, 0, root).data(ThreadListModel::MessageIdRole)
                  .toString(),
              QStringLiteral("m1@example.org"));
 
-    // And the count the card advertises must agree with the rows beneath it,
-    // or the expander opens onto nothing.
+    // The pill counts REPLIES while the rows are MESSAGES, so since item 177
+    // the rows are one more than the pill: the conversation lists its first
+    // message too. They must still move together, or the expander opens onto a
+    // number the card never promised.
     QCOMPARE(root.data(ThreadListModel::ReplyCountRole).toInt(),
-             model.rowCount(root));
+             model.rowCount(root) - 1);
 }
 
 void TestThreadListModel::theRootCardKnowsItsOwnMessage()
@@ -1529,9 +1553,14 @@ void TestThreadListModel::theRootCardKnowsItsOwnMessage()
     QCOMPARE(root.data(ThreadListModel::MessageIdRole).toString(),
              QStringLiteral("m0@example.org"));
 
-    // And it is the FIRST message, not just any of them: the reply must still
-    // report its own.
+    // The card still knows its own message, which the dashboard's heading and
+    // the thread-scoped actions read. Child 0 is now that same first message
+    // rather than the first reply: since item 177 the conversation lists every
+    // message, so the row under the card is m0 and m1 follows it.
     QCOMPARE(model.index(0, 0, root).data(ThreadListModel::MessageIdRole)
+                 .toString(),
+             QStringLiteral("m0@example.org"));
+    QCOMPARE(model.index(1, 0, root).data(ThreadListModel::MessageIdRole)
                  .toString(),
              QStringLiteral("m1@example.org"));
 }
@@ -1565,7 +1594,7 @@ void TestThreadListModel::replyShowsOnlyItsOwnTags()
 
     const QModelIndex threadIndex = model.index(0, 0);
     QVERIFY(model.hasChildren(threadIndex));
-    const QModelIndex replyIndex = model.index(0, 0, threadIndex);
+    const QModelIndex replyIndex = model.index(1, 0, threadIndex);
     QVERIFY(replyIndex.isValid());
 
     const QStringList own =
@@ -1601,7 +1630,7 @@ void TestThreadListModel::replySharingEveryThreadTagShowsNone()
     root.depth = 0;
     model.setThreadMessages(QStringLiteral("T1"), { root, reply });
 
-    const QModelIndex replyIndex = model.index(0, 0, model.index(0, 0));
+    const QModelIndex replyIndex = model.index(1, 0, model.index(0, 0));
     QVERIFY(replyIndex.isValid());
     QVERIFY(replyIndex.data(ThreadListModel::MessageOwnTagsRole)
                 .toStringList()
@@ -1677,7 +1706,7 @@ void TestThreadListModel::reconcileKeepsSurvivingRowsAndTheirExpansion()
     MessageNode root = makeNode(QStringLiteral("m1"), 0);
     MessageNode reply = makeNode(QStringLiteral("m2"), 1);
     model.setThreadMessages(QStringLiteral("t1"), { root, reply });
-    QCOMPARE(model.rowCount(model.index(0, 0)), 1);
+    QCOMPARE(model.rowCount(model.index(0, 0)), 2);
 
     const QPersistentModelIndex survivor(model.index(0, 0));
     QVERIFY(survivor.isValid());
@@ -1693,8 +1722,10 @@ void TestThreadListModel::reconcileKeepsSurvivingRowsAndTheirExpansion()
              "the open thread would be lost exactly as a reset loses them");
     QCOMPARE(model.threadAt(survivor.row()).threadId, QStringLiteral("t1"));
 
-    // Its loaded replies survive too, or the thread collapses under the reader.
-    QCOMPARE(model.rowCount(model.index(survivor.row(), 0)), 1);
+    // Its loaded messages survive too, or the thread collapses under the
+    // reader. Two of them since item 177: a conversation lists its first
+    // message as well as its replies.
+    QCOMPARE(model.rowCount(model.index(survivor.row(), 0)), 2);
 }
 
 void TestThreadListModel::reconcileUpdatesTagsOnASurvivingThread()
@@ -2099,6 +2130,81 @@ void TestThreadListModel::aLoadedThreadTrustsItsChildrenOverItsCount()
              "conversation after loading no replies at all");
 }
 
+void TestThreadListModel::aConversationListsItsFirstMessageAsAChild()
+{
+    // The user's report: "I can't reach the first message in a thread. All
+    // messages were supposed to sit below the new thread row. They start
+    // from #2."
+    //
+    // setThreadMessages() dropped nodes.first() until item 177, and that was
+    // correct while a thread row MEANT its first message: listing the message
+    // under itself would have shown it twice. Item 177 made the row stand for
+    // the conversation and render a dashboard instead of any one message, so
+    // the drop left the first message with no row anywhere in the interface.
+    // Unreachable, not merely unlabelled: expanding was the only route to it.
+    ThreadListModel model;
+    ThreadSummary conversation =
+        makeThread(QStringLiteral("t1"), QStringLiteral("A subject"));
+    conversation.totalCount = 3;
+    conversation.firstMessageId = QStringLiteral("m0@example.org");
+    model.appendBatch({ conversation });
+
+    model.setThreadMessages(
+        QStringLiteral("t1"),
+        { makeNode(QStringLiteral("m0@example.org"), 0),
+          makeNode(QStringLiteral("m1@example.org"), 1),
+          makeNode(QStringLiteral("m2@example.org"), 2) });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    QVERIFY2(model.isConversationRow(root),
+             "the fixture is not a conversation, so this test says nothing "
+             "about the case the defect lives in");
+
+    // Three messages, three rows. Counting is not enough on its own: a row
+    // could be added anywhere, so the first child is named explicitly.
+    QCOMPARE(model.rowCount(root), 3);
+    QCOMPARE(model.data(model.index(0, 0, root),
+                        ThreadListModel::MessageIdRole).toString(),
+             QStringLiteral("m0@example.org"));
+    QCOMPARE(model.data(model.index(2, 0, root),
+                        ThreadListModel::MessageIdRole).toString(),
+             QStringLiteral("m2@example.org"));
+
+    // And it is reachable as a MESSAGE row, which is what makes it selectable
+    // and actionable rather than merely drawn.
+    const QModelIndex first = model.index(0, 0, root);
+    QVERIFY(model.isMessageRow(first));
+    QCOMPARE(model.messageAt(first).messageId, QStringLiteral("m0@example.org"));
+}
+
+void TestThreadListModel::aMessageRowDoesNotListItselfBeneathItself()
+{
+    // The other half, and the reason the drop existed. A thread of one is
+    // still a MESSAGE row under item 177: its card renders that message, so a
+    // child carrying the same message would show it twice, once as the card
+    // and once beneath it.
+    //
+    // Decided on the messages that ARRIVED rather than on summary.totalCount,
+    // which counts duplicates: a "thread of 2" that loads one message must
+    // take this branch, or it gains a child and then claims through
+    // isConversationRow() to be a conversation it cannot open.
+    ThreadListModel model;
+    ThreadSummary lone =
+        makeThread(QStringLiteral("t1"), QStringLiteral("Alone"));
+    lone.totalCount = 2;  // notmuch counted a duplicate; one message arrives.
+    lone.firstMessageId = QStringLiteral("m0@example.org");
+    model.appendBatch({ lone });
+
+    model.setThreadMessages(QStringLiteral("t1"),
+                            { makeNode(QStringLiteral("m0@example.org"), 0) });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    QCOMPARE(model.rowCount(root), 0);
+    QVERIFY2(!model.isConversationRow(root),
+             "a thread that loaded one message claims to be a conversation, so "
+             "it offers an expander onto nothing");
+}
+
 void TestThreadListModel::aMessageRowIsNeverAConversationRow()
 {
     ThreadListModel model;
@@ -2118,7 +2224,7 @@ void TestThreadListModel::aMessageRowIsNeverAConversationRow()
     model.setThreadMessages(QStringLiteral("t1"), { root, reply });
 
     const QModelIndex thread = model.index(0, 0, QModelIndex());
-    const QModelIndex replyRow = model.index(0, 0, thread);
+    const QModelIndex replyRow = model.index(1, 0, thread);
     QVERIFY(model.isMessageRow(replyRow));
     QVERIFY2(!model.isConversationRow(replyRow),
              "a reply row answered yes, so an action on it would scope to the "
@@ -2220,8 +2326,10 @@ void TestThreadListModel::aReplyRowResolvesToItsMessage()
     model.setThreadMessages(QStringLiteral("t2"), { root, reply });
 
     const QModelIndex thread = model.index(1, 0, QModelIndex());
+    // Child 1, not child 0: since item 177 a conversation lists its first
+    // message too, so child 0 is m1 and the REPLY this test is about is m2.
     const ActionScope scope =
-        model.scopeForSelection({ model.index(0, 0, thread) });
+        model.scopeForSelection({ model.index(1, 0, thread) });
 
     QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m2") });
     QVERIFY(scope.threadIds.isEmpty());

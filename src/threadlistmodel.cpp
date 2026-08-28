@@ -942,22 +942,37 @@ void ThreadListModel::setThreadMessages(const QString &threadId,
             endRemoveRows();
         }
 
-        // Every message EXCEPT the first, which is the root card itself.
+        // A CONVERSATION row keeps every message, including the first.
         //
-        // Selecting on depth > 0 instead was wrong, and wrong in a way that
-        // only showed on real mail: notmuch_thread_get_toplevel_messages
-        // returns every message at depth 0 when a thread carries no usable
-        // In-Reply-To, so a flat thread contributed no children at all. The
-        // card advertised "3 replies" and expanded onto nothing. Measured in
-        // the user's database: of 396 inbox threads, three are flat, one of
-        // them nine messages long, and every two-message thread of this kind
-        // was affected, which is why the fault looked like "the expander only
-        // works with more than one reply".
+        // This dropped `nodes.first()` until item 177, and correctly: a thread
+        // row then MEANT its first message, so listing that message under
+        // itself would have shown it twice. Item 177 reversed the premise. A
+        // conversation row stands for the conversation and renders a dashboard
+        // rather than any one message, so dropping the first message left it
+        // with no row anywhere: the user reported the list starting at the
+        // second message with the first unreachable.
         //
-        // Position also happens to be the right rule rather than a workaround.
-        // The root card IS the thread's first message, so the row under it is
-        // the second message whatever depth notmuch assigns it.
-        QVector<MessageNode> children = nodes.mid(1);
+        // A thread of one is still a message row, and there the old rule holds
+        // exactly as it did. Giving it a child would list the message beneath
+        // itself, which is the duplication the drop existed to prevent.
+        //
+        // Selecting on depth > 0 instead is wrong whichever premise holds, and
+        // wrong in a way that only showed on real mail:
+        // notmuch_thread_get_toplevel_messages returns every message at depth 0
+        // when a thread carries no usable In-Reply-To, so a flat thread
+        // contributed no children at all. The card advertised "3 replies" and
+        // expanded onto nothing. Measured in the user's database: of 396 inbox
+        // threads, three are flat, one of them nine messages long, and every
+        // two-message thread of this kind was affected, which is why the fault
+        // looked like "the expander only works with more than one reply".
+        // Position remains the rule; only where it starts has changed.
+        // Decided on what actually ARRIVED, never on summary.totalCount. That
+        // count includes duplicates, so a "thread of 2" can load one message;
+        // trusting it would give that row a single child, and isConversationRow()
+        // reads children once loaded, so the row would claim to be a
+        // conversation it cannot open. The two rules have to agree, and the
+        // messages are the truth.
+        QVector<MessageNode> children = nodes.size() > 1 ? nodes : nodes.mid(1);
 
         // Kept so the root card can render its own message. It is the card the
         // user clicks to read the thread's opening message.

@@ -1763,7 +1763,14 @@ void MainWindow::registerActions()
         // comment said the direction came from the current row while the
         // change applied to the whole selection, which is the same split that
         // makes a mixed selection land in two states.
-        const bool unread = everySelectedRowHasTag(QStringLiteral("unread"));
+        //
+        // ANY unread rather than EVERY, which is item 177's catch-all rule and
+        // must be the same question refreshUnreadAction() asks for the label:
+        // a label promising "Mark thread read" over a write computed from
+        // Every would mark a mixed conversation UNREAD, which is the item 112
+        // report happening again from the other end.
+        const bool unread = selectionTagPresence(QStringLiteral("unread"))
+                            != TagPresence::None;
 
         // An explicit toggle overrides the automatic one. Without this, marking
         // a thread unread by hand would be undone a moment later by a timer
@@ -3669,16 +3676,21 @@ void MainWindow::refreshTrashActions()
 
 void MainWindow::refreshUnreadAction()
 {
-    // The user's design (item 112 and its duplicates 99/147): the label says
-    // which way the action will go, and on a selection with no single state
-    // the entry is HIDDEN rather than labelled wrongly.
+    // Item 112 hid this entry whenever the selection disagreed, because a
+    // union is not a state and no honest label existed. The route out was the
+    // "Whole thread" submenu, whose two entries were absolute rather than a
+    // toggle. Item 177 deleted that submenu: the ROW decides the scope, so a
+    // second set of actions was a second answer to a settled question.
     //
-    // The "Whole thread" submenu used to be the route out of the hidden case,
-    // with two absolute entries that worked whatever the mix. It is gone
-    // (item 177), and nothing replaces it: on a conversation row the label
-    // now names the THREAD, and the thread's union is a single state for the
-    // same reason it was not a message's. A genuinely mixed MULTI-row
-    // selection still hides the entry, and Edit tags beside it is the route.
+    // With one key left, hiding on disagreement leaves the commonest
+    // conversation in the mailbox with no key at all, so the rule is a
+    // catch-all instead: ANY unread message reads "Mark thread read" and marks
+    // every message read; only a fully read selection reads "Mark thread
+    // unread". Mixed is not a special case, it is the ordinary one.
+    //
+    // That keeps one key sufficient, which is what the hidden case cost. Two
+    // presses reach either state from anywhere: mark read collapses the mix to
+    // a state, and the second press toggles out of it.
     auto *action = m_actions.value(QStringLiteral("toggle_unread"));
     if (!action)
         return;
@@ -3690,9 +3702,15 @@ void MainWindow::refreshUnreadAction()
     const bool namesTheThread = kind == SelectionKind::Conversations
                                 || kind == SelectionKind::Mixed;
 
-    switch (selectionTagPresence(QStringLiteral("unread"))) {
-    case TagPresence::Every:
-        action->setVisible(true);
+    // Mixed joins Every rather than hiding: both mean "something here is
+    // unread", which is the question the direction actually turns on. The
+    // three-valued answer is still what is asked, because Every and Mixed
+    // differ for other callers; only this label collapses them.
+    const bool anyUnread =
+        selectionTagPresence(QStringLiteral("unread")) != TagPresence::None;
+
+    action->setVisible(true);
+    if (anyUnread) {
         action->setText(namesTheThread ? tr("Mark thread as &read")
                                        : tr("Mark as &read"));
         action->setStatusTip(
@@ -3700,9 +3718,7 @@ void MainWindow::refreshUnreadAction()
                 ? tr("Remove the unread tag from every message of the "
                      "selected threads")
                 : tr("Remove the unread tag from the selection"));
-        break;
-    case TagPresence::None:
-        action->setVisible(true);
+    } else {
         action->setText(namesTheThread ? tr("Mark thread as &unread")
                                        : tr("Mark as &unread"));
         action->setStatusTip(
@@ -3710,12 +3726,6 @@ void MainWindow::refreshUnreadAction()
                 ? tr("Add the unread tag to every message of the selected "
                      "threads")
                 : tr("Add the unread tag to the selection"));
-        break;
-    case TagPresence::Mixed:
-        // No honest label exists, so there is no label to show. Hidden rather
-        // than disabled, at the user's choice.
-        action->setVisible(false);
-        break;
     }
 }
 

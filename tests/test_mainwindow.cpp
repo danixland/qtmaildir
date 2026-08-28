@@ -396,8 +396,8 @@ private slots:
     void emptyTrashAsksBeforeDestroyingAnything();
     void theUnreadLabelSaysWhichDirectionItWillGo();
     void theUnreadLabelFollowsAWriteWithoutReselecting();
-    void theUnreadActionIsHiddenOnAMixedSelection();
-    void aMixedThreadIsMarkedReadAndEditTagsIsTheWayBack();
+    void aMixedSelectionIsMarkedReadAndTheActionStaysVisible();
+    void aMixedThreadIsMarkedReadAndTheSecondPressIsTheWayBack();
     void toggleUnreadOnAReplyReadsTheReplysOwnState();
     void toggleUnreadOnAReplyRepaintsItInBothDirections();
     void taggingTheOpenReplyUpdatesTheMessagePaneStrip();
@@ -5469,15 +5469,17 @@ void TestMainWindow::theUnreadLabelFollowsAWriteWithoutReselecting()
                                        "marked read").arg(action->text())));
 }
 
-void TestMainWindow::theUnreadActionIsHiddenOnAMixedSelection()
+void TestMainWindow::aMixedSelectionIsMarkedReadAndTheActionStaysVisible()
 {
-    // The other half of the same note: "on a thread with mixed states it
-    // should be hidden, we have a submenu for thread actions".
+    // This test asserted the opposite until item 177. The note behind it said
+    // "on a thread with mixed states it should be hidden, we have a submenu
+    // for thread actions", and the second clause was the load-bearing one: the
+    // submenu carried two absolute entries that worked whatever the mix, so
+    // hiding the toggle cost the user nothing.
     //
-    // A selection spanning an unread row and a read one has no single state,
-    // so no honest label exists for it. Hiding the entry sends the user to
-    // the thread submenu, whose entries are absolute and work regardless of
-    // the mix.
+    // Item 177 deleted that submenu, which took the route out with it. The
+    // rule is a catch-all now: any unread row reads "mark read" and the entry
+    // is never hidden, so one key still reaches both states in two presses.
     const Config config;
     MainWindow window(config);
 
@@ -5497,28 +5499,44 @@ void TestMainWindow::theUnreadActionIsHiddenOnAMixedSelection()
     // index invalid, so a test using it passes against a missing guard
     // (CLAUDE.md).
     view->setCurrentIndex(model->index(0, 0, {}));
-    QVERIFY2(action->isVisible(), "a single row already has no single state");
 
     view->selectionModel()->select(
         model->index(1, 0, {}),
         QItemSelectionModel::Select | QItemSelectionModel::Rows);
     QCOMPARE(view->selectionModel()->selectedRows().size(), 2);
 
-    QVERIFY2(!action->isVisible(),
-             qPrintable(QStringLiteral("a mixed selection still offers the "
-                                       "unread action, labelled: %1")
+    QVERIFY2(action->isVisible(),
+             "the mixed selection hid the unread action, which now leaves no "
+             "key at all: the submenu that used to be the way out is gone");
+    QVERIFY2(action->text().contains(QStringLiteral("read"), Qt::CaseInsensitive)
+                 && !action->text().contains(QStringLiteral("unread"),
+                                             Qt::CaseInsensitive),
+             qPrintable(QStringLiteral("a mixed selection must promise the "
+                                       "read direction, not: %1")
                             .arg(action->text())));
 
-    // ...and it comes back when the selection agrees again, or the entry
-    // would be gone for the rest of the session.
-    view->selectionModel()->select(
-        model->index(1, 0, {}),
-        QItemSelectionModel::Deselect | QItemSelectionModel::Rows);
-    QVERIFY2(action->isVisible(),
-             "the action did not return when the selection agreed again");
+    // And the write goes the way the label promised. A direction computed from
+    // "every row unread" would mark this selection UNREAD while the label said
+    // read, which is the item 112 report from the other end.
+    action->trigger();
+
+    QVERIFY2(window.undoTextForTesting().contains(QStringLiteral("Mark read")),
+             qPrintable(QStringLiteral("the write disagreed with the label on "
+                                       "a mixed selection: %1")
+                            .arg(window.undoTextForTesting())));
+    QVERIFY2(!model->threadAt(0).isUnread() && !model->threadAt(1).isUnread(),
+             "the mixed selection did not end up uniformly read, so a second "
+             "press has no single state to toggle out of");
+
+    // Which is what makes one key enough: the second press is the way back.
+    QVERIFY2(action->text().contains(QStringLiteral("unread"),
+                                     Qt::CaseInsensitive),
+             qPrintable(QStringLiteral("the label did not follow the write, so "
+                                       "the second press repeats the first: %1")
+                            .arg(action->text())));
 }
 
-void TestMainWindow::aMixedThreadIsMarkedReadAndEditTagsIsTheWayBack()
+void TestMainWindow::aMixedThreadIsMarkedReadAndTheSecondPressIsTheWayBack()
 {
     // What item 112 became under item 177. That item's report was real: on a
     // thread with two unread replies, asking to mark the whole thread unread
@@ -5528,15 +5546,13 @@ void TestMainWindow::aMixedThreadIsMarkedReadAndEditTagsIsTheWayBack()
     //
     // Its fix was two fixed-direction thread actions in a submenu. Item 177
     // deleted that submenu: the ROW decides the scope, so a second set of
-    // actions was a second answer to a settled question. The cost is recorded
-    // here rather than hidden. On a mixed conversation the toggle still goes
-    // ONE way, and that way is "mark read", which is the safe direction: it
-    // takes the thread to a state it can then be toggled out of, where the
-    // reverse would have left it mixed and the key still dead.
+    // actions was a second answer to a settled question.
     //
-    // The way back is Edit tags, which is absolute rather than a toggle and
-    // works whatever the mix. That is what the deleted submenu was really
-    // providing, and it did not need six actions to provide it.
+    // Nothing is lost with it, which is the point of this test. On a mixed
+    // conversation the toggle goes ONE way, and that way is "mark read",
+    // which is the direction that RESOLVES the mix: the thread lands in a
+    // single state, and the second press toggles out of it. The reverse would
+    // have left it mixed and the key still dead.
     const Config config;
     MainWindow window(config);
 
@@ -5601,11 +5617,24 @@ void TestMainWindow::aMixedThreadIsMarkedReadAndEditTagsIsTheWayBack()
              "the thread's own tags did not move, so the write was scoped to "
              "one message and the other two are still unread");
 
-    // The route back exists and is not the toggle.
-    auto *editTags = window.findChild<QAction *>(QStringLiteral("edit_tags"));
-    QVERIFY2(editTags && editTags->isEnabled(),
-             "Edit tags is the absolute route the deleted submenu used to "
-             "provide, and it is not available");
+    // The route back is the same key, which is what makes one key enough. The
+    // label has to follow the write for that to be true: a stale "Mark thread
+    // as read" would make the second press repeat the first, and the user
+    // would report the key as dead exactly as they did under item 112.
+    QVERIFY2(toggle->isVisible(),
+             "the toggle vanished after resolving the mix, so there is no way "
+             "back to unread");
+    QVERIFY2(toggle->text().contains(QStringLiteral("unread"),
+                                     Qt::CaseInsensitive),
+             qPrintable(QStringLiteral("the label did not follow the write: %1")
+                            .arg(toggle->text())));
+
+    toggle->trigger();
+
+    QVERIFY2(model->threadAt(0).isUnread(),
+             "the second press did not take the thread back to unread, so one "
+             "key does not reach both states and the deleted submenu really "
+             "was carrying something");
 }
 
 void TestMainWindow::toggleUnreadOnAReplyReadsTheReplysOwnState()

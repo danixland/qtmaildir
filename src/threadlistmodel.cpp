@@ -1014,6 +1014,29 @@ bool ThreadListModel::isMessageRow(const QModelIndex &index) const
     return index.isValid() && index.parent().isValid();
 }
 
+bool ThreadListModel::isConversationRow(const QModelIndex &index) const
+{
+    if (!index.isValid() || isMessageRow(index))
+        return false;
+    if (index.row() < 0 || index.row() >= m_threads.size())
+        return false;
+
+    // A flat view has no conversations by construction: every row is one
+    // message and there is nothing to expand.
+    if (m_flatMode)
+        return false;
+
+    const ThreadNode &node = m_threads.at(index.row());
+
+    // Identical to hasChildren()'s rule, and deliberately so: an expander and a
+    // conversation are the same fact. Once loaded the children are the truth,
+    // which is how a thread whose totalCount counted DUPLICATES stops claiming
+    // to be a conversation it cannot open.
+    if (node.loaded)
+        return !node.children.isEmpty();
+    return node.summary.totalCount > 1;
+}
+
 MessageNode ThreadListModel::messageAt(const QModelIndex &index) const
 {
     if (!isMessageRow(index))

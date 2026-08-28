@@ -324,6 +324,14 @@ public:
     /// True when the index is a message row rather than a thread root.
     bool isMessageRow(const QModelIndex &index) const;
 
+    /// Whether this row stands for a CONVERSATION rather than for one message.
+    ///
+    /// The single question every scope, label and membership decision keys on
+    /// (item 177). A row with replies is the conversation; a row without them
+    /// is its message and behaves as it always has. A message row is never
+    /// either, so the answer is false there rather than undefined.
+    bool isConversationRow(const QModelIndex &index) const;
+
     /// The message row's node, or a default-constructed one for any index that
     /// is not a message row.
     MessageNode messageAt(const QModelIndex &index) const;

@@ -105,6 +105,10 @@ private slots:
     void aRowCarriesItsSenderAndAccountAddress();
     void aMessageRowCarriesItsOwnSenderAndAddress();
     void aFlatViewsAvatarFollowsTheRecipient();
+    void aSummaryWithOneMessageIsAMessageRow();
+    void aSummaryWithRepliesIsAConversationRow();
+    void aLoadedThreadTrustsItsChildrenOverItsCount();
+    void aMessageRowIsNeverAConversationRow();
 };
 
 static ThreadSummary makeThread(const QString &id, const QString &subject)
@@ -2341,6 +2345,81 @@ void TestThreadListModel::theTrashViewDrawsNoDoomedFill()
     // is the leak the setter's comment warns about.
     model.setTrashView(false);
     QVERIFY(first.data(Qt::BackgroundRole).isValid());
+}
+
+void TestThreadListModel::aSummaryWithOneMessageIsAMessageRow()
+{
+    ThreadListModel model;
+    ThreadSummary one = makeThread(QStringLiteral("t1"), QStringLiteral("Alone"));
+    one.totalCount = 1;
+    one.firstMessageId = QStringLiteral("m1");
+    model.appendBatch({ one });
+
+    const QModelIndex row = model.index(0, 0, QModelIndex());
+    QVERIFY2(!model.isConversationRow(row),
+             "a thread of one message is not a conversation: it has no replies "
+             "to stand for, and must open its message on one click");
+}
+
+void TestThreadListModel::aSummaryWithRepliesIsAConversationRow()
+{
+    ThreadListModel model;
+    ThreadSummary many = makeThread(QStringLiteral("t1"), QStringLiteral("Talk"));
+    many.totalCount = 4;
+    many.firstMessageId = QStringLiteral("m1");
+    model.appendBatch({ many });
+
+    const QModelIndex row = model.index(0, 0, QModelIndex());
+    QVERIFY(model.isConversationRow(row));
+}
+
+void TestThreadListModel::aLoadedThreadTrustsItsChildrenOverItsCount()
+{
+    // notmuch's totalCount counts duplicates, so a "thread of 2" can load with
+    // no replies at all. Once loaded the children are the truth, exactly as
+    // hasChildren() already decides.
+    ThreadListModel model;
+    ThreadSummary many = makeThread(QStringLiteral("t1"), QStringLiteral("Dupe"));
+    many.totalCount = 2;
+    many.firstMessageId = QStringLiteral("m1");
+    model.appendBatch({ many });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m1");
+    root.threadId = QStringLiteral("t1");
+    root.depth = 0;
+    model.setThreadMessages(QStringLiteral("t1"), { root });
+
+    const QModelIndex row = model.index(0, 0, QModelIndex());
+    QVERIFY2(!model.isConversationRow(row),
+             "a thread whose count came from duplicates still claims to be a "
+             "conversation after loading no replies at all");
+}
+
+void TestThreadListModel::aMessageRowIsNeverAConversationRow()
+{
+    ThreadListModel model;
+    ThreadSummary many = makeThread(QStringLiteral("t1"), QStringLiteral("Talk"));
+    many.totalCount = 2;
+    many.firstMessageId = QStringLiteral("m1");
+    model.appendBatch({ many });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m1");
+    root.threadId = QStringLiteral("t1");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m2");
+    reply.threadId = QStringLiteral("t1");
+    reply.depth = 1;
+    model.setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    const QModelIndex thread = model.index(0, 0, QModelIndex());
+    const QModelIndex replyRow = model.index(0, 0, thread);
+    QVERIFY(model.isMessageRow(replyRow));
+    QVERIFY2(!model.isConversationRow(replyRow),
+             "a reply row answered yes, so an action on it would scope to the "
+             "whole conversation");
 }
 
 QTEST_MAIN(TestThreadListModel)

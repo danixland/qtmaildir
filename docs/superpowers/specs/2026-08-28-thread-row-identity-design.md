@@ -176,6 +176,27 @@ Blocks, top to bottom:
    reason the user is on the dashboard, and hunting for them past a long
    participant list is the case the scrolling exists for.
 
+**The dashboard invents no colours.** Every colour on it already means
+something elsewhere in the application, which is what keeps it from becoming
+decoration:
+
+- **Participants** reuse `Avatar::pixmapFor()` unchanged — the same squircle,
+  initials and colour the sender carries on every card in the list.
+  `Avatar::colourFor()` hashes the ADDRESS at a fixed saturation and lightness
+  (item 169), so a participant is already the same colour in every thread and
+  in both themes, with nothing to decide here.
+- **Tag chips** use `TagColors::colourFor()`, exactly as a card draws them. One
+  tier, so no muting.
+- **The read-progress bar** is the palette's highlight, one colour. It shows a
+  quantity, not a category.
+- **The sparkline** is one colour for the bars with the highlight on the
+  busiest bucket. Buckets are not categories either; colouring them per
+  participant would read as data and mean nothing.
+- **Unread emphasis** is the cue the list already uses, not a new colour.
+
+Deliberately NOT done: shading the participant list by how much each person
+has written. It looks meaningful and is not.
+
 **The content scrolls.** Everything above the action strip sits in a
 `QScrollArea`: a thread with many participants and several unread messages
 overflows the pane, and a dashboard that cannot be scrolled hides the half the
@@ -274,9 +295,6 @@ thread-specific binding should simply be deleted.
 
 ## Open, deliberately
 
-- **Per-sender colours in the dashboard** reuse the account-avatar palette from
-  item 169. Whether a participant's colour should be stable across threads is
-  not decided; nothing depends on it.
 - **Item 168** (Delete hidden when every selected row is already in the trash)
   needs restating in thread terms: a conversation is in the trash when all of
   its messages are. Not part of the core change, and it is a defect if left

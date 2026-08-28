@@ -29,10 +29,13 @@
 #include "marks.h"
 #include "mimeparser.h"
 #include "searchterm.h"
+#include "threaddigest.h"
 
 class QLabel;
 class QMenu;
+class QStackedWidget;
 class QToolBar;
+class ThreadDashboard;
 class QWebEnginePage;
 class QPushButton;
 class QWebEngineView;
@@ -122,6 +125,29 @@ public:
     /// True while the placeholder is what the view is showing. Lets the window
     /// re-render it with fresh counts without guessing what is on screen.
     bool showingPlaceholder() const { return m_showingPlaceholder; }
+
+    /// Shows the conversation dashboard instead of a message (item 177).
+    ///
+    /// A thread row stands for the conversation, so there is no single message
+    /// to render. The heading, account and tags come from the summary and are
+    /// set separately: the digest is built from the index by the worker and
+    /// carries none of them.
+    void showDashboard(const ThreadDigest &digest);
+
+    /// The heading the dashboard displays. Separate from showDashboard()
+    /// because the summary is known at selection time and the digest arrives
+    /// afterwards, so the pane can be right before the round trip returns.
+    void setDashboardThread(const QString &subject, const QString &accountLabel,
+                            const QStringList &tags);
+
+    /// True while the dashboard is what the pane is showing.
+    ///
+    /// The pane's content is asserted through this and through the dashboard's
+    /// own accessors, never by rendering: see "Rendering probes lie".
+    bool showingDashboard() const;
+
+    /// The dashboard itself, so the window can connect its signals. Never null.
+    ThreadDashboard *dashboard() const { return m_dashboard; }
 
     /// Supplies the tag strip's colours. Not owned; must outlive the view.
     void setTagColors(const TagColors *colours);
@@ -409,6 +435,17 @@ private:
 
     /// Gates queryRequested(), so a link in a message body cannot run a query.
     bool m_showingPlaceholder = false;
+
+    /// The two things this pane can be: a message, or the conversation it
+    /// belongs to. A stack rather than show/hide over eight widgets, so
+    /// switching cannot leave half of one pane visible behind the other.
+    QStackedWidget *m_stack = nullptr;
+    QWidget *m_messagePage = nullptr;
+    ThreadDashboard *m_dashboard = nullptr;
+
+    /// Puts the message page back on top. Every route that renders a message
+    /// passes through it, so the dashboard cannot survive into a message.
+    void showMessagePage();
 
     QWebEngineProfile *m_profile = nullptr;
     QWebEngineView *m_view = nullptr;

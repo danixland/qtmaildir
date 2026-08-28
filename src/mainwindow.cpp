@@ -69,6 +69,7 @@
 #include "pendingchangesdialog.h"
 #include "savequerydialog.h"
 #include "tagrulesdialog.h"
+#include "threaddashboard.h"
 #include "threadlistmodel.h"
 #include "threadlistview.h"
 #include "version.h"
@@ -959,6 +960,44 @@ void MainWindow::buildUi()
             this, &MainWindow::recoverStaleThread);
     connect(m_messageView, &MessageView::searchRequested,
             this, &MainWindow::runSearchFromPane);
+
+    // The conversation dashboard (item 177). Its colours are the application's
+    // own, so the strip it holds reads the same table every other chip does.
+    ThreadDashboard *dashboard = m_messageView->dashboard();
+    dashboard->setTagColors(&m_tagColors);
+
+    // An unread entry is a way INTO the conversation: expand the thread and
+    // select that message, which is the ordinary gesture rather than a second
+    // way to open a message.
+    connect(dashboard, &ThreadDashboard::messageActivated,
+            this, &MainWindow::selectMessageInCurrentThread);
+
+    // The "+N more" link. The full list already lives in the left pane, so
+    // this expands the thread there and leaves the selection alone.
+    connect(dashboard, &ThreadDashboard::expandRequested, this, [this]() {
+        const QModelIndex current = m_threadView->currentIndex();
+        if (current.isValid() && !m_model->isMessageRow(current))
+            m_threadView->expand(current);
+    });
+
+    // The three buttons TRIGGER the existing actions rather than reimplement
+    // them. Those actions already resolve their scope from the selection, and
+    // a conversation row resolves to the whole conversation, which is exactly
+    // what a button on this pane means. A second path to the same write is the
+    // mistake the deleted "Whole thread" submenu made.
+    //
+    // Looked up at emit time: registerActions() runs after buildUi(), so the
+    // map is empty here.
+    const auto triggerAction = [this](const QString &name) {
+        if (QAction *action = m_actions.value(name))
+            action->trigger();
+    };
+    connect(dashboard, &ThreadDashboard::markAllReadRequested, this,
+            [triggerAction]() { triggerAction(QStringLiteral("mark_all_read")); });
+    connect(dashboard, &ThreadDashboard::archiveRequested, this,
+            [triggerAction]() { triggerAction(QStringLiteral("archive")); });
+    connect(dashboard, &ThreadDashboard::deleteRequested, this,
+            [triggerAction]() { triggerAction(QStringLiteral("delete")); });
 
     m_splitter = new QSplitter(Qt::Horizontal, central);
     m_splitter->addWidget(m_threadView);
@@ -2558,6 +2597,8 @@ void MainWindow::wireWorker()
             this, &MainWindow::onThreadTreeLoaded);
     connect(m_worker, &NotmuchWorker::messageLoaded,
             this, &MainWindow::onMessageLoaded);
+    connect(m_worker, &NotmuchWorker::threadDigestLoaded,
+            this, &MainWindow::onThreadDigestLoaded);
     connect(m_worker, &NotmuchWorker::errorOccurred,
             this, &MainWindow::onWorkerError);
     connect(m_worker, &NotmuchWorker::allTagsReady,
@@ -4063,6 +4104,52 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     m_currentThreadId = thread.threadId;
     m_messageView->setTags(thread.tags);
 
+    // A CONVERSATION row stands for the whole thread, so there is no single
+    // message to render and the pane shows the conversation instead (item
+    // 177). A thread of one message is not a conversation and falls through to
+    // the message path below, which is the case the whole split protects: it
+    // must still open on one click.
+    if (m_model->isConversationRow(current)) {
+        // No mark-read, deliberately: the row displays nothing, so there is no
+        // message the user can be said to have read. Any timer armed for the
+        // row they came from is still cancelled.
+        m_markReadTimer->stop();
+        m_markReadMessageId.clear();
+
+        m_currentMessageId.clear();
+        m_currentMessageThreadId.clear();
+
+        m_dashboardThreadId = thread.threadId;
+
+        // The heading before the round trip, not after it: the subject, the
+        // account and the tags are already on the summary, and the digest
+        // carries none of them. Waiting would show an empty heading for as
+        // long as the worker takes.
+        m_messageView->setDashboardThread(
+            thread.subject,
+            m_model->data(current, ThreadListModel::AccountLabelRole).toString(),
+            thread.tags);
+
+        // Empty for now, so the pane switches at once rather than staying on
+        // the previous message until the digest lands.
+        ThreadDigest pending;
+        pending.threadId = thread.threadId;
+        pending.totalCount = thread.totalCount;
+        m_messageView->showDashboard(pending);
+
+        // Its OWN generation. m_generation is the query's, and bumping that
+        // discards any thread load in flight and blanks the pane, which is the
+        // opposite of what selecting a row should do.
+        ++m_digestGeneration;
+        QMetaObject::invokeMethod(m_worker, "loadThreadDigest",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(QString, thread.threadId),
+                                  Q_ARG(quint64, m_digestGeneration));
+        return;
+    }
+
+    m_dashboardThreadId.clear();
+
     // The message the card displays, not the thread. The summary's `unread` is
     // a union over the conversation, so this can arm for a thread whose first
     // message is already read; the write is scoped to that message either way,
@@ -4098,6 +4185,32 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     QMetaObject::invokeMethod(m_worker, "loadMessage", Qt::QueuedConnection,
                               Q_ARG(QString, firstId),
                               Q_ARG(quint64, m_generation));
+}
+
+void MainWindow::onThreadDigestLoaded(const ThreadDigest &digest,
+                                      quint64 generation)
+{
+    // Three guards, and each one covers a different way the answer can outlive
+    // the selection that asked for it. loadThreadDigest crosses on a queued
+    // connection, so all of them are reachable by moving the selection while
+    // one is in flight.
+    //
+    // Superseded by a later request: the user moved to another conversation.
+    if (generation != m_digestGeneration)
+        return;
+
+    // The pane is no longer showing a dashboard at all: it was blanked, or a
+    // message row was selected. Every route that renders a message switches
+    // the stack back, so this is the question rather than a flag of our own.
+    if (!m_messageView->showingDashboard())
+        return;
+
+    // And it is showing a DIFFERENT conversation. The generation guard alone
+    // would let this through if a request were ever made without bumping it.
+    if (digest.threadId != m_dashboardThreadId)
+        return;
+
+    m_messageView->showDashboard(digest);
 }
 
 void MainWindow::onMessageLoaded(const QVector<MessageRef> &messages,
@@ -4217,6 +4330,9 @@ void MainWindow::onThreadTreeLoaded(const QVector<MessageNode> &nodes,
     // A stale-thread recovery waits for exactly this: the message it wants to
     // select does not exist as a row until the replies land.
     applyPendingRecovery();
+
+    // And so does a dashboard entry, for the same reason.
+    applyPendingDashboardSelection();
 }
 
 void MainWindow::renderMessages(const QVector<MessageRef> &messages)
@@ -4759,6 +4875,69 @@ void MainWindow::onRowDoubleClicked(const QModelIndex &index)
     // the replies land, and falls back to the root when the message has gone.
     // Every one of item 91's three cases is one of those paths.
     recoverStaleThread(threadId, messageId);
+}
+
+void MainWindow::selectMessageInCurrentThread(const QString &messageId)
+{
+    if (messageId.isEmpty())
+        return;
+
+    const QModelIndex current = m_threadView->currentIndex();
+    if (!current.isValid() || m_model->isMessageRow(current))
+        return;
+
+    // Expanded FIRST, and unconditionally: this is also what asks the worker
+    // for the replies, so a collapsed thread has no row to select yet.
+    m_threadView->expand(current);
+
+    m_dashboardSelectThreadId = m_model->threadFor(current).threadId;
+    m_dashboardSelectMessageId = messageId;
+    applyPendingDashboardSelection();
+}
+
+void MainWindow::applyPendingDashboardSelection()
+{
+    if (m_dashboardSelectMessageId.isEmpty())
+        return;
+
+    for (int row = 0; row < m_model->rowCount(QModelIndex()); ++row) {
+        const QModelIndex thread = m_model->index(row, 0, QModelIndex());
+        if (m_model->threadAt(row).threadId != m_dashboardSelectThreadId)
+            continue;
+
+        // The thread's first message is the ROOT row, not a child:
+        // setThreadMessages drops depth 0 because the root stands for it, so
+        // looking for it among the children finds nothing.
+        if (m_model->data(thread, ThreadListModel::MessageIdRole).toString()
+            == m_dashboardSelectMessageId) {
+            selectRowAt(thread);
+            m_dashboardSelectMessageId.clear();
+            m_dashboardSelectThreadId.clear();
+            return;
+        }
+
+        for (int child = 0; child < m_model->rowCount(thread); ++child) {
+            const QModelIndex reply = m_model->index(child, 0, thread);
+            if (m_model->messageAt(reply).messageId
+                != m_dashboardSelectMessageId)
+                continue;
+            selectRowAt(reply);
+            m_dashboardSelectMessageId.clear();
+            m_dashboardSelectThreadId.clear();
+            return;
+        }
+
+        // The replies have not arrived. The target stays remembered and
+        // onThreadTreeLoaded() runs this again when they do; the selection is
+        // deliberately left where it is until then, so the dashboard the user
+        // clicked from stays on screen rather than flashing to something else.
+        return;
+    }
+
+    // The thread is not in the list at all, which the query having moved on
+    // would produce. Nothing to select, and nothing to keep waiting for.
+    m_dashboardSelectMessageId.clear();
+    m_dashboardSelectThreadId.clear();
 }
 
 void MainWindow::applyPendingRecovery()

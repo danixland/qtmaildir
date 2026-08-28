@@ -31,6 +31,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QtNumeric>
 #include <QResizeEvent>
@@ -57,6 +58,7 @@
 #include "searchterm.h"
 #include "tagstrip.h"
 #include "threadcidmap.h"
+#include "threaddashboard.h"
 #include "version.h"
 
 namespace {
@@ -444,6 +446,11 @@ MessageView::MessageView(QWidget *parent)
     // Tags live under the message rather than in the thread list, where
     // spelling them out cost most of the list's width.
     m_tagStrip = new TagStrip(this);
+    // Named because the pane now holds TWO strips: this one, under the
+    // message, and the dashboard's, under the conversation heading. An
+    // unqualified findChild<TagStrip *>() cannot tell them apart, and which
+    // one it happens to return is an ordering accident.
+    m_tagStrip->setObjectName(QStringLiteral("messageTagStrip"));
     m_tagStrip->hide();
 
     // Item 85: a tag chip is searchable. The strip reports which chip was hit
@@ -475,7 +482,12 @@ MessageView::MessageView(QWidget *parent)
     // Left at the style's own default until then, which is what a MessageView
     // built on its own in a test gets.
 
-    auto *layout = new QVBoxLayout(this);
+    // Everything above belongs to ONE of the pane's two faces. The message
+    // page carries it; the dashboard is the other page of the stack.
+    m_messagePage = new QWidget(this);
+    m_messagePage->setObjectName(QStringLiteral("messagePage"));
+    auto *layout = new QVBoxLayout(m_messagePage);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->addLayout(headerRow);
     layout->addWidget(m_blockedBar);
     layout->addWidget(m_receiveOnlyRibbon);
@@ -488,6 +500,27 @@ MessageView::MessageView(QWidget *parent)
     layout->addWidget(m_view, 1);
     layout->addWidget(m_attachmentBar);
     layout->addWidget(m_tagStrip);
+
+    m_dashboard = new ThreadDashboard(this);
+
+    // A QStackedWidget takes the LARGEST minimum of its pages, so the hidden
+    // dashboard would set the floor for the whole pane: its three action
+    // buttons side by side measured 395px, against the 300px MainWindow asks
+    // for, and a floor the pane cannot go under is a floor that squeezes the
+    // thread list instead. The dashboard already scrolls, so letting it be
+    // narrower than its natural width costs nothing it does not already
+    // handle.
+    m_dashboard->setMinimumWidth(0);
+    m_dashboard->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+
+    m_stack = new QStackedWidget(this);
+    m_stack->addWidget(m_messagePage);
+    m_stack->addWidget(m_dashboard);
+    m_stack->setCurrentWidget(m_messagePage);
+
+    auto *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->addWidget(m_stack);
 
     applyNoticeBarStyles();
 
@@ -519,9 +552,57 @@ void MessageView::setDocument(const QString &html)
     m_view->setHtml(html, documentUrl());
 }
 
+bool MessageView::showingDashboard() const
+{
+    return m_stack && m_stack->currentWidget() == m_dashboard;
+}
+
+void MessageView::showMessagePage()
+{
+    if (m_stack)
+        m_stack->setCurrentWidget(m_messagePage);
+}
+
+void MessageView::setDashboardThread(const QString &subject,
+                                     const QString &accountLabel,
+                                     const QStringList &tags)
+{
+    m_dashboard->setThreadHeading(subject, accountLabel);
+    m_dashboard->setTags(tags);
+}
+
+void MessageView::showDashboard(const ThreadDigest &digest)
+{
+    // Everything the message page was serving is dropped, exactly as
+    // showPlaceholder() drops it: the pane is no longer displaying that
+    // message, so none of its parts may stay reachable behind the dashboard.
+    m_items.clear();
+    m_tagStrip->setTags({});
+    m_cidHandler->setParts({});
+    m_interceptor->setAllowedCids({});
+    m_interceptor->resetForNewMessage();
+
+    m_headerLabel->clear();
+    m_detailsButton->hide();
+    m_blockedBar->hide();
+    m_messageBar->hide();
+    rebuildAttachmentBar();
+    setStaleThread(QString(), QString());
+
+    // Not the placeholder: a helper link is honoured only while THAT is on
+    // screen, and this is a different pane.
+    m_showingPlaceholder = false;
+    setDocument(QString());
+
+    m_dashboard->setDigest(digest);
+    m_stack->setCurrentWidget(m_dashboard);
+}
+
 void MessageView::showPlaceholder(
     const QList<HtmlBuilder::PlaceholderHelper> &helpers)
 {
+    showMessagePage();
+
     // Everything clear() drops, dropped again: this is reachable directly and
     // must not leave a previous thread's parts serveable behind the logo.
     m_items.clear();
@@ -633,6 +714,7 @@ void MessageView::setBarActions(const QList<QAction *> &messageActions,
 
 void MessageView::clear()
 {
+    showMessagePage();
     m_items.clear();
     m_showingPlaceholder = false;
     m_tagStrip->setTags({});
@@ -668,6 +750,7 @@ void MessageView::clear()
 
 void MessageView::showThread(const QList<ThreadRenderItem> &items)
 {
+    showMessagePage();
     m_items = items;
     m_preferHtml = true;
     m_showingPlaceholder = false;
@@ -707,6 +790,7 @@ void MessageView::showThread(const QList<ThreadRenderItem> &items)
 
 void MessageView::showError(const QString &text, const QString &filePath)
 {
+    showMessagePage();
     m_items.clear();
     m_showingPlaceholder = false;
 

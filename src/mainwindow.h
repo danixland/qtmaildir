@@ -41,6 +41,7 @@
 #include "tagrules.h"
 #include "syncmonitor.h"
 #include "tagcolors.h"
+#include "threaddigest.h"
 #include "types.h"
 
 // Held by value: the parsed business-senders list is a member, and the load is
@@ -585,6 +586,22 @@ private slots:
 
     /// Selects the remembered message once its thread's rows have loaded.
     void applyPendingRecovery();
+
+    /// Selects \p messageId inside the currently selected conversation,
+    /// expanding it first (item 177).
+    ///
+    /// For the dashboard's unread entries. Deliberately NOT recoverStaleThread(),
+    /// which runs thread:<id> as a new query: the thread is already in the list
+    /// the user is looking at, and replacing that list to reach a row it
+    /// already holds would throw away the view they came from.
+    ///
+    /// A reply row does not exist until the expansion's replies arrive, so the
+    /// target is remembered and applied again when they do.
+    void selectMessageInCurrentThread(const QString &messageId);
+
+    /// Applies a pending selectMessageInCurrentThread() target, if any.
+    void applyPendingDashboardSelection();
+
     void onThreadsReady(const QVector<ThreadSummary> &threads, quint64 generation);
     void onQueryFinished(int total, quint64 generation);
     void onThreadSelected(const QModelIndex &current, const QModelIndex &previous);
@@ -609,6 +626,15 @@ private slots:
     /// Renders the single message a message row asked for.
     void onMessageLoaded(const QVector<MessageRef> &messages,
                          quint64 generation);
+
+    /// Fills the conversation dashboard once the worker has read the digest.
+    ///
+    /// Guarded the way onMessageLoaded() is, and for the same reason: the
+    /// request crosses on a queued connection, so the answer arrives after
+    /// whatever the user did in the meantime. A digest for a thread the pane
+    /// has moved off, or one that arrives once the pane is showing a message,
+    /// must not repaint anything.
+    void onThreadDigestLoaded(const ThreadDigest &digest, quint64 generation);
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
 
@@ -1600,6 +1626,24 @@ private:
     bool m_sentView = false;
     QString m_lastQuery;
     QString m_currentThreadId;
+
+    /// The digest request's own generation, bumped per request.
+    ///
+    /// Separate from m_generation, which is the QUERY generation: bumping that
+    /// one discards any thread load in flight and blanks the pane, so a
+    /// selection asking for a digest would cancel the work the selection
+    /// itself started.
+    quint64 m_digestGeneration = 0;
+
+    /// The thread the dashboard is showing, empty whenever it is not showing.
+    /// A late digest is matched against this, not against m_currentThreadId,
+    /// which is also set for a thread of one message that renders normally.
+    QString m_dashboardThreadId;
+
+    /// The message a dashboard entry asked for and the thread it is in, both
+    /// empty when nothing is waiting. See selectMessageInCurrentThread().
+    QString m_dashboardSelectMessageId;
+    QString m_dashboardSelectThreadId;
 
     /// The message a MESSAGE row is showing, empty whenever the pane holds a
     /// whole thread. The two are mutually exclusive and each clears the other,

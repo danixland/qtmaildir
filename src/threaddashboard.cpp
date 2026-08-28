@@ -197,6 +197,9 @@ ThreadDashboard::ThreadDashboard(QWidget *parent) : QWidget(parent)
     // Block 2: the tag chips. One tier, no muting, drawn by the same strip the
     // message pane uses so the two cannot drift.
     m_tags = new TagStrip;
+    // Named for the same reason the message pane's is: the two sit in one
+    // widget tree and an unqualified findChild cannot tell them apart.
+    m_tags->setObjectName(QStringLiteral("dashboardTagStrip"));
     layout->addWidget(m_tags);
 
     // Block 3: the counts, with the read-progress bar beneath.

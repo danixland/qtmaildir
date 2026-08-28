@@ -307,7 +307,7 @@ private slots:
     void arrivingBatchesUpdateTheStatusBarWithTheCountSoFar();
     void aRefreshsBatchesLeaveTheStatusBarAlone();
     void selectingAThreadRootShowsItInTheMessagePane();
-    void anUnexpandedRootRendersOneMessageNotTheConversation();
+    void anUnexpandedRootShowsTheDashboardLikeAnExpandedOne();
     void aSingleMessageIdQuerysCardOpensInTheMessagePane();
     void autoSyncIsNotArmedWhenDisabledOrWithNothingPending();
     void autoSyncSkipsWhileABackgroundSyncIsRunning();
@@ -363,7 +363,7 @@ private slots:
     void childRowsAreIndentedUnderTheirThread();
     void aThreadWithRepliesDrawsAVisibleExpander();
     void cardsNeverScrollSideways();
-    void selectingARootCardKeepsItsThreadForMarkRead();
+    void selectingAConversationArmsNoMarkRead();
     void nextThreadLeavesTheLastReply();
     void altDownSkipsReplies();
     void bothThreadStepBindingsReachTheAction();
@@ -404,6 +404,8 @@ private slots:
     void taggingAnUnrelatedReplyLeavesTheStripAlone();
     void aHeldMessageEditIsSentWhenTheSyncEnds();
     void anActionOnAConversationRowTakesTheConversation();
+    void selectingAConversationShowsTheDashboard();
+    void selectingALoneMessageShowsTheMessage();
     void autoMarkReadTouchesOnlyTheMessageOnDisplay();
     void autoMarkReadArmsForAReplyToo();
     void taggingTheOpenRootMessageKeepsTheStripPopulated();
@@ -1156,37 +1158,6 @@ NavFixture buildNavFixture(MainWindow &window)
 
 }  // namespace
 
-void TestMainWindow::selectingARootCardKeepsItsThreadForMarkRead()
-{
-    // A root card is BOTH a message and a thread: it renders the thread's
-    // first message, and it is still the thread that gets marked read and
-    // repainted on a tag change. The message-row path deliberately clears the
-    // current thread id; doing that here too would silently disable mark-read
-    // and the tag-change repaint for every thread root in the list.
-    const Config config;
-    MainWindow window(config);
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
-
-    const NavFixture f = buildNavFixture(window);
-    f.view->setCurrentIndex(f.root);
-    QApplication::processEvents();
-
-    // Guard: the fixture loads replies, so the root knows its own message and
-    // the branch under test is the one that runs.
-    QVERIFY2(!f.model->data(f.root, ThreadListModel::MessageIdRole)
-                  .toString().isEmpty(),
-             "the root card does not know its first message, so this exercises "
-             "the fallback rather than the path it is written for");
-
-    // A mark-read timer armed for the thread is what proves the thread id
-    // survived: scheduleMarkRead() is only reached on the thread-row path.
-    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
-    QVERIFY(timer);
-    QVERIFY2(timer->isActive(),
-             "no mark-read timer for a selected root card: its thread id was "
-             "cleared along with the switch to rendering one message");
-}
 
 void TestMainWindow::nextThreadLeavesTheLastReply()
 {
@@ -3896,22 +3867,25 @@ void TestMainWindow::theStaleNoticeKeepsTheMessageOfAThreadRootToo()
     queryEdit->setText(QStringLiteral("tag:unread"));
     queryEdit->returnPressed();
 
+    // totalCount = 1 since item 177, and that is a retarget rather than a
+    // weakening. The stale notice describes the message the pane is DISPLAYING,
+    // and a conversation row displays none: it shows the dashboard. A thread of
+    // one still renders its message, which is the case the notice is for, and
+    // the root-sets-both-ids condition this test was written against is
+    // unchanged there.
     ThreadSummary thread = makeThread(QStringLiteral("T1"),
                                       { QStringLiteral("unread") });
-    thread.totalCount = 4;
+    thread.totalCount = 1;
     model->appendBatch({ thread });
 
     // The root knows its own message once the tree is loaded, which is what
-    // makes the pane show one message rather than the conversation.
+    // makes the pane show one message rather than the conversation. One node,
+    // at depth 0: a thread of one has no replies to carry.
     MessageNode root;
     root.messageId = QStringLiteral("m0@example.org");
     root.threadId = QStringLiteral("T1");
     root.depth = 0;
-    MessageNode reply;
-    reply.messageId = QStringLiteral("m1@example.org");
-    reply.threadId = QStringLiteral("T1");
-    reply.depth = 1;
-    model->setThreadMessages(QStringLiteral("T1"), { root, reply });
+    model->setThreadMessages(QStringLiteral("T1"), { root });
 
     const QModelIndex threadIndex = model->index(0, 0, QModelIndex());
     view->setCurrentIndex(threadIndex);
@@ -5772,7 +5746,10 @@ void TestMainWindow::taggingTheOpenReplyUpdatesTheMessagePaneStrip()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *strip = window.findChild<TagStrip *>();
+    // The MESSAGE pane's strip by name: the pane holds two since item 177,
+    // and an unqualified lookup can return the dashboard's instead.
+    auto *strip =
+        window.findChild<TagStrip *>(QStringLiteral("messageTagStrip"));
     QVERIFY2(strip, "no tag strip in the message pane");
 
     // visible + hidden: TagStrip collapses what does not fit into a "+N" chip,
@@ -5818,7 +5795,10 @@ void TestMainWindow::taggingAnUnrelatedReplyLeavesTheStripAlone()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *strip = window.findChild<TagStrip *>();
+    // The MESSAGE pane's strip by name: the pane holds two since item 177,
+    // and an unqualified lookup can return the dashboard's instead.
+    auto *strip =
+        window.findChild<TagStrip *>(QStringLiteral("messageTagStrip"));
     QVERIFY(strip);
 
     // visible + hidden: TagStrip collapses what does not fit into a "+N" chip,
@@ -5987,6 +5967,63 @@ void TestMainWindow::anActionOnAConversationRowTakesTheConversation()
              QStringList{ QStringLiteral("t2-first@example.org") });
 }
 
+void TestMainWindow::selectingAConversationShowsTheDashboard()
+{
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<QTreeView *>();
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(model && view && pane);
+
+    ThreadSummary one = makeThread(QStringLiteral("t1"), {});
+    one.totalCount = 1;
+    ThreadSummary many = makeThread(QStringLiteral("t2"), {});
+    many.totalCount = 4;
+    model->appendBatch({ one, many });
+
+    // Before the gesture, so the check after it means something: the pane
+    // starts on the placeholder, not on a dashboard.
+    QVERIFY2(!pane->showingDashboard(),
+             "the pane was already showing a dashboard before anything was "
+             "selected, so the assertion below would pass on nothing");
+
+    selectThreadRow(view, 1);
+    QApplication::processEvents();
+
+    QVERIFY2(pane->showingDashboard(),
+             "selecting a conversation rendered a message: the row stands for "
+             "the thread and has no message to show");
+}
+
+void TestMainWindow::selectingALoneMessageShowsTheMessage()
+{
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<QTreeView *>();
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(model && view && pane);
+
+    // The conversation FIRST, so a wrong answer cannot be accidentally right:
+    // a branch that showed the dashboard for every row would still be wrong
+    // here, and one that never showed it would be wrong above.
+    ThreadSummary many = makeThread(QStringLiteral("t1"), {});
+    many.totalCount = 4;
+    ThreadSummary one = makeThread(QStringLiteral("t2"), {});
+    one.totalCount = 1;
+    model->appendBatch({ many, one });
+
+    selectThreadRow(view, 1);
+    QApplication::processEvents();
+
+    QVERIFY2(!pane->showingDashboard(),
+             "a thread of one message showed a dashboard: it must open on one "
+             "click, which is the case the whole split exists to protect");
+}
+
 void TestMainWindow::autoMarkReadTouchesOnlyTheMessageOnDisplay()
 {
     // Item 87, reported 2026-08-14: "with the first message in a thread
@@ -6018,9 +6055,19 @@ void TestMainWindow::autoMarkReadTouchesOnlyTheMessageOnDisplay()
     auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
     QVERIFY(timer);
 
+    // totalCount = 1 since item 177, and the retarget is what KEEPS this test
+    // able to fail. A thread row means the conversation now and displays no
+    // message, so it arms no mark-read at all and there is no write left here
+    // to be wrong about. A thread of one still renders its message, which is
+    // where the automatic mark-read survives and where the scoping above is
+    // still the property that matters.
+    //
+    // The stronger new rule, that a conversation row arms nothing whatever, is
+    // asserted by selectingAConversationArmsNoMarkRead() below. Between them
+    // the two cover every row an automatic mark-read can reach.
     ThreadSummary t = makeThread(QStringLiteral("t1"),
                                  { QStringLiteral("unread") });
-    t.totalCount = 7;
+    t.totalCount = 1;
     model->appendBatch({ t });
 
     selectThreadRow(view, 0);
@@ -6032,19 +6079,112 @@ void TestMainWindow::autoMarkReadTouchesOnlyTheMessageOnDisplay()
     QTRY_VERIFY_WITH_TIMEOUT(!timer->isActive(), 2000);
     QApplication::processEvents();
 
-    // ONE message, the one the card renders, and named rather than merely
-    // counted: a thread of seven whose first message is the target is exactly
-    // the case where a count of one could still be the wrong one.
+    // ONE message, the one the card renders, and NAMED rather than merely
+    // counted: a count of one can still be the wrong one, and the id is what
+    // says the write landed on the message actually on display.
     QCOMPARE(window.pendingMessageIdsForTesting(),
              QStringList{ QStringLiteral("t1-first@example.org") });
     QVERIFY2(window.pendingThreadIdsForTesting().isEmpty(),
-             "the automatic mark-read still wrote to the whole thread, so six "
-             "messages the user never displayed were marked read and the next "
-             "sync carries that to the server");
+             "the automatic mark-read escalated to the whole thread, so mail "
+             "the user never displayed was marked read and the next sync "
+             "carries that to the server");
 
     // Still not on the undo stack. The user never took this action, so
     // hijacking Ctrl+Z to reverse it would undo something they did not do.
     QCOMPARE(window.undoDepthForTesting(), 0);
+}
+
+void TestMainWindow::selectingAConversationArmsNoMarkRead()
+{
+    // Item 177, and it REPLACES selectingARootCardKeepsItsThreadForMarkRead(),
+    // which asserted the opposite and is retired. That test opened "A root card
+    // is BOTH a message and a thread", which is exactly the identity item 177
+    // splits: a row with replies is the conversation and displays no message,
+    // so there is nothing on screen the user can be said to have read.
+    // Retargeting it would have made it a test about something it was never
+    // about; the history is recorded here so the next reader finds it.
+    //
+    // The data-safety half of item 87 is unchanged and still lives in
+    // autoMarkReadTouchesOnlyTheMessageOnDisplay() above, on the row that does
+    // display a message. This is the stronger half: arming NOTHING is safe by
+    // construction, so the assertions below are about the absence of any write
+    // rather than about its scope.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("[general]\nmark_read_delay_ms = 0\n");
+    file.close();
+
+    Config config;
+    config.load(path);
+    QCOMPARE(config.markReadDelayMs(), 0);
+
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(timer);
+
+    // A thread of ONE first and the conversation SECOND, in opposite states,
+    // so a wrong answer is visible rather than accidentally right: code that
+    // armed nothing anywhere would fail the lone-message test above, and code
+    // that armed for everything fails here.
+    ThreadSummary lone = makeThread(QStringLiteral("t1"),
+                                    { QStringLiteral("unread") });
+    lone.totalCount = 1;
+    ThreadSummary conversation = makeThread(QStringLiteral("t2"),
+                                            { QStringLiteral("unread") });
+    conversation.totalCount = 7;
+    model->appendBatch({ lone, conversation });
+
+    // The guard: this fixture really does arm a mark-read for the row that
+    // displays a message, so the absence asserted below is the conversation
+    // row's doing and not a window that never arms anything.
+    selectThreadRow(view, 0);
+    QApplication::processEvents();
+    QVERIFY2(timer->isActive() || !window.pendingMessageIdsForTesting().isEmpty(),
+             "the lone-message row armed nothing either, so this test cannot "
+             "tell a conversation row from a broken mark-read");
+
+    QTRY_VERIFY_WITH_TIMEOUT(!timer->isActive(), 2000);
+    QApplication::processEvents();
+
+    // A fresh window, so the lone row's own write does not count towards the
+    // assertions about the conversation.
+    MainWindow second(config);
+    auto *secondModel = second.findChild<ThreadListModel *>();
+    QVERIFY(secondModel);
+    auto *secondView = second.findChild<QTreeView *>();
+    QVERIFY(secondView);
+    auto *secondTimer =
+        second.findChild<QTimer *>(QStringLiteral("markReadTimer"));
+    QVERIFY(secondTimer);
+    secondModel->appendBatch({ lone, conversation });
+
+    selectThreadRow(secondView, 1);
+    QApplication::processEvents();
+
+    QVERIFY2(!secondTimer->isActive(),
+             "a conversation row armed the mark-read timer, so a row that "
+             "displays no message is about to mark one read");
+
+    // Given time to fire, in case it was armed and stopped between the check
+    // above and here. Nothing may arrive.
+    QTest::qWait(50);
+    QApplication::processEvents();
+
+    QVERIFY2(second.pendingMessageIdsForTesting().isEmpty(),
+             "a conversation row marked a message read: the row displays "
+             "none, so the write named a message the user never saw");
+    QVERIFY2(second.pendingThreadIdsForTesting().isEmpty(),
+             "a conversation row marked the whole thread read, which is "
+             "every message in it and none of them displayed");
+    QCOMPARE(second.undoDepthForTesting(), 0);
 }
 
 void TestMainWindow::autoMarkReadArmsForAReplyToo()
@@ -6123,7 +6263,10 @@ void TestMainWindow::taggingTheOpenRootMessageKeepsTheStripPopulated()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *strip = window.findChild<TagStrip *>();
+    // The MESSAGE pane's strip by name: the pane holds two since item 177,
+    // and an unqualified lookup can return the dashboard's instead.
+    auto *strip =
+        window.findChild<TagStrip *>(QStringLiteral("messageTagStrip"));
     QVERIFY(strip);
 
     ThreadSummary t = makeThread(QStringLiteral("t1"),
@@ -6185,7 +6328,10 @@ void TestMainWindow::aLoadedMessageCorrectsTheStripFromTheThreadsUnion()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *strip = window.findChild<TagStrip *>();
+    // The MESSAGE pane's strip by name: the pane holds two since item 177,
+    // and an unqualified lookup can return the dashboard's instead.
+    auto *strip =
+        window.findChild<TagStrip *>(QStringLiteral("messageTagStrip"));
     QVERIFY(strip);
 
     const auto stripTags = [strip]() {
@@ -6193,11 +6339,20 @@ void TestMainWindow::aLoadedMessageCorrectsTheStripFromTheThreadsUnion()
     };
 
     // The union carries `signed`; the root message does not.
+    //
+    // totalCount = 1 since item 177, which is a retarget rather than a
+    // weakening. This test is about the message pane's strip being corrected
+    // from a LOADED message, and a conversation row displays no message at all
+    // now: it shows the dashboard, whose strip is the thread's union on
+    // purpose. A thread of one still renders its message, so the union and the
+    // message's own tags can still disagree and the correction still has to
+    // happen. The tags are unchanged, so the disagreement the test turns on is
+    // the same one the user reported.
     ThreadSummary t = makeThread(QStringLiteral("t1"),
                                  { QStringLiteral("inbox"),
                                    QStringLiteral("signed"),
                                    QStringLiteral("unread") });
-    t.totalCount = 4;
+    t.totalCount = 1;
     model->appendBatch({ t });
 
     selectThreadRow(view, 0);
@@ -7845,8 +8000,14 @@ void TestMainWindow::theMessageBarSitsAboveTheBodyAndBelowTheHeader()
     auto *header = pane->findChild<QLabel *>(QStringLiteral("messageHeader"));
     QVERIFY(bar);
 
-    auto *layout = qobject_cast<QVBoxLayout *>(pane->layout());
-    QVERIFY2(layout, "the message pane is not laid out vertically");
+    // The message PAGE's column, not the pane's. Since item 177 the pane is a
+    // stack of two faces, the message and the conversation dashboard, so the
+    // pane's own layout holds one item and the ordering this test is about
+    // lives one level in.
+    auto *page = pane->findChild<QWidget *>(QStringLiteral("messagePage"));
+    QVERIFY2(page, "the message pane has no message page to order");
+    auto *layout = qobject_cast<QVBoxLayout *>(page->layout());
+    QVERIFY2(layout, "the message page is not laid out vertically");
 
     // Index in the pane's own column, which is what "above" and "below" mean
     // here. Asserting on geometry instead would measure the offscreen
@@ -10776,13 +10937,23 @@ void TestMainWindow::selectingAThreadRootShowsItInTheMessagePane()
     QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
 }
 
-void TestMainWindow::anUnexpandedRootRendersOneMessageNotTheConversation()
+void TestMainWindow::anUnexpandedRootShowsTheDashboardLikeAnExpandedOne()
 {
-    // Item 66, the half that reproduced. Clicking a thread root that has never
-    // been expanded used to render the whole conversation, because the model
-    // learned the thread's first message only when the replies loaded. The
-    // identical click rendered ONE message afterwards. The user reported the
-    // inconsistency and asked for the single-message behaviour throughout.
+    // Item 66 resolved the other way, by item 177, and this REPLACES
+    // anUnexpandedRootRendersOneMessageNotTheConversation().
+    //
+    // What item 66 was actually about was an INCONSISTENCY across the
+    // expansion boundary: clicking a thread root that had never been expanded
+    // rendered the whole conversation, and the identical click rendered one
+    // message afterwards, because the model learned the thread's first message
+    // only when the replies loaded. The user reported the inconsistency. Item
+    // 66 removed it by making both clicks render one message; item 177 removes
+    // it the other way, by making a row with replies mean the conversation
+    // whether or not it has been opened.
+    //
+    // So the old assertion is now simply the wrong expectation, while item
+    // 66's real value, that the same gesture does the same thing on both sides
+    // of the expansion, is exactly what this asserts.
     WorkerBackedWindow backed;
     QVERIFY(backed.fixture().addMessage(
         QStringLiteral("inbox"), QStringLiteral("root@example.org"),
@@ -10817,27 +10988,36 @@ void TestMainWindow::anUnexpandedRootRendersOneMessageNotTheConversation()
     const QModelIndex root = model->index(0, 0, QModelIndex());
     QVERIFY(root.isValid());
     QVERIFY2(model->hasChildren(root), "the two messages did not thread");
+    QVERIFY2(model->isConversationRow(root),
+             "the two-message row is not a conversation, so this measures the "
+             "lone-message path instead");
 
-    // NEVER expanded. That is the whole point: this is the state in which the
-    // old code fell back to the conversation render.
+    // NEVER expanded yet. That is the side of the boundary item 66 found the
+    // inconsistency on.
     QVERIFY2(!view->isExpanded(root), "the test expanded the thread itself");
 
-    // The root's message id is known anyway, because the query carries it now.
-    QVERIFY2(!model->data(root, ThreadListModel::MessageIdRole)
-                  .toString()
-                  .isEmpty(),
-             "an unexpanded root still has no message id: the query is not "
-             "carrying firstMessageId");
+    // The guard: the pane is not already showing a dashboard, or the
+    // assertion after the click would pass on nothing.
+    QVERIFY(!pane->showingDashboard());
 
     view->setCurrentIndex(root);
-    QTRY_VERIFY_WITH_TIMEOUT(!pane->showingPlaceholder(), 15000);
+    QApplication::processEvents();
 
-    // ONE message, not a conversation. headerSearchOffers() is populated only
-    // when the header states a single message's own From/To/Cc; for a thread
-    // the header says "N messages in thread" and carries no such offers, so an
-    // empty list here is exactly the conversation render this replaced.
-    QVERIFY2(!pane->headerSearchOffers().isEmpty(),
-             "the pane rendered a conversation, not a single message");
+    QVERIFY2(pane->showingDashboard(),
+             "an unexpanded conversation row rendered a message: the row "
+             "stands for the thread whether or not it has been opened");
+
+    // The other side of the boundary, which is the whole point: expanding
+    // changes what the LIST shows and must not change what the ROW means.
+    view->expand(root);
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(root) > 0, 15000);
+
+    view->setCurrentIndex(root);
+    QApplication::processEvents();
+
+    QVERIFY2(pane->showingDashboard(),
+             "the same click on the same row did different things either side "
+             "of the expansion, which is the inconsistency item 66 reported");
 }
 
 void TestMainWindow::aSingleMessageIdQuerysCardOpensInTheMessagePane()

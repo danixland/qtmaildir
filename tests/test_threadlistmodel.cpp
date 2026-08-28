@@ -107,6 +107,10 @@ private slots:
     void aSummaryWithRepliesIsAConversationRow();
     void aLoadedThreadTrustsItsChildrenOverItsCount();
     void aMessageRowIsNeverAConversationRow();
+    void aConversationRowResolvesToItsThread();
+    void aLoneMessageRowResolvesToItsMessage();
+    void aReplyRowResolvesToItsMessage();
+    void aMixedSelectionCarriesBothScopes();
 };
 
 static ThreadSummary makeThread(const QString &id, const QString &subject)
@@ -2277,6 +2281,95 @@ void TestThreadListModel::aMessageRowIsNeverAConversationRow()
     QVERIFY2(!model.isConversationRow(replyRow),
              "a reply row answered yes, so an action on it would scope to the "
              "whole conversation");
+}
+
+void TestThreadListModel::aConversationRowResolvesToItsThread()
+{
+    ThreadListModel model;
+    ThreadSummary one = makeThread(QStringLiteral("t1"), QStringLiteral("Alone"));
+    one.totalCount = 1;
+    one.firstMessageId = QStringLiteral("m1");
+    // SECOND, so a wrong answer is visible rather than accidentally right.
+    ThreadSummary many = makeThread(QStringLiteral("t2"), QStringLiteral("Talk"));
+    many.totalCount = 4;
+    many.firstMessageId = QStringLiteral("m2");
+    model.appendBatch({ one, many });
+
+    const ActionScope scope =
+        model.scopeForSelection({ model.index(1, 0, QModelIndex()) });
+
+    QCOMPARE(scope.threadIds, QStringList{ QStringLiteral("t2") });
+    QVERIFY2(scope.messageIds.isEmpty(),
+             "a conversation row named a message, so an action on it would "
+             "touch one message of the thread it claims to act on");
+    QVERIFY(scope.wholeThread);
+}
+
+void TestThreadListModel::aLoneMessageRowResolvesToItsMessage()
+{
+    ThreadListModel model;
+    ThreadSummary many = makeThread(QStringLiteral("t1"), QStringLiteral("Talk"));
+    many.totalCount = 4;
+    many.firstMessageId = QStringLiteral("m1");
+    ThreadSummary one = makeThread(QStringLiteral("t2"), QStringLiteral("Alone"));
+    one.totalCount = 1;
+    one.firstMessageId = QStringLiteral("m2");
+    model.appendBatch({ many, one });
+
+    const ActionScope scope =
+        model.scopeForSelection({ model.index(1, 0, QModelIndex()) });
+
+    QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m2") });
+    QVERIFY(scope.threadIds.isEmpty());
+    QVERIFY(!scope.wholeThread);
+}
+
+void TestThreadListModel::aReplyRowResolvesToItsMessage()
+{
+    ThreadListModel model;
+    ThreadSummary first = makeThread(QStringLiteral("t1"), QStringLiteral("One"));
+    first.totalCount = 1;
+    first.firstMessageId = QStringLiteral("m0");
+    ThreadSummary many = makeThread(QStringLiteral("t2"), QStringLiteral("Talk"));
+    many.totalCount = 2;
+    many.firstMessageId = QStringLiteral("m1");
+    model.appendBatch({ first, many });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m1");
+    root.threadId = QStringLiteral("t2");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m2");
+    reply.threadId = QStringLiteral("t2");
+    reply.depth = 1;
+    model.setThreadMessages(QStringLiteral("t2"), { root, reply });
+
+    const QModelIndex thread = model.index(1, 0, QModelIndex());
+    const ActionScope scope =
+        model.scopeForSelection({ model.index(0, 0, thread) });
+
+    QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m2") });
+    QVERIFY(scope.threadIds.isEmpty());
+}
+
+void TestThreadListModel::aMixedSelectionCarriesBothScopes()
+{
+    ThreadListModel model;
+    ThreadSummary one = makeThread(QStringLiteral("t1"), QStringLiteral("Alone"));
+    one.totalCount = 1;
+    one.firstMessageId = QStringLiteral("m1");
+    ThreadSummary many = makeThread(QStringLiteral("t2"), QStringLiteral("Talk"));
+    many.totalCount = 4;
+    many.firstMessageId = QStringLiteral("m2");
+    model.appendBatch({ one, many });
+
+    const ActionScope scope =
+        model.scopeForSelection({ model.index(0, 0, QModelIndex()),
+                                  model.index(1, 0, QModelIndex()) });
+
+    QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m1") });
+    QCOMPARE(scope.threadIds, QStringList{ QStringLiteral("t2") });
 }
 
 QTEST_MAIN(TestThreadListModel)

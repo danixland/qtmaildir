@@ -1117,6 +1117,43 @@ ActionScope ThreadListModel::scopeFor(const QModelIndexList &selection) const
     return scope;
 }
 
+ActionScope ThreadListModel::scopeForSelection(
+    const QModelIndexList &selection) const
+{
+    ActionScope scope;
+
+    for (const QModelIndex &index : selection) {
+        if (isConversationRow(index)) {
+            const ThreadSummary &summary = m_threads.at(index.row()).summary;
+            if (scope.threadIds.contains(summary.threadId))
+                continue;
+            scope.threadIds.append(summary.threadId);
+            // totalCount, not the loaded children: an unexpanded conversation
+            // still has all of its messages, and the count is what the status
+            // bar names after the fact.
+            scope.messageCount += summary.totalCount;
+            scope.wholeThread = true;
+            continue;
+        }
+
+        const QString messageId =
+            isMessageRow(index)
+                ? messageAt(index).messageId
+                : (index.row() >= 0 && index.row() < m_threads.size()
+                       ? m_threads.at(index.row()).summary.firstMessageId
+                       : QString());
+
+        // Skipped rather than widened. Falling back to the thread would
+        // silently act on messages the row does not stand for.
+        if (messageId.isEmpty() || scope.messageIds.contains(messageId))
+            continue;
+        scope.messageIds.append(messageId);
+        scope.messageCount += 1;
+    }
+
+    return scope;
+}
+
 ThreadSummary ThreadListModel::threadAt(int row) const
 {
     if (row < 0 || row >= m_threads.size())

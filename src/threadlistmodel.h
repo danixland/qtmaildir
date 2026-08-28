@@ -361,6 +361,14 @@ public:
     /// thread instead would be the silent escalation this exists to remove.
     ActionScope messageScopeFor(const QModelIndexList &selection) const;
 
+    /// What a selection means, resolved per row from what that row IS.
+    ///
+    /// Replaces the scopeFor()/messageScopeFor() pair, which made the caller
+    /// choose the scope and so let one gesture mean two things (item 177). A
+    /// conversation row contributes its thread, any other row its message, and
+    /// a mixed selection carries both.
+    ActionScope scopeForSelection(const QModelIndexList &selection) const;
+
     /// The account keys behind a thread's account tags, for item 49's
     /// per-account sync.
     ///

@@ -154,6 +154,22 @@ Reply without quote and Save all behave exactly as they do today. The dashboard
 also offers a route to any of them: clicking an entry under "Waiting for you"
 selects that message's row, where the full set applies.
 
+**A mixed conversation's unread toggle is a catch-all, and that is item 112
+answered rather than lost.** Item 112 split the thread toggle into two
+fixed-direction actions because a union is not a state: a conversation with
+some messages read and some unread has no current state to toggle from. With
+the submenu gone there is one key, so the rule is:
+
+- Any message unread (including a mixed conversation) reads **Mark thread
+  read**, and marks every message read. Mixed is not a special case; it is the
+  ordinary one.
+- A fully read conversation reads **Mark thread unread**.
+
+Two presses therefore reach either state from anywhere, which is what makes one
+key enough. The three-valued `selectionTagPresence()` item 112 introduced is
+what answers the question; only the LABEL rule changes, from "hide when the
+selection disagrees" to "a mixed selection is treated as unread".
+
 `markAllRead` is untouched. It ignores the selection by design and is
 thread-scoped by nature (item 108 recorded this).
 

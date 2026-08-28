@@ -24,6 +24,7 @@
 #include <QStringList>
 #include <QVector>
 
+#include "threaddigest.h"
 #include "types.h"
 
 struct _notmuch_database;
@@ -109,6 +110,35 @@ public slots:
     /// deliberately unused: see the comment on the walk in the .cpp.
     void loadThreadTree(const QString &threadId, const QString &matchQuery,
                         quint64 generation);
+
+    /// Everything the thread dashboard shows, from ONE walk of the index.
+    ///
+    /// Sender counts, the newest unread messages, and an activity histogram,
+    /// all served from the index: no message file is opened, which is the
+    /// contract ThreadDigest states and the reason this can run on every
+    /// selection. See threaddigest.h.
+    ///
+    /// \p generation is the DASHBOARD's own counter, never m_generation's
+    /// query generation. Bumping that one would discard a thread load in
+    /// flight and blank the message pane because the user selected a row,
+    /// which is the rule requestMessageCounts and countSenders already follow.
+    ///
+    /// A thread id the index does not hold yields an EMPTY digest rather than
+    /// silence, for the reason loadMessage() documents: a caller that arms
+    /// state on the request and disarms it on the reply otherwise waits for
+    /// ever.
+    void loadThreadDigest(const QString &threadId, quint64 generation);
+
+public:
+    /// The first thread id matching \p query, for tests.
+    ///
+    /// A test knows a message id and needs the thread id the digest call
+    /// takes; nothing in the UI ever needs this, since every caller there
+    /// already holds a thread id from a query result. Not a slot, so it cannot
+    /// be reached across the thread boundary by accident.
+    QString threadIdForTesting(const QString &query);
+
+public slots:
 
     /// Loads ONE message, for a message row selected in the list.
     ///
@@ -315,6 +345,10 @@ signals:
     void threadTreeLoaded(const QVector<MessageNode> &nodes,
                           quint64 generation);
     void messageLoaded(const QVector<MessageRef> &messages, quint64 generation);
+
+    /// The dashboard's digest. `generation` is the dashboard's own counter,
+    /// echoed back so a stale answer can be discarded.
+    void threadDigestLoaded(const ThreadDigest &digest, quint64 generation);
     void tagsApplied(const TagChange &change);
 
     /// Carries the ids that ACTUALLY moved, which may be fewer than requested.

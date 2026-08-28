@@ -349,11 +349,21 @@ static const int kSortOrderMetaType =
 static const int kSenderCountsMetaType =
     qRegisterMetaType<QHash<QString, int>>("QHash<QString,int>");
 
+/// And the same for the dashboard's digest, which crosses the queued
+/// threadDigestLoaded connection. Here beside the signal that carries it
+/// rather than in MainWindow, for the reason SortOrder above records: the
+/// registration belongs to the type, and a caller that never builds a window
+/// still needs it. threaddigest.h is header-only, so this file is where a
+/// static initialiser for it can live.
+static const int kThreadDigestMetaType =
+    qRegisterMetaType<ThreadDigest>("ThreadDigest");
+
 NotmuchWorker::NotmuchWorker(const QString &notmuchConfigPath, QObject *parent)
     : QObject(parent), m_configPath(notmuchConfigPath)
 {
     Q_UNUSED(kSortOrderMetaType);
     Q_UNUSED(kSenderCountsMetaType);
+    Q_UNUSED(kThreadDigestMetaType);
 }
 
 NotmuchWorker::~NotmuchWorker()
@@ -679,6 +689,196 @@ void NotmuchWorker::loadThreadTree(const QString &threadId,
     }
 
     emit threadTreeLoaded(nodes, generation);
+}
+
+QString NotmuchWorker::threadIdForTesting(const QString &query)
+{
+    if (!openReadOnly())
+        return QString();
+
+    NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+    if (!nmQuery)
+        return QString();
+
+    notmuch_threads_t *rawThreads = nullptr;
+    if (notmuch_query_search_threads(nmQuery.get(), &rawThreads)
+            != NOTMUCH_STATUS_SUCCESS) {
+        return QString();
+    }
+    NmThreads threads(rawThreads);
+    if (!notmuch_threads_valid(threads.get()))
+        return QString();
+
+    NmThread thread(notmuch_threads_get(threads.get()));
+    if (!thread)
+        return QString();
+    return QString::fromUtf8(notmuch_thread_get_thread_id(thread.get()));
+}
+
+void NotmuchWorker::loadThreadDigest(const QString &threadId,
+                                     quint64 generation)
+{
+    ThreadDigest digest;
+    digest.threadId = threadId;
+    // Always kBuckets entries, on every path out of here including the failure
+    // ones. The sparkline's geometry is written against a fixed count, so an
+    // empty vector from an unknown thread would be a second shape for the
+    // widget to handle rather than a thread with nothing in it.
+    digest.buckets.assign(ThreadDigest::kBuckets, 0);
+
+    if (!openReadOnly()) {
+        emit threadDigestLoaded(digest, generation);
+        return;
+    }
+
+    const QString query = QStringLiteral("thread:%1").arg(threadId);
+    NmQuery nmQuery(notmuch_query_create(m_db, query.toUtf8().constData()));
+    if (!nmQuery) {
+        emit threadDigestLoaded(digest, generation);
+        return;
+    }
+
+    notmuch_threads_t *rawThreads = nullptr;
+    if (notmuch_query_search_threads(nmQuery.get(), &rawThreads)
+            != NOTMUCH_STATUS_SUCCESS) {
+        emit threadDigestLoaded(digest, generation);
+        return;
+    }
+    NmThreads threads(rawThreads);
+    if (!notmuch_threads_valid(threads.get())) {
+        // An unknown thread id. Emitted rather than dropped, for the reason
+        // loadMessage() documents: a caller that arms state on the request
+        // and disarms it on the reply otherwise waits for ever.
+        emit threadDigestLoaded(digest, generation);
+        return;
+    }
+
+    // Held for the whole walk. Every message pointer below belongs to this
+    // thread and is freed with it (notmuch.h:1637), which is why none of them
+    // is wrapped in NmMessage: that would destroy memory the thread frees
+    // again. The same rule walkReplies follows.
+    NmThread thread(notmuch_threads_get(threads.get()));
+    if (!thread) {
+        emit threadDigestLoaded(digest, generation);
+        return;
+    }
+
+    // Grouped by the bare ADDRESS, labelled with the raw From header.
+    //
+    // The address is the identity: a sender whose display name varies between
+    // messages is still one participant, and the address is what the avatar
+    // hashes, so the dashboard's squircle matches the card's. The label keeps
+    // the display name, which is what a human reads.
+    QHash<QString, int> countByAddress;
+    QHash<QString, QString> labelByAddress;
+    QStringList addressOrder;
+
+    QVector<MessageNode> unread;
+    QVector<qint64> timestamps;
+
+    notmuch_messages_t *messages = notmuch_thread_get_messages(thread.get());
+    for (; notmuch_messages_valid(messages);
+           notmuch_messages_move_to_next(messages)) {
+
+        notmuch_message_t *message = notmuch_messages_get(messages);
+        if (!message)
+            continue;
+
+        ++digest.totalCount;
+
+        const qint64 when = notmuch_message_get_date(message);
+        timestamps.append(when);
+
+        const QString rawFrom =
+            QString::fromUtf8(notmuch_message_get_header(message, "from"));
+        QString address = senderAddressOf(message);
+        if (address.isEmpty())
+            address = rawFrom;
+        const QString key = address.toLower();
+        if (!countByAddress.contains(key)) {
+            addressOrder.append(key);
+            labelByAddress.insert(key, rawFrom.isEmpty() ? address : rawFrom);
+        }
+        countByAddress[key] += 1;
+
+        const QStringList tags = tagsOf(message);
+        if (!tags.contains(QStringLiteral("unread")))
+            continue;
+
+        ++digest.unreadTotal;
+
+        // MessageNode rather than MessageRef, because the dashboard draws
+        // these rows without opening the message. Every field here is served
+        // from the INDEX, so the struct's no-file-opening contract holds.
+        MessageNode node;
+        node.messageId =
+            QString::fromUtf8(notmuch_message_get_message_id(message));
+        node.threadId = threadId;
+        node.from = rawFrom;
+        node.senderAddress = address;
+        node.subject =
+            QString::fromUtf8(notmuch_message_get_header(message, "subject"));
+        node.date = QDateTime::fromSecsSinceEpoch(when);
+        node.tags = tags;
+        node.filePath =
+            QString::fromUtf8(notmuch_message_get_filename(message));
+        unread.append(node);
+    }
+
+    if (digest.totalCount == 0) {
+        emit threadDigestLoaded(digest, generation);
+        return;
+    }
+
+    std::sort(timestamps.begin(), timestamps.end());
+    digest.firstTimestamp = timestamps.first();
+    digest.lastTimestamp = timestamps.last();
+
+    // A zero-width span is the degenerate case: one message, or several sharing
+    // a timestamp. Dividing it into buckets is either a division by zero or a
+    // bucket width of zero that throws everything into the last slot, so the
+    // whole thread lands in bucket 0 instead, which is what "all of it happened
+    // at once" honestly looks like.
+    const qint64 span = digest.lastTimestamp - digest.firstTimestamp;
+    for (qint64 when : timestamps) {
+        int bucket = 0;
+        if (span > 0) {
+            bucket = static_cast<int>(((when - digest.firstTimestamp)
+                                       * ThreadDigest::kBuckets) / span);
+            bucket = qBound(0, bucket, ThreadDigest::kBuckets - 1);
+        }
+        digest.buckets[bucket] += 1;
+    }
+
+    digest.busiestBucket = 0;
+    for (int i = 1; i < ThreadDigest::kBuckets; ++i) {
+        if (digest.buckets.at(i) > digest.buckets.at(digest.busiestBucket))
+            digest.busiestBucket = i;
+    }
+
+    // Most prolific first, ties broken by the order they were met, so the
+    // list does not reshuffle between two openings of the same thread.
+    std::stable_sort(addressOrder.begin(), addressOrder.end(),
+                     [&countByAddress](const QString &a, const QString &b) {
+                         return countByAddress.value(a)
+                                > countByAddress.value(b);
+                     });
+    for (const QString &key : addressOrder) {
+        digest.senders.append(
+            qMakePair(labelByAddress.value(key), countByAddress.value(key)));
+    }
+
+    // Newest first, then capped. unreadTotal already carries the real number,
+    // so the cap costs nothing but the rows nobody would have read.
+    std::stable_sort(unread.begin(), unread.end(),
+                     [](const MessageNode &a, const MessageNode &b) {
+                         return a.date > b.date;
+                     });
+    if (unread.size() > ThreadDigest::kUnreadShown)
+        unread.resize(ThreadDigest::kUnreadShown);
+    digest.unread = unread;
+
+    emit threadDigestLoaded(digest, generation);
 }
 
 void NotmuchWorker::loadMessage(const QString &messageId, quint64 generation)

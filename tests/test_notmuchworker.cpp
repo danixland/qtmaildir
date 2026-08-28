@@ -21,6 +21,7 @@
 
 #include "notmuchfixture.h"
 #include "notmuchworker.h"
+#include "threaddigest.h"
 #include "types.h"
 
 /// NotmuchWorker against a throwaway database. This is the only code in the
@@ -119,6 +120,10 @@ private slots:
     void twoMessagesMovedTogetherGetDistinctNames();
 
     void aQuerySeesMailIndexedAfterTheWorkerOpened();
+
+    void aDigestCountsSendersAndUnread();
+    void aDigestCapsItsUnreadListButNotItsCount();
+    void aOneMessageThreadGivesASaneSpan();
 
 private:
     /// Adds one read message in `folder` and reindexes, for the move tests.
@@ -2176,6 +2181,137 @@ void TestNotmuchWorker::aSplitIndexListsTheMaildirsFolders()
                             .arg(found.join(QStringLiteral(", ")))));
     QVERIFY2(!found.contains(QStringLiteral("xapian")),
              "the index's own directory was listed as a mail folder");
+}
+
+void TestNotmuchWorker::aDigestCountsSendersAndUnread()
+{
+    NotmuchFixture fixture;
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("d0@example.org"),
+                               QStringLiteral("Digest root"),
+                               QStringLiteral("alice@example.org"),
+                               QStringLiteral("Mon, 24 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Root."), false));
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("d1@example.org"),
+                               QStringLiteral("Re: Digest root"),
+                               QStringLiteral("alice@example.org"),
+                               QStringLiteral("Tue, 25 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Again."), false,
+                               QStringLiteral("d0@example.org")));
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("d2@example.org"),
+                               QStringLiteral("Re: Digest root"),
+                               QStringLiteral("bob@example.org"),
+                               QStringLiteral("Wed, 26 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Unread one."), true,
+                               QStringLiteral("d0@example.org")));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::threadDigestLoaded);
+
+    const QString threadId = worker.threadIdForTesting(
+        QStringLiteral("id:d0@example.org"));
+    QVERIFY(!threadId.isEmpty());
+    worker.loadThreadDigest(threadId, 1);
+
+    QCOMPARE(spy.count(), 1);
+    const ThreadDigest digest = spy.at(0).at(0).value<ThreadDigest>();
+
+    QCOMPARE(digest.totalCount, 3);
+    QCOMPARE(digest.unreadTotal, 1);
+    QCOMPARE(digest.unread.size(), 1);
+    QCOMPARE(digest.unread.at(0).messageId, QStringLiteral("d2@example.org"));
+
+    // Alice twice, Bob once, most prolific first.
+    QCOMPARE(digest.senders.size(), 2);
+    QCOMPARE(digest.senders.at(0).second, 2);
+    QCOMPARE(digest.senders.at(1).second, 1);
+
+    QCOMPARE(digest.buckets.size(), ThreadDigest::kBuckets);
+    int summed = 0;
+    for (int n : digest.buckets)
+        summed += n;
+    QCOMPARE(summed, 3);
+
+    // The dashboard reconstructs the busiest bucket's date from the span, so
+    // an index outside the histogram would name a date the thread never saw.
+    QVERIFY(digest.busiestBucket >= 0);
+    QVERIFY(digest.busiestBucket < ThreadDigest::kBuckets);
+    QVERIFY(digest.firstTimestamp <= digest.lastTimestamp);
+}
+
+void TestNotmuchWorker::aDigestCapsItsUnreadListButNotItsCount()
+{
+    NotmuchFixture fixture;
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("c0@example.org"),
+                               QStringLiteral("Cap root"),
+                               QStringLiteral("alice@example.org"),
+                               QStringLiteral("Mon, 24 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Root."), false));
+    for (int i = 1; i <= 8; ++i) {
+        QVERIFY(fixture.addMessage(
+            QStringLiteral("inbox"),
+            QStringLiteral("c%1@example.org").arg(i),
+            QStringLiteral("Re: Cap root"),
+            QStringLiteral("bob@example.org"),
+            QStringLiteral("Tue, 25 Aug 2026 %1:00:00 +0200")
+                .arg(i, 2, 10, QLatin1Char('0')),
+            QStringLiteral("Reply."), true, QStringLiteral("c0@example.org")));
+    }
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::threadDigestLoaded);
+    worker.loadThreadDigest(
+        worker.threadIdForTesting(QStringLiteral("id:c0@example.org")), 1);
+
+    QCOMPARE(spy.count(), 1);
+    const ThreadDigest digest = spy.at(0).at(0).value<ThreadDigest>();
+    QCOMPARE(digest.unreadTotal, 8);
+    QCOMPARE(digest.unread.size(), ThreadDigest::kUnreadShown);
+    // Newest first: c8 is the latest.
+    QCOMPARE(digest.unread.at(0).messageId, QStringLiteral("c8@example.org"));
+}
+
+void TestNotmuchWorker::aOneMessageThreadGivesASaneSpan()
+{
+    // The degenerate case the dashboard would otherwise divide by: one message
+    // is a zero-width span, and a bucket width of zero either divides by zero
+    // or throws every message into the last bucket.
+    NotmuchFixture fixture;
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("s0@example.org"),
+                               QStringLiteral("Alone"),
+                               QStringLiteral("alice@example.org"),
+                               QStringLiteral("Mon, 24 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Only."), false));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::threadDigestLoaded);
+    worker.loadThreadDigest(
+        worker.threadIdForTesting(QStringLiteral("id:s0@example.org")), 1);
+
+    QCOMPARE(spy.count(), 1);
+    const ThreadDigest digest = spy.at(0).at(0).value<ThreadDigest>();
+    QCOMPARE(digest.totalCount, 1);
+    QCOMPARE(digest.buckets.size(), ThreadDigest::kBuckets);
+    QCOMPARE(digest.buckets.at(0), 1);
+    QCOMPARE(digest.busiestBucket, 0);
+    QCOMPARE(digest.firstTimestamp, digest.lastTimestamp);
+
+    // An unknown thread yields an EMPTY digest rather than nothing at all, so a
+    // caller that arms state on the request always gets its reply.
+    QSignalSpy missing(&worker, &NotmuchWorker::threadDigestLoaded);
+    worker.loadThreadDigest(QStringLiteral("0000000000000000"), 2);
+    QCOMPARE(missing.count(), 1);
+    const ThreadDigest empty = missing.at(0).at(0).value<ThreadDigest>();
+    QCOMPARE(empty.totalCount, 0);
+    QCOMPARE(empty.buckets.size(), ThreadDigest::kBuckets);
+    QCOMPARE(empty.busiestBucket, -1);
 }
 
 QTEST_MAIN(TestNotmuchWorker)

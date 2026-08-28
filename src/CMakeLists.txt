@@ -29,6 +29,7 @@ add_library(qtmaildir_lib STATIC
     tagrules.cpp
     tagrulesdialog.cpp
     tagstrip.cpp
+    threaddashboard.cpp
     threadlistmodel.cpp
     threadlistview.cpp
     mailsync.cpp

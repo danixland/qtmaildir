@@ -1326,6 +1326,13 @@ void NotmuchWorker::resolveQuery(const QString &query,
         return;
     }
 
+    // Stated rather than inherited. notmuch's default already is newest-first,
+    // and the move and restore callers do not care about the order at all, but
+    // "reply to this thread" reads the FIRST id as the conversation's newest
+    // message: an unstated default is not something a reply's threading
+    // headers should rest on.
+    notmuch_query_set_sort(nmQuery.get(), NOTMUCH_SORT_NEWEST_FIRST);
+
     notmuch_messages_t *raw = nullptr;
     if (notmuch_query_search_messages(nmQuery.get(), &raw)
         != NOTMUCH_STATUS_SUCCESS) {

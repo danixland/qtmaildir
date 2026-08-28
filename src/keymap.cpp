@@ -43,26 +43,6 @@ QStringList KeyMap::knownActions()
         QStringLiteral("edit_tags"),
         QStringLiteral("tag_rules"),
         QStringLiteral("flag"),
-        // The whole-thread counterparts (item 108). The names above act on the
-        // message a row displays; these act on its entire thread. Separate
-        // names rather than a scope flag, because a name is what a user writes
-        // in [keys]: giving `delete` new semantics would silently change an
-        // existing config, and renaming it would break one that mentions it.
-        //
-        // Unbound by default. They are reached through the "Whole thread"
-        // submenu, and inventing five more default chords for actions most
-        // users will rarely want is worse than leaving them to bind what they
-        // use.
-        QStringLiteral("archive_thread"),
-        QStringLiteral("delete_thread"),
-        QStringLiteral("spam_thread"),
-        // Item 112 split the thread toggle in two. Neither carries a default
-        // chord, at the user's choice: since item 132 a shortcut is a chosen
-        // subset rather than a requirement, and Ctrl+Alt+U meant whichever
-        // direction the union happened to pick, which is what made it wrong.
-        QStringLiteral("mark_thread_read"),
-        QStringLiteral("mark_thread_unread"),
-        QStringLiteral("flag_thread"),
         // Compose and send (item 123). save_message deliberately carries no
         // default chord: since item 132 a shortcut is a chosen subset rather
         // than a requirement, and writing the raw message to a file is the
@@ -121,17 +101,14 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         // Compose and send (item 123), listed where the Message menu presents
         // them: composing sits above organising.
         //
-        // PROVISIONAL. The user intends to rework the bindings, and
-        // Ctrl+Alt+R for reply_no_quote is an imperfect fit: the Ctrl+Alt tier
-        // elsewhere means a WIDER SCOPE (the five whole-thread actions), not a
-        // variant of the same scope.
+        // PROVISIONAL. The user intends to rework the bindings.
         //
         // Each was checked against every sequence in this table, not merely
         // against the lines above it: these sit near the top, so most of the
         // table is BELOW them, Ctrl+Shift+U and Ctrl+Shift+S among it.
-        // Checking only upwards would miss exactly those. The near misses:
-        // Ctrl+R is restore, Ctrl+A is select_all and Ctrl+Alt+S is
-        // spam_thread, so none of these five is a reuse.
+        // Checking only upwards would miss exactly those. The near misses are
+        // Ctrl+R for restore and Ctrl+A for select_all, so none of these five
+        // is a reuse.
         //
         // save_message gets none. Item 132 made a chord a chosen subset rather
         // than a requirement, and this is the escape hatch nobody presses a
@@ -164,8 +141,8 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         { QStringLiteral("Ctrl+R"),       QStringLiteral("restore") },
         // Item 103's cleanup. A chord rather than a plain key: it replaces the
         // whole view, and it is reached from a menu far more often than from
-        // the keyboard. Ctrl+Shift+D is message_details and Ctrl+Alt+D is
-        // delete_thread, so this takes the T of "trash".
+        // the keyboard. Ctrl+Shift+D is message_details, so this takes the T
+        // of "trash".
         { QStringLiteral("Ctrl+Alt+T"),   QStringLiteral("cleanup_stranded") },
         { QStringLiteral("Ctrl+Shift+S"), QStringLiteral("spam") },
         { QStringLiteral("Ctrl+U"),       QStringLiteral("toggle_unread") },
@@ -174,19 +151,6 @@ QList<QPair<QString, QString>> KeyMap::defaultBindings()
         // action takes the harder chord rather than the easier one.
         { QStringLiteral("Ctrl+Shift+U"), QStringLiteral("mark_all_read") },
         { QStringLiteral("Ctrl+I"),       QStringLiteral("flag") },
-        // The whole-thread tier (item 108), one modifier out from each
-        // message-scoped twin: Ctrl+D deletes the message a row displays,
-        // Ctrl+Alt+D deletes its conversation.
-        //
-        // Ctrl+ALT, not Ctrl+Shift. The obvious pairing is taken twice over:
-        // Ctrl+Shift+S is `spam` and Ctrl+Shift+U is `mark_all_read`, both
-        // shipped and both in users' fingers. Reusing either would silently
-        // change what an existing key does, which is the same objection that
-        // made these separate action names rather than a flag on the old ones.
-        { QStringLiteral("Ctrl+Alt+E"),   QStringLiteral("archive_thread") },
-        { QStringLiteral("Ctrl+Alt+D"),   QStringLiteral("delete_thread") },
-        { QStringLiteral("Ctrl+Alt+S"),   QStringLiteral("spam_thread") },
-        { QStringLiteral("Ctrl+Alt+I"),   QStringLiteral("flag_thread") },
         { QStringLiteral("Ctrl+T"),       QStringLiteral("edit_tags") },
         // Shifted against Ctrl+T for the same reason Ctrl+Shift+U is shifted
         // against Ctrl+U: this is the standing version of tagging, applied to

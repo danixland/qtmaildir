@@ -471,6 +471,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Nascondi l&apos;output della sincronizzazione fino al prossimo errore</translation>
     </message>
     <message>
+        <source>No thread is selected</source>
+        <translation>Nessuna conversazione selezionata</translation>
+    </message>
+    <message>
+        <source>Select one message to save</source>
+        <translation>Seleziona un singolo messaggio da salvare</translation>
+    </message>
+    <message>
         <source>&amp;Find</source>
         <translation>&amp;Cerca</translation>
     </message>
@@ -523,10 +531,6 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Aggiunge o rimuove l&apos;etichetta deleted</translation>
     </message>
     <message>
-        <source>Mark thread &amp;read</source>
-        <translation>Segna conversazione come &amp;letta</translation>
-    </message>
-    <message>
         <source>Remove the unread tag from every message of the selected threads</source>
         <translation>Rimuove il tag unread da ogni messaggio delle conversazioni selezionate</translation>
     </message>
@@ -556,6 +560,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
             <numerusform>%n messaggio non è stato eliminato: nessuna cartella cestino è configurata per il suo account.</numerusform>
             <numerusform>%n messaggi non sono stati eliminati: nessuna cartella cestino è configurata per il loro account.</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>That thread holds no message to answer</source>
+        <translation>Quella conversazione non contiene messaggi a cui rispondere</translation>
     </message>
     <message>
         <source>Restore</source>
@@ -705,16 +713,8 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Rimuove inbox da ogni messaggio delle conversazioni selezionate</translation>
     </message>
     <message>
-        <source>Archive thread</source>
-        <translation>Archivia conversazione</translation>
-    </message>
-    <message>
         <source>&amp;Delete thread</source>
         <translation>&amp;Elimina conversazione</translation>
-    </message>
-    <message>
-        <source>Add or remove the deleted tag on whole threads</source>
-        <translation>Aggiunge o rimuove l&apos;etichetta eliminato su intere conversazioni</translation>
     </message>
     <message>
         <source>Undelete thread</source>
@@ -827,36 +827,12 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Elimina definitivamente ogni messaggio nel cestino</translation>
     </message>
     <message>
-        <source>Add spam and remove inbox on whole threads</source>
-        <translation>Aggiunge spam e rimuove inbox su intere conversazioni</translation>
-    </message>
-    <message>
-        <source>Mark thread spam</source>
-        <translation>Segna conversazione come spam</translation>
-    </message>
-    <message>
-        <source>Mark thread read</source>
-        <translation>Segna conversazione come letta</translation>
-    </message>
-    <message>
-        <source>Mark thread &amp;unread</source>
-        <translation>Segna conversazione come &amp;non letta</translation>
-    </message>
-    <message>
         <source>Add the unread tag to every message of the selected threads</source>
         <translation>Aggiunge il tag unread a ogni messaggio delle conversazioni selezionate</translation>
     </message>
     <message>
-        <source>Mark thread unread</source>
-        <translation>Segna conversazione come non letta</translation>
-    </message>
-    <message>
         <source>Mark every message of the selected threads as important</source>
         <translation>Segna come importante ogni messaggio delle conversazioni selezionate</translation>
-    </message>
-    <message>
-        <source>Mark thread important</source>
-        <translation>Segna conversazione come importante</translation>
     </message>
     <message>
         <source>Tagging &amp;rules...</source>
@@ -1259,6 +1235,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         </translation>
     </message>
     <message>
+        <source>Mark thread as &amp;read</source>
+        <translation>Segna conversazione come &amp;letta</translation>
+    </message>
+    <message>
         <source>Mark as &amp;read</source>
         <translation>Segna come &amp;letto</translation>
     </message>
@@ -1267,12 +1247,48 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Rimuove il tag unread dalla selezione</translation>
     </message>
     <message>
+        <source>Mark thread as &amp;unread</source>
+        <translation>Segna conversazione come &amp;non letta</translation>
+    </message>
+    <message>
         <source>Mark as &amp;unread</source>
         <translation>Segna come &amp;non letto</translation>
     </message>
     <message>
         <source>Add the unread tag to the selection</source>
         <translation>Aggiunge il tag unread alla selezione</translation>
+    </message>
+    <message>
+        <source>Move every message of the selected threads to the trash</source>
+        <translation>Sposta nel cestino ogni messaggio delle conversazioni selezionate</translation>
+    </message>
+    <message>
+        <source>&amp;Restore thread from trash</source>
+        <translation>&amp;Ripristina conversazione dal cestino</translation>
+    </message>
+    <message>
+        <source>Move every message of the selected threads out of the trash</source>
+        <translation>Sposta fuori dal cestino ogni messaggio delle conversazioni selezionate</translation>
+    </message>
+    <message>
+        <source>Add spam and remove inbox on the selected threads</source>
+        <translation>Aggiunge spam e rimuove inbox sulle conversazioni selezionate</translation>
+    </message>
+    <message>
+        <source>&amp;Important thread</source>
+        <translation>Conversazione &amp;importante</translation>
+    </message>
+    <message>
+        <source>Remove the inbox tag</source>
+        <translation>Rimuove il tag inbox</translation>
+    </message>
+    <message>
+        <source>Reply to this &amp;thread</source>
+        <translation>Rispondi a questa &amp;conversazione</translation>
+    </message>
+    <message>
+        <source>Add an answer to the end of this conversation</source>
+        <translation>Aggiunge una risposta in fondo a questa conversazione</translation>
     </message>
     <message numerus="yes">
         <source>1 thread selected (%n message(s))</source>
@@ -1369,10 +1385,6 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
             <numerusform>%n modifica non sincronizzata</numerusform>
             <numerusform>%n modifiche non sincronizzate</numerusform>
         </translation>
-    </message>
-    <message>
-        <source>&amp;Whole thread</source>
-        <translation>&amp;Intera conversazione</translation>
     </message>
     <message>
         <source>Select a thread first</source>

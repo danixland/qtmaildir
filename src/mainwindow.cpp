@@ -1011,14 +1011,24 @@ void MainWindow::composeNew()
 
 void MainWindow::composeReply(ComposeContext::Kind kind, bool quote)
 {
-    // messageScopeFor() semantics, NOT threadFor(): a thread row means the one
-    // message its card shows, a reply row means itself. Replying to a thread
-    // is meaningless; a reply answers a message.
-    //
+    const QModelIndex current = m_threadView->currentIndex();
+
+    // A CONVERSATION row answers the thread, not a message (item 177). The
+    // old comment here said "replying to a thread is meaningless; a reply
+    // answers a message", and half of that survives: this still resolves to
+    // one message. What changed is WHICH one. A conversation row's card
+    // shows the thread's FIRST message, and answering that would thread the
+    // reply off the opening post of a discussion that has moved on, so the
+    // newest message is asked for instead. Only `reply` reaches here on such
+    // a row; refreshScopedActionLabels() hides the other four.
+    if (m_model->isConversationRow(current)) {
+        replyToThread(m_model->threadFor(current).threadId);
+        return;
+    }
+
     // It takes a QModelIndexList, not a single index, so the current index is
     // wrapped rather than passed bare.
-    const ActionScope scope =
-        m_model->messageScopeFor({ m_threadView->currentIndex() });
+    const ActionScope scope = m_model->scopeForSelection({ current });
     if (scope.messageIds.isEmpty()) {
         showTransientStatus(tr("No message is selected"));
         return;
@@ -1031,6 +1041,27 @@ void MainWindow::composeReply(ComposeContext::Kind kind, bool quote)
     requestMessageForCompose(scope.messageIds.first(), kind, quote);
 }
 
+void MainWindow::replyToThread(const QString &threadId)
+{
+    if (threadId.isEmpty()) {
+        showTransientStatus(tr("No thread is selected"));
+        return;
+    }
+
+    // A round trip, because the model cannot answer this. The summary carries
+    // only the thread's FIRST message, and an unexpanded conversation holds no
+    // nodes for its replies at all, so the newest message's id exists only in
+    // the database. resolveQuery() sorts newest-first explicitly for this.
+    //
+    // m_pendingThreadScope is deliberately NOT set. It carries the ids a MOVE
+    // is about to apply to, and a reply moves nothing; setting it would leave
+    // a delete arriving next reading a scope this gesture left behind.
+    QMetaObject::invokeMethod(
+        m_worker, "resolveThreadMessages", Qt::QueuedConnection,
+        Q_ARG(QStringList, QStringList{ threadId }),
+        Q_ARG(QString, QStringLiteral("reply_thread")));
+}
+
 void MainWindow::editDraft()
 {
     editDraftAt(m_threadView->currentIndex());
@@ -1038,9 +1069,9 @@ void MainWindow::editDraft()
 
 void MainWindow::editDraftAt(const QModelIndex &index)
 {
-    // messageScopeFor(), like composeReply(): a thread row means the one
-    // message its card shows.
-    const ActionScope scope = m_model->messageScopeFor({ index });
+    // A draft is one message by construction, so a drafts row is never a
+    // conversation and this needs no thread branch of its own.
+    const ActionScope scope = m_model->scopeForSelection({ index });
     if (scope.messageIds.isEmpty()) {
         showTransientStatus(tr("No message is selected"));
         return;
@@ -1445,7 +1476,16 @@ void MainWindow::updateComposeActions()
 void MainWindow::saveDisplayedMessage(const QString &chosenDirectory)
 {
     const QModelIndex current = m_threadView->currentIndex();
-    const ActionScope scope = m_model->messageScopeFor({ current });
+
+    // Never reached on a conversation row: refreshScopedActionLabels() hides
+    // Save there, because a conversation names no single file. Guarded anyway,
+    // since a hidden QAction still fires from a shortcut.
+    if (m_model->isConversationRow(current)) {
+        showTransientStatus(tr("Select one message to save"));
+        return;
+    }
+
+    const ActionScope scope = m_model->scopeForSelection({ current });
     if (scope.messageIds.isEmpty()) {
         showTransientStatus(tr("No message is selected"));
         return;
@@ -1746,77 +1786,6 @@ void MainWindow::registerActions()
         editTagsOnSelection();
     });
 
-    // The whole-thread counterparts (item 108). Separate action NAMES, because
-    // a name is what a user writes in [keys]: reusing `delete` with new
-    // semantics would silently change what an existing config does, and
-    // renaming it would break one that mentions it. These are unbound by
-    // default; the submenu is how they are reached.
-    //
-    // Each one is its message-scoped twin with TagScope::Thread, so the two
-    // cannot drift in what they write, only in what they write it to.
-    addAction(QStringLiteral("archive_thread"), tr("&Archive thread"),
-              tr("Remove inbox from every message of the selected threads"),
-              [this]() {
-        tagSelected({}, { QStringLiteral("inbox") }, tr("Archive thread"),
-                    TagScope::Thread);
-    });
-    addAction(QStringLiteral("delete_thread"), tr("&Delete thread"),
-              tr("Add or remove the deleted tag on whole threads"), [this]() {
-        // A MOVE now, like its message-scoped twin. It tagged and moved
-        // nothing until item 103's follow-up, so "Delete thread" left a whole
-        // conversation sitting in the inbox wearing a `deleted` chip: exactly
-        // the half-deleted state Delete stopped producing.
-        //
-        // The direction is read per MESSAGE, not from the thread's tag union.
-        // A thread whose root was deleted on its own carries `deleted` in the
-        // union while its replies do not, and asking the union there ran
-        // Delete a second time on messages already in the trash.
-        if (everySelectedRowHasTag(QStringLiteral("deleted"), TagScope::Thread)) {
-            restoreSelectedThreads();
-        } else {
-            trashSelectedThreads();
-        }
-    });
-    addAction(QStringLiteral("spam_thread"), tr("Mark thread as &spam"),
-              tr("Add spam and remove inbox on whole threads"), [this]() {
-        tagSelected({ QStringLiteral("spam") }, { QStringLiteral("inbox") },
-                    tr("Mark thread spam"), TagScope::Thread);
-    });
-    // Two fixed directions rather than one toggle, and the asymmetry with the
-    // message-scoped twin is the point (item 112). `ThreadSummary::tags` is
-    // notmuch's UNION over the conversation, so a thread holding even one
-    // unread message answers "unread" and a toggle reading that predicate
-    // always chose "mark read": there was no input that reached "mark thread
-    // unread" on a mixed thread, which is exactly the thread a user wants it
-    // for. A union is not a state, and a toggle needs a state.
-    //
-    // The message-scoped `toggle_unread` stays a toggle, because one message
-    // has a real two-valued state. Do not unify them.
-    addAction(QStringLiteral("mark_thread_read"), tr("Mark thread &read"),
-              tr("Remove the unread tag from every message of the selected "
-                 "threads"), [this]() {
-        m_markReadTimer->stop();
-        m_markReadMessageId.clear();
-        tagSelected({}, { QStringLiteral("unread") },
-                    tr("Mark thread read"), TagScope::Thread);
-    });
-    addAction(QStringLiteral("mark_thread_unread"), tr("Mark thread &unread"),
-              tr("Add the unread tag to every message of the selected threads"),
-              [this]() {
-        // Cancels the automatic mark-read for the same reason its
-        // message-scoped twin does: a thread marked unread by hand must not be
-        // undone a moment later by a timer armed when it was opened.
-        m_markReadTimer->stop();
-        m_markReadMessageId.clear();
-        tagSelected({ QStringLiteral("unread") }, {},
-                    tr("Mark thread unread"), TagScope::Thread);
-    });
-    addAction(QStringLiteral("flag_thread"), tr("&Important"),
-              tr("Mark every message of the selected threads as important"),
-              [this]() {
-        tagSelected({ QStringLiteral("flagged") }, {},
-                    tr("Mark thread important"), TagScope::Thread);
-    });
     addAction(QStringLiteral("tag_rules"), tr("Tagging &rules..."),
               tr("Edit the rules that tag mail as it arrives"), [this]() {
         showTagRulesDialog();
@@ -2037,8 +2006,6 @@ void MainWindow::buildMenus()
     messageMenu->addAction(m_actions.value(QStringLiteral("mark_all_read")));
     messageMenu->addAction(m_actions.value(QStringLiteral("edit_tags")));
     messageMenu->addAction(m_actions.value(QStringLiteral("flag")));
-    messageMenu->addSeparator();
-    messageMenu->addMenu(buildThreadActionsMenu(messageMenu));
     // Separated from the entries above: those act on the selection, this edits
     // a rule store shared with mailctl and changes nothing that is on screen.
     messageMenu->addSeparator();
@@ -2142,25 +2109,12 @@ void MainWindow::buildMenus()
         { QStringLiteral("zoom_out"),        QStringLiteral("zoom-out") },
         { QStringLiteral("zoom_reset"),      QStringLiteral("zoom-original") },
 
-        // The whole-thread tier (item 108) deliberately SHARES each icon with
-        // its message-scoped twin. The no-duplicates rule exists because the
-        // toolbar can be icon-only, where the icon is the entire control;
-        // these five never reach the toolbar. They live in a submenu whose
-        // entries always carry text, and "Delete thread" beside the delete
-        // icon is the honest pairing: the same operation, a wider scope, with
-        // the words saying which. Inventing five different shapes for the same
-        // five operations would be less clear, not more.
-        { QStringLiteral("archive_thread"),       QStringLiteral("mail-archive") },
-        { QStringLiteral("delete_thread"),        QStringLiteral("edit-delete") },
-        { QStringLiteral("spam_thread"),          QStringLiteral("mail-mark-junk") },
-        { QStringLiteral("mark_thread_read"), QStringLiteral("mail-mark-read") },
-        { QStringLiteral("mark_thread_unread"), QStringLiteral("mail-mark-unread") },
-        { QStringLiteral("flag_thread"),          QStringLiteral("mail-mark-important") },
-
-        // Compose and send (item 123). reply_no_quote SHARES reply's icon for
-        // the same reason the five above share theirs: it never reaches the
-        // toolbar, it is a menu entry that always carries its text, and
-        // "Reply without quoting" beside the reply icon is the honest pairing.
+        // Compose and send (item 123). reply_no_quote SHARES reply's icon,
+        // which the no-duplicates rule allows because that rule exists for the
+        // icon-only TOOLBAR, where the icon is the entire control: it never
+        // reaches the toolbar, it is a menu entry that always carries its
+        // text, and "Reply without quoting" beside the reply icon is the
+        // honest pairing.
         // It is named in the exception list in noTwoActionsShareAnIcon(), so
         // putting it on the toolbar fails that test rather than passing
         // silently.
@@ -2199,8 +2153,6 @@ void MainWindow::buildMenus()
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("flag")));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("edit_tags")));
-    m_threadContextMenu->addSeparator();
-    m_threadContextMenu->addMenu(buildThreadActionsMenu(m_threadContextMenu));
     m_threadContextMenu->addSeparator();
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("select_all")));
 
@@ -3698,41 +3650,184 @@ void MainWindow::refreshTrashActions()
     // moveMessages() finds the file already in the destination and takes its
     // early-return branch, which counts an unsynced change for a move that
     // never happened (item 168).
-    if (auto *del = m_actions.value(QStringLiteral("delete")))
-        del->setVisible(!haveSelection || !inTrash);
+    // ...and hidden on a reply row as well (item 177): deleting is a
+    // conversation-level act, so a reply offers no Delete at all. The two
+    // hides are ORed rather than fought over, which is why this reads a flag
+    // refreshScopedActionLabels() sets instead of walking the selection twice.
+    if (auto *del = m_actions.value(QStringLiteral("delete"))) {
+        del->setVisible((!haveSelection || !inTrash)
+                        && !m_replySelectionHidesDelete);
+    }
 
     // The mirror, which shipped beside it: Restore was added unconditionally
     // to both menus and so was offered on mail that was never deleted.
-    if (auto *restore = m_actions.value(QStringLiteral("restore")))
-        restore->setVisible(!haveSelection || inTrash);
+    if (auto *restore = m_actions.value(QStringLiteral("restore"))) {
+        restore->setVisible((!haveSelection || inTrash)
+                            && !m_replySelectionHidesDelete);
+    }
 }
 
 void MainWindow::refreshUnreadAction()
 {
     // The user's design (item 112 and its duplicates 99/147): the label says
     // which way the action will go, and on a selection with no single state
-    // the entry is HIDDEN rather than labelled wrongly. The thread submenu is
-    // then the route, whose entries are absolute and work whatever the mix.
+    // the entry is HIDDEN rather than labelled wrongly.
+    //
+    // The "Whole thread" submenu used to be the route out of the hidden case,
+    // with two absolute entries that worked whatever the mix. It is gone
+    // (item 177), and nothing replaces it: on a conversation row the label
+    // now names the THREAD, and the thread's union is a single state for the
+    // same reason it was not a message's. A genuinely mixed MULTI-row
+    // selection still hides the entry, and Edit tags beside it is the route.
     auto *action = m_actions.value(QStringLiteral("toggle_unread"));
     if (!action)
         return;
 
+    // Mixed as well as Conversations: the write really will take whole threads
+    // for the rows that are conversations, so the wider claim is the honest
+    // one. Same rule as refreshScopedActionLabels(), which must not disagree.
+    const SelectionKind kind = selectionKind();
+    const bool namesTheThread = kind == SelectionKind::Conversations
+                                || kind == SelectionKind::Mixed;
+
     switch (selectionTagPresence(QStringLiteral("unread"))) {
     case TagPresence::Every:
         action->setVisible(true);
-        action->setText(tr("Mark as &read"));
-        action->setStatusTip(tr("Remove the unread tag from the selection"));
+        action->setText(namesTheThread ? tr("Mark thread as &read")
+                                       : tr("Mark as &read"));
+        action->setStatusTip(
+            namesTheThread
+                ? tr("Remove the unread tag from every message of the "
+                     "selected threads")
+                : tr("Remove the unread tag from the selection"));
         break;
     case TagPresence::None:
         action->setVisible(true);
-        action->setText(tr("Mark as &unread"));
-        action->setStatusTip(tr("Add the unread tag to the selection"));
+        action->setText(namesTheThread ? tr("Mark thread as &unread")
+                                       : tr("Mark as &unread"));
+        action->setStatusTip(
+            namesTheThread
+                ? tr("Add the unread tag to every message of the selected "
+                     "threads")
+                : tr("Add the unread tag to the selection"));
         break;
     case TagPresence::Mixed:
         // No honest label exists, so there is no label to show. Hidden rather
         // than disabled, at the user's choice.
         action->setVisible(false);
         break;
+    }
+}
+
+MainWindow::SelectionKind MainWindow::selectionKind() const
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return SelectionKind::Empty;
+
+    int conversations = 0;
+    for (const QModelIndex &index : rows) {
+        if (m_model->isConversationRow(index))
+            ++conversations;
+    }
+    if (conversations == 0)
+        return SelectionKind::Messages;
+    return conversations == rows.size() ? SelectionKind::Conversations
+                                        : SelectionKind::Mixed;
+}
+
+void MainWindow::refreshScopedActionLabels()
+{
+    // One pass, one selection, both jobs. Splitting the label from the
+    // visibility would let the two answer from different reads of the
+    // selection, and a hidden action wearing the wrong label is worse than
+    // either fault alone.
+    const SelectionKind kind = selectionKind();
+    const bool conversation = kind == SelectionKind::Conversations;
+
+    // Mixed counts as a conversation for the LABEL, because the write really
+    // will take whole threads for the rows that are conversations, and the
+    // wider claim is the honest one when the selection holds both.
+    const bool namesTheThread = conversation || kind == SelectionKind::Mixed;
+
+    const auto relabel = [this](const QString &name, const QString &text,
+                                const QString &tip) {
+        if (QAction *action = m_actions.value(name)) {
+            action->setText(text);
+            action->setStatusTip(tip);
+        }
+    };
+
+    if (namesTheThread) {
+        relabel(QStringLiteral("archive"), tr("&Archive thread"),
+                tr("Remove inbox from every message of the selected threads"));
+        relabel(QStringLiteral("delete"), tr("&Delete thread"),
+                tr("Move every message of the selected threads to the trash"));
+        relabel(QStringLiteral("restore"), tr("&Restore thread from trash"),
+                tr("Move every message of the selected threads out of the "
+                   "trash"));
+        relabel(QStringLiteral("spam"), tr("Mark thread as &spam"),
+                tr("Add spam and remove inbox on the selected threads"));
+        relabel(QStringLiteral("flag"), tr("&Important thread"),
+                tr("Mark every message of the selected threads as important"));
+    } else {
+        relabel(QStringLiteral("archive"), tr("&Archive"),
+                tr("Remove the inbox tag"));
+        relabel(QStringLiteral("delete"), tr("&Delete"),
+                tr("Add or remove the deleted tag"));
+        relabel(QStringLiteral("restore"), tr("&Restore from trash"),
+                tr("Move the selected messages out of the trash"));
+        relabel(QStringLiteral("spam"), tr("Mark &spam"),
+                tr("Add spam and remove inbox"));
+        relabel(QStringLiteral("flag"), tr("&Important"),
+                tr("Add or remove the important tag"));
+    }
+
+    // Delete and Archive are ABSENT on a reply, not disabled, at the user's
+    // decision: "I don't think I'd want to be able to remove a single reply
+    // from a thread". A thread of ONE is still a message row and keeps them,
+    // because there deleting the message and deleting the conversation are
+    // the same act. So the test is not "is this a message row" but "is this a
+    // reply", which only a message row can be.
+    bool anyReply = false;
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    for (const QModelIndex &index : rows) {
+        if (m_model->isMessageRow(index)) {
+            anyReply = true;
+            break;
+        }
+    }
+
+    // Delete's and Restore's visibility is also refreshTrashActions()' job,
+    // which runs after this and would overwrite a hide made here. It is told
+    // about the reply case rather than asked to repeat the walk.
+    m_replySelectionHidesDelete = anyReply;
+
+    if (QAction *archive = m_actions.value(QStringLiteral("archive")))
+        archive->setVisible(!anyReply);
+
+    // The mirror, on a conversation row: it shows no message, so the actions
+    // that need one cannot mean what they usually do. Reply survives as the
+    // thread's own, relabelled above; the other four go.
+    for (const QString &name : { QStringLiteral("reply_all"),
+                                 QStringLiteral("reply_no_quote"),
+                                 QStringLiteral("forward"),
+                                 QStringLiteral("save_message") }) {
+        if (QAction *action = m_actions.value(name))
+            action->setVisible(!conversation);
+    }
+
+    if (QAction *reply = m_actions.value(QStringLiteral("reply"))) {
+        if (conversation) {
+            reply->setText(tr("Reply to this &thread"));
+            reply->setStatusTip(
+                tr("Add an answer to the end of this conversation"));
+        } else {
+            reply->setText(tr("Re&ply"));
+            reply->setStatusTip(tr("Reply to the displayed message"));
+        }
     }
 }
 
@@ -3743,6 +3838,7 @@ void MainWindow::onSelectionChanged()
     // selectedRows() there sees the PREVIOUS selection and would label the
     // action for the rows the user just left (CLAUDE.md, verified Qt 6.11).
     refreshUnreadAction();
+    refreshScopedActionLabels();
     refreshTrashActions();
 
     const QModelIndexList rows = m_threadView->selectionModel()->selectedRows();
@@ -3753,7 +3849,7 @@ void MainWindow::onSelectionChanged()
         // a message row for one, and the keypress looks identical. Naming it
         // here is what this project does instead of a confirmation dialog,
         // which CLAUDE.md rules out for tag mutations.
-        const ActionScope scope = m_model->scopeFor(rows);
+        const ActionScope scope = m_model->scopeForSelection(rows);
 
         if (scope.wholeThread) {
             m_selectionMessage =
@@ -3814,7 +3910,7 @@ void MainWindow::onSelectionChanged()
     // Reported per row kind rather than as a bare row count, so a mixed
     // selection says what it will really touch instead of calling three replies
     // "3 threads".
-    const ActionScope scope = m_model->scopeFor(rows);
+    const ActionScope scope = m_model->scopeForSelection(rows);
     if (!scope.threadIds.isEmpty() && scope.messageIds.isEmpty()) {
         m_selectionMessage =
             tr("%n thread(s) selected (%1 messages)", "", scope.threadIds.size())
@@ -5086,7 +5182,7 @@ QVector<PendingChange> MainWindow::pendingChangeSnapshot() const
         rows.append(PendingChange{ id, false, it->action, QString(), -1 });
     }
 
-    // Held THREAD edits, which stay thread-scoped: a `*_thread` action is what
+    // Held THREAD edits, which stay thread-scoped: a CONVERSATION row is what
     // made them, and reporting the messages instead would claim the user acted
     // on each one. One row per thread the edit named, since a single edit can
     // cover a multi-row selection.
@@ -5204,7 +5300,8 @@ void MainWindow::scheduleMarkRead(const QString &messageId, bool unread)
         return;
 
     // A row the model cannot name a message for. Marking its thread instead
-    // would be the escalation item 108 removed.
+    // would be a silent escalation: the automatic mark-read is about the
+    // message on display, never about the conversation around it.
     if (messageId.isEmpty())
         return;
 
@@ -5278,29 +5375,32 @@ QString MainWindow::currentThreadFirstMessageId() const
     return {};
 }
 
-bool MainWindow::everySelectedRowHasTag(const QString &tag,
-                                        TagScope scope) const
+bool MainWindow::everySelectedRowHasTag(const QString &tag) const
 {
     // Kept as the direction question, which only has two answers to give: a
     // mixed selection has to go one way, and this says which. The LABEL asks
     // selectionTagPresence() instead, because a label can say "these disagree"
     // and a direction cannot.
-    return selectionTagPresence(tag, scope) == TagPresence::Every;
+    return selectionTagPresence(tag) == TagPresence::Every;
 }
 
-MainWindow::TagPresence MainWindow::selectionTagPresence(const QString &tag,
-                                                         TagScope scope) const
+MainWindow::TagPresence MainWindow::selectionTagPresence(
+    const QString &tag) const
 {
     // What a toggle asks before choosing its direction, for both Delete and
     // Toggle unread.
     //
-    // Per ROW, and each row is asked about what it stands for: a reply row
-    // reports the message's tags, a thread row the thread's. Asking a reply's
-    // THREAD is the trap both toggles fell into. The write is message-scoped,
-    // so it never changes the thread's tags; the thread's answer therefore
-    // never moves however many times the key is pressed, and the toggle
-    // becomes one-way. On the second press it re-sends a tag the message
-    // already has, which is a no-op, and a no-op repaints nothing.
+    // Per ROW, and each row is asked about what it stands for. The same
+    // question ThreadListModel::scopeForSelection() answers for the WRITE, and
+    // it has to be the same question: a direction taken from one object while
+    // the write lands on another is how a toggle goes one-way.
+    //
+    // A reply row reports the message's tags. Asking a reply's THREAD is the
+    // trap both toggles fell into: the write is message-scoped, so it never
+    // changes the thread's tags; the thread's answer therefore never moves
+    // however many times the key is pressed. On the second press it re-sends a
+    // tag the message already has, which is a no-op, and a no-op repaints
+    // nothing.
     //
     // One direction for the WHOLE selection, which is the rule Delete
     // established: toggling each row independently would leave one keystroke
@@ -5313,37 +5413,30 @@ MainWindow::TagPresence MainWindow::selectionTagPresence(const QString &tag,
     int withTag = 0;
     for (const QModelIndex &index : rows) {
         QStringList tags;
-        if (scope == TagScope::Thread) {
+        if (m_model->isConversationRow(index)) {
+            // The conversation's own union, which is what a conversation-scoped
+            // write is about to change. Reading one message here would make the
+            // toggle disagree with itself the moment the thread is mixed.
             tags = m_model->threadFor(index).tags;
         } else if (m_model->isMessageRow(index)) {
             tags = m_model->messageAt(index).tags;
         } else {
-            // A thread row answers about the MESSAGE ITS CARD DISPLAYS, which
-            // is what it acts on. threadFor() already substitutes that
-            // message's own tags for the thread's union when they are known
-            // (item 110), so this reads the row's real state rather than a
-            // union over messages it does not stand for.
+            // A thread row that is NOT a conversation: a thread of one, whose
+            // union IS its message. Asked about that message anyway rather
+            // than about the summary, because the two can diverge in one
+            // direction that matters, described below.
             //
-            // This used to read the union deliberately, with a comment
-            // calling the imprecision bounded because no per-message tags
-            // existed in the model. They do now: ThreadSummary carries
-            // firstMessageTags from the query, so an UNEXPANDED row already
-            // knows its own tags, and the comment outlived the fact.
-            //
-            // The cost of the union was not bounded once Delete became a
-            // MOVE. Deleting the root of a three-message thread left the two
-            // replies undeleted, so the union carried no `deleted`, so a
-            // second press read the row as not-deleted and deleted it AGAIN:
-            // the message was moved trash-to-trash and came out carrying
-            // `deleted`, `deleted-from:inbox` and `deleted-from:Trash` at
-            // once, with no way back. A tag toggle merely re-applied a tag it
-            // already had; a move re-applies the MOVE.
-            //
-            // Resolved through messageById() on the row's own message, which
-            // is the id messageScopeFor() will act on. Asking the same
-            // question the write asks is what keeps the direction and the
-            // write from disagreeing; the union answered a question about a
-            // conversation when the row stands for one message.
+            // The union used to be read for EVERY thread row, with a comment
+            // calling the imprecision bounded because a tag toggle at worst
+            // re-applied a tag the message already had. That stopped being
+            // bounded when Delete became a MOVE: deleting the root of a
+            // three-message thread left the replies undeleted, so the union
+            // carried no `deleted`, so a second press read the row as
+            // not-deleted and deleted it AGAIN, trash-to-trash, ending with
+            // `deleted-from:inbox` and `deleted-from:Trash` at once and no way
+            // back. Item 177 removes the case rather than the symptom: a
+            // three-message row is a conversation now and is asked about its
+            // conversation, above.
             const ThreadSummary summary = m_model->threadFor(index);
             const MessageNode own =
                 m_model->messageById(summary.firstMessageId);
@@ -5368,25 +5461,6 @@ MainWindow::TagPresence MainWindow::selectionTagPresence(const QString &tag,
 ThreadSummary MainWindow::threadForCurrentRowForTesting() const
 {
     return m_model->threadFor(m_threadView->currentIndex());
-}
-
-QMenu *MainWindow::buildThreadActionsMenu(QWidget *parent)
-{
-    // Built per call rather than shared. A QMenu belongs to one place in one
-    // menu tree, and adding the same instance to both the menu bar and the
-    // context menu gives whichever added it last the object. The ACTIONS are
-    // shared, which is what has to stay consistent; the menu holding them is
-    // just a container.
-    auto *menu = new QMenu(tr("&Whole thread"), parent);
-    menu->setObjectName(QStringLiteral("threadActionsMenu"));
-    menu->addAction(m_actions.value(QStringLiteral("archive_thread")));
-    menu->addAction(m_actions.value(QStringLiteral("delete_thread")));
-    menu->addAction(m_actions.value(QStringLiteral("spam_thread")));
-    menu->addSeparator();
-    menu->addAction(m_actions.value(QStringLiteral("mark_thread_read")));
-    menu->addAction(m_actions.value(QStringLiteral("mark_thread_unread")));
-    menu->addAction(m_actions.value(QStringLiteral("flag_thread")));
-    return menu;
 }
 
 QHash<QString, int> MainWindow::selectionTagCounts() const
@@ -5439,7 +5513,7 @@ void MainWindow::editTagsOnSelection()
 }
 
 void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,
-                             const QString &description, TagScope tagScope)
+                             const QString &description)
 {
     const QModelIndexList rows =
         m_threadView->selectionModel()->selectedRows();
@@ -5451,12 +5525,10 @@ void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,
     // threadAt(index.row()) mapping silently acted on whichever thread sat at
     // that position in the list.
     //
-    // Message scope by default since item 108: a thread row displays one
-    // message, so acting on it acts on that message. Thread scope is what the
-    // "Whole thread" actions ask for explicitly.
-    const ActionScope scope = tagScope == TagScope::Thread
-                                  ? m_model->scopeFor(rows)
-                                  : m_model->messageScopeFor(rows);
+    // One resolution, per row, from what the row IS (item 177). There is no
+    // scope argument any more: a caller that could choose is what let one
+    // gesture mean two things and forced a second set of actions to exist.
+    const ActionScope scope = m_model->scopeForSelection(rows);
     if (scope.isEmpty())
         return;
 
@@ -5613,11 +5685,19 @@ void MainWindow::trashSelected()
     if (rows.isEmpty())
         return;
 
-    // Message scope, exactly as tagSelected() uses by default: a thread row
-    // stands for the ONE message its card displays. Escalating to the thread
-    // would move a whole conversation into the trash because the user deleted
-    // one reply.
-    const ActionScope scope = m_model->messageScopeFor(rows);
+    // Resolved per row, like every other action since item 177. A conversation
+    // row deletes its conversation; a thread of one deletes its message. A
+    // REPLY row never reaches here at all, because Delete is hidden on one:
+    // the user's rule is that a single reply cannot be removed from a thread.
+    const ActionScope scope = m_model->scopeForSelection(rows);
+
+    // Both halves are run, because a selection really can hold one of each and
+    // dropping either would silently delete less than the user asked for. They
+    // travel different routes: an unexpanded conversation's message ids and
+    // paths live only in the database, so the thread half is asynchronous.
+    if (!scope.threadIds.isEmpty())
+        trashThreads(scope.threadIds);
+
     if (scope.messageIds.isEmpty())
         return;
 
@@ -5625,7 +5705,7 @@ void MainWindow::trashSelected()
     for (const QString &messageId : scope.messageIds)
         pathById.insert(messageId, m_model->messageById(messageId).filePath);
 
-    trashMessages(scope.messageIds, pathById, scope.messageCount);
+    trashMessages(scope.messageIds, pathById, scope.messageIds.size());
 }
 
 void MainWindow::trashMessages(const QStringList &messageIds,
@@ -5725,34 +5805,8 @@ QString MainWindow::originTagFor(const QString &dbRelativeFolder) const
     return QStringLiteral("deleted-from:%1").arg(accountRelative);
 }
 
-QStringList MainWindow::selectedThreadIds() const
+void MainWindow::trashThreads(const QStringList &threadIds)
 {
-    // A THREAD action on a reply row means that reply's conversation.
-    //
-    // scopeFor() reports a reply under messageIds and leaves threadIds empty,
-    // which is right for the mixed selections it was built for and wrong as
-    // the only input to a thread-scoped action: the early return on an empty
-    // threadIds made Delete thread do nothing at all when the selected row
-    // happened to be a reply. threadFor() resolves either kind of row.
-    const QModelIndexList rows =
-        m_threadView->selectionModel()->selectedRows();
-    QStringList threadIds;
-    for (const QModelIndex &index : rows) {
-        const QString threadId = m_model->threadFor(index).threadId;
-        if (!threadId.isEmpty() && !threadIds.contains(threadId))
-            threadIds.append(threadId);
-    }
-    return threadIds;
-}
-
-void MainWindow::trashSelectedThreads()
-{
-    const QModelIndexList rows =
-        m_threadView->selectionModel()->selectedRows();
-    if (rows.isEmpty())
-        return;
-
-    const QStringList threadIds = selectedThreadIds();
     if (threadIds.isEmpty())
         return;
 
@@ -5793,6 +5847,25 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
 
     const QStringList threadScope = m_pendingThreadScope;
     m_pendingThreadScope.clear();
+
+    if (requestTag == QStringLiteral("reply_thread")) {
+        if (messageIds.isEmpty()) {
+            showTransientStatus(tr("That thread holds no message to answer"));
+            return;
+        }
+        // The NEWEST message, which resolveQuery() puts first: In-Reply-To and
+        // References then land the answer at the END of the conversation, and
+        // the recipients are the ones currently in it rather than whoever
+        // started it.
+        //
+        // ReplyAll and no quoting, at the user's decision. A conversation is
+        // multi-party by definition, so answering one participant of it is the
+        // unusual case and stays available on an individual message; and "we
+        // just add an answer to the thread", so there is nothing to quote.
+        requestMessageForCompose(messageIds.first(),
+                                 ComposeContext::Kind::ReplyAll, false);
+        return;
+    }
 
     if (requestTag == QStringLiteral("empty_trash")) {
         confirmAndPurge(messageIds);
@@ -5876,14 +5949,8 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
                             .arg(tr("Undelete thread")));
 }
 
-void MainWindow::restoreSelectedThreads()
+void MainWindow::untrashThreads(const QStringList &threadIds)
 {
-    const QModelIndexList rows =
-        m_threadView->selectionModel()->selectedRows();
-    if (rows.isEmpty())
-        return;
-
-    const QStringList threadIds = selectedThreadIds();
     if (threadIds.isEmpty())
         return;
 
@@ -6042,7 +6109,14 @@ void MainWindow::restoreSelectedFromTrash()
     if (rows.isEmpty())
         return;
 
-    const ActionScope scope = m_model->messageScopeFor(rows);
+    const ActionScope scope = m_model->scopeForSelection(rows);
+
+    // A conversation row restores its whole conversation, by the same rule
+    // that makes Delete conversation-scoped there: the two are inverses and
+    // must agree about what they act on.
+    if (!scope.threadIds.isEmpty())
+        untrashThreads(scope.threadIds);
+
     if (scope.messageIds.isEmpty())
         return;
 
@@ -6057,7 +6131,7 @@ void MainWindow::restoreSelectedFromTrash()
     //
     // A restore has to be right about the destination or it is worse than
     // doing nothing, so it asks the database rather than trusting a view that
-    // may be a moment behind. restoreSelectedThreads() already worked this
+    // may be a moment behind. untrashThreads() already worked this
     // way; this is the same reasoning applied to the message-scoped path.
     m_pendingRestoreIds = scope.messageIds;
     QMetaObject::invokeMethod(
@@ -6180,7 +6254,13 @@ void MainWindow::restoreSelected(bool fallbackToInbox)
     if (rows.isEmpty())
         return;
 
-    const ActionScope scope = m_model->messageScopeFor(rows);
+    const ActionScope scope = m_model->scopeForSelection(rows);
+
+    // The conversation half, for the same reason trashSelected() has one: this
+    // is the undelete direction of the same toggle.
+    if (!scope.threadIds.isEmpty())
+        untrashThreads(scope.threadIds);
+
     if (scope.messageIds.isEmpty())
         return;
 
@@ -6346,7 +6426,7 @@ void MainWindow::sendMove(const QStringList &messageIds,
             displayRemove.append(tag);
     }
     // A thread-scoped move already repainted its rows in
-    // trashSelectedThreads() / restoreSelectedThreads(), synchronously, before
+    // trashThreads() / untrashThreads(), synchronously, before
     // the worker was asked to resolve the threads at all. Repeating it here
     // would be harmless but redundant; more importantly the caller there needs
     // the repaint to happen WITHOUT a worker round trip, which is the whole

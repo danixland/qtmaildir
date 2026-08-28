@@ -333,40 +333,13 @@ public:
     /// expanded thread holds it.
     MessageNode messageById(const QString &messageId) const;
 
-    /// Resolves a selection into whole THREADS, for the thread-scoped actions.
-    ///
-    /// A thread row contributes its thread; a message row still contributes
-    /// only itself, since a reply's own row cannot be widened into its
-    /// conversation without escalating silently. Mixed selections are honoured
-    /// as given: a thread root and an unrelated reply act on that whole thread
-    /// and that one message.
-    ///
-    /// **Not the default any more.** Since item 108 the ordinary actions use
-    /// messageScopeFor(); this is what the explicit "whole thread" submenu
-    /// resolves through.
-    ActionScope scopeFor(const QModelIndexList &selection) const;
-
-    /// Resolves a selection into individual MESSAGES, which is what the
-    /// ordinary tag actions act on since item 108.
-    ///
-    /// A thread row contributes the ONE message its card displays, not its
-    /// whole conversation. That is `ThreadSummary::firstMessageId`, carried
-    /// from the query, so this needs no expansion and no worker round trip.
-    /// In the Sent view that field is the first MATCHED message rather than
-    /// the thread's opening one, which is right here for the same reason it is
-    /// right on the card: both answer "the message this row shows".
-    ///
-    /// A thread row whose `firstMessageId` is empty contributes nothing. That
-    /// is a row the model cannot name a message for, and acting on the whole
-    /// thread instead would be the silent escalation this exists to remove.
-    ActionScope messageScopeFor(const QModelIndexList &selection) const;
-
     /// What a selection means, resolved per row from what that row IS.
     ///
-    /// Replaces the scopeFor()/messageScopeFor() pair, which made the caller
-    /// choose the scope and so let one gesture mean two things (item 177). A
-    /// conversation row contributes its thread, any other row its message, and
-    /// a mixed selection carries both.
+    /// The one answer to the question, and the only one (item 177). It
+    /// replaced a scopeFor()/messageScopeFor() pair that made the CALLER
+    /// choose, which let one gesture mean two things and needed a second set
+    /// of actions to disambiguate. A conversation row contributes its thread,
+    /// any other row its message, and a mixed selection carries both.
     ActionScope scopeForSelection(const QModelIndexList &selection) const;
 
     /// The account keys behind a thread's account tags, for item 49's

@@ -112,7 +112,7 @@ public:
     /// this is testable with no worker and no database.
     ///
     /// Scope follows the ACTION. The three queues already encode it: a held
-    /// thread edit carries thread ids because a `*_thread` action made it,
+    /// thread edit carries thread ids because a CONVERSATION row made it,
     /// while a netted tag edit and a held move both carry message ids. Nothing
     /// is expanded, and nothing is escalated.
     /// Net changes the index holds that a sync has not carried over.
@@ -768,10 +768,22 @@ private:
     /// reply from reply-without-quoting, which are the same kind with and
     /// without a seeded body.
     ///
-    /// Resolves through ThreadListModel::messageScopeFor(), NOT threadFor(): a
-    /// thread row means the one message its card shows. Replying to a thread
-    /// is meaningless, a reply answers a message.
+    /// Resolved per ROW since item 177. A message row, whether a reply or a
+    /// thread of one, seeds the composer from that message exactly as before.
+    /// A CONVERSATION row has no one message to answer, so `reply` there means
+    /// "reply to this thread": reply-all, quoting nothing, threaded off the
+    /// conversation's NEWEST message so the answer lands at its end. The other
+    /// four compose actions are hidden on such a row rather than redefined.
     void composeReply(ComposeContext::Kind kind, bool quote);
+
+    /// Starts the conversation reply: asks the worker for the thread's
+    /// messages, and finishes in onThreadMessagesResolved().
+    ///
+    /// A round trip because the newest message's id is not in the model. A
+    /// thread the user never expanded holds no nodes for its replies at all,
+    /// and the summary carries only the FIRST message, which is the one a
+    /// reply must not answer.
+    void replyToThread(const QString &threadId);
 
     /// Asks the worker for \p messageId's current file, then opens a composer.
     ///
@@ -835,20 +847,16 @@ private:
                        const QString &description,
                        const std::function<void()> &handler);
 
-    /// What a tag action acts on.
+    /// Applies a tag change to whatever the selection stands for.
     ///
-    /// Since item 108 a thread ROW means the one message its card displays, so
-    /// Message is the default and Thread is the explicit choice the user makes
-    /// through the "Whole thread" submenu. Before that there was no choice:
-    /// a thread row always meant the conversation.
-    enum class TagScope {
-        Message,   ///< The message each selected row displays.
-        Thread,    ///< Every message of each selected row's thread.
-    };
-
+    /// There is no scope parameter, and that is item 177: the ROW decides.
+    /// A conversation row means its conversation, any other row means its one
+    /// message, and ThreadListModel::scopeForSelection() is the only place
+    /// that answer is worked out. A caller that could choose is how the same
+    /// gesture came to mean two things, which is what the deleted "Whole
+    /// thread" submenu existed to disambiguate.
     void tagSelected(const QStringList &add, const QStringList &remove,
-                     const QString &description,
-                     TagScope scope = TagScope::Message);
+                     const QString &description);
 
     /// Starts, restarts or cancels the mark-read timer for a newly opened
     /// MESSAGE. Cancels outright for one that is not unread, so an already read
@@ -921,32 +929,18 @@ private:
     void updateSyncControls();
 
 
-    /// Opens the tag dialog on the current selection and applies its result.
-    ///
-    /// The only route to an arbitrary tag: every other tag action writes a
-    /// hardcoded name.
-    /// The "Whole thread" submenu, built fresh for each parent that needs one.
-    ///
-    /// A QMenu lives in one menu tree, so the menu bar and the context menu get
-    /// their own instance. The actions inside are shared, which is what has to
-    /// stay consistent between them.
-    QMenu *buildThreadActionsMenu(QWidget *parent);
-
     /// Per-tag counts across the selected rows, for the tag dialog.
     QHash<QString, int> selectionTagCounts() const;
 
     /// True when every selected row already carries \p tag, which is what a
     /// toggle asks before choosing its direction.
     ///
-    /// Under Message scope each row answers about what it STANDS FOR: a reply
-    /// row about its message, a thread row about the message its card
-    /// displays. Asking a reply's thread makes a toggle one-way, since the
-    /// message-scoped write never changes the thread's tags.
-    ///
-    /// Under Thread scope a row answers about its whole thread, so the
-    /// question matches the write the thread actions are about to make.
-    bool everySelectedRowHasTag(const QString &tag,
-                                TagScope scope = TagScope::Message) const;
+    /// Each row answers about what it STANDS FOR, which is the same question
+    /// the write asks: a conversation row about its whole thread, any other
+    /// row about its one message. Asking a reply's thread makes a toggle
+    /// one-way, since the message-scoped write never changes the thread's
+    /// tags and the answer therefore never moves.
+    bool everySelectedRowHasTag(const QString &tag) const;
 
     /// The three-valued version of the question above, which is what a LABEL
     /// needs and a toggle's direction does not.
@@ -958,12 +952,36 @@ private:
     /// is what happens when a two-valued predicate is asked a three-valued
     /// question.
     enum class TagPresence { None, Every, Mixed };
-    TagPresence selectionTagPresence(
-        const QString &tag, TagScope scope = TagScope::Message) const;
+    TagPresence selectionTagPresence(const QString &tag) const;
 
     /// Relabels the unread action, and hides it when the selection has no
     /// single state. Called whenever the selection changes.
     void refreshUnreadAction();
+
+    /// Makes every scoped action say what it will act on, and hides the ones
+    /// that cannot mean anything on the selected row (item 177).
+    ///
+    /// Two separate jobs, deliberately in one pass over one selection so the
+    /// label and the visibility cannot disagree. Delete and Archive name the
+    /// thread on a conversation row and are ABSENT on a reply, per the user:
+    /// a single reply cannot be removed from a conversation. Forward and Save
+    /// are the mirror, absent on a conversation row, which shows no message
+    /// to forward and names no file to write.
+    void refreshScopedActionLabels();
+
+    /// Whether every selected row is a conversation, a message, or neither
+    /// because the selection mixes them or is empty.
+    enum class SelectionKind { Empty, Conversations, Messages, Mixed };
+    SelectionKind selectionKind() const;
+
+    /// Whether the selection holds a reply row, which is what hides Delete,
+    /// Restore and Archive (item 177).
+    ///
+    /// Written by refreshScopedActionLabels() and read by
+    /// refreshTrashActions(), which runs after it and owns the same two
+    /// actions' visibility. A flag rather than a second walk over the
+    /// selection, so the two cannot answer differently.
+    bool m_replySelectionHidesDelete = false;
 
     /// Hides Delete on mail already in the trash, and Restore on mail that
     /// was never there (item 168). Each is offered only where it means
@@ -979,6 +997,10 @@ private:
     /// Delete on exactly the mail a trash view is full of.
     bool everySelectedRowIsInATrashFolder() const;
 
+    /// Opens the tag dialog on the current selection and applies its result.
+    ///
+    /// The only route to an arbitrary tag: every other tag action writes a
+    /// hardcoded name.
     void editTagsOnSelection();
 
     /// Set once the user has answered the exit prompt, or once a sync started
@@ -1052,21 +1074,20 @@ private:
                        int messageCount,
                        const QStringList &wholeThreadIds = {});
 
-    /// Moves every message of each selected THREAD to its account's trash.
+    /// Moves every message of the named THREADS to their accounts' trash.
     ///
     /// Asynchronous, unlike its message-scoped twin: the ids and paths of an
     /// unexpanded thread's messages live only in the database, so this asks
     /// the worker and finishes in onThreadMessagesResolved().
-    void trashSelectedThreads();
+    ///
+    /// Takes ids rather than reading the selection, because since item 177 the
+    /// conversation half of a delete is one branch of trashSelected() rather
+    /// than a separate action the user could pick.
+    void trashThreads(const QStringList &threadIds);
 
-    /// The thread ids the selection covers, resolving a reply row to its own
-    /// thread. scopeFor() reports a reply under messageIds instead, which left
-    /// a thread action on a reply row doing nothing at all.
-    QStringList selectedThreadIds() const;
-
-    /// The inverse of trashSelectedThreads(): moves every message of each
-    /// selected thread back where it came from.
-    void restoreSelectedThreads();
+    /// The inverse of trashThreads(): moves every message of the named threads
+    /// back where it came from.
+    void untrashThreads(const QStringList &threadIds);
 
     /// Runs the thread-scoped delete once the worker has resolved the
     /// threads to messages.

@@ -101,6 +101,7 @@ private slots:
     void purgeMessagesReportsWhatItDestroyed();
     void purgeMessagesLeavesOtherMessagesAlone();
     void purgeMessagesDoesNotClaimAnIdItCouldNotDelete();
+    void resolveThreadMessagesReportsTheNewestFirst();
     void resolveQueryMessagesRefusesAnEmptyQuery();
     void moveMessagesKeepsTheMaildirFlags();
     void moveMessagesRecoversWhenASyncRenamedTheFile();
@@ -1528,6 +1529,37 @@ void TestNotmuchWorker::purgeMessagesDoesNotClaimAnIdItCouldNotDelete()
     QVERIFY2(reported.contains(real), qPrintable(reported.join(QLatin1Char(','))));
     QVERIFY2(!reported.contains(stale),
              "claimed to have destroyed a message whose file was already gone");
+}
+
+void TestNotmuchWorker::resolveThreadMessagesReportsTheNewestFirst()
+{
+    // Item 177's "Reply to this thread" reads the FIRST id this reports as the
+    // conversation's newest message, so its In-Reply-To and References land
+    // the answer at the end of the conversation and its recipients are the
+    // ones currently in it. Answering the thread's opening post instead would
+    // fork the discussion, silently, in mail that has already gone out.
+    //
+    // Asserted here rather than in the UI because the ORDER is the contract.
+    // notmuch's own default already is newest-first, which is exactly why this
+    // needs a test: the code now states the sort explicitly, and nothing else
+    // would notice if that statement were dropped and the default later moved.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy resolved(&worker, &NotmuchWorker::threadMessagesResolved);
+
+    // Thread A, whose two messages are a day apart. A one-message thread
+    // answers identically whatever the sort and would assert nothing.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    worker.resolveThreadMessages({ threadId }, QStringLiteral("reply_thread"));
+
+    QCOMPARE(resolved.size(), 1);
+    const QStringList ids = resolved.first().at(0).toStringList();
+    QCOMPARE(ids.size(), 2);
+    QCOMPARE(ids.first(), QStringLiteral("a2@example.org"));
+    QVERIFY2(ids.last() == QStringLiteral("a1@example.org"),
+             qPrintable(QStringLiteral("wrong order: %1")
+                            .arg(ids.join(QLatin1Char(',')))));
 }
 
 void TestNotmuchWorker::resolveQueryMessagesRefusesAnEmptyQuery()

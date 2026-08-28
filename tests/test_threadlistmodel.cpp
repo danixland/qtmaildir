@@ -41,9 +41,6 @@ private slots:
     void replySharingEveryThreadTagShowsNone();
     void reloadingAThreadReplacesItsRepliesRatherThanRepeatingThem();
     void anUnexpandedMultiMessageThreadOffersAnExpander();
-    void scopeFollowsTheSelectedRowKind();
-    void scopeCountsEveryMessageOfAnUnexpandedThread();
-    void scopeHonoursAMixedSelectionWithoutEscalating();
     void startsEmpty();
     void accountKeysComeFromTheAccountTags();
     void accountKeysCoverAThreadSpanningTwoAccounts();
@@ -78,8 +75,6 @@ private slots:
     void markingAReplyReadChangesItsForeground();
     void anUnreadReplyIsBoldAndStillSmallerThanItsThread();
     void aThreadTagChangeReachesItsLoadedReplies();
-    void messageScopeResolvesAThreadRowToTheMessageItDisplays();
-    void messageScopeSkipsAThreadRowItCannotNameAMessageFor();
     void aMessageTagChangeReachesTheRootCardsOwnMessage();
     void aMessageTagChangeOnOneOfManyLeavesTheThreadSummaryAlone();
     void aConversationRowDrawsTheThreadsTags();
@@ -108,6 +103,7 @@ private slots:
     void aLoadedThreadTrustsItsChildrenOverItsCount();
     void aMessageRowIsNeverAConversationRow();
     void aConversationRowResolvesToItsThread();
+    void aRowNamingNoMessageIsSkippedNotEscalated();
     void aLoneMessageRowResolvesToItsMessage();
     void aReplyRowResolvesToItsMessage();
     void aMixedSelectionCarriesBothScopes();
@@ -276,86 +272,6 @@ void TestThreadListModel::anUnexpandedMultiMessageThreadOffersAnExpander()
                               makeNode(QStringLiteral("m1@example.org"), 1) });
     QVERIFY(model.hasChildren(withReplies));
     QVERIFY(!model.hasChildren(model.index(0, 0, withReplies)));
-}
-
-void TestThreadListModel::scopeFollowsTheSelectedRowKind()
-{
-    ThreadListModel model;
-    ThreadSummary t = makeThread(QStringLiteral("t1"),
-                                 QStringLiteral("A subject"));
-    t.totalCount = 3;
-    model.appendBatch({ t });
-    model.setThreadMessages(QStringLiteral("t1"),
-                            { makeNode(QStringLiteral("m0@example.org"), 0),
-                              makeNode(QStringLiteral("m1@example.org"), 1) });
-
-    const QModelIndex root = model.index(0, 0, QModelIndex());
-    const QModelIndex child = model.index(0, 0, root);
-
-    // A thread root acts on the whole thread, and reports every message it
-    // stands for so the status bar can say so.
-    const ActionScope threadScope = model.scopeFor({ root });
-    QCOMPARE(threadScope.threadIds, QStringList{ QStringLiteral("t1") });
-    QVERIFY(threadScope.messageIds.isEmpty());
-    QCOMPARE(threadScope.messageCount, 3);
-    QVERIFY(threadScope.wholeThread);
-
-    // A message row acts on that message alone.
-    const ActionScope messageScope = model.scopeFor({ child });
-    QVERIFY(messageScope.threadIds.isEmpty());
-    QCOMPARE(messageScope.messageIds,
-             QStringList{ QStringLiteral("m1@example.org") });
-    QCOMPARE(messageScope.messageCount, 1);
-    QVERIFY(!messageScope.wholeThread);
-}
-
-void TestThreadListModel::scopeCountsEveryMessageOfAnUnexpandedThread()
-{
-    // totalCount, not the loaded children. A thread that was never expanded
-    // still has all of its messages, and counting only what happens to be on
-    // screen would understate what the action is about to do.
-    ThreadListModel model;
-    ThreadSummary t = makeThread(QStringLiteral("t1"),
-                                 QStringLiteral("A subject"));
-    t.totalCount = 7;
-    model.appendBatch({ t });
-
-    const QModelIndex root = model.index(0, 0, QModelIndex());
-    QCOMPARE(model.rowCount(root), 0);  // guard: nothing expanded
-
-    const ActionScope scope = model.scopeFor({ root });
-    QCOMPARE(scope.messageCount, 7);
-}
-
-void TestThreadListModel::scopeHonoursAMixedSelectionWithoutEscalating()
-{
-    // Selecting a thread root and an unrelated reply acts on that whole thread
-    // AND that one message. Nothing is escalated to thread scope or narrowed to
-    // message scope silently, which is the point of the scope being visible.
-    ThreadListModel model;
-    ThreadSummary t1 = makeThread(QStringLiteral("t1"), QStringLiteral("One"));
-    t1.totalCount = 2;
-    ThreadSummary t2 = makeThread(QStringLiteral("t2"), QStringLiteral("Two"));
-    t2.totalCount = 5;
-    model.appendBatch({ t1, t2 });
-
-    MessageNode reply = makeNode(QStringLiteral("m1@example.org"), 1);
-    reply.threadId = QStringLiteral("t2");
-    model.setThreadMessages(QStringLiteral("t2"),
-                            { makeNode(QStringLiteral("m0@example.org"), 0),
-                              reply });
-
-    const QModelIndex firstRoot = model.index(0, 0, QModelIndex());
-    const QModelIndex secondRoot = model.index(1, 0, QModelIndex());
-    const QModelIndex reply1 = model.index(0, 0, secondRoot);
-
-    const ActionScope scope = model.scopeFor({ firstRoot, reply1 });
-    QCOMPARE(scope.threadIds, QStringList{ QStringLiteral("t1") });
-    QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m1@example.org") });
-
-    // 2 from the whole thread plus 1 for the lone message.
-    QCOMPARE(scope.messageCount, 3);
-    QVERIFY(scope.wholeThread);
 }
 
 void TestThreadListModel::accountKeysComeFromTheAccountTags()
@@ -1266,80 +1182,6 @@ void TestThreadListModel::aThreadTagChangeReachesItsLoadedReplies()
     // Both directions, since a toggle is only fixed if it is visible each way.
     model.applyTagChange(QStringLiteral("t1"), { QStringLiteral("unread") }, {});
     QVERIFY(model.messageAt(replyIndex).isUnread());
-}
-
-void TestThreadListModel::messageScopeResolvesAThreadRowToTheMessageItDisplays()
-{
-    // Item 108. A thread root RENDERS one message since item 66, so acting on
-    // it acts on that message. The thread's other messages are reached through
-    // the explicit thread actions, which still resolve through scopeFor().
-    ThreadListModel model;
-    ThreadSummary t = makeThread(QStringLiteral("t1"),
-                                 QStringLiteral("A subject"));
-    t.totalCount = 7;
-    t.firstMessageId = QStringLiteral("m0@example.org");
-    model.appendBatch({ t });
-
-    const QModelIndex root = model.index(0, 0, QModelIndex());
-
-    // Unexpanded, which is the case that matters: the id comes from the query,
-    // so this needs no children loaded.
-    QCOMPARE(model.rowCount(root), 0);
-
-    const ActionScope scope = model.messageScopeFor({ root });
-    QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m0@example.org") });
-    QVERIFY2(scope.threadIds.isEmpty(),
-             "a thread row still resolved to its whole thread, so every action "
-             "on a root card would touch messages it does not display");
-    QCOMPARE(scope.messageCount, 1);
-    QVERIFY2(!scope.wholeThread,
-             "the status bar would claim '(whole thread)' for a one-message "
-             "action");
-
-    // The old resolver is unchanged and is what the thread actions use.
-    const ActionScope threadScope = model.scopeFor({ root });
-    QCOMPARE(threadScope.threadIds, QStringList{ QStringLiteral("t1") });
-    QCOMPARE(threadScope.messageCount, 7);
-    QVERIFY(threadScope.wholeThread);
-
-    // A reply row is unchanged in both: it always stood for one message.
-    model.setThreadMessages(QStringLiteral("t1"),
-                            { makeNode(QStringLiteral("m0@example.org"), 0),
-                              makeNode(QStringLiteral("m1@example.org"), 1) });
-    const QModelIndex reply = model.index(0, 0, root);
-    QCOMPARE(model.messageScopeFor({ reply }).messageIds,
-             QStringList{ QStringLiteral("m1@example.org") });
-
-    // A root and one of its own replies is two DISTINCT messages, not one
-    // deduplicated to the thread.
-    const ActionScope both = model.messageScopeFor({ root, reply });
-    QCOMPARE(both.messageIds,
-             (QStringList{ QStringLiteral("m0@example.org"),
-                           QStringLiteral("m1@example.org") }));
-    QCOMPARE(both.messageCount, 2);
-}
-
-void TestThreadListModel::messageScopeSkipsAThreadRowItCannotNameAMessageFor()
-{
-    // firstMessageId is populated by the worker from the query. A summary that
-    // arrived without one names no message, and the tempting fallback is to
-    // act on the whole thread instead. That is exactly the silent escalation
-    // item 108 exists to remove: the user would ask to act on one message and
-    // hit the conversation.
-    ThreadListModel model;
-    ThreadSummary t = makeThread(QStringLiteral("t1"),
-                                 QStringLiteral("A subject"));
-    t.totalCount = 4;
-    t.firstMessageId.clear();
-    model.appendBatch({ t });
-
-    const QModelIndex root = model.index(0, 0, QModelIndex());
-    const ActionScope scope = model.messageScopeFor({ root });
-
-    QVERIFY2(scope.isEmpty(),
-             "a thread row with no message id was escalated to its whole "
-             "thread rather than skipped");
-    QCOMPARE(scope.messageCount, 0);
 }
 
 void TestThreadListModel::aMessageTagChangeReachesTheRootCardsOwnMessage()
@@ -2303,6 +2145,38 @@ void TestThreadListModel::aConversationRowResolvesToItsThread()
              "a conversation row named a message, so an action on it would "
              "touch one message of the thread it claims to act on");
     QVERIFY(scope.wholeThread);
+
+    // totalCount, not the loaded children: nothing is expanded here, and a
+    // status bar counting only what happens to be on screen would understate
+    // what the action is about to do.
+    QCOMPARE(model.rowCount(model.index(1, 0, QModelIndex())), 0);
+    QCOMPARE(scope.messageCount, 4);
+}
+
+void TestThreadListModel::aRowNamingNoMessageIsSkippedNotEscalated()
+{
+    // firstMessageId comes from the query. A summary that arrived without one
+    // names no message, and the tempting fallback is to act on the whole
+    // thread instead. That is a silent escalation: the user asked to act on
+    // one message and would hit the conversation.
+    //
+    // A thread of ONE, deliberately. A conversation row resolves to its thread
+    // and needs no message id at all, so the escalation can only be reached
+    // where the row really does stand for one message.
+    ThreadListModel model;
+    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("Alone"));
+    t.totalCount = 1;
+    t.firstMessageId.clear();
+    model.appendBatch({ t });
+
+    const QModelIndex root = model.index(0, 0, QModelIndex());
+    QVERIFY(!model.isConversationRow(root));
+
+    const ActionScope scope = model.scopeForSelection({ root });
+    QVERIFY2(scope.isEmpty(),
+             "a row with no message id was escalated to its whole thread "
+             "rather than skipped");
+    QCOMPARE(scope.messageCount, 0);
 }
 
 void TestThreadListModel::aLoneMessageRowResolvesToItsMessage()

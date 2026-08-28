@@ -128,6 +128,30 @@ reason about, while reversible per-message things (tags, flags, read state,
 reply, forward, save) work wherever they are. It also dissolves the "delete one
 reply of five" membership question, which can no longer arise.
 
+**Reply, Forward and Save on a conversation row.** A conversation row shows no
+message, so the three actions that need one cannot mean what they usually do.
+`composeReply()`'s own comment already stated the principle before item 177:
+"Replying to a thread is meaningless; a reply answers a message."
+
+The user's decision: **Forward and Save disappear** on a conversation row, and
+one action replaces Reply, **Reply to this thread**:
+
+- It quotes NOTHING. "We just add an answer to the thread."
+- It is `Kind::ReplyAll` with `quote == false`, which `composeReply()` already
+  supports (the existing `reply_no_quote` action uses the same path), so no new
+  compose machinery is needed. Reply-all rather than reply-to-sender because a
+  conversation is multi-party by definition; answering one participant of a
+  four-person discussion is the unusual case, and it stays available on an
+  individual message.
+- Its threading headers come from the thread's **newest** message, so
+  `In-Reply-To` and `References` land the answer at the end of the conversation
+  and the recipients are the current ones.
+
+On a message row — a thread of one, or a reply — Reply, Reply-all, Forward,
+Reply without quote and Save all behave exactly as they do today. The dashboard
+also offers a route to any of them: clicking an entry under "Waiting for you"
+selects that message's row, where the full set applies.
+
 `markAllRead` is untouched. It ignores the selection by design and is
 thread-scoped by nature (item 108 recorded this).
 

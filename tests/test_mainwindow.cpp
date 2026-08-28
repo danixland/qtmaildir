@@ -411,7 +411,6 @@ private slots:
     void autoMarkReadArmsForAReplyToo();
     void taggingTheOpenRootMessageKeepsTheStripPopulated();
     void aLoadedMessageCorrectsTheStripFromTheThreadsUnion();
-    void aLoadedRootMessageGivesTheCardItsOwnTags();
     void aTransientStatusMessageExpires();
     void theSelectionCountIsStateAndDoesNotExpire();
     void anEditUndoneNettsBackToZero();
@@ -6260,73 +6259,6 @@ void TestMainWindow::aLoadedMessageCorrectsTheStripFromTheThreadsUnion()
              "message on display");
     QVERIFY2(stripTags().contains(QStringLiteral("unread")),
              "the pane lost a tag the message really carries");
-}
-
-void TestMainWindow::aLoadedRootMessageGivesTheCardItsOwnTags()
-{
-    // The same correction, reaching the MODEL, which is what fixes the two
-    // repaint reports: "if I mark the root message read the left pane entry
-    // doesn't repaint (stays bold)" and the same for delete.
-    //
-    // The card could not repaint because the model had no per-message tags for
-    // a root at all, so a message-scoped write updated the thread summary only
-    // when the thread was a single message. A load gives the root the same
-    // per-message node a reply has had all along, and from then on the card
-    // draws the message it displays.
-    const Config config;
-    MainWindow window(config);
-
-    auto *model = window.findChild<ThreadListModel *>();
-    QVERIFY(model);
-    auto *view = window.findChild<QTreeView *>();
-    QVERIFY(view);
-
-    ThreadSummary t = makeThread(QStringLiteral("t1"),
-                                 { QStringLiteral("inbox"),
-                                   QStringLiteral("signed"),
-                                   QStringLiteral("unread") });
-    t.totalCount = 4;
-    model->appendBatch({ t });
-
-    selectThreadRow(view, 0);
-    QApplication::processEvents();
-
-    MessageRef ref;
-    ref.messageId = QStringLiteral("t1-first@example.org");
-    ref.tags = QStringList{ QStringLiteral("inbox"), QStringLiteral("unread") };
-    QMetaObject::invokeMethod(
-        &window, "onMessageLoaded", Qt::DirectConnection,
-        Q_ARG(QVector<MessageRef>, QVector<MessageRef>{ ref }),
-        Q_ARG(quint64, window.currentGenerationForTesting()));
-    QApplication::processEvents();
-
-    // The model now knows what the root message itself carries.
-    const MessageNode root =
-        model->messageById(QStringLiteral("t1-first@example.org"));
-    QCOMPARE(root.messageId, QStringLiteral("t1-first@example.org"));
-    QVERIFY2(!root.tags.contains(QStringLiteral("signed")),
-             "the root's node still carries a sibling's tag");
-
-    const QModelIndex threadIndex = model->index(0, 0, QModelIndex());
-    QSignalSpy spy(model, &QAbstractItemModel::dataChanged);
-
-    auto *toggle = window.findChild<QAction *>(QStringLiteral("toggle_unread"));
-    QVERIFY(toggle);
-    toggle->trigger();
-
-    QVERIFY2(spy.count() >= 1, "marking the root message read repainted nothing");
-    QVERIFY2(!model->messageById(QStringLiteral("t1-first@example.org"))
-                  .isUnread(),
-             "the root message is still unread after being marked read");
-
-    // The card now draws that message, so it stops looking unread. Asserted on
-    // the FONT, which is what the user means by "stays bold".
-    QVERIFY2(!model->data(threadIndex, Qt::FontRole).value<QFont>().bold(),
-             "the card still reads as unread, so the row stays bold and the "
-             "user sees nothing");
-    QVERIFY2(model->threadAt(0).isUnread(),
-             "the thread summary was rewritten, claiming a four-message thread "
-             "is read when three of its messages still are not");
 }
 
 void TestMainWindow::aTransientStatusMessageExpires()

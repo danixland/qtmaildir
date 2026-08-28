@@ -503,24 +503,13 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
 
     const ThreadNode &rowNode = m_threads.at(index.row());
 
-    // A card stands for ONE message since item 108, so it must draw that
-    // message's tags and not the thread's. `ThreadSummary::tags` is notmuch's
-    // UNION over the conversation: a four-message thread whose third message
-    // is signed reads as signed, and the card said so about a message that was
-    // not (item 110).
-    //
-    // Only the tags are substituted. Everything else on the card, the subject,
-    // the authors, the date and the reply count, describes the THREAD and is
-    // correct as it stands; only the tags were ever the union that lied.
-    //
-    // `first.tags` is populated when the message is loaded, which is when the
-    // user selects the row. Before that the union is the only answer available
-    // and is what the card shows, which is why an unopened row can still
-    // display a sibling's mark. Narrowing that further needs per-message state
-    // in the query itself.
-    ThreadSummary thread = rowNode.summary;
-    if (!rowNode.first.messageId.isEmpty())
-        thread.tags = rowNode.first.tags;
+    // The row IS the conversation since item 177, so `ThreadSummary::tags`,
+    // notmuch's UNION over it, is simply what the row means. Items 110 and 111
+    // substituted the displayed message's tags here and drew the rest in a
+    // muted second tier, to reconcile "this card shows one message" with "this
+    // row is a thread"; the first half of that is gone, so the whole apparatus
+    // is.
+    const ThreadSummary &thread = rowNode.summary;
 
     if (role == ThreadIdRole)
         return thread.threadId;
@@ -566,8 +555,7 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
     if (role == MessageOwnColoursRole)
         return QVariantList();
 
-    if (role == PillTagsRole || role == PillColoursRole
-        || role == PillOwnCountRole) {
+    if (role == PillTagsRole || role == PillColoursRole) {
         // Everything the row already says another way is dropped: the account
         // is the chip in the subject cell, flagged is the star column,
         // attachment is the paperclip, unread is the row not being dimmed, and
@@ -601,28 +589,8 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
             return pills;
         };
 
-        // `thread.tags` is the displayed message's own tags once the row has
-        // been opened, and the thread's union before that (see the
-        // substitution above). The union is always the full set, so the
-        // difference is what belongs only to siblings.
-        QStringList pills = pillsFrom(thread.tags);
-        const int ownCount = pills.size();
-
-        // The sibling tier, appended after the message's own. Shown rather
-        // than dropped at the user's request: a card sits above a
-        // conversation, so what the rest of it carries is worth seeing, just
-        // not at the same weight. The delegate draws these smaller and muted.
-        //
-        // Empty until the row has been opened, because before that
-        // `thread.tags` IS the union and the difference is nothing. That is
-        // what makes a chip shrink rather than appear.
-        for (const QString &tag : pillsFrom(rowNode.summary.tags)) {
-            if (!pills.contains(tag))
-                pills.append(tag);
-        }
-
-        if (role == PillOwnCountRole)
-            return ownCount;
+        // One tier: the thread's own tags, which is what the row stands for.
+        const QStringList pills = pillsFrom(thread.tags);
 
         if (role == PillTagsRole)
             return pills;
@@ -799,22 +767,11 @@ QVariant ThreadListModel::data(const QModelIndex &index, int role) const
 ThreadListModel::ThreadNode
 ThreadListModel::nodeFor(const ThreadSummary &summary)
 {
-    ThreadNode node{ summary, {}, {}, false };
-
-    // Only when the query actually supplied them. An empty list here would be
-    // indistinguishable from "this message carries nothing", which would put
-    // every chip in the sibling tier and mute the whole card.
-    if (!summary.firstMessageId.isEmpty()
-        && !summary.firstMessageTags.isEmpty()) {
-        node.first.messageId = summary.firstMessageId;
-        node.first.threadId = summary.threadId;
-        node.first.tags = summary.firstMessageTags;
-        // Carried alongside the tags, for the same reason messageById()
-        // carries it onto a synthesised root: an unexpanded row has to know
-        // which account it belongs to before Delete can name a folder.
-        node.first.filePath = summary.firstMessagePath;
-    }
-    return node;
+    // No `first` node. A conversation row stands for the thread and draws the
+    // union; a one-message row's message arrives with its children like any
+    // other. Seeding it here is what made a row an ambiguous half-message
+    // (item 177).
+    return ThreadNode{ summary, {}, {}, false };
 }
 
 void ThreadListModel::appendBatch(const QVector<ThreadSummary> &batch)
@@ -926,26 +883,8 @@ void ThreadListModel::reconcile(const QVector<ThreadSummary> &threads)
             || m_threads.at(row).summary.authors != summary.authors
             || m_threads.at(row).summary.date != summary.date
             || m_threads.at(row).summary.totalCount != summary.totalCount
-            || m_threads.at(row).summary.matchedCount != summary.matchedCount
-            // The card's OWN message, which can move while the thread's union
-            // does not: a root read elsewhere leaves the thread unread as long
-            // as any reply is. Without this the card kept the tags it was
-            // first given, and the sibling tier with them.
-            || m_threads.at(row).summary.firstMessageTags
-                   != summary.firstMessageTags) {
+            || m_threads.at(row).summary.matchedCount != summary.matchedCount) {
             m_threads[row].summary = summary;
-
-            // The node too, since the card draws its tags from there. Only the
-            // tags: the node's children and loaded flag are the expansion
-            // state this whole method exists to preserve, and `first` carries
-            // no children.
-            if (!summary.firstMessageId.isEmpty()
-                && !summary.firstMessageTags.isEmpty()) {
-                m_threads[row].first.messageId = summary.firstMessageId;
-                m_threads[row].first.threadId = summary.threadId;
-                m_threads[row].first.tags = summary.firstMessageTags;
-            }
-
             emit dataChanged(index(row, 0), index(row, 0));
         }
     }
@@ -1062,36 +1001,6 @@ QString ThreadListModel::threadIdForMessage(const QString &messageId) const
         }
     }
     return {};
-}
-
-void ThreadListModel::setRootMessageTags(const QString &messageId,
-                                         const QStringList &tags)
-{
-    if (messageId.isEmpty())
-        return;
-
-    for (int row = 0; row < m_threads.size(); ++row) {
-        ThreadNode &node = m_threads[row];
-        if (node.summary.firstMessageId != messageId
-            && node.first.messageId != messageId) {
-            continue;
-        }
-
-        if (node.first.tags == tags && !node.first.messageId.isEmpty())
-            return;   // Nothing changed; do not churn the view.
-
-        // Enough of a node for the card to draw from. The rest of the display
-        // still comes from the summary, which is correct for it: the subject,
-        // the authors and the date describe the thread, and only the TAGS were
-        // ever the union that lied about this message.
-        node.first.messageId = messageId;
-        node.first.threadId = node.summary.threadId;
-        node.first.tags = tags;
-
-        const QModelIndex threadIndex = index(row, 0, QModelIndex());
-        emit dataChanged(threadIndex, threadIndex);
-        return;
-    }
 }
 
 MessageNode ThreadListModel::messageById(const QString &messageId) const

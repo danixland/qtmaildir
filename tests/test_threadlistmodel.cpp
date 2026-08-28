@@ -82,9 +82,7 @@ private slots:
     void messageScopeSkipsAThreadRowItCannotNameAMessageFor();
     void aMessageTagChangeReachesTheRootCardsOwnMessage();
     void aMessageTagChangeOnOneOfManyLeavesTheThreadSummaryAlone();
-    void aCardListsItsOwnTagsBeforeItsSiblings();
-    void theSplitIsKnownBeforeTheRowIsEverOpened();
-    void reconcileRefreshesASurvivorsOwnMessageTags();
+    void aConversationRowDrawsTheThreadsTags();
     void updatesTagsForMessage();
     void tagChangeIsIdempotent();
     void tagChangeSignalsExactlyTheChangedRow();
@@ -1412,170 +1410,29 @@ void TestThreadListModel::aMessageTagChangeOnOneOfManyLeavesTheThreadSummaryAlon
              "whole conversation was read, though six messages still are not");
 }
 
-void TestThreadListModel::aCardListsItsOwnTagsBeforeItsSiblings()
+void TestThreadListModel::aConversationRowDrawsTheThreadsTags()
 {
-    // The user, 2026-08-16, looking at a real four-message thread: the card
-    // showed `mailing-list/SBo` and `signed`, and `signed` vanished the moment
-    // the row was selected, because it belongs to a SIBLING and item 110 made
-    // the card stop claiming it.
-    //
-    // Their answer, which is better than either extreme: show both, and let
-    // size say whose is whose. Own tags first at full size, the thread's other
-    // tags after, smaller and muted. Nothing disappears; a chip only shrinks
-    // once the split becomes known.
+    // Item 110 made a card draw its first message's tags so a four-message
+    // thread would stop claiming a `signed` its displayed message lacked.
+    // Under item 177 the row IS the conversation, so the union is what it
+    // means and the substitution is wrong.
     ThreadListModel model;
-    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("one"));
+    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("Talk"));
     t.totalCount = 4;
-    t.firstMessageId = QStringLiteral("m0@example.org");
-    // The UNION, as notmuch reports it: `signed` is a sibling's.
-    t.tags = QStringList{ QStringLiteral("inbox"),
-                          QStringLiteral("mailing-list/SBo"),
-                          QStringLiteral("signed"),
-                          QStringLiteral("unread") };
+    t.tags = QStringList{ QStringLiteral("inbox"), QStringLiteral("signed") };
+    t.firstMessageId = QStringLiteral("m1");
+    t.firstMessageTags = QStringList{ QStringLiteral("inbox") };
     model.appendBatch({ t });
 
-    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
-
-    // Before the row is opened there is no per-message answer, so every chip
-    // is in the own tier. This is what stops anything from appearing to vanish
-    // later: the split narrows the tier, it does not remove a chip.
-    const QStringList before =
-        model.data(threadIndex, ThreadListModel::PillTagsRole).toStringList();
-    QVERIFY(before.contains(QStringLiteral("mailing-list/SBo")));
-    QVERIFY(before.contains(QStringLiteral("signed")));
-    QCOMPARE(model.data(threadIndex, ThreadListModel::PillOwnCountRole).toInt(),
-             before.size());
-
-    // The message loads, carrying what it really has.
-    model.setRootMessageTags(QStringLiteral("m0@example.org"),
-                             { QStringLiteral("inbox"),
-                               QStringLiteral("mailing-list/SBo"),
-                               QStringLiteral("unread") });
-
-    const QStringList after =
-        model.data(threadIndex, ThreadListModel::PillTagsRole).toStringList();
-
-    // Same chips, still all present. The user explicitly did not want the
-    // sibling's tag dropped.
-    QVERIFY2(after.contains(QStringLiteral("signed")),
-             "the sibling's tag was dropped from the card rather than being "
-             "shown smaller, which is what looked like a bug");
-    QVERIFY2(after.contains(QStringLiteral("mailing-list/SBo")),
-             "the card lost a tag the message really carries");
-
-    // Own first, siblings after, and the count is where the delegate switches
-    // fonts.
-    const int own =
-        model.data(threadIndex, ThreadListModel::PillOwnCountRole).toInt();
-    QVERIFY2(own > 0 && own < after.size(),
-             "the split did not happen: every chip is in one tier");
-    QCOMPARE(after.mid(0, own),
-             QStringList{ QStringLiteral("mailing-list/SBo") });
-    QCOMPARE(after.mid(own), QStringList{ QStringLiteral("signed") });
-
-    // Colours stay aligned with the tags, since the delegate walks them in
-    // step and a shift would colour a chip with its neighbour's colour.
-    QCOMPARE(model.data(threadIndex, ThreadListModel::PillColoursRole)
-                 .toList()
-                 .size(),
-             after.size());
-}
-
-void TestThreadListModel::theSplitIsKnownBeforeTheRowIsEverOpened()
-{
-    // The user, 2026-08-16: "not selecting the thread shows the chips at 'main'
-    // size, not smaller, not dimmed. After selecting the thread the unioned
-    // chips repaint to the correct size/color."
-    //
-    // The first version derived the split from the message LOAD, so an unopened
-    // row had no per-message answer and put every chip in the own tier. That is
-    // honest and useless: the list is mostly unopened rows, so the feature was
-    // invisible exactly where it was meant to be read, and selecting a row
-    // still changed the card.
-    //
-    // The query knows. The worker already walks to the card's message to get
-    // its id, so it reads that message's tags in the same pass and the split
-    // arrives with the row.
-    ThreadListModel model;
-    ThreadSummary t = makeThread(QStringLiteral("t1"), QStringLiteral("one"));
-    t.totalCount = 4;
-    t.firstMessageId = QStringLiteral("m0@example.org");
-    t.tags = QStringList{ QStringLiteral("inbox"),
-                          QStringLiteral("mailing-list/SBo"),
-                          QStringLiteral("signed"),
-                          QStringLiteral("unread") };
-    // What the worker now supplies: the CARD's message, not the thread.
-    t.firstMessageTags = QStringList{ QStringLiteral("inbox"),
-                                      QStringLiteral("mailing-list/SBo"),
-                                      QStringLiteral("unread") };
-    model.appendBatch({ t });
-
-    const QModelIndex threadIndex = model.index(0, 0, QModelIndex());
-
-    // Never opened, never expanded.
-    QCOMPARE(model.rowCount(threadIndex), 0);
-
+    const QModelIndex row = model.index(0, 0, QModelIndex());
     const QStringList pills =
-        model.data(threadIndex, ThreadListModel::PillTagsRole).toStringList();
-    const int own =
-        model.data(threadIndex, ThreadListModel::PillOwnCountRole).toInt();
+        model.data(row, ThreadListModel::PillTagsRole).toStringList();
 
-    QVERIFY2(own < pills.size(),
-             "an unopened row still puts every chip in the own tier, so the "
-             "card renders them all at full size and only corrects itself "
-             "when the row is selected");
-    QCOMPARE(pills.mid(0, own), QStringList{ QStringLiteral("mailing-list/SBo") });
-    QCOMPARE(pills.mid(own), QStringList{ QStringLiteral("signed") });
-
-    // And a message-scoped write still lands, without a load having happened.
-    model.applyMessageTagChange(QStringLiteral("m0@example.org"),
-                                { QStringLiteral("deleted") }, {});
-    QVERIFY(model.messageById(QStringLiteral("m0@example.org")).isDeleted());
-    QVERIFY2(!model.threadAt(0).isDeleted(),
-             "the thread summary was rewritten for a one-message edit on a "
-             "four-message thread");
-}
-
-void TestThreadListModel::reconcileRefreshesASurvivorsOwnMessageTags()
-{
-    // reconcile() keeps a surviving row's NODE, deliberately: its children and
-    // its loaded flag are the expansion state the method exists to preserve.
-    // That means the per-message tags have to be refreshed explicitly, and the
-    // change detector has to notice when only they moved.
-    //
-    // The case: a sync where the root message alone changed, which is exactly
-    // what an external `notmuch tag` or another client does. The thread's union
-    // can be identical while the card's own message is not.
-    ThreadListModel model;
-    ThreadSummary before = makeThread(QStringLiteral("t1"),
-                                      QStringLiteral("one"));
-    before.totalCount = 2;
-    before.firstMessageId = QStringLiteral("m0@example.org");
-    before.tags = QStringList{ QStringLiteral("inbox"),
-                               QStringLiteral("unread") };
-    before.firstMessageTags = QStringList{ QStringLiteral("inbox"),
-                                           QStringLiteral("unread") };
-    model.appendBatch({ before });
-
-    QVERIFY(model.messageById(QStringLiteral("m0@example.org")).isUnread());
-
-    // The root was read elsewhere. The THREAD is still unread, because its
-    // reply is, so the union does not move at all.
-    ThreadSummary after = before;
-    after.firstMessageTags = QStringList{ QStringLiteral("inbox") };
-
-    QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
-    model.reconcile({ after });
-
-    QVERIFY2(!model.messageById(QStringLiteral("m0@example.org")).isUnread(),
-             "a sync that changed only the card's own message left the row "
-             "showing the old per-message tags");
-    QVERIFY2(spy.count() >= 1,
-             "the change was applied without telling the view, so the card "
-             "keeps its old pixels until something else repaints it");
-
-    // The expansion state is still what reconcile() exists to preserve.
-    QCOMPARE(model.threadAt(0).threadId, QStringLiteral("t1"));
+    QVERIFY2(pills.contains(QStringLiteral("signed")),
+             "the card dropped a tag the conversation carries, so a signed "
+             "thread does not read as one until it is expanded");
+    QCOMPARE(model.data(row, ThreadListModel::TagsRole).toStringList(),
+             t.tags);
 }
 
 void TestThreadListModel::updatesTagsForMessage()

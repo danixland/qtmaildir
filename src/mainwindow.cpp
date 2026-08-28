@@ -4058,21 +4058,8 @@ void MainWindow::onMessageLoaded(const QVector<MessageRef> &messages,
         return;
 
     // The worker's answer is the authority on what THIS message carries, and
-    // it is the only place that truth arrives. Until it does, a thread row can
-    // only offer ThreadSummary::tags, which is notmuch's union over the
-    // conversation: a four-message thread whose third message is signed makes
-    // the root card and the pane both claim `signed` for a message that is not
-    // (item 110). Recording it here corrects the card and gives a
-    // message-scoped write something to update, which is why marking a root
-    // message read left the row bold before.
-    //
-    // A reply already has its own node from the thread tree, and
-    // setRootMessageTags ignores anything that is not a root.
-    for (const MessageRef &ref : messages)
-        m_model->setRootMessageTags(ref.messageId, ref.tags);
-
-    // The pane follows the same correction. setTags() at selection time can
-    // only have used the union.
+    // the pane shows one message. setTags() at selection time can only have
+    // used the thread's union.
     if (messages.size() == 1)
         m_messageView->setTags(messages.first().tags);
 

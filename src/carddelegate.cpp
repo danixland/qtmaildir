@@ -425,17 +425,11 @@ void CardDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                              : ThreadListModel::PillColoursRole)
             .toList();
 
-    // A thread card draws its own tags at full size and the rest of the
-    // conversation's smaller and muted (item 111). The count is where the two
-    // tiers meet; a message row has no such split and reports its whole list.
-    //
-    // Shown rather than dropped, at the user's request: a card sits above a
-    // conversation, so what its siblings carry is worth seeing, just not at
-    // the same weight. Before the row has been opened everything is in the own
-    // tier, so a chip SHRINKS when the split becomes known and none vanishes.
-    const int ownCount =
-        isMessage ? tags.size()
-                  : index.data(ThreadListModel::PillOwnCountRole).toInt();
+    // One tier since item 177: a conversation row draws the thread's own tags
+    // and a message row draws its message's, so nothing on a card belongs to
+    // anything but the row. The sibling tier this switched fonts at is Task
+    // 3's to remove.
+    const int ownCount = tags.size();
 
     const QFont ownFont = CardLayout::smallFont(chrome.font);
     const QFont siblingFont = CardLayout::siblingFont(chrome.font);

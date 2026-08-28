@@ -74,21 +74,6 @@ public:
         /// config itself would be a second source of truth.
         PillColoursRole,
 
-        /// How many of PillTagsRole's entries belong to the message the card
-        /// DISPLAYS, the rest belonging only to its siblings.
-        ///
-        /// The card stands for one message but sits above a conversation, so
-        /// it shows both: the message's own tags first at full size, then the
-        /// thread's other tags smaller and muted. Without the split a card
-        /// either claimed a sibling's tag as its own (item 110) or dropped it
-        /// and looked like it had lost information.
-        ///
-        /// Equals the whole list until the row has been opened, since the
-        /// per-message tags arrive with the message load and before that the
-        /// union is the only answer there is. Chips therefore SHRINK when the
-        /// split becomes known; none ever disappears.
-        PillOwnCountRole,
-
         /// True when the row is a MESSAGE row rather than a thread root.
         /// Drives both the action scope and whether the view paints a tag
         /// strip under the row.
@@ -340,23 +325,6 @@ public:
     /// thread holds it. Only expanded threads have message rows at all, so a
     /// message the user could select is always findable here.
     QString threadIdForMessage(const QString &messageId) const;
-
-    /// Records the tags a MESSAGE really carries, as the worker reported them.
-    ///
-    /// Exists because `ThreadSummary::tags` is notmuch's UNION over the
-    /// thread, which is right for a card standing for a conversation and wrong
-    /// for one standing for a message. A four-message thread whose third
-    /// message is signed makes the whole thread read as signed, so the root
-    /// card and the message pane both claimed a tag the displayed message did
-    /// not have.
-    ///
-    /// Only the ROOT needs this: reply rows already carry their own nodes from
-    /// setThreadMessages. Calling it for anything else is a no-op.
-    ///
-    /// The thread's summary is deliberately NOT rewritten. It describes the
-    /// conversation, and three unread siblings do not stop being unread
-    /// because this message was read.
-    void setRootMessageTags(const QString &messageId, const QStringList &tags);
 
     /// A loaded message row's node, found by id rather than by position.
     ///

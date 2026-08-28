@@ -164,12 +164,22 @@ Blocks, top to bottom:
 1. **Header** — subject, then `N people · N days`, and the account.
 2. **Tag chips** — the thread's tags. One tier.
 3. **Counts** — messages and unread, with a read-progress bar beneath.
-4. **Waiting for you** — the unread messages, each as sender, relative time and
-   subject. When nothing is unread this block is replaced by a single
-   **All caught up** line and the rest of the pane is unchanged.
+4. **Waiting for you** — the unread messages, newest first, each as sender,
+   relative time and subject. **Capped at five**, with a `+N more` link beneath
+   when there are more; clicking it expands the thread in the LEFT pane, where
+   the full list already lives. When nothing is unread this block is replaced
+   by a single **All caught up** line and the rest of the pane is unchanged.
 5. **Activity** — a sparkline over the thread's lifetime, with
    `first → last · busiest <day>` beneath it.
-6. **Thread actions** — Mark all read, Archive, Delete.
+6. **Thread actions** — Mark all read, Archive, Delete. **Pinned** to the
+   pane's bottom edge rather than scrolling with the content: they are the
+   reason the user is on the dashboard, and hunting for them past a long
+   participant list is the case the scrolling exists for.
+
+**The content scrolls.** Everything above the action strip sits in a
+`QScrollArea`: a thread with many participants and several unread messages
+overflows the pane, and a dashboard that cannot be scrolled hides the half the
+user came for. The action strip is outside it and stays put.
 
 **Not a web view.** The message pane's `QWebEngineView` exists to render mail
 from strangers under a locked-down profile; a dashboard is our own widgets over
@@ -184,7 +194,11 @@ bucket size, and the label carries the truth.
 
 **An entry under "Waiting for you" is clickable** and selects that message's
 row in the list, expanding the thread if needed. Without it the dashboard is a
-dead end at the moment it has just told the user what they have not read.
+dead end at the moment it has just told the user what they have not read. The
+`+N more` link uses the same mechanism with no target message: it expands the
+thread and leaves the selection where it is. `ThreadListView` already expands a
+thread on click, so this is one signal from the pane rather than new
+machinery.
 
 ## Data
 
@@ -196,7 +210,8 @@ thread boundary:
 struct ThreadDigest {
     QString threadId;
     QList<QPair<QString, int>> senders;   // display name, message count
-    QVector<MessageRef> unread;           // sender, date, subject, id
+    QVector<MessageRef> unread;           // newest first, at most 5
+    int unreadTotal;                      // may exceed unread.size()
     QVector<int> buckets;                 // always 7
     qint64 firstTimestamp, lastTimestamp;
     int busiestBucket;

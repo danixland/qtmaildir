@@ -680,6 +680,26 @@ private slots:
     /// drive it through the meta-object.
     void showTransientStatus(const QString &text);
 
+    /// Announces an action that has just been sent, saying so when a sync is
+    /// holding it rather than claiming it landed.
+    ///
+    /// Item 182. The three hold branches set a deliberately NON-transient label
+    /// explaining that the change will be applied when the sync finishes, and
+    /// every caller overwrote it a line later with the bare action, which
+    /// claims a write that has not happened. The user then saw the same work
+    /// reported again by flushHeldEdits() and read it as double reporting.
+    ///
+    /// The action is still named, because that announcement is what stands in
+    /// for the confirmation dialog this project rules out: it is how a user
+    /// tells that something larger than they meant has just happened. So the
+    /// hold is ADDED to it rather than replacing it.
+    ///
+    /// Held text is not transient, for the reason the hold branches give: it
+    /// describes state lasting until the sync ends, and a message that expired
+    /// would leave rows showing a tag the database has not got and no
+    /// explanation of why.
+    void announceAction(const QString &text);
+
     /// Reacts to a sync started outside this window, by cron or by hand.
     ///
     /// A private slot rather than a plain method so tests can drive it through

@@ -1387,6 +1387,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Sincronizzazione in corso in background...</translation>
     </message>
     <message>
+        <source>%1, waiting for the running sync to finish</source>
+        <translation>%1, in attesa che termini la sincronizzazione in corso</translation>
+    </message>
+    <message>
         <source>Syncing...</source>
         <translation>Sincronizzazione in corso...</translation>
     </message>

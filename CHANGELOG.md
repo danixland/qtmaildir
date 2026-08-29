@@ -143,6 +143,13 @@ point at which they are stable.
 
 ### Fixed
 
+- **An edit made during a sync now says it is waiting.** A sync holds
+  notmuch's write lock, so an edit made while one runs is queued and applied
+  when it finishes. The status bar said so and was then immediately
+  overwritten with the bare action, which claimed the change had been applied;
+  when the queued work was really sent at the end of the sync it was reported
+  a second time, reading as a duplicate. The announcement now names the action
+  AND the wait, and stays up until the sync ends.
 - **The conversation dashboard now follows what you do to the conversation.**
   Marking a thread read left the pane reporting the unread count, the progress
   bar and the "Waiting for you" list it had when you opened it, including when

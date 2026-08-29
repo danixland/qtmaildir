@@ -270,6 +270,7 @@ private slots:
     void aWorkerBackedWindowReturnsRealThreads();
     void aPurgeTakesTheRowsOutOfTheViewWithoutARefresh();
     void theDashboardFollowsAWriteToTheConversationItShows();
+    void anEditHeldByASyncSaysSoInsteadOfClaimingItLanded();
 
     // Compose and send, item 123 task 12.
     void theMailRootComesFromTheConfigNotTheIndex();
@@ -9226,6 +9227,70 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
 /// Reachable from the dashboard's own Mark all read button, which is the worst
 /// version of it: the user presses a button and the number above it does not
 /// move.
+/// Item 182, found by hand: a thread marked read DURING a sync reported
+/// "<subject>: mark as read", and then reported the same work again when the
+/// sync finished, never once saying it was waiting.
+///
+/// The write is held, correctly: a sync holds notmuch's exclusive lock and the
+/// worker's read-write open BLOCKS on it, so sending would freeze the worker
+/// for the rest of the run. Every hold branch sets a deliberately NON-transient
+/// label explaining that, and every caller then overwrote it a line later with
+/// the generic announcement, which claims the write happened.
+///
+/// Asserted on the LABEL rather than on the write: what the mail does was
+/// already right, and what the user was told was not.
+void TestMainWindow::anEditHeldByASyncSaysSoInsteadOfClaimingItLanded()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const Config config = configWithTrash(dir);
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    ThreadSummary thread = threadAtPath(QStringLiteral("t1"),
+                                        QStringLiteral("acct/inbox/cur/1:2,S"),
+                                        { QStringLiteral("unread") });
+    thread.totalCount = 9;
+    model->appendBatch({ thread });
+    view->setCurrentIndex(model->index(0, 0, {}));
+
+    // The sync starts. This is the same slot the sync monitor calls, so the
+    // window reaches the state a real background sync puts it in.
+    QMetaObject::invokeMethod(&window, "onExternalSyncStateChanged",
+                              Q_ARG(SyncMonitor::State,
+                                    SyncMonitor::State::Running));
+
+    // The toggle, which is the route the user took: the thread has unread
+    // messages, so this reads "Mark thread as read" and sends the write.
+    auto *toggle = window.findChild<QAction *>(QStringLiteral("toggle_unread"));
+    QVERIFY(toggle);
+    toggle->trigger();
+
+    // The hold has to be what the user is told about. Without the fix the
+    // label reads "Mark as read: 1 thread(s)", which claims a write that has
+    // not happened and cannot happen until the sync ends.
+    QVERIFY2(status->text().contains(QStringLiteral("sync")),
+             qPrintable(QStringLiteral("the status bar never mentions the "
+                                       "sync that is holding the edit: %1")
+                            .arg(status->text())));
+
+    // And it still names the action, which is what stands in for the
+    // confirmation dialog this project rules out: the user has to be able to
+    // tell that something larger than they meant has just happened.
+    QVERIFY2(status->text().contains(QStringLiteral("read"), Qt::CaseInsensitive),
+             qPrintable(QStringLiteral("the status bar no longer says WHAT is "
+                                       "waiting: %1").arg(status->text())));
+
+    // No restore to "/proc/locks": init() points every test at its own
+    // table, and handing the real one back would re-expose the next test.
+}
+
 void TestMainWindow::theDashboardFollowsAWriteToTheConversationItShows()
 {
     WorkerBackedWindow backed;

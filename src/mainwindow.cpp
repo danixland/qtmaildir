@@ -3638,7 +3638,7 @@ void MainWindow::markAllRead()
                         description);
     m_undoStack.push(command);
 
-    showTransientStatus(
+    announceAction(
         tr("%1: %n thread(s)", "", threadIds.size()).arg(description));
 }
 
@@ -5198,6 +5198,21 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
 
 }
 
+void MainWindow::announceAction(const QString &text)
+{
+    if (!aSyncHoldsTheWriteLock()) {
+        showTransientStatus(text);
+        return;
+    }
+
+    // Not showTransientStatus(): this describes state that lasts until the
+    // sync ends. The hold branch that queued the edit set the same kind of
+    // label and this replaces it, naming the action it was silent about.
+    m_statusLabel->setText(
+        tr("%1, waiting for the running sync to finish").arg(text));
+    m_statusTimer->stop();
+}
+
 void MainWindow::showTransientStatus(const QString &text)
 {
     m_transientMessage = text;
@@ -5843,7 +5858,7 @@ void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,
     // dialog CLAUDE.md rules out: undo is the safety net, and undo is only
     // usable if the user can tell that something larger than they meant has
     // just happened.
-    showTransientStatus(
+    announceAction(
         scope.wholeThread
             ? tr("%1: %n message(s) (whole thread)", "", scope.messageCount)
                   .arg(description)
@@ -6101,7 +6116,7 @@ void MainWindow::trashMessages(const QStringList &messageIds,
                  tr("Delete"), false, wholeThreadIds);
     }
 
-    showTransientStatus(
+    announceAction(
         tr("%1: %n message(s)", "", messageCount).arg(tr("Delete")));
 }
 

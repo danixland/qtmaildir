@@ -8416,8 +8416,14 @@ void TestMainWindow::theMainToolbarKeepsOnlyListWideActions()
         window.findChild<QToolBar *>(QStringLiteral("main_toolbar"));
     QVERIFY(toolBar);
 
+    // delete joined them under item 186, and archive under 189. Both act on
+    // the displayed message, which is the rule this test encodes; archive sat
+    // in the guard list below until 189 reclassified it, since "list-wide" was
+    // never true of it, only untested.
     for (const QString &name : { QStringLiteral("reply"),
-                                 QStringLiteral("forward") }) {
+                                 QStringLiteral("forward"),
+                                 QStringLiteral("delete"),
+                                 QStringLiteral("archive") }) {
         auto *action = window.findChild<QAction *>(name);
         QVERIFY2(action, qPrintable(QStringLiteral("no action %1").arg(name)));
         QVERIFY2(!toolBar->actions().contains(action),
@@ -8426,10 +8432,12 @@ void TestMainWindow::theMainToolbarKeepsOnlyListWideActions()
     }
 
     // The guard: without it, a change emptying the toolbar entirely would pass
-    // every assertion above while deleting the feature.
+    // every assertion above while deleting the feature. mark_all_read is the
+    // one item 189 deliberately kept, being the only action here that ignores
+    // the selection outright.
     for (const QString &name : { QStringLiteral("compose"),
                                  QStringLiteral("sync"),
-                                 QStringLiteral("archive"),
+                                 QStringLiteral("mark_all_read"),
                                  QStringLiteral("undo") }) {
         auto *action = window.findChild<QAction *>(name);
         QVERIFY2(action && toolBar->actions().contains(action),
@@ -13892,6 +13900,18 @@ void TestMainWindow::theMessageBarSwapsToTheTrashActionsOnTrashedMail()
              "the message bar lost Forward on ordinary mail");
     QVERIFY2(barHolds(QStringLiteral("delete")),
              "Delete did not arrive on the message bar (item 186)");
+    // Item 189, the same move for the two that followed it.
+    QVERIFY2(barHolds(QStringLiteral("flag")),
+             "Star did not arrive on the message bar (item 189)");
+    QVERIFY2(barHolds(QStringLiteral("archive")),
+             "Archive did not arrive on the message bar (item 189)");
+    // And the one that deliberately did NOT move. mark_all_read ignores the
+    // selection and acts on every row in the view, so a bar whose every other
+    // entry acts on one message is where it must not be. The user's call, and
+    // asserted so it cannot drift in later.
+    QVERIFY2(!barHolds(QStringLiteral("mark_all_read")),
+             "Mark all read is on the message bar, where a view-wide action "
+             "sits among per-message ones (item 189)");
     QVERIFY2(!barHolds(QStringLiteral("restore")),
              "Restore is offered on mail that was never deleted");
     QVERIFY2(!barHolds(QStringLiteral("purge")),
@@ -13902,13 +13922,22 @@ void TestMainWindow::theMessageBarSwapsToTheTrashActionsOnTrashedMail()
     auto *mainBar = window.findChild<QToolBar *>(QStringLiteral("main_toolbar"));
     QVERIFY(mainBar);
     const auto mainActions = mainBar->actions();
-    QVERIFY2(std::none_of(mainActions.cbegin(), mainActions.cend(),
-                          [](const QAction *action) {
-                              return action
-                                     && action->objectName()
-                                            == QStringLiteral("delete");
-                          }),
+    const auto mainBarHolds = [&](const QString &name) {
+        return std::any_of(mainActions.cbegin(), mainActions.cend(),
+                           [&](const QAction *action) {
+                               return action && action->objectName() == name;
+                           });
+    };
+    QVERIFY2(!mainBarHolds(QStringLiteral("delete")),
              "Delete is still on the main toolbar as well as the message bar");
+    QVERIFY2(!mainBarHolds(QStringLiteral("archive")),
+             "Archive is still on the main toolbar as well as the message bar");
+
+    // The guard, and the half that matters: with no positive assertion here a
+    // main toolbar that had lost EVERYTHING would pass the three checks
+    // above. mark_all_read is the action item 189 decided must stay.
+    QVERIFY2(mainBarHolds(QStringLiteral("mark_all_read")),
+             "Mark all read left the main toolbar, where item 189 kept it");
 
     // And the trash, which is the whole point.
     QVERIFY2(selectById(QStringLiteral("trashed1@example.org")),

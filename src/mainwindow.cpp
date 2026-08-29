@@ -2265,11 +2265,18 @@ void MainWindow::buildMenus()
     }
     toolBar->addAction(syncAction);
     toolBar->addSeparator();
-    toolBar->addAction(m_actions.value(QStringLiteral("archive")));
-    // Delete is NOT here (item 186). It acts on the displayed message, like
-    // Reply and Forward, so it lives on the pane's own bar by the same rule
-    // items 139 to 141 settled for those two. It stays in the Message menu
-    // and the context menu, so nothing became unreachable.
+    // Neither Archive nor Delete is here (items 186 and 189). Both act on the
+    // displayed message, like Reply and Forward, so they live on the pane's
+    // own bar by the same rule items 139 to 141 settled for those two. Both
+    // stay in the Message menu and the context menu, so nothing became
+    // unreachable.
+    //
+    // mark_all_read STAYS, and that is a decision rather than an oversight
+    // (item 189, the user's own call). It is the one action in this window
+    // that deliberately ignores the selection and acts on every row in the
+    // view, so a bar whose every other entry acts on the one displayed
+    // message is exactly where it must not be: that is how a user marks a
+    // thousand threads read meaning to mark one.
     toolBar->addAction(m_actions.value(QStringLiteral("mark_all_read")));
     toolBar->addSeparator();
     toolBar->addAction(m_actions.value(QStringLiteral("undo")));
@@ -2356,12 +2363,23 @@ void MainWindow::populateMessageBar()
     } else if (currentMessageIsADraft()) {
         messageActions = { m_actions.value(QStringLiteral("edit_draft")) };
     } else {
-        // Delete joins the pair here (item 186), from the main toolbar. It is
-        // hidden on a reply row and outside its scope by
+        // Delete joins the pair here (item 186), and Star and Archive with it
+        // (item 189), all three from the main toolbar. Every one of them acts
+        // on the displayed message, which is the rule this bar follows.
+        //
+        // Ordered by what they do rather than by where they came from:
+        // answering the message, then filing it, then destroying it. Delete
+        // stays last so the destructive button is not between two that are
+        // not.
+        //
+        // Delete is hidden on a reply row and outside its scope by
         // refreshTrashActions(), which the bar inherits by showing the
-        // window's own QActions rather than copies.
+        // window's own QActions rather than copies. Star and Archive need no
+        // such guard: both are ordinary tag writes with an undo behind them.
         messageActions = { m_actions.value(QStringLiteral("reply")),
                            m_actions.value(QStringLiteral("forward")),
+                           m_actions.value(QStringLiteral("flag")),
+                           m_actions.value(QStringLiteral("archive")),
                            m_actions.value(QStringLiteral("delete")) };
     }
 

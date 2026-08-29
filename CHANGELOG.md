@@ -31,9 +31,11 @@ point at which they are stable.
 
 ### Changed
 
-- **Delete moved from the main toolbar to the message pane's bar**, beside
-  Reply and Forward, where it belongs with the other actions that operate on
-  the message being read. It is still in the Message menu and the context menu.
+- **Delete and Archive moved from the main toolbar to the message pane's
+  bar**, beside Reply and Forward, and Star joined them there. All five act on
+  the message being read, which is what that bar is for. They are still in the
+  Message menu and the context menu. Mark all read stays on the main toolbar:
+  it acts on every row in the view rather than on the message you are reading.
 
 ### Fixed
 

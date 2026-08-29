@@ -28,6 +28,11 @@ point at which they are stable.
   count for every account, including ones it never touched. Their edits were
   then reported as delivered while still sitting locally. A sync started from
   inside qtmaildir has always narrowed this correctly; the two paths now agree.
+- **A change made when a sync is skipped is no longer left waiting.** When a
+  sync starts and finds another already running, it stops without carrying
+  anything; qtmaildir reported that correctly but scheduled nothing in its
+  place, so the change waited for a manual sync or the next scheduled one. It
+  now retries on its own.
 - **A skipped sync no longer looks like a successful one.** When a run exits
   because another sync already holds the lock, it carried nothing, and the
   pending count stays where it was.

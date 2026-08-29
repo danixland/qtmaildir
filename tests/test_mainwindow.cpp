@@ -337,6 +337,7 @@ private slots:
     void aLocalSyncIsNotReportedAsABackgroundOne();
     void aLocalSyncsOwnLockIsNeverReportedAsBackground();
     void aSkippedLocalSyncStillReportsTheOtherRunFinishing();
+    void aSkippedLocalSyncRearmsSoTheEditIsNotStranded();
     void aCronSyncRefreshesTheListWithoutAQuery();
     void aCronSyncRefreshesOverASelectionWithoutClearingIt();
     void aCronSyncRefreshesTheLastRunQueryNotTheQueryBar();
@@ -7238,6 +7239,49 @@ void TestMainWindow::aSkippedExternalSyncClearsNothing()
     QVERIFY2(!label->isHidden(),
              "a SKIPPED run cleared the pending count: it synced nothing, so "
              "the edits are still only local");
+}
+
+/// Item 125, the half the status file did not close. A local sync that LAUNCHES
+/// and exits 75 leaves its edit with nothing scheduled to carry it.
+///
+/// runAutoSync() already re-arms when it declines to start at all (item 89),
+/// which covers a sync skipped BEFORE launching. A run that starts, finds the
+/// lock held and exits 75 goes to onSyncFinished() instead, and that branch
+/// reported the skip correctly and armed nothing: the edit then waited for the
+/// user's next manual sync or the next cron tick.
+///
+/// That is the reported symptom, "a held edit waits for a completion that never
+/// comes", and it is the half the status file cannot reach: the file says what
+/// a run DID, while this is about what the application does next.
+void TestMainWindow::aSkippedLocalSyncRearmsSoTheEditIsNotStranded()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString conf = writeSyncConfig(dir);
+
+    Config config;
+    config.load(conf);
+    MainWindow window(config);
+
+    auto *timer = window.findChild<QTimer *>(QStringLiteral("autoSyncTimer"));
+    QVERIFY2(timer, "no auto-sync timer");
+
+    // An outstanding edit, so there is something a re-armed sync would carry.
+    // Without one runAutoSync() correctly declines and the re-arm would be
+    // pointless, so the fixture has to establish it first.
+    recordOneEdit(window, QStringLiteral("m1"), QStringLiteral("flagged"));
+    QVERIFY(window.pendingEditCount() > 0);
+
+    timer->stop();
+    QVERIFY(!timer->isActive());
+
+    QMetaObject::invokeMethod(&window, "onSyncFinished",
+                              Q_ARG(bool, false),
+                              Q_ARG(int, MainWindow::kSyncSkippedExitCode));
+
+    QVERIFY2(timer->isActive(),
+             "a skipped local sync armed nothing, so the edit it was carrying "
+             "waits for a manual sync or the next cron tick (item 125)");
 }
 
 void TestMainWindow::aSuccessfulCronSyncClearsThePendingCount()

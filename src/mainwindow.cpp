@@ -4688,6 +4688,23 @@ void MainWindow::onSyncFinished(bool success, int exitCode)
         showTransientStatus(tr("A sync is already running (started "
                                "elsewhere); this one was skipped"));
 
+        // Item 125's other half, and the one the status file cannot reach:
+        // that file says what a run DID, this is what the application does
+        // next. The run carried nothing, so something has to carry the edit.
+        //
+        // runAutoSync() already re-arms when it declines to START (item 89),
+        // which covers a sync skipped before launching. A run that launches,
+        // finds the lock held and exits 75 arrives HERE instead, and armed
+        // nothing: the edit then waited for a manual sync or the next cron
+        // tick, which is the "held edit waits for a completion that never
+        // comes" the item was filed for.
+        //
+        // scheduleAutoSync() re-checks the delay, the sync command and the
+        // pending count on the way in, so this cannot arm a sync for nothing,
+        // and against a long external run it re-arms once per debounce
+        // interval until the lock clears.
+        scheduleAutoSync();
+
         if (m_syncingForExit) {
             // The other run is syncing, but this application cannot see when
             // it finishes, so it cannot promise the changes are across. Leave

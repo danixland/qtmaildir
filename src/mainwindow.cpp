@@ -4215,6 +4215,25 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
                               Q_ARG(quint64, m_generation));
 }
 
+void MainWindow::refreshDashboardDigest()
+{
+    // Not showing a conversation: the ordinary case, and nothing to refresh.
+    if (m_dashboardThreadId.isEmpty() || !m_messageView->showingDashboard())
+        return;
+
+    // No placeholder digest here, unlike the selection path: the pane is
+    // already showing this conversation, and blanking it to re-fill it would
+    // flicker the whole dashboard for a change to one number.
+    //
+    // Its own generation, bumped like any other request so a reply that
+    // arrives after the user has moved on is discarded by the guards in
+    // onThreadDigestLoaded().
+    ++m_digestGeneration;
+    QMetaObject::invokeMethod(m_worker, "loadThreadDigest", Qt::QueuedConnection,
+                              Q_ARG(QString, m_dashboardThreadId),
+                              Q_ARG(quint64, m_digestGeneration));
+}
+
 void MainWindow::onThreadDigestLoaded(const ThreadDigest &digest,
                                       quint64 generation)
 {
@@ -4709,6 +4728,12 @@ void MainWindow::onTagsApplied(const TagChange &change)
 {
     m_pendingChange = {};
     m_pendingThreadIds.clear();
+
+    // Item 181. HERE, where a write is CONFIRMED, and not where one is sent:
+    // the digest is rebuilt from the INDEX, so a refresh queued beside the
+    // write would race it and answer from the state before it. The dashboard
+    // covers every write for the same reason the indicator below does.
+    refreshDashboardDigest();
 
     // Item 176. The ids the worker reports are the ones whose tags really
     // moved, which is what the undo entry has to invert. Inverting the REQUEST

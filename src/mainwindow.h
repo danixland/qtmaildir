@@ -645,6 +645,30 @@ private slots:
     /// has moved off, or one that arrives once the pane is showing a message,
     /// must not repaint anything.
     void onThreadDigestLoaded(const ThreadDigest &digest, quint64 generation);
+
+    /// Re-asks the worker for the dashboard's digest, after a write that may
+    /// have changed what it draws.
+    ///
+    /// Item 181. The digest is built from the INDEX by the worker and arrived
+    /// only when a conversation was selected, so a tag write moved the model
+    /// and the card and left the pane reporting the unread count the
+    /// conversation had when it was opened. Reachable from the dashboard's own
+    /// Mark all read button, where the number sits directly above the button
+    /// that fails to move it.
+    ///
+    /// Called from BOTH write funnels, per the rule that every path a
+    /// thread-scoped write travels a message-scoped one travels too. It is
+    /// deliberately not narrowed to the writes that change what the dashboard
+    /// happens to draw today: that list is one the dashboard can outgrow
+    /// silently, and this costs a round trip only while a conversation is on
+    /// screen.
+    ///
+    /// Does nothing when the pane is not showing a dashboard, which is the
+    /// ordinary case. Re-requests rather than editing the digest in place: the
+    /// digest is a derived summary (senders, buckets, timestamps, the unread
+    /// list and its cap), and reproducing that arithmetic here would be a
+    /// second place that has to agree with the worker about what a write did.
+    void refreshDashboardDigest();
     void onWorkerError(const QString &message);
     void onSyncFinished(bool success, int exitCode);
 

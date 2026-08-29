@@ -143,6 +143,12 @@ point at which they are stable.
 
 ### Fixed
 
+- **The conversation dashboard now follows what you do to the conversation.**
+  Marking a thread read left the pane reporting the unread count, the progress
+  bar and the "Waiting for you" list it had when you opened it, including when
+  the write came from the dashboard's own Mark all read button, where the
+  number sits directly above the button that failed to move it. Every tag
+  write to the conversation on display now refreshes it.
 - **Delete and Restore now judge a whole conversation.** They asked whether a
   row was in the trash by looking at one of its messages, so a conversation
   with some messages trashed and some not answered on whichever the query

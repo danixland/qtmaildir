@@ -73,6 +73,7 @@
 #include <QScrollBar>
 #include "tagchip.h"
 #include "tagstrip.h"
+#include "threaddashboard.h"
 #include "threadlistmodel.h"
 #include "threadlistview.h"
 #include "notmuchfixture.h"
@@ -268,6 +269,7 @@ private slots:
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
     void aPurgeTakesTheRowsOutOfTheViewWithoutARefresh();
+    void theDashboardFollowsAWriteToTheConversationItShows();
 
     // Compose and send, item 123 task 12.
     void theMailRootComesFromTheConfigNotTheIndex();
@@ -9210,6 +9212,82 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
     // thread, so findChild() cannot see it. Observing the window's own state
     // is both the only route and the better assertion.
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+/// Item 181, from the user: "the thread dashboard doesn't update live with the
+/// modifications applied to the list pane. If I mark the thread as read, the
+/// dash still reports N unread".
+///
+/// The dashboard draws a ThreadDigest, which the worker builds from the index
+/// and which arrived only when a conversation was SELECTED. A tag write moved
+/// the model and the card beside it and never touched the digest, so the pane
+/// went on reporting the unread count the conversation had when it was opened.
+///
+/// Reachable from the dashboard's own Mark all read button, which is the worst
+/// version of it: the user presses a button and the number above it does not
+/// move.
+void TestMainWindow::theDashboardFollowsAWriteToTheConversationItShows()
+{
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("conv0@example.org"),
+        QStringLiteral("A conversation"), QStringLiteral("alice@example.org"),
+        // Friday, verified with `date -d 2026-08-14 +%A`. Qt::RFC2822Date
+        // validates the weekday against the date.
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Root."), true));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("conv1@example.org"),
+        QStringLiteral("Re: A conversation"), QStringLiteral("bob@example.org"),
+        QStringLiteral("Sat, 15 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Reply."), true, QStringLiteral("conv0@example.org")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *messageView = window.findChild<MessageView *>();
+    QVERIFY(messageView);
+    ThreadDashboard *dashboard = messageView->dashboard();
+    QVERIFY(dashboard);
+
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QModelIndex row = model->index(0, 0, {});
+    QVERIFY2(model->isConversationRow(row),
+             "the fixture is not a conversation, so this test cannot see the "
+             "dashboard at all");
+
+    view->setCurrentIndex(row);
+
+    // The digest is a worker round trip, so wait for the pane to actually
+    // carry the conversation's state before asserting anything about it. Not a
+    // fixed wait: that passes when the digest never arrives.
+    QTRY_VERIFY_WITH_TIMEOUT(messageView->showingDashboard(), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(!dashboard->showingAllCaughtUp(), 15000);
+    QVERIFY2(dashboard->unreadCountShown() == 2,
+             qPrintable(QStringLiteral("expected 2 unread listed, got %1")
+                            .arg(dashboard->unreadCountShown())));
+
+    // Driven through the ACTION rather than the private funnel, which is both
+    // the only route from here and the better assertion: it is the path the
+    // dashboard's own Mark all read button takes.
+    auto *markAllRead =
+        window.findChild<QAction *>(QStringLiteral("mark_all_read"));
+    QVERIFY(markAllRead);
+    markAllRead->trigger();
+
+    // The pane must follow it. Without the refresh the digest is the one built
+    // when the row was selected, and this stays at 2 for ever.
+    QTRY_VERIFY_WITH_TIMEOUT(dashboard->showingAllCaughtUp(), 15000);
+    QCOMPARE(dashboard->unreadCountShown(), 0);
 }
 
 void TestMainWindow::aPurgeTakesTheRowsOutOfTheViewWithoutARefresh()

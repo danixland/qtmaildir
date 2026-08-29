@@ -11,6 +11,19 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-08-29
+
+A row in the thread list is now either a conversation or a message, and it
+says which. Selecting a conversation shows a dashboard of the whole thread
+rather than one of its messages, and every action on that row means the
+conversation; a thread of one message behaves exactly as it always has. The
+"Whole thread" submenu and the five `*_thread` actions are gone with the
+ambiguity that made them necessary, so a keybinding for one of them needs
+removing: see Upgrading below.
+
+It also fixes an undo that rewrote messages it never touched, which was
+capable of marking a whole conversation unread on the mail server.
+
 ### Added
 
 - **A dashboard for a conversation.** Selecting a thread of more than one

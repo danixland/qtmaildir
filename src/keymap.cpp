@@ -37,6 +37,10 @@ QStringList KeyMap::knownActions()
         // that destroys mail with no undo, and a chord is how it would be run
         // by accident. Menu only, which item 132 made a legitimate choice.
         QStringLiteral("empty_trash"),
+        // Item 185. Empty trash's sibling, scoped to the selection, and it
+        // carries no default binding for exactly the same reason: the act is
+        // identical and so is the hazard.
+        QStringLiteral("purge"),
         QStringLiteral("spam"),
         QStringLiteral("toggle_unread"),
         QStringLiteral("mark_all_read"),

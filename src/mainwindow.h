@@ -1272,9 +1272,23 @@ private:
     /// which holds whatever the current view happens to show.
     void emptyTrash();
 
+    /// Empty trash's sibling, scoped to the SELECTION rather than to the
+    /// account's whole trash. The act is identical, `purgeMessages()` in both
+    /// cases, and so are its safeguards: it confirms, and it carries no
+    /// default shortcut. Only where the ids come from differs, which is why
+    /// there are two entry points rather than a parameter.
+    ///
+    /// Asynchronous for the same reason emptyTrash() is: the count in the
+    /// dialog must be what will be destroyed, so a conversation row's
+    /// messages are resolved against the database rather than counted from
+    /// the model. The answer arrives at onThreadMessagesResolved() tagged
+    /// `purge_selection`.
+    void purgeSelected();
+
     /// The confirmation, and the only one in this application. Destroys
-    /// nothing if the user declines.
-    void confirmAndPurge(const QStringList &messageIds);
+    /// nothing if the user declines. \p where names the scope in the prompt,
+    /// since the two callers destroy very different amounts of mail.
+    void confirmAndPurge(const QStringList &messageIds, const QString &where);
 
     /// Moves each resolved message home, using the tags and paths the WORKER
     /// reported rather than anything the model holds.

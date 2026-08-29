@@ -603,6 +603,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Non connesso all&apos;indice della posta</translation>
     </message>
     <message>
+        <source>Nothing selected to delete</source>
+        <translation>Nessun messaggio selezionato da eliminare</translation>
+    </message>
+    <message>
         <source>The trash is already empty</source>
         <translation>Il cestino è già vuoto</translation>
     </message>
@@ -613,6 +617,13 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Empty trash</source>
         <translation>Svuota cestino</translation>
+    </message>
+    <message numerus="yes">
+        <source>Permanently delete %n selected message(s)?</source>
+        <translation>
+            <numerusform>Eliminare definitivamente %n messaggio selezionato?</numerusform>
+            <numerusform>Eliminare definitivamente %n messaggi selezionati?</numerusform>
+        </translation>
     </message>
     <message numerus="yes">
         <source>Permanently delete %n message(s) from the trash of %1?</source>
@@ -848,6 +859,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Tagging &amp;rules...</source>
         <translation>&amp;Regole di etichettatura...</translation>
+    </message>
+    <message>
+        <source>Delete per&amp;manently...</source>
+        <translation>Elimina definitiva&amp;mente...</translation>
+    </message>
+    <message>
+        <source>Permanently delete the selected messages</source>
+        <translation>Elimina definitivamente i messaggi selezionati</translation>
     </message>
     <message>
         <source>Edit the rules that tag mail as it arrives</source>

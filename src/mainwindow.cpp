@@ -1757,6 +1757,14 @@ void MainWindow::registerActions()
               tr("Permanently delete every message in the trash"), [this]() {
         emptyTrash();
     });
+    // The same act as empty_trash, scoped to the selection: the user's own
+    // words, "they are the same action, scoped differently". So it inherits
+    // both safeguards rather than being reasoned about afresh, the
+    // confirmation and the absent default shortcut.
+    addAction(QStringLiteral("purge"), tr("Delete per&manently..."),
+              tr("Permanently delete the selected messages"), [this]() {
+        purgeSelected();
+    });
     addAction(QStringLiteral("spam"), tr("Mark &spam"),
               tr("Add spam and remove inbox"), [this]() {
         tagSelected({ QStringLiteral("spam") }, { QStringLiteral("inbox") },
@@ -2046,6 +2054,11 @@ void MainWindow::buildMenus()
     // disabled entry with its shortcut beside it says both that it exists and
     // where it applies.
     messageMenu->addAction(m_actions.value(QStringLiteral("restore")));
+    // Beside Restore, the other thing a trashed message affords. Hidden
+    // outside the trash rather than greyed, unlike Restore above: this one
+    // destroys, so offering it where it does not apply is worse than teaching
+    // that it exists.
+    messageMenu->addAction(m_actions.value(QStringLiteral("purge")));
     messageMenu->addAction(m_actions.value(QStringLiteral("spam")));
     messageMenu->addSeparator();
     messageMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
@@ -2122,6 +2135,11 @@ void MainWindow::buildMenus()
         // thing it deliberately does not do.
         { QStringLiteral("cleanup_stranded"), QStringLiteral("system-search") },
         { QStringLiteral("empty_trash"), QStringLiteral("edit-delete-shred") },
+        // Item 185. Distinct from empty_trash's, because both reach the trash
+        // bar and there the icon IS the control: two buttons that destroy
+        // different amounts of mail must not look identical. `user-trash` is
+        // the theme's own wastebasket, which reads as "this one, gone".
+        { QStringLiteral("purge"), QStringLiteral("user-trash") },
         { QStringLiteral("undo"),    QStringLiteral("edit-undo") },
         { QStringLiteral("spam"),    QStringLiteral("mail-mark-junk") },
         { QStringLiteral("flag"),    QStringLiteral("mail-mark-important") },
@@ -2248,7 +2266,10 @@ void MainWindow::buildMenus()
     toolBar->addAction(syncAction);
     toolBar->addSeparator();
     toolBar->addAction(m_actions.value(QStringLiteral("archive")));
-    toolBar->addAction(m_actions.value(QStringLiteral("delete")));
+    // Delete is NOT here (item 186). It acts on the displayed message, like
+    // Reply and Forward, so it lives on the pane's own bar by the same rule
+    // items 139 to 141 settled for those two. It stays in the Message menu
+    // and the context menu, so nothing became unreachable.
     toolBar->addAction(m_actions.value(QStringLiteral("mark_all_read")));
     toolBar->addSeparator();
     toolBar->addAction(m_actions.value(QStringLiteral("undo")));
@@ -2308,17 +2329,45 @@ void MainWindow::populateMessageBar()
     // changed the answer. The guard that IS load-bearing sits one level up in
     // updateComposeActions(), where accountForCurrentMessage() would otherwise
     // answer about a row this query is discarding.
+    // A THIRD branch since item 185, and the order matters: a draft that has
+    // been deleted is in the trash, where Edit draft is no more use than
+    // Reply. Trash is asked first for that reason.
+    //
+    // Keyed on the SELECTION being in a trash folder, the same predicate
+    // refreshTrashActions() uses, rather than on the trash VIEW: the two
+    // disagree on mail reached from a search, where a message can sit in the
+    // trash while the query was never the trash filter. Reading the view
+    // there would offer Reply on a trashed message, which is the whole
+    // complaint.
     QList<QAction *> messageActions;
-    if (currentMessageIsADraft()) {
+    QList<QAction *> tinted;
+    if (everySelectedRowIsInATrashFolder()
+        && !m_threadView->selectionModel()->selectedRows().isEmpty()) {
+        // Restore first, then the two purges, which are one act at two
+        // scopes: this message, and the whole trash. Delete is absent because
+        // refreshTrashActions() hides it on mail already in the trash, where
+        // it reported success and did nothing (item 168).
+        messageActions = { m_actions.value(QStringLiteral("restore")),
+                           m_actions.value(QStringLiteral("purge")),
+                           m_actions.value(QStringLiteral("empty_trash")) };
+        // Restore alone. The two purges are the same act at two scopes and
+        // need no colour to tell them from each other, only from this one.
+        tinted = { m_actions.value(QStringLiteral("restore")) };
+    } else if (currentMessageIsADraft()) {
         messageActions = { m_actions.value(QStringLiteral("edit_draft")) };
     } else {
+        // Delete joins the pair here (item 186), from the main toolbar. It is
+        // hidden on a reply row and outside its scope by
+        // refreshTrashActions(), which the bar inherits by showing the
+        // window's own QActions rather than copies.
         messageActions = { m_actions.value(QStringLiteral("reply")),
-                           m_actions.value(QStringLiteral("forward")) };
+                           m_actions.value(QStringLiteral("forward")),
+                           m_actions.value(QStringLiteral("delete")) };
     }
 
     m_messageView->setBarActions(
         messageActions, { m_actions.value(QStringLiteral("toggle_html")) },
-        iconSize);
+        iconSize, tinted);
 }
 
 void MainWindow::showShortcutReference()
@@ -3743,6 +3792,15 @@ void MainWindow::refreshTrashActions()
         restore->setVisible((!haveSelection || inTrash)
                             && !m_replySelectionHidesDelete);
     }
+
+    // Item 185. Follows Restore exactly: both are what a message ALREADY in
+    // the trash affords, and neither means anything outside it. Unlike the
+    // pair above, it is not hidden on a reply row: Delete is a
+    // conversation-level act because removing one reply from a live
+    // conversation is not offered, but a reply that is already in the trash
+    // is just mail, and destroying only that one is a coherent thing to ask.
+    if (auto *purge = m_actions.value(QStringLiteral("purge")))
+        purge->setVisible(haveSelection && inTrash);
 }
 
 void MainWindow::refreshUnreadAction()
@@ -4263,6 +4321,12 @@ void MainWindow::onThreadDigestLoaded(const ThreadDigest &digest,
     m_conversationPathsThreadId = digest.threadId;
     m_conversationPaths = digest.messagePaths;
     refreshTrashActions();
+    // And the bar, for the same reason and on the same line of reasoning
+    // (item 185). A conversation's trash-ness is not known until the digest
+    // reports every path, so the bar filled at selection time answered from
+    // the summary's single path; refilling here is what makes it agree with
+    // the menu entries refreshTrashActions() just corrected.
+    populateMessageBar();
 
     m_messageView->showDashboard(digest);
 }
@@ -6282,7 +6346,17 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
     }
 
     if (requestTag == QStringLiteral("empty_trash")) {
-        confirmAndPurge(messageIds);
+        const QString accountKey = m_accountBox->currentData().toString();
+        confirmAndPurge(messageIds, accountKey.isEmpty()
+                                        ? tr("every account")
+                                        : m_accountBox->currentText());
+        return;
+    }
+
+    if (requestTag == QStringLiteral("purge_selection")) {
+        // No scope named: the prompt says "the selection", which is what the
+        // user pointed at, rather than an account they did not.
+        confirmAndPurge(messageIds, QString());
         return;
     }
 
@@ -6597,25 +6671,66 @@ void MainWindow::emptyTrash()
                               Q_ARG(QString, QStringLiteral("empty_trash")));
 }
 
-void MainWindow::confirmAndPurge(const QStringList &messageIds)
+void MainWindow::purgeSelected()
 {
-    if (messageIds.isEmpty()) {
-        showTransientStatus(tr("The trash is already empty"));
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty()) {
+        showTransientStatus(tr("Nothing selected to delete"));
         return;
     }
 
-    const QString accountKey = m_accountBox->currentData().toString();
-    const QString where = accountKey.isEmpty()
-                              ? tr("every account")
-                              : m_accountBox->currentText();
+    if (!m_worker) {
+        showTransientStatus(tr("Not connected to the mail index"));
+        return;
+    }
+
+    const ActionScope scope = m_model->scopeForSelection(rows);
+
+    // One combined query rather than a resolve per scope, since two round
+    // trips would reach confirmAndPurge() twice and ask the user twice for
+    // one gesture. `thread:` and `id:` compose in one notmuch query, which is
+    // what lets a mixed selection stay a single confirmation.
+    QStringList terms;
+    terms.reserve(scope.threadIds.size() + scope.messageIds.size());
+    for (const QString &id : scope.threadIds)
+        terms.append(QStringLiteral("thread:%1").arg(id));
+    for (const QString &id : scope.messageIds)
+        terms.append(QStringLiteral("id:%1").arg(id));
+
+    if (terms.isEmpty())
+        return;
+
+    // Resolved by the WORKER, like every other count that precedes a
+    // destructive act: the dialog must name what will actually be destroyed,
+    // and the model holds whatever the view last painted.
+    QMetaObject::invokeMethod(
+        m_worker, "resolveQueryMessages", Qt::QueuedConnection,
+        Q_ARG(QString, terms.join(QStringLiteral(" or "))),
+        Q_ARG(QString, QStringLiteral("purge_selection")));
+}
+
+void MainWindow::confirmAndPurge(const QStringList &messageIds,
+                                 const QString &where)
+{
+    if (messageIds.isEmpty()) {
+        showTransientStatus(where.isEmpty()
+                                ? tr("Nothing selected to delete")
+                                : tr("The trash is already empty"));
+        return;
+    }
 
     QMessageBox box(this);
     box.setObjectName(QStringLiteral("emptyTrashConfirmation"));
     box.setIcon(QMessageBox::Warning);
-    box.setWindowTitle(tr("Empty trash"));
-    box.setText(tr("Permanently delete %n message(s) from the trash of %1?",
-                   "", messageIds.size())
-                    .arg(where));
+    box.setWindowTitle(where.isEmpty() ? tr("Delete permanently")
+                                       : tr("Empty trash"));
+    box.setText(where.isEmpty()
+                    ? tr("Permanently delete %n selected message(s)?", "",
+                         messageIds.size())
+                    : tr("Permanently delete %n message(s) from the trash "
+                         "of %1?", "", messageIds.size())
+                          .arg(where));
     // Said plainly, because it is the only place in this application where it
     // is true.
     box.setInformativeText(tr("This cannot be undone."));

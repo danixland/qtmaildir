@@ -13,12 +13,27 @@ point at which they are stable.
 
 ### Added
 
+- **The message pane's bar knows about the trash.** On a message that is
+  already in the trash it now carries Restore, Delete permanently and Empty
+  trash in place of Reply and Forward, which were the two least useful things
+  to offer on mail that was thrown away. Restore is tinted so the one action
+  that gives mail back is not the same shape as the two that destroy it.
+- **Delete permanently.** The selection-scoped counterpart to Empty trash:
+  the same act, on the messages you picked rather than on the whole trash. Like
+  Empty trash it asks first, names the count, and carries no default shortcut,
+  because it cannot be undone.
 - **The sync script reports what it did.** `mailsync.sh` now writes a small
   status file at the end of every run, naming the channels it synced, whether
   each of mbsync and notmuch succeeded, and whether the run was skipped because
   another already held the lock. qtmaildir reads it instead of inferring the
   outcome from a line in the log. Set `status` under `[sync]` to move the file;
   the default matches what the script writes and no config change is needed.
+
+### Changed
+
+- **Delete moved from the main toolbar to the message pane's bar**, beside
+  Reply and Forward, where it belongs with the other actions that operate on
+  the message being read. It is still in the Message menu and the context menu.
 
 ### Fixed
 

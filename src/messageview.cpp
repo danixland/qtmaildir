@@ -673,7 +673,8 @@ void MessageView::applyNoticeBarStyles()
 
 void MessageView::setBarActions(const QList<QAction *> &messageActions,
                                 const QList<QAction *> &viewControls,
-                                int iconSize)
+                                int iconSize,
+                                const QList<QAction *> &tinted)
 {
     m_messageBar->clear();
     if (iconSize > 0)
@@ -682,6 +683,39 @@ void MessageView::setBarActions(const QList<QAction *> &messageActions,
     for (QAction *action : messageActions) {
         if (action)
             m_messageBar->addAction(action);
+    }
+
+    // Applied after the actions are added, because a QToolBar creates the
+    // button for an action when it takes it: widgetForAction() returns
+    // nothing before that, so tinting in the loop above would silently do
+    // nothing at all.
+    //
+    // Per-button rather than a bar-wide sheet keyed on the object name, since
+    // the bar refills on every selection change and a sheet naming actions
+    // would have to be rewritten each time anyway. The ground follows the
+    // palette by the same rule applyNoticeBarStyles() uses: QPalette::Base
+    // decides which way round the theme is, so the tint cannot come out
+    // near-white on near-white.
+    if (!tinted.isEmpty()) {
+        const bool dark = palette().color(QPalette::Base).lightnessF() < 0.5;
+        // Green, not the blue the notice bars use: those are informational,
+        // and this marks the one button on a destructive bar that gives mail
+        // back. Each set carries its own ground and border rather than being
+        // the other dimmed, for the reason recorded beside the notice bars.
+        const QString ground = dark ? QStringLiteral("#12301c")
+                                    : QStringLiteral("#e2f4e6");
+        const QString border = dark ? QStringLiteral("#2b5c39")
+                                    : QStringLiteral("#a9d5b5");
+        const QString sheet = QStringLiteral(
+            "QToolButton { background: %1; border: 1px solid %2; "
+            "border-radius: 4px; padding: 2px; }").arg(ground, border);
+
+        for (QAction *action : tinted) {
+            if (!action)
+                continue;
+            if (QWidget *button = m_messageBar->widgetForAction(action))
+                button->setStyleSheet(sheet);
+        }
     }
 
     // The stretch is what separates the two scopes, so the view controls end

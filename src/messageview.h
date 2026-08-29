@@ -278,9 +278,16 @@ public:
     /// separated from \p messageActions by a stretch: acting on the message
     /// and changing how it is displayed are different scopes, which is the
     /// confusion the bar exists to remove one level up.
+    /// \p tinted names the actions whose buttons take a coloured ground. The
+    /// trash bar is icons-only like the rest, so the tint is what separates
+    /// the one action that gives mail back from the two that destroy it. Only
+    /// the positive one is tinted, at the user's decision: colouring all
+    /// three would make the bar a warning strip and the tint would stop
+    /// meaning anything.
     void setBarActions(const QList<QAction *> &messageActions,
                        const QList<QAction *> &viewControls,
-                       int iconSize = 0);
+                       int iconSize = 0,
+                       const QList<QAction *> &tinted = {});
 
     /// Tells the pane whether the query bar currently holds anything.
     ///

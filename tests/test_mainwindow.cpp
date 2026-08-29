@@ -514,6 +514,7 @@ private slots:
     void aDraftReopensWithItsOwnContent();
     void editDraftIsOfferedOnlyForADraft();
     void theMessageBarOffersEditOnADraft();
+    void theMessageBarSwapsToTheTrashActionsOnTrashedMail();
     void doubleClickingADraftOpensTheComposer();
     void aResumedDraftReplacesItsFileRatherThanAddingOne();
     void aResumedDraftKeepsItsBlindRecipients();
@@ -13815,6 +13816,127 @@ void TestMainWindow::editDraftIsOfferedOnlyForADraft()
              "the draft was not found");
     QVERIFY2(edit->isEnabled(),
              "Edit draft is not offered on a message in the drafts folder");
+}
+
+void TestMainWindow::theMessageBarSwapsToTheTrashActionsOnTrashedMail()
+{
+    // Items 185 and 186. The bar offered Reply and Forward on a message the
+    // user had thrown away, which are the two things a trashed message is
+    // least likely to want, while Restore and the two purges lived only in
+    // menus. Delete moved here from the main toolbar in the same change.
+    //
+    // Asserted on WHICH ACTIONS the bar carries, which has a right answer.
+    // The tint on Restore does not and is not tested: a probe counting
+    // coloured pixels passes whatever the stylesheet says, for the reasons
+    // CLAUDE.md records under rendering probes.
+    WorkerComposeFixture fixture;
+    QVERIFY(fixture.backed.fixture().addMessage(
+        QStringLiteral("acct/Trash"), QStringLiteral("trashed1@example.org"),
+        QStringLiteral("Thrown away"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body.")));
+    QVERIFY2(fixture.seed({ { QStringLiteral("acct"), QStringLiteral("acct"),
+                              QStringLiteral("Trash"),
+                              QStringLiteral("/bin/true"),
+                              QStringLiteral("you@example.org"),
+                              QStringLiteral("Drafts") } },
+                          QStringLiteral("acct/inbox")),
+             qPrintable(fixture.backed.error()));
+
+    MainWindow window(fixture.backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *bar = window.findChild<QToolBar *>(QStringLiteral("message_toolbar"));
+    QVERIFY(model && view && queryEdit && bar);
+
+    const auto selectById = [&](const QString &id) {
+        queryEdit->setText(QStringLiteral("id:") + id);
+        queryEdit->returnPressed();
+        bool ready = false;
+        for (int attempt = 0; attempt < 150 && !ready; ++attempt) {
+            ready = model->rowCount(QModelIndex()) == 1
+                    && !window.mailRootForTesting().isEmpty();
+            if (!ready)
+                QTest::qWait(100);
+        }
+        if (!ready)
+            return false;
+        view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+        // The bar's trash branch reads the same predicate the menus do, and
+        // for a conversation row that predicate is only right once the digest
+        // has reported every path. Give the round trip a moment.
+        QTest::qWait(300);
+        return true;
+    };
+
+    const auto barHolds = [&](const QString &name) {
+        const auto actions = bar->actions();
+        return std::any_of(actions.cbegin(), actions.cend(),
+                           [&](const QAction *action) {
+                               return action && action->objectName() == name
+                                      && action->isVisible();
+                           });
+    };
+
+    // Ordinary mail first, so the trash assertions below mean something: a bar
+    // that never holds Reply passes the "no Reply in the trash" check by
+    // accident. This is also item 186's assertion, since Delete is on the bar
+    // here only because it was moved off the main toolbar.
+    QVERIFY2(selectById(QStringLiteral("compose1@example.org")),
+             "the inbox message was not found");
+    QVERIFY2(barHolds(QStringLiteral("reply")),
+             "the message bar lost Reply on ordinary mail");
+    QVERIFY2(barHolds(QStringLiteral("forward")),
+             "the message bar lost Forward on ordinary mail");
+    QVERIFY2(barHolds(QStringLiteral("delete")),
+             "Delete did not arrive on the message bar (item 186)");
+    QVERIFY2(!barHolds(QStringLiteral("restore")),
+             "Restore is offered on mail that was never deleted");
+    QVERIFY2(!barHolds(QStringLiteral("purge")),
+             "Delete permanently is offered outside the trash");
+
+    // The main toolbar must have LOST it, or item 186 moved nothing and the
+    // action simply appears twice.
+    auto *mainBar = window.findChild<QToolBar *>(QStringLiteral("main_toolbar"));
+    QVERIFY(mainBar);
+    const auto mainActions = mainBar->actions();
+    QVERIFY2(std::none_of(mainActions.cbegin(), mainActions.cend(),
+                          [](const QAction *action) {
+                              return action
+                                     && action->objectName()
+                                            == QStringLiteral("delete");
+                          }),
+             "Delete is still on the main toolbar as well as the message bar");
+
+    // And the trash, which is the whole point.
+    QVERIFY2(selectById(QStringLiteral("trashed1@example.org")),
+             "the trashed message was not found");
+    QVERIFY2(barHolds(QStringLiteral("restore")),
+             "Restore is missing from the bar on a trashed message");
+    QVERIFY2(barHolds(QStringLiteral("purge")),
+             "Delete permanently is missing from the bar in the trash");
+    QVERIFY2(barHolds(QStringLiteral("empty_trash")),
+             "Empty trash is missing from the bar in the trash");
+    QVERIFY2(!barHolds(QStringLiteral("reply")),
+             "Reply is still offered on a trashed message, which is the "
+             "complaint item 185 exists to fix");
+    QVERIFY2(!barHolds(QStringLiteral("forward")),
+             "Forward is still offered on a trashed message");
+    QVERIFY2(barHolds(QStringLiteral("toggle_html")),
+             "the view controls were lost when the bar swapped to the trash");
+
+    // And back, because a one-way swap is the plausible defect: the bar is
+    // refilled on every selection change, so returning to ordinary mail has to
+    // restore the reply pair rather than leaving the purges behind on mail
+    // they must not destroy.
+    QVERIFY2(selectById(QStringLiteral("compose1@example.org")),
+             "the inbox message was not found on the way back");
+    QVERIFY2(barHolds(QStringLiteral("reply")),
+             "Reply did not come back after leaving the trash");
+    QVERIFY2(!barHolds(QStringLiteral("purge")),
+             "Delete permanently stayed on the bar after leaving the trash");
 }
 
 void TestMainWindow::theMessageBarOffersEditOnADraft()

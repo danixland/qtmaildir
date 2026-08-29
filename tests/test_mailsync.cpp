@@ -65,6 +65,16 @@ private slots:
     void lastRunOutcomeReadsATailOfAHugeLog();
     void lastRunOutcomeReadsABannerTheScriptActuallyWrote();
 
+    void readStatusReadsAnOkRun();
+    void readStatusReadsTheChannelsARunCarried();
+    void readStatusReadsAFullRunAsEveryAccount();
+    void readStatusReadsASkippedRun();
+    void readStatusOnAMissingFileIsUnknown();
+    void readStatusOnRubbishIsUnknown();
+    void readStatusOnATruncatedFileIsUnknown();
+    void readStatusOnAnUnknownVersionIsUnknown();
+    void readStatusReadsAFileTheScriptActuallyWrote();
+
 private:
     /// Writes an executable shell script into the temp dir, returns its path.
     QString makeScript(const QString &name, const QString &body);
@@ -465,6 +475,186 @@ void TestMailSync::aChannelNameIsNotLetInVerbatim()
 // the only evidence of that available to this process is the RUN END line the
 // script writes into its log. These tests pin the parser against the exact
 // shape assets/mailsync.sh emits.
+
+// Item 174. The status file is what the application READS, as against the log,
+// which is for a human. These pin the reader against the exact shape
+// assets/mailsync.sh writes; assets/test_mailsync.py pins the writer against
+// the same shape from the other side, and the two agree by test rather than by
+// shared code, exactly as the two rules.json readers do.
+
+static QString writeStatus(const QDir &dir, const QString &name,
+                           const QByteArray &contents)
+{
+    const QString path = dir.filePath(name);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return QString();
+    file.write(contents);
+    file.close();
+    return path;
+}
+
+void TestMailSync::readStatusReadsAnOkRun()
+{
+    const QString path = writeStatus(
+        QDir(m_dir.path()), QStringLiteral("ok.json"),
+        R"({"version": 1, "run_id": "2026-08-29T10:00:00+02:00",
+            "started": "2026-08-29T10:00:00+02:00",
+            "ended": "2026-08-29T10:00:12+02:00",
+            "state": "ok", "channels": ["-a"],
+            "mbsync_status": 0, "notmuch_status": 0})");
+    QVERIFY(!path.isEmpty());
+
+    const SyncStatus status = MailSync::readStatus(path);
+    QCOMPARE(status.state, SyncState::Ok);
+    QVERIFY(status.ended.isValid());
+}
+
+void TestMailSync::readStatusReadsTheChannelsARunCarried()
+{
+    // The whole reason this file exists rather than the log's banner: the
+    // application clears its pending count for the accounts a run carried, and
+    // the log could never say which those were.
+    const QString path = writeStatus(
+        QDir(m_dir.path()), QStringLiteral("channels.json"),
+        R"({"version": 1, "run_id": "r", "started": "2026-08-29T10:00:00+02:00",
+            "ended": "2026-08-29T10:00:12+02:00", "state": "ok",
+            "channels": ["work", "personal"],
+            "mbsync_status": 0, "notmuch_status": 0})");
+    QVERIFY(!path.isEmpty());
+
+    const SyncStatus status = MailSync::readStatus(path);
+    QCOMPARE(status.state, SyncState::Ok);
+    QCOMPARE(status.channels,
+             (QStringList{ QStringLiteral("work"), QStringLiteral("personal") }));
+    QVERIFY(!status.everyChannel);
+}
+
+void TestMailSync::readStatusReadsAFullRunAsEveryAccount()
+{
+    // "-a" is not a channel name and must not be matched against one: a full
+    // run carries every account, so a reader treating it as an unknown channel
+    // would clear nothing on exactly the run that carried everything.
+    const QString path = writeStatus(
+        QDir(m_dir.path()), QStringLiteral("full.json"),
+        R"({"version": 1, "run_id": "r", "started": "2026-08-29T10:00:00+02:00",
+            "ended": "2026-08-29T10:00:12+02:00", "state": "ok",
+            "channels": ["-a"], "mbsync_status": 0, "notmuch_status": 0})");
+    QVERIFY(!path.isEmpty());
+
+    const SyncStatus status = MailSync::readStatus(path);
+    QVERIFY2(status.everyChannel, "a -a run was not read as every account");
+}
+
+void TestMailSync::readStatusReadsASkippedRun()
+{
+    // Item 125. A skipped run releases a lock it never took, so the spinner had
+    // nothing to clear on. It is a terminal state, and distinct from a failure:
+    // the other run is doing the work.
+    const QString path = writeStatus(
+        QDir(m_dir.path()), QStringLiteral("skip.json"),
+        R"({"version": 1, "run_id": "r", "started": "2026-08-29T10:00:00+02:00",
+            "ended": "2026-08-29T10:00:00+02:00", "state": "skipped",
+            "channels": ["-a"], "mbsync_status": -1, "notmuch_status": -1})");
+    QVERIFY(!path.isEmpty());
+
+    const SyncStatus status = MailSync::readStatus(path);
+    QCOMPARE(status.state, SyncState::Skipped);
+}
+
+void TestMailSync::readStatusOnAMissingFileIsUnknown()
+{
+    QCOMPARE(MailSync::readStatus(m_dir.filePath(QStringLiteral("nope.json"))).state,
+             SyncState::Unknown);
+    QCOMPARE(MailSync::readStatus(QString()).state, SyncState::Unknown);
+}
+
+void TestMailSync::readStatusOnRubbishIsUnknown()
+{
+    const QString path = writeStatus(QDir(m_dir.path()),
+                                     QStringLiteral("rubbish.json"),
+                                     "this is not json at all\n");
+    QVERIFY(!path.isEmpty());
+    QCOMPARE(MailSync::readStatus(path).state, SyncState::Unknown);
+}
+
+void TestMailSync::readStatusOnATruncatedFileIsUnknown()
+{
+    // The script writes atomically through a temp file and mv precisely so this
+    // cannot happen, but a reader that trusts that is one filesystem away from
+    // being wrong. Unknown changes no state, so a torn read is harmless.
+    const QString path = writeStatus(QDir(m_dir.path()),
+                                     QStringLiteral("torn.json"),
+                                     R"({"version": 1, "state": "o)");
+    QVERIFY(!path.isEmpty());
+    QCOMPARE(MailSync::readStatus(path).state, SyncState::Unknown);
+}
+
+void TestMailSync::readStatusOnAnUnknownVersionIsUnknown()
+{
+    // Refused rather than guessed at, the rule the rules file already follows:
+    // a future version may mean something different by the same field names,
+    // and acting on it would be worse than observing nothing.
+    const QString path = writeStatus(
+        QDir(m_dir.path()), QStringLiteral("future.json"),
+        R"({"version": 99, "run_id": "r", "started": "2026-08-29T10:00:00+02:00",
+            "ended": "2026-08-29T10:00:12+02:00", "state": "ok",
+            "channels": ["-a"], "mbsync_status": 0, "notmuch_status": 0})");
+    QVERIFY(!path.isEmpty());
+    QCOMPARE(MailSync::readStatus(path).state, SyncState::Unknown);
+}
+
+void TestMailSync::readStatusReadsAFileTheScriptActuallyWrote()
+{
+    // The guard against the two sides drifting apart. Every test above writes
+    // what this file BELIEVES the script emits; this one runs the real script
+    // with stubbed binaries and reads what it actually wrote.
+    //
+    // Skipped rather than failed where bash or the script is unavailable: a
+    // packaging build has no reason to carry either, and a test that cannot run
+    // has observed nothing.
+    const QString script = QStringLiteral(SOURCE_DIR "/assets/mailsync.sh");
+    if (!QFile::exists(script))
+        QSKIP("assets/mailsync.sh not found");
+
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+
+    // Stubs, so nothing reaches the network and the real lock is never taken.
+    const QString bin = home.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkpath(bin));
+    for (const QString &name : { QStringLiteral("mbsync"),
+                                 QStringLiteral("notmuch") }) {
+        QFile stub(bin + QLatin1Char('/') + name);
+        QVERIFY(stub.open(QIODevice::WriteOnly | QIODevice::Text));
+        stub.write("#!/bin/bash\nexit 0\n");
+        stub.close();
+        QVERIFY(stub.setPermissions(QFile::ReadOwner | QFile::WriteOwner
+                                    | QFile::ExeOwner));
+    }
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("HOME"), home.path());
+    env.insert(QStringLiteral("PATH"),
+               bin + QLatin1Char(':') + env.value(QStringLiteral("PATH")));
+    // Never /tmp/mbsync.lock: that is the mutex the user's cron sync uses, and
+    // a test that took it would block their mail.
+    env.insert(QStringLiteral("MAILSYNC_LOCKFILE"),
+               home.filePath(QStringLiteral("lock")));
+
+    QProcess proc;
+    proc.setProcessEnvironment(env);
+    proc.start(QStringLiteral("bash"), { script, QStringLiteral("work") });
+    if (!proc.waitForStarted(5000))
+        QSKIP("bash not available");
+    QVERIFY(proc.waitForFinished(30000));
+
+    const SyncStatus status = MailSync::readStatus(
+        home.filePath(QStringLiteral(".local/state/qtmaildir/syncstatus.json")));
+    QCOMPARE(status.state, SyncState::Ok);
+    QCOMPARE(status.channels, QStringList{ QStringLiteral("work") });
+    QVERIFY(!status.everyChannel);
+}
 
 void TestMailSync::lastRunOutcomeReadsAnOkRun()
 {

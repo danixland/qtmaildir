@@ -96,6 +96,13 @@ target_compile_definitions(test_translations PRIVATE
 target_compile_definitions(test_composewindow PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+# One test RUNS assets/mailsync.sh with stubbed binaries and reads the status
+# file it wrote, which is the guard against the bash writer and the C++ reader
+# drifting apart. Every other test in that file writes what it believes the
+# script emits, and would go on passing after the script changed.
+target_compile_definitions(test_mailsync PRIVATE
+    SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # The notmuch hooks (assets/hooks/), which are Python rather than C++ and are
 # therefore registered directly rather than through add_qtmaildir_test().
 #
@@ -112,6 +119,19 @@ if(Python3_Interpreter_FOUND)
                  COMMAND ${Python3_EXECUTABLE}
                          ${CMAKE_SOURCE_DIR}/assets/hooks/test_${hook_test}.py)
     endforeach()
+
+    # The sync script, which lives in assets/ rather than assets/hooks/ and so
+    # is registered on its own rather than through the loop above.
+    #
+    # It belongs in the suite for a stronger reason than the hooks do: the
+    # user's ~/bin/mailsync.sh is a SYMLINK to assets/mailsync.sh, so an edit
+    # here is live on their next cron tick with no deploy step in between. The
+    # test stubs mbsync and notmuch, points HOME at a temp directory and
+    # redirects the lock file, so it can neither reach the network nor take the
+    # real sync lock, which is the mutex their cron run uses.
+    add_test(NAME mailsync_script
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/assets/test_mailsync.py)
 else()
     message(STATUS "Python3 not found: the notmuch hook tests will not run")
 endif()

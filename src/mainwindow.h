@@ -202,6 +202,20 @@ public:
     /// command was pushed, which is what "this did nothing" has to assert.
     int undoDepthForTesting() const { return m_undoStack.count(); }
 
+    /// Item 174. The set of accounts with edits not yet known to have reached
+    /// the mail store, so a test can assert that an external sync cleared the
+    /// accounts it carried and ONLY those.
+    QSet<QString> editedAccountsForTesting() const { return m_editedAccounts; }
+
+    /// Marks an account edited, standing in for the write funnels: a test
+    /// asserting which accounts a sync clears needs more than one of them
+    /// edited, and driving two real writes through a worker to arrange that
+    /// would test the funnels rather than the clearing.
+    Q_INVOKABLE void noteEditedAccountForTesting(const QString &accountKey)
+    {
+        m_editedAccounts.insert(accountKey);
+    }
+
     /// Item 178. Stands in for the digest round trip, which a bare window has
     /// no worker to make. Sets what onThreadDigestLoaded() would have set.
     void setConversationPathsForTesting(const QString &threadId,
@@ -1485,6 +1499,17 @@ private:
     /// half. Tracked here rather than read back from SyncMonitor so the state
     /// the UI acted on is the state it was told about.
     bool m_externalSyncBusy = false;
+
+    /// When the external sync now running began, from the lock appearing.
+    ///
+    /// Item 174. The status file the script leaves is preferred over the log's
+    /// banner, but only when it describes THIS run: a stale file outranking a
+    /// fresh log would clear the pending count on an old success for a run that
+    /// has just failed, which is the indicator lying in the direction that
+    /// loses work. Invalid when no external sync has been observed, where the
+    /// comparison is skipped rather than failing closed on a file that may well
+    /// be current.
+    QDateTime m_externalSyncStartedAt;
     QUndoStack m_undoStack;
 
     QLineEdit *m_queryEdit = nullptr;

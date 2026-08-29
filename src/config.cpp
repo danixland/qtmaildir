@@ -475,6 +475,14 @@ void Config::load(const QString &path)
     if (m_syncLog.isEmpty())
         m_syncLog = MailSync::defaultLogPath();
 
+    // The status file the script writes (item 174), beside the log and unvalidated
+    // for the same reason: a fresh install has none until the first sync runs,
+    // and a missing one reads as SyncState::Unknown when the time comes.
+    m_syncStatus =
+        settings.value(QStringLiteral("sync/status")).toString().trimmed();
+    if (m_syncStatus.isEmpty())
+        m_syncStatus = MailSync::defaultStatusPath();
+
     // Account groups are written as [account.work], [account.personal], etc.
     // A dot, not a slash, separates the "account" namespace from the key:
     // QSettings' INI backend treats "/" as its own hierarchical group

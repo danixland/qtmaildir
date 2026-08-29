@@ -21,6 +21,9 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 
 namespace {
@@ -249,6 +252,93 @@ QString MailSync::defaultLogPath()
     // $HOME. Deriving it from QStandardPaths::GenericStateLocation would append
     // the application name and point at a file the script never writes.
     return QDir::homePath() + QStringLiteral("/.local/state/mailsync.log");
+}
+
+QString MailSync::defaultStatusPath()
+{
+    // Hardcoded to match assets/mailsync.sh for the same reason defaultLogPath
+    // is: the script builds it from $HOME, and QStandardPaths would derive a
+    // path the script never writes.
+    //
+    // Under the application's own state directory rather than beside
+    // mailsync.log, and the split is deliberate: the log belongs to the script
+    // and a human reads it, while this file is the interface between the two
+    // programs.
+    return QDir::homePath()
+           + QStringLiteral("/.local/state/qtmaildir/syncstatus.json");
+}
+
+SyncStatus MailSync::readStatus(const QString &statusPath)
+{
+    // Every failure below returns this untouched, so Unknown is the default
+    // rather than something each branch has to remember to set.
+    SyncStatus status;
+
+    if (statusPath.isEmpty())
+        return status;
+
+    QFile file(statusPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return status;
+
+    // The whole file: it holds one run and is a few hundred bytes. The cap is
+    // against a path that is not the file we think it is, since a reader on the
+    // UI thread must not swallow something enormous by mistake.
+    constexpr qint64 kMaxBytes = 64 * 1024;
+    if (file.size() > kMaxBytes)
+        return status;
+
+    QJsonParseError error{};
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !doc.isObject())
+        return status;
+
+    const QJsonObject object = doc.object();
+
+    // Refused rather than guessed at, the rule the rules file already follows:
+    // a later version may mean something different by these same field names,
+    // and acting on it would be worse than observing nothing. The script writes
+    // 1 and both sides bump together.
+    if (object.value(QStringLiteral("version")).toInt() != 1)
+        return status;
+
+    const QString state = object.value(QStringLiteral("state")).toString();
+    if (state == QLatin1String("ok"))
+        status.state = SyncState::Ok;
+    else if (state == QLatin1String("failed"))
+        status.state = SyncState::Failed;
+    else if (state == QLatin1String("skipped"))
+        status.state = SyncState::Skipped;
+    else
+        return status;   // An unrecognised state is not a fourth kind of run.
+
+    const QJsonArray channels =
+        object.value(QStringLiteral("channels")).toArray();
+    for (const QJsonValue &value : channels) {
+        const QString channel = value.toString();
+        if (channel.isEmpty())
+            continue;
+        // "-a" is the script's word for "every channel", not the name of one.
+        // Kept as a flag so a caller cannot match it against configured
+        // channels, find nothing, and clear nothing on the run that carried
+        // everything.
+        if (channel == QLatin1String("-a"))
+            status.everyChannel = true;
+        else
+            status.channels.append(channel);
+    }
+
+    status.mbsyncStatus =
+        object.value(QStringLiteral("mbsync_status")).toInt(-1);
+    status.notmuchStatus =
+        object.value(QStringLiteral("notmuch_status")).toInt(-1);
+
+    status.started = QDateTime::fromString(
+        object.value(QStringLiteral("started")).toString(), Qt::ISODate);
+    status.ended = QDateTime::fromString(
+        object.value(QStringLiteral("ended")).toString(), Qt::ISODate);
+
+    return status;
 }
 
 SyncOutcome MailSync::lastRunOutcome(const QString &logPath)

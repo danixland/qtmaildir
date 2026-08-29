@@ -381,6 +381,11 @@ public:
     /// clear on a cron sync, which is exactly the defect this exists to fix.
     QString syncLog() const { return m_syncLog; }
 
+    /// The status file assets/mailsync.sh writes, which is what the
+    /// application READS to learn what a run it did not start actually did
+    /// (item 174). The log beside it is for a human.
+    QString syncStatus() const { return m_syncStatus; }
+
     /// Optional alternate notmuch config file. Empty means "let notmuch decide".
     QString notmuchConfig() const { return m_notmuchConfig; }
 
@@ -548,6 +553,7 @@ private:
 
     QString m_syncCommand;
     QString m_syncLog;
+    QString m_syncStatus;
     int m_toolbarIconSize = 24;
     QString m_notmuchConfig;
     QString m_dateFormat;

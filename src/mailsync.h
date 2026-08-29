@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QDateTime>
 #include <QObject>
 #include <QProcess>
 #include <QString>
@@ -76,6 +77,64 @@ enum class SyncOutcome {
     Failed,
 };
 
+/// What a finished run was, from the status file (item 174).
+///
+/// Three states rather than SyncOutcome's two, and the third is the point:
+/// a run that SKIPPED because another held the lock is neither a success nor a
+/// failure, and having no way to say so is why item 125 left the spinner
+/// running for ever.
+enum class SyncState {
+    Unknown,
+    Ok,
+    Failed,
+    Skipped,
+};
+
+/// One finished run of the sync script, as the script itself reported it.
+///
+/// This exists because the application used to INFER a finished run, from an
+/// inode in /proc/locks and from grepping the log for its RUN END banner. That
+/// made a human-readable line into wire format, and it could not answer the
+/// question the pending count actually needs answered: which channels did this
+/// run carry? The local sync path has always narrowed its clear to the accounts
+/// it carried; the external path could not, and cleared everything.
+///
+/// Written by assets/mailsync.sh, which is the only producer. The two agree by
+/// TEST rather than by shared code, exactly as the two readers of rules.json
+/// do: assets/test_mailsync.py pins the writer, test_mailsync.cpp pins the
+/// reader, and one test runs the real script and reads what it wrote.
+struct SyncStatus
+{
+    SyncState state = SyncState::Unknown;
+
+    /// The channels the run synced. Empty when `everyChannel` is true.
+    QStringList channels;
+
+    /// The run covered every account, which the script reports as "-a".
+    ///
+    /// Carried as a flag rather than left as the literal string in `channels`,
+    /// because "-a" is not a channel name: a caller matching it against
+    /// configured channels finds nothing and clears nothing, on exactly the run
+    /// that carried everything.
+    bool everyChannel = false;
+
+    /// Reported separately as well as folded into `state`, because they mean
+    /// different things: a failed mbsync means the edits never reached the
+    /// server, while a failed notmuch means they did and only the local index
+    /// is behind. -1 for a run where neither program ran.
+    int mbsyncStatus = -1;
+    int notmuchStatus = -1;
+
+    QDateTime started;
+    QDateTime ended;
+
+    /// True only for a run that completed with both programs succeeding.
+    /// Nothing else may clear the pending count, per the rule the local path
+    /// states: clearing on a failure asserts the edits reached the mail store
+    /// when the sync is exactly what failed to put them there.
+    bool carriedEdits() const { return state == SyncState::Ok; }
+};
+
 /// Runs the configured external sync command.
 ///
 /// qtmaildir deliberately does not implement sync itself. The existing script
@@ -124,6 +183,27 @@ public:
     /// time a background sync ends, against a file logrotate lets grow all day.
     /// Anything unreadable, absent or unmarked is Unknown.
     static SyncOutcome lastRunOutcome(const QString &logPath);
+
+    /// Reads the status file assets/mailsync.sh writes (item 174).
+    ///
+    /// Preferred over lastRunOutcome(), which stays as the fallback for a file
+    /// that is missing or unreadable: that is what a first run after upgrading
+    /// looks like, and deleting a working mechanism in the same change that
+    /// adds its replacement leaves two broken things instead of one.
+    ///
+    /// Anything unreadable, absent, malformed or of an unrecognised version
+    /// returns a default SyncStatus, whose state is Unknown. Callers must
+    /// change no state on Unknown, exactly as they must for SyncOutcome and
+    /// SyncMonitor::State: it is the absence of evidence, not evidence of
+    /// absence.
+    ///
+    /// A whole-file read rather than a tail, unlike lastRunOutcome(): the file
+    /// holds one run and is a few hundred bytes, where the log holds every run
+    /// of the day.
+    static SyncStatus readStatus(const QString &statusPath);
+
+    /// Where the status file lives when the config names none.
+    static QString defaultStatusPath();
 
 signals:
     void started();

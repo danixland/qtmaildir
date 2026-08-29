@@ -247,6 +247,7 @@ private slots:
     void init();
     void cleanup();
     void noTestCanSeeTheRealLockTable();
+    void noSyncTestReadsTheRealSyncState();
     void everyKnownActionIsRegistered();
     void everyRegisteredActionIsKnown();
     void configuredBindingReachesTheAction();
@@ -429,6 +430,8 @@ private slots:
     void aRejectedWriteKeepsEarlierUndoHistory();
 
     void aSuccessfulCronSyncClearsThePendingCount();
+    void anExternalSyncClearsOnlyTheAccountsItCarried();
+    void aSkippedExternalSyncClearsNothing();
     void aFailedCronSyncLeavesThePendingCount();
     void anUnreadableSyncLogLeavesThePendingCount();
     void anUnknownExternalStateClearsNothing();
@@ -622,6 +625,53 @@ void TestMainWindow::noTestCanSeeTheRealLockTable()
              "the suite is reading the real kernel lock table; a sync running "
              "on this machine will fail unrelated tests (item 61)");
     QVERIFY(MainWindow::locksPath().startsWith(QDir::tempPath()));
+}
+
+void TestMainWindow::noSyncTestReadsTheRealSyncState()
+{
+    // The same guard as noTestCanSeeTheRealLockTable(), for the two paths a
+    // Config falls back to when a test does not name them, and it exists
+    // because that fallback bit twice in one sitting (item 174).
+    //
+    // A test writing "[sync]\nlog=..." and nothing else leaves syncStatus()
+    // pointing at the developer's real ~/.local/state/qtmaildir/syncstatus.json.
+    // Two tests asserting that a FAILED run leaves the pending count alone
+    // therefore read the last real cron run, found "ok", and passed against a
+    // broken clear. Pinning only the status key has the mirror problem: the log
+    // then defaults to the real mailsync.log.
+    //
+    // Asserted on Config rather than on any one test, so a new sync test that
+    // forgets one key fails here with a message naming the reason rather than
+    // failing mysteriously whenever the developer's last sync happened to
+    // succeed.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("[sync]\ncommand=/bin/true\n");
+    file.close();
+
+    Config config;
+    config.load(path);
+
+    // Both DO default to the real paths, which is correct for the application
+    // and is exactly the trap for a test. This documents the behaviour so the
+    // requirement below is obviously about the tests rather than the defaults.
+    QCOMPARE(config.syncLog(), MailSync::defaultLogPath());
+    QCOMPARE(config.syncStatus(), MailSync::defaultStatusPath());
+
+    QVERIFY2(MailSync::defaultStatusPath().contains(
+                 QStringLiteral(".local/state/qtmaildir/syncstatus.json")),
+             "the default status path moved: assets/mailsync.sh writes the old "
+             "one, and the two must agree or every external sync reads as "
+             "Unknown");
+
+    // Any test asserting on what a sync did must name BOTH keys in its own
+    // config, pointing them inside its own QTemporaryDir. There is no fixture
+    // that can enforce it, since Config is loaded per test, so this is the
+    // reminder that fails loudly if the defaults ever stop being real paths.
 }
 
 void TestMainWindow::everyKnownActionIsRegistered()
@@ -7015,7 +7065,17 @@ void loadConfigWithSyncLog(Config &config, const QTemporaryDir &dir,
     const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-    file.write(QStringLiteral("[sync]\nlog=%1\n").arg(logPath).toUtf8());
+    // The status file is pointed at this test's own directory even though these
+    // tests are about the LOG, and the omission cost two false greens: without
+    // it Config falls back to the real ~/.local/state/qtmaildir/syncstatus.json,
+    // so a test asserting that a FAILED log leaves the count alone read the
+    // developer's own last cron run, found "ok" and cleared. Same rule as the
+    // lock table: no test may observe the machine's real sync state. Pointing
+    // it at a file that does not exist makes readStatus() return Unknown, which
+    // is exactly the fallback-to-log case these tests mean to exercise.
+    file.write(QStringLiteral("[sync]\nlog=%1\nstatus=%2\n")
+                   .arg(logPath, dir.filePath(QStringLiteral("no-status.json")))
+                   .toUtf8());
     file.close();
 
     config.load(path);
@@ -7055,6 +7115,130 @@ void runExternalSync(MainWindow &window, SyncMonitor::State ending)
 }
 
 } // namespace
+
+/// Item 174. A run this process did not start now reports what it DID, in the
+/// status file assets/mailsync.sh writes, instead of being inferred from the
+/// log's RUN END banner.
+///
+/// The property that banner could never express: WHICH channels the run
+/// carried. The local sync path has always narrowed its clear to the accounts
+/// it carried (onSyncFinished's snapshot-and-subtract); the external path had
+/// no way to and cleared everything, so an edit to an account the run did not
+/// touch was reported as shipped when it had not been.
+void TestMainWindow::anExternalSyncClearsOnlyTheAccountsItCarried()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString statusPath = dir.filePath(QStringLiteral("syncstatus.json"));
+    QFile status(statusPath);
+    QVERIFY(status.open(QIODevice::WriteOnly));
+    // Timestamped NOW rather than with a fixed date: the status file is only
+    // read as this run's result when it is at least as new as the sync that
+    // just ended, so a fixture dated in the past is correctly ignored as stale
+    // and the test would exercise the log fallback instead.
+    const QString now =
+        QDateTime::currentDateTime().toString(Qt::ISODate);
+    // A run that carried ONE of the two accounts.
+    status.write(QStringLiteral(R"({"version": 1, "run_id": "r",
+                     "started": "%1", "ended": "%1",
+                     "state": "ok", "channels": ["work"],
+                     "mbsync_status": 0, "notmuch_status": 0})")
+                     .arg(now).toUtf8());
+    status.close();
+
+    const QString confPath = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile conf(confPath);
+    QVERIFY(conf.open(QIODevice::WriteOnly | QIODevice::Text));
+    // BOTH keys, always. Pinning only one leaves the other defaulting to the
+    // developer's real ~/.local/state file, and a test then reads their last
+    // cron run instead of its own fixture: that is how two tests in this group
+    // went green against a broken clear before this was noticed.
+    conf.write(QStringLiteral("[sync]\nstatus=%1\nlog=%2\n"
+                              "[account.work]\nmaildir=work\ntrash=trash\n"
+                              "[account.personal]\nmaildir=personal\ntrash=trash\n")
+                   .arg(statusPath,
+                        dir.filePath(QStringLiteral("no-log.log")))
+                   .toUtf8());
+    conf.close();
+
+    Config config;
+    config.load(confPath);
+    QCOMPARE(config.syncStatus(), statusPath);
+
+    MainWindow window(config);
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    // An edit on each account. Only the first is carried by the run above.
+    QVERIFY(QMetaObject::invokeMethod(&window, "noteEditedAccountForTesting",
+                                      Q_ARG(QString, QStringLiteral("work"))));
+    QVERIFY(QMetaObject::invokeMethod(&window, "noteEditedAccountForTesting",
+                                      Q_ARG(QString,
+                                            QStringLiteral("personal"))));
+    recordOneEdit(window, QStringLiteral("m1"), QStringLiteral("flagged"));
+    QVERIFY2(!label->isHidden(), "the edit was not counted at all");
+
+    runExternalSync(window, SyncMonitor::State::Idle);
+
+    // The account the run carried is gone; the one it did not is still waiting.
+    // Asserting only that something cleared would pass against the old blanket
+    // clear, which is the behaviour this replaces.
+    QVERIFY2(!window.editedAccountsForTesting().contains(
+                 QStringLiteral("work")),
+             "the account the sync carried is still marked as edited");
+    QVERIFY2(window.editedAccountsForTesting().contains(
+                 QStringLiteral("personal")),
+             "an account the sync never carried was cleared anyway, which is "
+             "the blanket clear this replaces");
+}
+
+/// Item 125, the half this closes. A run that SKIPPED because another held the
+/// lock did the work of neither: it must clear no edits, and before the status
+/// file there was nothing to tell the application it had happened at all.
+void TestMainWindow::aSkippedExternalSyncClearsNothing()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString statusPath = dir.filePath(QStringLiteral("syncstatus.json"));
+    QFile status(statusPath);
+    QVERIFY(status.open(QIODevice::WriteOnly));
+    // NOW, for the staleness reason the other test records.
+    const QString now =
+        QDateTime::currentDateTime().toString(Qt::ISODate);
+    status.write(QStringLiteral(R"({"version": 1, "run_id": "r",
+                     "started": "%1", "ended": "%1",
+                     "state": "skipped", "channels": ["-a"],
+                     "mbsync_status": -1, "notmuch_status": -1})")
+                     .arg(now).toUtf8());
+    status.close();
+
+    const QString confPath = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile conf(confPath);
+    QVERIFY(conf.open(QIODevice::WriteOnly | QIODevice::Text));
+    conf.write(QStringLiteral("[sync]\nstatus=%1\nlog=%2\n")
+                   .arg(statusPath,
+                        dir.filePath(QStringLiteral("no-log.log")))
+                   .toUtf8());
+    conf.close();
+
+    Config config;
+    config.load(confPath);
+    MainWindow window(config);
+
+    auto *label = window.findChild<QLabel *>(QStringLiteral("pendingEdits"));
+    QVERIFY(label);
+
+    recordOneEdit(window, QStringLiteral("m1"), QStringLiteral("flagged"));
+    QVERIFY(!label->isHidden());
+
+    runExternalSync(window, SyncMonitor::State::Idle);
+
+    QVERIFY2(!label->isHidden(),
+             "a SKIPPED run cleared the pending count: it synced nothing, so "
+             "the edits are still only local");
+}
 
 void TestMainWindow::aSuccessfulCronSyncClearsThePendingCount()
 {

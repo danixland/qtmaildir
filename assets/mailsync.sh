@@ -43,10 +43,63 @@
 export HOME="${HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}"
 export GNUPGHOME="${GNUPGHOME:-$HOME/.gnupg}"
 
-LOCKFILE="/tmp/mbsync.lock"
+# Overridable for the test suite ONLY. A test must never take the real lock:
+# that is the mutex the user's cron sync uses, so a test run holding it would
+# block their mail. Production passes nothing and gets the real path.
+LOCKFILE="${MAILSYNC_LOCKFILE:-/tmp/mbsync.lock}"
 LOGFILE="$HOME/.local/state/mailsync.log"
 
+# What qtmaildir READS, as against the log, which is for a human (item 174).
+# The application used to infer a finished run from the log's RUN END banner
+# and from this lock's inode in /proc/locks. That made a human-readable line
+# into wire format, said nothing about WHICH channels a run carried, and left a
+# skipped run reporting nothing at all (item 125). This file is the interface;
+# the log stays the log.
+STATUSFILE="$HOME/.local/state/qtmaildir/syncstatus.json"
+
 mkdir -p "$(dirname "$LOGFILE")"
+mkdir -p "$(dirname "$STATUSFILE")"
+
+# Written atomically, because qtmaildir watches this file and a reader must
+# never see a half-written one: mv within a directory is atomic, a redirect
+# into the final path is not.
+#
+# Failure to write it is deliberately NOT fatal. The status file is a
+# convenience for the application; the sync itself has already happened, and
+# taking the run down over a report of it would turn a cosmetic problem into a
+# mail problem.
+write_status() {
+    local state="$1" mbsync_status="$2" notmuch_status="$3"
+    local started="$4" ended="$5"
+    shift 5
+
+    local channels="" sep="" channel
+    for channel in "$@"; do
+        # The two characters JSON requires escaping in a string. A channel name
+        # comes from ~/.mbsyncrc and is an identifier rather than free text, so
+        # this is belt and braces rather than a real expectation.
+        channel="${channel//\\/\\\\}"
+        channel="${channel//\"/\\\"}"
+        channels="${channels}${sep}\"${channel}\""
+        sep=", "
+    done
+
+    local tmp
+    tmp="$(mktemp "${STATUSFILE}.XXXXXX")" || return 0
+    cat > "$tmp" <<JSON
+{
+  "version": 1,
+  "run_id": "$started",
+  "started": "$started",
+  "ended": "$ended",
+  "state": "$state",
+  "channels": [$channels],
+  "mbsync_status": $mbsync_status,
+  "notmuch_status": $notmuch_status
+}
+JSON
+    mv -f "$tmp" "$STATUSFILE" 2>/dev/null || rm -f "$tmp"
+}
 
 # Rotation is NOT this script's job: /etc/logrotate.d/mailsync owns this file,
 # keeping seven compressed days. An earlier version also rotated by size here,
@@ -54,12 +107,31 @@ mkdir -p "$(dirname "$LOGFILE")"
 # logrotate had just put at .1, losing a day of history and leaving an
 # uncompressed file where a compressed one belonged.
 
+# Resolved HERE, before the lock and before the pipeline below, for two
+# reasons. The block below is piped into tee and so runs in a subshell, where
+# a "set --" cannot be seen by the parent that writes the status file; and the
+# skip branch needs the list too, to report what the run WOULD have carried.
+#
+# -a is NOT equivalent to naming every channel: with no arguments at all mbsync
+# syncs nothing and exits, which would look like a clean sync that moved no
+# mail. It is reported to qtmaildir as "-a" rather than expanded, since only
+# ~/.mbsyncrc knows what every channel is, and the application reads "-a" as
+# "every account".
+[ "$#" -gt 0 ] || set -- -a
+CHANNELS=("$@")
+
 exec 200>"$LOCKFILE"
 if ! flock -n 200; then
     # Both streams again: a caller that skipped because the cron run holds
     # the lock needs to be told, not left with silence and an error code.
-    msg="$(date -Iseconds) === SKIPPED: previous run still in progress ==="
+    SKIP_TS="$(date -Iseconds)"
+    msg="$SKIP_TS === SKIPPED: previous run still in progress ==="
     echo "$msg" | tee -a "$LOGFILE" >&2
+    # Item 125. A skip used to report NOTHING a watcher could see: it releases
+    # a lock it never took, so qtmaildir's spinner waited for a completion that
+    # never came. A skipped run is a terminal state and says so, with -1 for
+    # both statuses since neither program ran.
+    write_status "skipped" -1 -1 "$SKIP_TS" "$SKIP_TS" "${CHANNELS[@]}"
     # 75 (EX_TEMPFAIL), not 1. A skip is not a failure: the other run is
     # doing the work. qtmaildir reports 1 as "sync failed" and shows its log
     # pane, which is wrong for a click that landed during the cron run, and
@@ -88,17 +160,12 @@ START_TS="$(date -Iseconds)"
     # which is both the progress and the account name the status bar shows.
     # This is not a buffering problem and stdbuf does not help: the output
     # streams fine, there simply is none to stream.
-    # "$@" when channels were named, -a otherwise. Quoted and passed as
-    # separate words, never flattened into a string: a channel name is an
-    # argument, and mbsync takes an unknown one as a fatal error rather than
-    # skipping it, which would fail the whole run.
-    #
-    # -a is NOT equivalent to naming every channel and cannot be dropped: with
-    # no arguments at all mbsync syncs nothing and exits, which would look like
-    # a clean sync that moved no mail.
-    [ "$#" -gt 0 ] || set -- -a
-
-    mbsync -V "$@" 2>&1 | while IFS= read -r line; do
+    # "$@" when channels were named, -a otherwise, resolved into CHANNELS
+    # before the lock above. Quoted and passed as separate words, never
+    # flattened into a string: a channel name is an argument, and mbsync takes
+    # an unknown one as a fatal error rather than skipping it, which would fail
+    # the whole run.
+    mbsync -V "${CHANNELS[@]}" 2>&1 | while IFS= read -r line; do
         echo "$(date '+%H:%M:%S') $line"
     done
     echo "${PIPESTATUS[0]}" > "$STATUS_DIR/mbsync"
@@ -109,6 +176,9 @@ START_TS="$(date -Iseconds)"
     echo "${PIPESTATUS[0]}" > "$STATUS_DIR/notmuch"
 
     END_TS="$(date -Iseconds)"
+    # Also to a file, for the same subshell reason the statuses are: the parent
+    # writes the status file and cannot see a variable assigned in here.
+    echo "$END_TS" > "$STATUS_DIR/end"
     MBSYNC_STATUS="$(cat "$STATUS_DIR/mbsync")"
     NOTMUCH_STATUS="$(cat "$STATUS_DIR/notmuch")"
     if [ "$MBSYNC_STATUS" -eq 0 ] && [ "$NOTMUCH_STATUS" -eq 0 ]; then
@@ -123,6 +193,24 @@ START_TS="$(date -Iseconds)"
 
 MBSYNC_STATUS="$(cat "$STATUS_DIR/mbsync" 2>/dev/null || echo 1)"
 NOTMUCH_STATUS="$(cat "$STATUS_DIR/notmuch" 2>/dev/null || echo 1)"
+END_TS="$(cat "$STATUS_DIR/end" 2>/dev/null || date -Iseconds)"
+
+# Item 174. What qtmaildir reads, written before the exit below so it exists
+# whichever way this run went. "ok" only when BOTH programs succeeded, matching
+# the log banner and the exit status: a caller must not be able to read success
+# here and failure there.
+#
+# The two statuses are reported separately as well as folded into the state,
+# because they mean different things to the application: a failed mbsync means
+# the edits never reached the server, while a failed notmuch means they did and
+# only the local index is behind.
+if [ "$MBSYNC_STATUS" -eq 0 ] && [ "$NOTMUCH_STATUS" -eq 0 ]; then
+    write_status "ok" "$MBSYNC_STATUS" "$NOTMUCH_STATUS" \
+                 "$START_TS" "$END_TS" "${CHANNELS[@]}"
+else
+    write_status "failed" "$MBSYNC_STATUS" "$NOTMUCH_STATUS" \
+                 "$START_TS" "$END_TS" "${CHANNELS[@]}"
+fi
 
 # Report the real outcome. The old unconditional "exit 0" meant a caller
 # could not distinguish a clean sync from a failed one, so qtmaildir's

@@ -5089,6 +5089,10 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
             return;
 
         m_externalSyncBusy = true;
+        // When this run began, so the status file it leaves can be told from
+        // one an earlier run left (item 174). A stale file must not be read as
+        // this run's result.
+        m_externalSyncStartedAt = QDateTime::currentDateTime();
         updateSyncControls();
         m_statusLabel->setText(tr("Background sync running..."));
         m_announcedExternalSync = true;
@@ -5174,12 +5178,54 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
         // Without this the indicator kept reporting work that had already
         // shipped, and the exit prompt asked to sync for it.
         //
-        // The outcome comes from the RUN END line the script writes, because
-        // the process that ran this sync is gone and its exit status with it.
-        // Anything other than a definite OK changes nothing: the local path's
-        // rule is that only a SUCCESSFUL sync may clear the count, and Unknown
-        // is the absence of evidence rather than evidence of success.
-        if (MailSync::lastRunOutcome(m_config.syncLog()) == SyncOutcome::Ok) {
+        // The process that ran this sync is gone and its exit status with it,
+        // so what it did has to be read from what it left behind.
+        //
+        // Item 174: the status file the script writes, which says which
+        // CHANNELS the run carried. The RUN END line in the log remains the
+        // fallback for a status file that is missing or unreadable, which is
+        // what a first run after upgrading looks like; it cannot name channels,
+        // so that path keeps the old blanket clear.
+        //
+        // Anything other than a definite success changes nothing, on either
+        // path: the local rule is that only a SUCCESSFUL sync may clear the
+        // count, and Unknown is the absence of evidence rather than evidence of
+        // success. A SKIPPED run is neither, and clears nothing: the other run
+        // is doing the work and this one carried none of it.
+        // The status file is preferred, but only when it describes THIS run.
+        // A stale one outranking a fresh log would be worse than not having it:
+        // an old success would clear the count for a run that has just failed,
+        // which is the indicator lying in the direction that loses work.
+        //
+        // "This run" is judged on the file being at least as new as the sync
+        // that just ended. m_externalSyncStartedAt is when the lock appeared,
+        // and the script writes the file immediately before exiting, so a file
+        // older than that belongs to an earlier run.
+        const SyncStatus status = MailSync::readStatus(m_config.syncStatus());
+
+        // The script writes `date -Iseconds`, which carries no milliseconds, so
+        // a file written in the same second as the lock appeared parses as up
+        // to 999ms EARLIER than it. Measured: an ISODate round trip of "now"
+        // comes back 329ms behind. A plain `>=` therefore judges a fast sync's
+        // own status file stale and falls back to the log, which is the
+        // opposite of the intent.
+        //
+        // One second of slack, matching the precision the format actually
+        // carries. This cannot readmit a genuinely stale file: cron runs ten
+        // minutes apart, and a run whose file is a second old IS this run.
+        constexpr qint64 kTimestampSlackMs = 1000;
+        const bool statusIsForThisRun =
+            status.state != SyncState::Unknown
+            && (!m_externalSyncStartedAt.isValid() || !status.ended.isValid()
+                || status.ended.msecsTo(m_externalSyncStartedAt)
+                       <= kTimestampSlackMs);
+
+        const bool carried =
+            statusIsForThisRun
+                ? status.carriedEdits()
+                : MailSync::lastRunOutcome(m_config.syncLog()) == SyncOutcome::Ok;
+
+        if (carried) {
             m_pendingTagEdits.clear();
 
             // Cleared HERE, before flushHeldEdits() below, and the ordering is
@@ -5188,10 +5234,21 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
             // writes m_editedAccounts SYNCHRONOUSLY. Clearing after the flush
             // would discard accounts whose edits this run did not carry, and
             // those edits would then sync only when some later edit happened to
-            // name the same account. Running first, everything in the set at
-            // this moment is exactly what the finished sync carried, so the
-            // local path's snapshot-and-subtract collapses to a clear.
-            m_editedAccounts.clear();
+            // name the same account.
+            //
+            // WHICH accounts, when the status file said. A run naming channels
+            // carried those and no others, so clearing the whole set would
+            // report an untouched account's edits as shipped. `-a` and the log
+            // fallback both mean every account, where the blanket clear is
+            // right.
+            if (!status.everyChannel && !status.channels.isEmpty()) {
+                for (const Account &account : m_config.accounts()) {
+                    if (status.channels.contains(account.syncChannel()))
+                        m_editedAccounts.remove(account.key);
+                }
+            } else {
+                m_editedAccounts.clear();
+            }
             updatePendingIndicator();
         }
     }

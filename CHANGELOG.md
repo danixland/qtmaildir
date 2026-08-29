@@ -11,6 +11,27 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- **The sync script reports what it did.** `mailsync.sh` now writes a small
+  status file at the end of every run, naming the channels it synced, whether
+  each of mbsync and notmuch succeeded, and whether the run was skipped because
+  another already held the lock. qtmaildir reads it instead of inferring the
+  outcome from a line in the log. Set `status` under `[sync]` to move the file;
+  the default matches what the script writes and no config change is needed.
+
+### Fixed
+
+- **A background sync now clears only the accounts it actually carried.** A
+  sync qtmaildir did not start could only be judged from the log, which cannot
+  say which accounts a run covered, so a successful run cleared the pending
+  count for every account, including ones it never touched. Their edits were
+  then reported as delivered while still sitting locally. A sync started from
+  inside qtmaildir has always narrowed this correctly; the two paths now agree.
+- **A skipped sync no longer looks like a successful one.** When a run exits
+  because another sync already holds the lock, it carried nothing, and the
+  pending count stays where it was.
+
 ## [0.28.0] - 2026-08-29
 
 A row in the thread list is now either a conversation or a message, and it

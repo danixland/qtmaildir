@@ -3667,29 +3667,53 @@ bool MainWindow::everySelectedRowIsInATrashFolder() const
         return false;
 
     for (const QModelIndex &index : rows) {
-        // The row's own file: a reply row's message, a thread row's displayed
-        // message. Same rule as everySelectedRowHasTag(), and for the same
-        // reason: a thread row acts on the message its card shows.
-        const QString path =
-            m_model->isMessageRow(index)
-                ? m_model->messageAt(index).filePath
-                : m_model->threadFor(index).firstMessagePath;
-        if (path.isEmpty())
+        // A MESSAGE row is its one file. A CONVERSATION is in the trash only
+        // when ALL of its messages are (item 178), so it answers on every path
+        // the digest reported rather than on the one the summary carries.
+        //
+        // That was the pre-177 rule and it is now wrong in a way that is
+        // invisible: a partly trashed thread answered on whichever message the
+        // query returned first, hiding Delete on a conversation with mail
+        // outside the trash and offering Restore on one that mostly is not.
+        QStringList paths;
+        if (m_model->isMessageRow(index)) {
+            paths = { m_model->messageAt(index).filePath };
+        } else {
+            const ThreadSummary thread = m_model->threadFor(index);
+            // Known only for the single conversation row the dashboard is
+            // showing, since that is the one the digest was requested for.
+            // Anything else falls back to the summary's one path, which is the
+            // pre-177 answer: wrong in the same partial case, so a multi-row
+            // selection is left no worse than it was rather than being given a
+            // second, differently wrong rule of its own.
+            paths = (!m_conversationPaths.isEmpty()
+                     && m_conversationPathsThreadId == thread.threadId)
+                        ? m_conversationPaths
+                        : QStringList{ thread.firstMessagePath };
+        }
+
+        if (paths.isEmpty())
             return false;
 
-        const Account account = accountForMessagePath(path);
-        if (account.maildir.isEmpty() || account.trash.isEmpty())
-            return false;
+        for (const QString &path : std::as_const(paths)) {
+            if (path.isEmpty())
+                return false;
 
-        // Compared as a path segment, never with startsWith(): `trash-old`
-        // starts with `trash` and is a different folder. The same trap the
-        // attachment-save check records.
-        const QString prefix = account.maildir + QLatin1Char('/')
-                               + account.trash + QLatin1Char('/');
-        // accountForMessagePath() accepts both shapes, so this must too: a
-        // thread row's path is database-relative and a reply row's absolute.
-        if (!path.contains(prefix))
-            return false;
+            const Account account = accountForMessagePath(path);
+            if (account.maildir.isEmpty() || account.trash.isEmpty())
+                return false;
+
+            // Compared as a path segment, never with startsWith(): `trash-old`
+            // starts with `trash` and is a different folder. The same trap the
+            // attachment-save check records.
+            const QString prefix = account.maildir + QLatin1Char('/')
+                                   + account.trash + QLatin1Char('/');
+            // accountForMessagePath() accepts both shapes, so this must too: a
+            // thread row's path is database-relative and a reply row's
+            // absolute.
+            if (!path.contains(prefix))
+                return false;
+        }
     }
     return true;
 }
@@ -4149,6 +4173,10 @@ void MainWindow::onThreadSelected(const QModelIndex &current,
     }
 
     m_dashboardThreadId.clear();
+    // Stale the moment the dashboard is not showing this thread: leaving them
+    // would answer a later conversation's question with an earlier one's paths.
+    m_conversationPathsThreadId.clear();
+    m_conversationPaths.clear();
 
     // The message the card displays, not the thread. The summary's `unread` is
     // a union over the conversation, so this can arm for a thread whose first
@@ -4209,6 +4237,13 @@ void MainWindow::onThreadDigestLoaded(const ThreadDigest &digest,
     // would let this through if a request were ever made without bumping it.
     if (digest.threadId != m_dashboardThreadId)
         return;
+
+    // Item 178: what Delete and Restore need to judge the CONVERSATION rather
+    // than its first message. Kept beside the thread id so a late digest for
+    // another row cannot answer about this one.
+    m_conversationPathsThreadId = digest.threadId;
+    m_conversationPaths = digest.messagePaths;
+    refreshTrashActions();
 
     m_messageView->showDashboard(digest);
 }

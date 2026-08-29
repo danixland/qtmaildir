@@ -391,6 +391,7 @@ private slots:
     void markCurrentThreadReadResolvesTheThreadThroughTheIndex();
     void deletingAReplyRepaintsThatReplyRow();
     void deleteIsHiddenOnMailAlreadyInTheTrash();
+    void aPartlyTrashedConversationIsNotJudgedOnOneMessage();
     void restoreIsHiddenOnMailThatWasNeverDeleted();
     void deleteAlsoMarksTheMessageRead();
     void emptyTrashAsksBeforeDestroyingAnything();
@@ -5241,6 +5242,86 @@ static ThreadSummary threadAtPath(const QString &id, const QString &filePath,
     thread.firstMessagePath = filePath;
     thread.firstMessageTags = tags;
     return thread;
+}
+
+/// Item 178. A CONVERSATION is in the trash only when ALL of its messages are.
+///
+/// The predicate read ThreadSummary::firstMessagePath for any row that is not
+/// a message row, which was right while a thread row MEANT that message (item
+/// 108) and stopped being right when item 177 made it mean the conversation.
+/// So a partly trashed thread answered on whichever message the query returned
+/// first: Delete hidden on a conversation that still has mail outside the
+/// trash, Restore offered on one that mostly does not.
+///
+/// qtmaildir cannot itself produce such a thread, since Delete is hidden on a
+/// reply row and Restore is thread-scoped. Two things outside it can: another
+/// client trashing one message (the user runs Thunderbird, item 104), and a
+/// reply arriving after the conversation was trashed.
+///
+/// The two messages are in DIFFERENT folders deliberately. Two in the same
+/// folder answer identically whichever way the code resolves them, which is
+/// the trap AGENTS.md records for item 87.
+void TestMainWindow::aPartlyTrashedConversationIsNotJudgedOnOneMessage()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const Config config = configWithTrash(dir);
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *deleteAction =
+        window.findChild<QAction *>(QStringLiteral("delete"));
+    QVERIFY(deleteAction);
+    auto *restoreAction =
+        window.findChild<QAction *>(QStringLiteral("restore"));
+    QVERIFY(restoreAction);
+
+    // totalCount is what item 177 reads to decide a row is a conversation. A
+    // summary left at the default is a MESSAGE row, so a test meaning to
+    // exercise a conversation would quietly exercise the other branch and pass
+    // for the wrong reason.
+    ThreadSummary partly = threadAtPath(QStringLiteral("t1"),
+                                        QStringLiteral("acct/trash/cur/1:2,S"));
+    partly.totalCount = 2;
+    model->appendBatch({ partly });
+
+    const QModelIndex row = model->index(0, 0, {});
+    QVERIFY2(model->isConversationRow(row),
+             "the fixture is a message row, so this test cannot see item 178 "
+             "at all: set totalCount");
+
+    view->setCurrentIndex(row);
+
+    // The paths the worker reports for this conversation: the displayed
+    // message is in the trash, the other is not. Delete must survive and
+    // Restore must not be offered, because the conversation is NOT wholly
+    // trashed however its first message looks.
+    window.setConversationPathsForTesting(
+        QStringLiteral("t1"),
+        { QStringLiteral("acct/trash/cur/1:2,S"),
+          QStringLiteral("acct/inbox/cur/2:2,S") });
+
+    QVERIFY2(deleteAction->isVisible(),
+             "Delete was hidden on a conversation with mail outside the "
+             "trash: it judged the thread on its first message");
+    QVERIFY2(!restoreAction->isVisible(),
+             "Restore was offered on a conversation that is only partly "
+             "trashed");
+
+    // And the whole-conversation case still answers as it always did, which is
+    // what says the fix narrowed nothing.
+    window.setConversationPathsForTesting(
+        QStringLiteral("t1"),
+        { QStringLiteral("acct/trash/cur/1:2,S"),
+          QStringLiteral("acct/trash/cur/2:2,S") });
+
+    QVERIFY2(!deleteAction->isVisible(),
+             "Delete is still offered on a wholly trashed conversation");
+    QVERIFY2(restoreAction->isVisible(),
+             "Restore vanished on a wholly trashed conversation");
 }
 
 void TestMainWindow::deleteIsHiddenOnMailAlreadyInTheTrash()

@@ -123,6 +123,7 @@ private slots:
 
     void aDigestCountsSendersAndUnread();
     void aDigestCapsItsUnreadListButNotItsCount();
+    void aDigestCarriesEveryMessagePath();
     void aOneMessageThreadGivesASaneSpan();
 
 private:
@@ -2240,6 +2241,77 @@ void TestNotmuchWorker::aDigestCountsSendersAndUnread()
     QVERIFY(digest.busiestBucket >= 0);
     QVERIFY(digest.busiestBucket < ThreadDigest::kBuckets);
     QVERIFY(digest.firstTimestamp <= digest.lastTimestamp);
+}
+
+/// Item 178. Delete and Restore judge a CONVERSATION, and the summary carries
+/// one message's path, so a partly-trashed thread answered on whichever
+/// message the query returned first.
+///
+/// The paths are collected by the walk the digest already makes over every
+/// message, so this costs no extra query and no extra file read: a filename
+/// comes from the INDEX, like everything else in ThreadDigest.
+///
+/// The fixture puts the two messages in DIFFERENT folders deliberately. Two
+/// messages in one folder answer identically whichever way the code resolves
+/// them, which is the trap AGENTS.md records for item 87's opposite states.
+void TestNotmuchWorker::aDigestCarriesEveryMessagePath()
+{
+    NotmuchFixture fixture;
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("p0@example.org"),
+                               QStringLiteral("Split thread"),
+                               QStringLiteral("alice@example.org"),
+                               QStringLiteral("Mon, 24 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Root."), false));
+    QVERIFY(fixture.addMessage(QStringLiteral("Trash"),
+                               QStringLiteral("p1@example.org"),
+                               QStringLiteral("Re: Split thread"),
+                               QStringLiteral("bob@example.org"),
+                               QStringLiteral("Tue, 25 Aug 2026 10:00:00 +0200"),
+                               QStringLiteral("Trashed reply."), false,
+                               QStringLiteral("p0@example.org")));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy spy(&worker, &NotmuchWorker::threadDigestLoaded);
+
+    const QString threadId = worker.threadIdForTesting(
+        QStringLiteral("id:p0@example.org"));
+    QVERIFY(!threadId.isEmpty());
+    worker.loadThreadDigest(threadId, 1);
+
+    QCOMPARE(spy.count(), 1);
+    const ThreadDigest digest = spy.at(0).at(0).value<ThreadDigest>();
+
+    QCOMPARE(digest.totalCount, 2);
+    QCOMPARE(digest.messagePaths.size(), 2);
+
+    // RELATIVE to the mail root, for the reason ThreadSummary::firstMessagePath
+    // records: the UI knows an account only by its `maildir`, itself a
+    // database-relative prefix, so an absolute path here matches no account and
+    // silently resolves every row to none.
+    for (const QString &path : digest.messagePaths) {
+        QVERIFY2(!path.startsWith(QLatin1Char('/')),
+                 qPrintable(QStringLiteral("absolute path: %1").arg(path)));
+    }
+
+    // One in each folder, which is what makes a partly-trashed conversation
+    // answerable at all.
+    int inInbox = 0;
+    int inTrash = 0;
+    for (const QString &path : digest.messagePaths) {
+        // The mail root IS the fixture's maildir, so a relative path begins
+        // with the folder name and carries no leading separator.
+        if (path.startsWith(QStringLiteral("inbox/")))
+            ++inInbox;
+        if (path.startsWith(QStringLiteral("Trash/")))
+            ++inTrash;
+    }
+    QVERIFY2(inInbox + inTrash == 2,
+             qPrintable(QStringLiteral("unexpected paths: %1")
+                            .arg(digest.messagePaths.join(QStringLiteral(", ")))));
+    QCOMPARE(inInbox, 1);
+    QCOMPARE(inTrash, 1);
 }
 
 void TestNotmuchWorker::aDigestCapsItsUnreadListButNotItsCount()

@@ -776,6 +776,11 @@ void NotmuchWorker::loadThreadDigest(const QString &threadId,
     QVector<MessageNode> unread;
     QVector<qint64> timestamps;
 
+    // mailRootOf(), never notmuch_database_get_path(): under a split index the
+    // latter returns the XAPIAN directory, and a path relative to that matches
+    // no account (item 124).
+    const QString dbRoot = QDir(mailRootOf(m_db)).absolutePath();
+
     notmuch_messages_t *messages = notmuch_thread_get_messages(thread.get());
     for (; notmuch_messages_valid(messages);
            notmuch_messages_move_to_next(messages)) {
@@ -785,6 +790,15 @@ void NotmuchWorker::loadThreadDigest(const QString &threadId,
             continue;
 
         ++digest.totalCount;
+
+        // Item 178: which FOLDER each message lives in, so Delete and Restore
+        // can judge a conversation on all of it rather than on whichever
+        // message the query returned first. Read from the index by the walk
+        // that is already running.
+        if (const char *rawName = notmuch_message_get_filename(message)) {
+            digest.messagePaths.append(
+                QDir(dbRoot).relativeFilePath(QString::fromUtf8(rawName)));
+        }
 
         const qint64 when = notmuch_message_get_date(message);
         timestamps.append(when);

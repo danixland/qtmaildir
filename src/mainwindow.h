@@ -202,6 +202,16 @@ public:
     /// command was pushed, which is what "this did nothing" has to assert.
     int undoDepthForTesting() const { return m_undoStack.count(); }
 
+    /// Item 178. Stands in for the digest round trip, which a bare window has
+    /// no worker to make. Sets what onThreadDigestLoaded() would have set.
+    void setConversationPathsForTesting(const QString &threadId,
+                                        const QStringList &paths)
+    {
+        m_conversationPathsThreadId = threadId;
+        m_conversationPaths = paths;
+        refreshTrashActions();
+    }
+
     /// Runs a purge without the confirmation, which a test cannot drive: a
     /// modal blocks the thread it is shown on (item 84). What this exists to
     /// cover is what happens AFTER the user confirms.
@@ -1639,6 +1649,25 @@ private:
     /// A late digest is matched against this, not against m_currentThreadId,
     /// which is also set for a thread of one message that renders normally.
     QString m_dashboardThreadId;
+
+    /// Every message path of the conversation the dashboard is showing, keyed
+    /// by its thread id so a late digest cannot answer about another row.
+    ///
+    /// Item 178. Delete and Restore ask whether a row is in the trash, and a
+    /// conversation is in the trash only when ALL of its messages are; the
+    /// summary carries ONE path, which was the right answer while a thread row
+    /// meant its first message (item 108) and stopped being right when item
+    /// 177 made it mean the conversation.
+    ///
+    /// Filled from ThreadDigest, which the selection already requests and
+    /// which already walks every message, so this costs no query of its own.
+    /// It is therefore known only for a SINGLE selected conversation row, and
+    /// everySelectedRowIsInATrashFolder() falls back to the summary's one path
+    /// when it is absent: the fallback is the pre-177 answer, wrong in exactly
+    /// the same partial case, so a multi-row selection is no better than
+    /// before and no worse.
+    QString m_conversationPathsThreadId;
+    QStringList m_conversationPaths;
 
     /// The message a dashboard entry asked for and the thread it is in, both
     /// empty when nothing is waiting. See selectMessageInCurrentThread().

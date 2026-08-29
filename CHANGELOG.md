@@ -143,6 +143,16 @@ point at which they are stable.
 
 ### Fixed
 
+- **Delete and Restore now judge a whole conversation.** They asked whether a
+  row was in the trash by looking at one of its messages, so a conversation
+  with some messages trashed and some not answered on whichever the query
+  returned first: Delete could be hidden on a conversation that still had mail
+  outside the trash, and Restore offered on one that mostly did not. Both
+  actions were no-ops in the wrong direction rather than destructive. A
+  conversation is now in the trash only when every one of its messages is.
+  qtmaildir cannot produce such a thread itself, since it deletes and restores
+  whole conversations; another mail client trashing a single message can, and
+  so can a reply arriving after a conversation was trashed.
 - **Undo no longer rewrites messages the action never touched.** Undoing a
   thread-scoped action inverted its tags while keeping the whole thread as its
   scope, so undoing "mark thread read" on a conversation of 44 messages that

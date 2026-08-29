@@ -36,6 +36,11 @@ point at which they are stable.
   the message being read, which is what that bar is for. They are still in the
   Message menu and the context menu. Mark all read stays on the main toolbar:
   it acts on every row in the view rather than on the message you are reading.
+- **Important is a star again**, matching the filter button that has drawn one
+  since 0.15.0. The action had kept the theme's "important" name, which some
+  themes draw as an exclamation mark; that was invisible while it only ever
+  appeared beside its own label, and became an info glyph the moment it
+  reached the icon-only message bar.
 
 ### Fixed
 

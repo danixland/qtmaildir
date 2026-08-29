@@ -2142,7 +2142,15 @@ void MainWindow::buildMenus()
         { QStringLiteral("purge"), QStringLiteral("user-trash") },
         { QStringLiteral("undo"),    QStringLiteral("edit-undo") },
         { QStringLiteral("spam"),    QStringLiteral("mail-mark-junk") },
-        { QStringLiteral("flag"),    QStringLiteral("mail-mark-important") },
+        // A STAR, which is what the user asked for and what every other mail
+        // client draws for this. NOT mail-mark-important: Breeze draws that
+        // as an exclamation mark, so on the icon-only message bar the action
+        // read as an "info" glyph rather than as Star. The label stays
+        // "Important" (item 57) and the tag stays `flagged`; only the picture
+        // changes. `starred` sits under status/ rather than actions/, which is
+        // fine: a theme without it falls to text alone, as every other name
+        // here already does.
+        { QStringLiteral("flag"),    QStringLiteral("starred") },
         { QStringLiteral("quit"),    QStringLiteral("application-exit") },
         { QStringLiteral("focus_query"), QStringLiteral("edit-find") },
 
@@ -3061,8 +3069,15 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
         // A STAR for Important, not mail-mark-important, which the `flag`
         // action uses. Item 57 recorded the user asking for a star when the
         // action was renamed, and on the query row the icon is read as a
-        // category rather than as "do this to the selection", so the two can
-        // differ. Chosen by the user on sight, 2026-08-15.
+        // category rather than as "do this to the selection", so the two were
+        // allowed to differ. Chosen by the user on sight, 2026-08-15.
+        //
+        // They no longer differ, and the divergence did not survive contact
+        // with item 189: putting `flag` on the icon-only message bar made its
+        // icon the whole control, where Breeze's mail-mark-important draws an
+        // exclamation mark and read as "info". Both are `starred` now. The
+        // lesson generalises: an icon that only ever appeared beside its own
+        // label can be wrong for years without anyone noticing.
         //
         // mail-folder-sent, not mail-sent: the former is the folder shape every
         // theme ships, the latter is the envelope-in-flight some do not.

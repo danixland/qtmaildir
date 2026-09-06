@@ -80,6 +80,9 @@ private slots:
     void loadThreadMatchedOnlyWithNoQueryKeepsEverything();
 
     void recipientsAreAbsentUnlessAskedFor();
+    void aSentQueryEmitsOneRowPerMatchedMessage();
+    void aSentRowCarriesItsOwnMessagesDateAndSubject();
+    void sentRowsAreOrderedByTheirOwnDate();
     void recipientsAreFoldedWhenAskedFor();
     void recipientsCrossAQueuedCall();
     void theFirstRecipientsAddressCrossesForTheAvatar();
@@ -204,6 +207,41 @@ void TestNotmuchWorker::initTestCase()
                                  QStringLiteral("\"Rossi, Mario\" <mario@example.org>, "
                                                 "info@example.net, "
                                                 "third@example.org")));
+
+    // Thread F: a conversation the user replied to TWICE, which is the shape
+    // item 191 exists for. f1 is theirs, f2 is the correspondent's, f3 is
+    // theirs again. A Sent query matches f1 and f3 and must produce TWO rows,
+    // not one row standing for whichever of them the walk reached first.
+    QVERIFY(m_fixture.addMessage(QStringLiteral("sent"), QStringLiteral("f1@example.org"),
+                                 QStringLiteral("Ticket 1234"),
+                                 QStringLiteral("You <you@example.org>"),
+                                 QStringLiteral("Sun, 7 Jun 2026 10:00:00 +0000"),
+                                 QStringLiteral("my first reply"), false, QString(),
+                                 QStringLiteral("Support <support@example.org>")));
+    QVERIFY(m_fixture.addMessage(QStringLiteral("inbox"), QStringLiteral("f2@example.org"),
+                                 QStringLiteral("Re: Ticket 1234"),
+                                 QStringLiteral("Support <support@example.org>"),
+                                 QStringLiteral("Mon, 8 Jun 2026 10:00:00 +0000"),
+                                 QStringLiteral("their answer"), false,
+                                 QStringLiteral("f1@example.org")));
+    QVERIFY(m_fixture.addMessage(QStringLiteral("sent"), QStringLiteral("f3@example.org"),
+                                 QStringLiteral("Re: Ticket 1234"),
+                                 QStringLiteral("You <you@example.org>"),
+                                 QStringLiteral("Tue, 9 Jun 2026 14:00:00 +0000"),
+                                 QStringLiteral("my second reply"), false,
+                                 QStringLiteral("f2@example.org"),
+                                 QStringLiteral("Support <support@example.org>")));
+
+    // Thread G: one sent message dated BETWEEN thread F's two, which is what
+    // makes the cross-thread ordering assertion mean something. Without it
+    // the fixture's threads happen not to interleave, and sorting each
+    // thread's own rows is enough to pass a whole-view order check.
+    QVERIFY(m_fixture.addMessage(QStringLiteral("sent"), QStringLiteral("g1@example.org"),
+                                 QStringLiteral("Interleaved"),
+                                 QStringLiteral("You <you@example.org>"),
+                                 QStringLiteral("Mon, 8 Jun 2026 12:00:00 +0000"),
+                                 QStringLiteral("between f1 and f3"), false, QString(),
+                                 QStringLiteral("Someone <someone@example.org>")));
 
     QVERIFY2(m_fixture.index(), qPrintable(m_fixture.error()));
 }
@@ -508,12 +546,15 @@ void TestNotmuchWorker::aSentQueryCarriesTheMatchedMessageNotTheThreadsFirst()
         runQuery(QStringLiteral("id:a2@example.org"),
                  NotmuchWorker::NewestFirst, /*withRecipients=*/true);
 
+    // Matched on the MESSAGE id rather than on the subject: since item 191 a
+    // flat row is titled by its own message, so this row reads "Re: Release
+    // notes" and a subject filter for the thread's title skips it.
     bool sawIt = false;
     for (const ThreadSummary &t : asSent) {
-        if (t.subject != QStringLiteral("Release notes"))
+        if (t.firstMessageId != QStringLiteral("a2@example.org"))
             continue;
         // The REPLY, because that is what matched. Not a1, the thread's first.
-        QCOMPARE(t.firstMessageId, QStringLiteral("a2@example.org"));
+        QCOMPARE(t.subject, QStringLiteral("Re: Release notes"));
         sawIt = true;
     }
     QVERIFY2(sawIt, "the thread was not in the results at all");
@@ -528,6 +569,112 @@ void TestNotmuchWorker::aSentQueryCarriesTheMatchedMessageNotTheThreadsFirst()
         if (t.subject == QStringLiteral("Release notes"))
             QCOMPARE(t.firstMessageId, QStringLiteral("a1@example.org"));
     }
+}
+
+void TestNotmuchWorker::aSentQueryEmitsOneRowPerMatchedMessage()
+{
+    // Item 191. The Sent view is a list of what the USER sent, and it is flat
+    // (Config::generatorIsFlat), so a conversation they replied to twice owes
+    // them two rows. Before this the walk stopped at the first match and the
+    // second reply was reachable nowhere in the view: measured on the
+    // developer's real mail, a message sent at 12:42 was absent while the row
+    // above it, dated 12:42, opened a message from three weeks earlier.
+    //
+    // Thread F is that shape: f1 and f3 are the user's, f2 is the reply
+    // between them. The query matches only the sent folder, as the real Sent
+    // filter does.
+    const QVector<ThreadSummary> rows =
+        runQuery(QStringLiteral("path:\"sent/**\" and subject:\"Ticket 1234\""),
+                 NotmuchWorker::NewestFirst, /*withRecipients=*/true);
+
+    QStringList ids;
+    for (const ThreadSummary &t : rows)
+        ids.append(t.firstMessageId);
+    std::sort(ids.begin(), ids.end());
+
+    const QStringList expected{ QStringLiteral("f1@example.org"),
+                                QStringLiteral("f3@example.org") };
+    QCOMPARE(ids, expected);
+
+    // Both rows name the same thread, which is the property that makes this
+    // more than a loop: anything keyed on threadId alone now sees a duplicate.
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows.at(0).threadId, rows.at(1).threadId);
+
+    // And an ordinary query over the same messages still folds them into ONE
+    // row, so this is the Sent branch's contract and not a change of meaning
+    // for the threaded views.
+    const QVector<ThreadSummary> threaded =
+        runQuery(QStringLiteral("subject:\"Ticket 1234\""),
+                 NotmuchWorker::NewestFirst, /*withRecipients=*/false);
+    QCOMPARE(threaded.size(), 1);
+}
+
+void TestNotmuchWorker::aSentRowCarriesItsOwnMessagesDateAndSubject()
+{
+    // The half the user reported first: a row dated today that opened a
+    // message from three weeks ago. `date` and `subject` came from the THREAD
+    // (newest date, thread subject) while the pane rendered `firstMessageId`,
+    // so the two could not agree once a thread matched twice.
+    const QVector<ThreadSummary> rows =
+        runQuery(QStringLiteral("path:\"sent/**\" and subject:\"Ticket 1234\""),
+                 NotmuchWorker::NewestFirst, /*withRecipients=*/true);
+    QCOMPARE(rows.size(), 2);
+
+    for (const ThreadSummary &t : rows) {
+        if (t.firstMessageId == QStringLiteral("f1@example.org")) {
+            QCOMPARE(t.date.toUTC().toString(QStringLiteral("yyyy-MM-dd")),
+                     QStringLiteral("2026-06-07"));
+            QCOMPARE(t.subject, QStringLiteral("Ticket 1234"));
+        } else {
+            QCOMPARE(t.date.toUTC().toString(QStringLiteral("yyyy-MM-dd")),
+                     QStringLiteral("2026-06-09"));
+            QCOMPARE(t.subject, QStringLiteral("Re: Ticket 1234"));
+        }
+    }
+}
+
+void TestNotmuchWorker::sentRowsAreOrderedByTheirOwnDate()
+{
+    // The sort notmuch applies is a THREAD sort: notmuch_query_set_sort orders
+    // the threads the walk visits and says nothing about the messages inside
+    // one. Emitting a thread's matches in its own oldest-first walk therefore
+    // put the user's older reply ABOVE their newer one, both sitting at the
+    // position of the thread they share. Reported by hand: a message sent on
+    // 17/08 drawn above one sent on 06/09.
+    //
+    // Thread F holds f1 (7 Jun) and f3 (9 Jun), both the user's.
+    const QString sent =
+        QStringLiteral("path:\"sent/**\" and subject:\"Ticket 1234\"");
+
+    QVector<QDateTime> dates;
+    for (const ThreadSummary &t : runQuery(sent, NotmuchWorker::NewestFirst,
+                                           /*withRecipients=*/true))
+        dates.append(t.date);
+    QCOMPARE(dates.size(), 2);
+    QVERIFY2(dates.at(0) > dates.at(1),
+             "newest-first put the older of two messages in one thread first");
+
+    dates.clear();
+    for (const ThreadSummary &t : runQuery(sent, NotmuchWorker::OldestFirst,
+                                           /*withRecipients=*/true))
+        dates.append(t.date);
+    QCOMPARE(dates.size(), 2);
+    QVERIFY2(dates.at(0) < dates.at(1),
+             "oldest-first did not reverse with the requested sort");
+
+    // And the whole view is ordered, not merely each thread internally: the
+    // Sent folder's other messages must interleave correctly with these two.
+    // d1 is 5 Jun and e1 is 6 Jun, so newest-first owes f3, f1, e1, d1.
+    QVector<QDateTime> all;
+    for (const ThreadSummary &t : runQuery(QStringLiteral("path:\"sent/**\""),
+                                           NotmuchWorker::NewestFirst,
+                                           /*withRecipients=*/true))
+        all.append(t.date);
+    QCOMPARE(all.size(), 5);
+    for (int i = 1; i < all.size(); ++i)
+        QVERIFY2(all.at(i - 1) >= all.at(i),
+                 "the flat view is not in date order across threads");
 }
 
 void TestNotmuchWorker::queryCarriesTheFirstMessageSender()
@@ -655,7 +802,7 @@ void TestNotmuchWorker::loadThreadTreeCarriesTheFactsARowNeeds()
 void TestNotmuchWorker::queryReturnsAllThreads()
 {
     const QVector<ThreadSummary> threads = runQuery(QStringLiteral("*"));
-    QCOMPARE(threads.size(), 5);
+    QCOMPARE(threads.size(), 7);
 }
 
 void TestNotmuchWorker::queryFiltersByTag()
@@ -724,7 +871,7 @@ void TestNotmuchWorker::queryPassesGenerationThrough()
     QCOMPARE(ready.size(), 1);
     QCOMPARE(ready.first().at(1).value<quint64>(), quint64(42));
     QCOMPARE(finished.size(), 1);
-    QCOMPARE(finished.first().at(0).toInt(), 5);
+    QCOMPARE(finished.first().at(0).toInt(), 7);
     QCOMPARE(finished.first().at(1).value<quint64>(), quint64(42));
 }
 
@@ -743,7 +890,20 @@ void TestNotmuchWorker::oldestFirstReversesTheOrder()
     QVERIFY(newest.first().date != newest.last().date);
 
     QCOMPARE(oldest.first().threadId, newest.last().threadId);
-    QCOMPARE(oldest.last().threadId, newest.first().threadId);
+
+    // NOT the mirror assertion, and the asymmetry is notmuch's rather than
+    // ours: NOTMUCH_SORT_OLDEST_FIRST orders threads by their OLDEST message
+    // while NEWEST_FIRST orders them by their newest, so the two lists are
+    // reverses of each other only while no thread's span contains another
+    // thread's. Fixture thread F starts before thread G and ends after it, so
+    // F is first under newest-first and G is last under oldest-first. Measured
+    // on this fixture; asserting the mirror here would be asserting that
+    // notmuch does something it does not do.
+    //
+    // What still holds in both directions is that each list is monotonic in
+    // the sense its own sort defines, which is what a caller relies on.
+    for (int i = 1; i < newest.size(); ++i)
+        QVERIFY(newest.at(i - 1).date >= newest.at(i).date);
 }
 
 void TestNotmuchWorker::theSortOrderCrossesAQueuedCall()
@@ -975,7 +1135,7 @@ void TestNotmuchWorker::queryStillWorksAfterWrite()
 
     worker.runQuery(QStringLiteral("*"), 2);
     QCOMPARE(ready.size(), 2);
-    QCOMPARE(ready.at(1).at(0).value<QVector<ThreadSummary>>().size(), 5);
+    QCOMPARE(ready.at(1).at(0).value<QVector<ThreadSummary>>().size(), 7);
 
     worker.applyTags(change.inverted());
 }
@@ -1323,7 +1483,7 @@ void TestNotmuchWorker::requestCountsAnswersOneCountPerQuery()
     // Threads, not messages: thread A holds two messages and must count once,
     // which is the number the pane's "N in inbox" line claims to be showing.
     const QVector<int> counts = spy.at(0).at(0).value<QVector<int>>();
-    QCOMPARE(counts, QVector<int>({ 1, 5, 0 }));
+    QCOMPARE(counts, QVector<int>({ 1, 7, 0 }));
 }
 
 void TestNotmuchWorker::requestCountsKeepsPositionOnAnInvalidQuery()
@@ -1353,7 +1513,7 @@ void TestNotmuchWorker::requestCountsKeepsPositionOnAnInvalidQuery()
     // The queries either side keep their own answers, which is the property
     // the pane depends on.
     QCOMPARE(counts.at(0), 1);
-    QCOMPARE(counts.at(2), 5);
+    QCOMPARE(counts.at(2), 7);
 }
 
 void TestNotmuchWorker::messageCountsCountMessagesNotThreads()
@@ -1379,12 +1539,12 @@ void TestNotmuchWorker::messageCountsCountMessagesNotThreads()
     const QVector<int> threadCounts =
         threads.first().at(0).value<QVector<int>>();
 
-    QCOMPARE(messageCounts, (QVector<int>{ 6 }));
+    QCOMPARE(messageCounts, (QVector<int>{ 10 }));
     // The guard that makes this test mean something: if requestMessageCounts
     // were implemented with count_threads it would return 5 here and match
     // the thread count, and the assertion above would be the only thing that
     // caught it.
-    QCOMPARE(threadCounts, (QVector<int>{ 5 }));
+    QCOMPARE(threadCounts, (QVector<int>{ 7 }));
 }
 
 void TestNotmuchWorker::messageCountsReportAnInvalidQueryAsMinusOne()
@@ -1411,7 +1571,7 @@ void TestNotmuchWorker::messageCountsReportAnInvalidQueryAsMinusOne()
     QCOMPARE(counts.at(0), 0);
     // The query beside it keeps its own answer at its own position, which is
     // what pairs a count with the rule that produced it.
-    QCOMPARE(counts.at(1), 6);
+    QCOMPARE(counts.at(1), 10);
 }
 
 void TestNotmuchWorker::requestDatabaseStatsCountsMessagesNotThreads()
@@ -1431,8 +1591,8 @@ void TestNotmuchWorker::requestDatabaseStatsCountsMessagesNotThreads()
     // one counts messages, which is what a user means by "how much mail". A
     // reimplementation that reused the thread count would report 3 here and be
     // confidently wrong under the label "messages".
-    QCOMPARE(stats.messages, 6);
-    QCOMPARE(stats.threads, 5);
+    QCOMPARE(stats.messages, 10);
+    QCOMPARE(stats.threads, 7);
     QVERIFY2(stats.messages != stats.threads,
              "messages and threads are equal, so this fixture cannot prove the "
              "two counts are distinct: add a reply to it");

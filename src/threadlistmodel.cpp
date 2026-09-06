@@ -820,6 +820,22 @@ void ThreadListModel::appendBatch(const QVector<ThreadSummary> &batch)
     endInsertRows();
 }
 
+QString ThreadListModel::rowKeyFor(const ThreadSummary &summary) const
+{
+    // What makes a ROW unique, which is not always its thread. A flat view
+    // (Sent, Drafts) emits one row per matched MESSAGE since item 191, so two
+    // rows can share a threadId and keying on that alone silently drops one of
+    // them on every reconcile: the QHash below would map both to one row and
+    // the second would look like a thread that had vanished.
+    //
+    // Falls back to the thread id when a flat row somehow carries no message
+    // id, which keeps the old behaviour rather than collapsing every such row
+    // onto one empty key.
+    if (m_flatMode && !summary.firstMessageId.isEmpty())
+        return summary.firstMessageId;
+    return summary.threadId;
+}
+
 void ThreadListModel::reconcile(const QVector<ThreadSummary> &threads)
 {
     // Removals first, walking BACKWARDS. Each beginRemoveRows renumbers
@@ -832,14 +848,14 @@ void ThreadListModel::reconcile(const QVector<ThreadSummary> &threads)
     QSet<QString> wanted;
     wanted.reserve(threads.size());
     for (const ThreadSummary &summary : threads)
-        wanted.insert(summary.threadId);
+        wanted.insert(rowKeyFor(summary));
 
     for (int row = m_threads.size() - 1; row >= 0; --row) {
-        if (wanted.contains(m_threads.at(row).summary.threadId))
+        if (wanted.contains(rowKeyFor(m_threads.at(row).summary)))
             continue;
         int first = row;
         while (first > 0
-               && !wanted.contains(m_threads.at(first - 1).summary.threadId))
+               && !wanted.contains(rowKeyFor(m_threads.at(first - 1).summary)))
             --first;
         beginRemoveRows({}, first, row);
         m_threads.remove(first, row - first + 1);
@@ -852,7 +868,7 @@ void ThreadListModel::reconcile(const QVector<ThreadSummary> &threads)
     QHash<QString, int> present;
     present.reserve(m_threads.size());
     for (int row = 0; row < m_threads.size(); ++row)
-        present.insert(m_threads.at(row).summary.threadId, row);
+        present.insert(rowKeyFor(m_threads.at(row).summary), row);
 
     // Insertions, forwards, at the position the RESULT gives them. Walking the
     // result in order means each new thread is placed against rows already
@@ -860,7 +876,7 @@ void ThreadListModel::reconcile(const QVector<ThreadSummary> &threads)
     // know what that order means.
     for (int target = 0; target < threads.size(); ++target) {
         const ThreadSummary &summary = threads.at(target);
-        const auto it = present.constFind(summary.threadId);
+        const auto it = present.constFind(rowKeyFor(summary));
 
         if (it == present.constEnd()) {
             const int at = qMin(target, m_threads.size());
@@ -903,7 +919,7 @@ void ThreadListModel::reconcile(const QVector<ThreadSummary> &threads)
                 if (entry.value() >= target && entry.value() < row)
                     ++entry.value();
             }
-            present[summary.threadId] = target;
+            present[rowKeyFor(summary)] = target;
             row = target;
         }
 

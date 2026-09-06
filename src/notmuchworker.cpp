@@ -27,6 +27,8 @@
 
 #include <notmuch.h>
 
+#include <algorithm>
+
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
@@ -468,6 +470,11 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
     batch.reserve(kBatchSize);
     int total = 0;
 
+    // A flat view's rows, held back until every thread has been walked so they
+    // can be ordered against each other rather than thread by thread. Empty
+    // for a threaded query, which emits in notmuch's own order as it goes.
+    QVector<ThreadSummary> flatRows;
+
     for (; notmuch_threads_valid(threads.get());
            notmuch_threads_move_to_next(threads.get())) {
 
@@ -500,17 +507,40 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
         // Two different questions, and the Sent view asks the second one. A
         // normal row stands for the thread's OPENING message. A Sent row
         // stands for what the USER sent, usually a reply and often not the
-        // opening message at all, so it takes the first message the query
-        // MATCHED. withRecipients is exactly the Sent query, which is why it
-        // selects between them rather than carrying a second flag that could
-        // disagree with it.
+        // opening message at all.
+        //
+        // **One row per MATCHED MESSAGE, not per thread** (item 191). The Sent
+        // and Drafts views are flat (`Config::generatorIsFlat`), so they are
+        // lists of messages and a conversation the user replied to twice owes
+        // them two rows. This branch used to stop at the first match, which
+        // made the second reply reachable NOWHERE in the view: measured on the
+        // developer's real mail, a message sent at 12:42 was missing while the
+        // row above it, dated 12:42, opened a message from three weeks
+        // earlier. The date came from the thread and the body from the one
+        // chosen message, and the two cannot agree once a thread matches
+        // twice.
+        //
+        // `date` and `subject` are therefore overridden per message here.
+        // Everything above this point is thread-wide and correct for a
+        // threaded view; for a flat row the MESSAGE is the row.
         //
         // Note notmuch_thread_get_matched_messages returns a COUNT, not an
         // iterator; there is no matched-messages list. The match state is a
-        // per-message flag, so the Sent branch walks in oldest-first order and
-        // stops at the first match. Measured at 0.146s against a 0.143s
-        // baseline over 4,515 threads: the walk stops early and reads the
-        // index, so it is as free as the toplevel call.
+        // per-message flag, so this walks the thread in oldest-first order and
+        // takes every message carrying it. The walk is the same one that was
+        // measured at 0.146s against a 0.143s baseline over 4,515 threads; it
+        // no longer stops early, but it still reads only the index.
+        //
+        // **The rows are collected and sorted as ONE list, because the sort
+        // notmuch applied is a THREAD sort.** `notmuch_query_set_sort` orders
+        // the threads this loop visits; it says nothing about the messages
+        // inside one, and it gives every row of a thread that thread's single
+        // position. Emitting them in the thread's own oldest-first walk put a
+        // reply from three weeks ago ABOVE the one sent today, both sitting
+        // where their shared thread sorted. Sorting each thread's rows
+        // in place does not fix it either: a message from ANOTHER thread dated
+        // between them still cannot land between them. A flat view is a list
+        // of messages, so it has to be ordered as one.
         if (withRecipients) {
             notmuch_messages_t *all = notmuch_thread_get_messages(thread.get());
             for (; all && notmuch_messages_valid(all);
@@ -522,24 +552,43 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
                 notmuch_message_get_flag_st(message,
                                             NOTMUCH_MESSAGE_FLAG_MATCH,
                                             &matched);
-                if (matched) {
-                    summary.firstMessageId = QString::fromUtf8(
-                        notmuch_message_get_message_id(message));
-                    // The card's own tags, beside the thread's union above.
-                    // Same walk, same index read, no extra query.
-                    summary.firstMessageTags = tagsOf(message);
-                    // The card's sender, for the avatar hash (item 169). Same
-                    // walk, and From is in the index like the tags.
-                    summary.firstMessageSender = senderAddressOf(message);
-                    // Which account this belongs to, for Delete's destination.
-                    summary.firstMessagePath = QDir(dbRoot).relativeFilePath(
-                        QString::fromUtf8(
-                            notmuch_message_get_filename(message)));
-                    break;
-                }
+                if (!matched)
+                    continue;
+
+                // A copy per matched message, so each row carries the
+                // thread-wide fields set above and its own identity below.
+                ThreadSummary row = summary;
+                row.firstMessageId = QString::fromUtf8(
+                    notmuch_message_get_message_id(message));
+                // The card's own tags, beside the thread's union above.
+                // Same walk, same index read, no extra query.
+                row.firstMessageTags = tagsOf(message);
+                // The card's sender, for the avatar hash (item 169). Same
+                // walk, and From is in the index like the tags.
+                row.firstMessageSender = senderAddressOf(message);
+                // Which account this belongs to, for Delete's destination.
+                row.firstMessagePath = QDir(dbRoot).relativeFilePath(
+                    QString::fromUtf8(
+                        notmuch_message_get_filename(message)));
+                // The row IS this message, so it is dated and titled by it.
+                // Reading the thread's newest date here is what put a sent
+                // message under a stranger's date.
+                row.date = QDateTime::fromSecsSinceEpoch(
+                    notmuch_message_get_date(message));
+                const char *subject =
+                    notmuch_message_get_header(message, "subject");
+                if (subject && *subject)
+                    row.subject = QString::fromUtf8(subject);
+
+                flatRows.append(row);
             }
-        } else if (notmuch_messages_t *top =
-                       notmuch_thread_get_toplevel_messages(thread.get())) {
+
+            // Sorted and emitted once the whole query has been walked, below.
+            continue;
+        }
+
+        if (notmuch_messages_t *top =
+                notmuch_thread_get_toplevel_messages(thread.get())) {
             if (notmuch_messages_valid(top)) {
                 if (notmuch_message_t *first = notmuch_messages_get(top)) {
                     summary.firstMessageId = QString::fromUtf8(
@@ -565,6 +614,27 @@ void NotmuchWorker::runQuery(const QString &query, quint64 generation,
             emit threadsReady(batch, generation);
             batch.clear();
             batch.reserve(kBatchSize);
+        }
+    }
+
+    // The flat views (Sent, Drafts) are lists of MESSAGES, so they are ordered
+    // by each row's own date across the whole result. std::stable_sort so rows
+    // sharing a timestamp keep the order the walk found them in rather than
+    // swapping between identical queries.
+    if (!flatRows.isEmpty()) {
+        std::stable_sort(flatRows.begin(), flatRows.end(),
+                         [sort](const ThreadSummary &a, const ThreadSummary &b) {
+            return sort == OldestFirst ? a.date < b.date : a.date > b.date;
+        });
+
+        for (const ThreadSummary &row : flatRows) {
+            batch.append(row);
+            ++total;
+            if (batch.size() >= kBatchSize) {
+                emit threadsReady(batch, generation);
+                batch.clear();
+                batch.reserve(kBatchSize);
+            }
         }
     }
 

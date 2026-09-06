@@ -430,6 +430,11 @@ private:
         bool loaded = false;
     };
 
+    /// What makes a ROW unique: the message id in a flat view, the thread id
+    /// otherwise. Two flat rows can share a thread since item 191, so
+    /// reconcile() cannot key on threadId alone without dropping one of them.
+    QString rowKeyFor(const ThreadSummary &summary) const;
+
     /// A newly arrived thread, with its card's own message seeded from the
     /// query.
     ///

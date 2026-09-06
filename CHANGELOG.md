@@ -44,6 +44,16 @@ point at which they are stable.
 
 ### Fixed
 
+- **The Sent and Drafts views show every message you sent in a conversation,
+  not just the first.** Both views are lists of your own messages rather than
+  of conversations, but a thread you had replied to twice produced a single
+  row: it was dated by the conversation, opened the OLDER of your two
+  messages, and the newer one could not be reached from the view at all. Each
+  matched message is now its own row, carrying its own date, subject, tags and
+  sender, and the view is ordered by those dates rather than by the dates of
+  the conversations behind them. This also fixes a quieter problem on the same
+  rows, where Delete or Archive would have acted on the wrong message's file.
+
 - **A background sync now clears only the accounts it actually carried.** A
   sync qtmaildir did not start could only be judged from the log, which cannot
   say which accounts a run covered, so a successful run cleared the pending

@@ -56,6 +56,8 @@ private slots:
     void aDirectoryAttachmentFailsRatherThanHangingTheProcess();
     void anUnparseableRecipientFailsRatherThanVanishing();
     void everyMessageCarriesADateAndMessageId();
+    void aSuppliedMessageIdIsUsedRatherThanAFreshOne();
+    void twoBuildsWithNoSuppliedIdStillDiffer();
     void aForwardSendsOnePartChosenByTheHtmlToggle();
     void recipientsAppearInTheirOwnHeaders();
     void anAccountWithNoAddressFailsRatherThanBuildingHeaderlessMail();
@@ -417,6 +419,47 @@ void TestMessageBuilder::everyMessageCarriesADateAndMessageId()
     QVERIFY2(text.contains(QStringLiteral("Date: ")), qPrintable(text));
     QVERIFY2(text.contains(QStringLiteral("Message-Id: "), Qt::CaseInsensitive), qPrintable(text));
     QVERIFY(!r.messageId.isEmpty());
+}
+
+/// Item 165. A draft keeps ONE identity across its revisions, so an autosave
+/// replaces the message it wrote last time rather than adding another. Without
+/// this every save minted a new Message-ID, and mbsync uploaded each revision
+/// to the drafts folder before the next save removed the local file: measured
+/// on real mail as four distinct messages on the server for one reply.
+void TestMessageBuilder::aSuppliedMessageIdIsUsedRatherThanAFreshOne()
+{
+    OutgoingMessage message = baseMessage();
+    message.messageId = QStringLiteral("kept-across-revisions@example.org");
+
+    const MessageBuilder::Result r = MessageBuilder::build(message, m_account);
+    QVERIFY2(r.ok(), qPrintable(r.error));
+
+    QCOMPARE(r.messageId, QStringLiteral("kept-across-revisions@example.org"));
+    QVERIFY2(QString::fromUtf8(r.bytes).contains(
+                 QStringLiteral("<kept-across-revisions@example.org>")),
+             "the supplied id did not reach the headers");
+
+    // Twice, because the point is that a SECOND save keeps it. A test building
+    // once cannot tell a reused id from a freshly generated one.
+    const MessageBuilder::Result again = MessageBuilder::build(message, m_account);
+    QVERIFY2(again.ok(), qPrintable(again.error));
+    QCOMPARE(again.messageId, r.messageId);
+}
+
+/// The other half, and the constraint that makes the change safe: the SEND
+/// path supplies no id, and two sent messages must never share one. A field
+/// that defaulted to some fixed value would pass the test above and break
+/// this.
+void TestMessageBuilder::twoBuildsWithNoSuppliedIdStillDiffer()
+{
+    const MessageBuilder::Result first = MessageBuilder::build(baseMessage(), m_account);
+    const MessageBuilder::Result second = MessageBuilder::build(baseMessage(), m_account);
+    QVERIFY2(first.ok() && second.ok(), "a build failed");
+
+    QVERIFY(!first.messageId.isEmpty());
+    QVERIFY(!second.messageId.isEmpty());
+    QVERIFY2(first.messageId != second.messageId,
+             "two messages built with no supplied id share a Message-ID");
 }
 
 /// Bcc must be PRESENT in the bytes. The documented send command is `msmtp -t`,

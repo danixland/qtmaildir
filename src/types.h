@@ -352,6 +352,15 @@ struct ComposeContext
     /// to make room. It is the message itself.
     QString body;
 
+    /// The Message-ID the resumed draft already has, empty for every other
+    /// kind.
+    ///
+    /// Item 165. Seeded into ComposeWindow::m_draftMessageId so a reopened
+    /// draft keeps the identity it was saved under instead of starting a
+    /// second one on its next autosave. Distinct from `inReplyTo`, which is
+    /// the ORIGINAL's id when the draft is a reply; this is the draft's own.
+    QString draftMessageId;
+
     /// The draft file this composer OWNS, empty for every other kind.
     ///
     /// Seeded into ComposeWindow::m_draftPath so the next autosave REPLACES
@@ -378,6 +387,24 @@ struct OutgoingMessage
     QStringList attachments;     ///< Local paths, read at build time.
     QString inReplyTo;
     QStringList references;
+
+    /// The Message-ID to build under, or empty to mint a fresh one.
+    ///
+    /// Item 165. A draft keeps ONE identity across its revisions, so an
+    /// autosave replaces the message it wrote last time instead of adding
+    /// another. Every save used to generate a new id, and mbsync uploads each
+    /// revision to the drafts folder before the next save removes the local
+    /// file, so the server ended up holding one message per revision:
+    /// measured as four for a single reply on the user's own mail. Deleting a
+    /// local file does not retract an uploaded one, which is why the local
+    /// cleanup, which is correct, could never fix this.
+    ///
+    /// **Empty on the SEND path, deliberately.** The sent copy is a different
+    /// item from the draft, at the user's own decision (item 165), and two
+    /// sent messages sharing an id would be far worse than two ids for one
+    /// draft. So this is opt-in: only ComposeWindow's autosave fills it, from
+    /// the id the previous build returned.
+    QString messageId;
 
     /// Item 171. The forwarded original's HTML, already sanitised, appended to
     /// the HTML alternative below the user's own text.

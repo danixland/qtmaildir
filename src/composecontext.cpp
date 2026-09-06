@@ -572,6 +572,11 @@ ComposeContext ComposeContextBuilder::forDraft(const Config &config,
     // arriving one step later.
     context.draftPath = resolved;
 
+    // Item 165. The identity this draft already has, so the next autosave
+    // REPLACES the message on the server rather than minting a second one.
+    // The parser already reads this header; nothing used it until now.
+    context.draftMessageId = draft.messageId;
+
     const auto addresses = [](const QString &header) {
         QStringList out;
         for (const Recipient &recipient : parseAddressHeader(header))

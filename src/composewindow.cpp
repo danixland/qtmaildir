@@ -902,6 +902,9 @@ void ComposeWindow::seedFields()
     // The draft file this composer is resuming, so the next autosave REPLACES
     // it rather than writing a second one beside it.
     m_draftPath = m_context.draftPath;
+    // And the identity that file already carries (item 165), so resuming does
+    // not start a second one.
+    m_draftMessageId = m_context.draftMessageId;
 
     // New and Forward seed from [compose] send_html; Reply and Reply-all seed
     // from whether the original carried a text/html part, ignoring the config
@@ -1365,7 +1368,10 @@ bool ComposeWindow::saveDraftNow()
         return true;
     }
 
-    const OutgoingMessage message = currentMessage();
+    // Not const: the draft's own Message-ID is assigned below (item 165).
+    // fingerprintOf() does not read that field, so the dirty check above is
+    // unaffected by it.
+    OutgoingMessage message = currentMessage();
 
     // The dirty CHECK, not just the flag: an unchanged message means no file
     // is written and no sync is provoked. Every autosave produces a Maildir
@@ -1374,10 +1380,13 @@ bool ComposeWindow::saveDraftNow()
     //
     // Checked BEFORE the build, and on the message rather than on the bytes.
     // The plan's draft compared built.bytes, which can never match: GMime is
-    // given a fresh Date and Message-ID on every build, so two builds of an
-    // unchanged message differ. That check would have read as working while
-    // writing a file on every debounce. Doing it first also skips the
-    // blocking build entirely for the no-change case, which is the common one.
+    // given a fresh Date on every build, so two builds of an unchanged message
+    // differ. That check would have read as working while writing a file on
+    // every debounce. Doing it first also skips the blocking build entirely
+    // for the no-change case, which is the common one.
+    //
+    // The Message-ID is no longer part of that difference since item 165, but
+    // the Date still is, so comparing bytes remains wrong.
     const QString fingerprint = fingerprintOf(message);
     if (!m_savedFingerprint.isEmpty() && fingerprint == m_savedFingerprint) {
         setDirty(false);
@@ -1391,6 +1400,12 @@ bool ComposeWindow::saveDraftNow()
     // crosses the worker boundary, and a second threading model for one call
     // is worse than the stall. If someone is measuring a composer freeze, this
     // line is where to look.
+    // Item 165. Every revision of this draft builds under ONE id, so a save
+    // replaces the message on the server rather than adding one. Empty on the
+    // first save of a new draft, which mints one below; seeded from the file
+    // for a resumed draft. The SEND path deliberately does not do this.
+    message.messageId = m_draftMessageId;
+
     const MessageBuilder::Result built = MessageBuilder::build(message, account);
     if (!built.ok()) {
         m_saveFailed = true;
@@ -1426,6 +1441,10 @@ bool ComposeWindow::saveDraftNow()
     }
 
     m_draftPath = written.path;
+    // Kept for the NEXT revision (item 165). Assigned from the build rather
+    // than from m_draftMessageId so the first save adopts the id GMime just
+    // generated, which is what makes every later save a replacement.
+    m_draftMessageId = built.messageId;
     m_savedFingerprint = fingerprint;
     setDirty(false);
     m_saveFailed = false;

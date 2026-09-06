@@ -66,6 +66,8 @@ private slots:
     void theMenuBarReachesEveryComposerAction();
     void saveDraftWritesAndReports();
     void aSavedDraftIsFlaggedSeen();
+    void everyRevisionOfADraftKeepsOneMessageId();
+    void aSentMessageDoesNotInheritTheDraftsMessageId();
     void aForwardCarriesTheOriginalHtmlAndStripsRemoteContent();
     void anHtmlForwardPreviewsTheOriginalInsteadOfQuotingIt();
     void theMenusReuseTheToolbarActions();
@@ -750,6 +752,97 @@ void TestComposeWindow::saveDraftWritesAndReports()
     QVERIFY(age);
     QVERIFY2(!age->text().isEmpty(), "a manual save must report like an autosave");
     QVERIFY2(!window.isWindowModified(), "a manual save must clear the marker");
+}
+
+/// Item 165. Two saves of one draft must produce ONE message, not two.
+///
+/// Every save used to mint a fresh Message-ID, and mbsync uploads each
+/// revision to the drafts folder before the next save removes the local file,
+/// so the server kept one message per revision: measured on the user's own
+/// mail as four independent messages for a single reply, which then threaded
+/// into the conversation and put a `draft` tag on a Sent row. Deleting a local
+/// file does not retract an uploaded one, so the local cleanup, which is
+/// correct, could never fix this.
+///
+/// Asserted on the FILE's header rather than on a notmuch tag, for the reason
+/// the test below gives: the bytes are what the code here controls.
+void TestComposeWindow::everyRevisionOfADraftKeepsOneMessageId()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    auto *save = window.findChild<QAction *>(QStringLiteral("compose_save"));
+    QVERIFY(save);
+
+    const auto messageIdIn = [](const QString &path) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+            return QString();
+        const QString text = QString::fromUtf8(file.readAll());
+        for (const QString &line : text.split(QLatin1Char('\n'))) {
+            if (line.startsWith(QStringLiteral("Message-Id:"), Qt::CaseInsensitive))
+                return line.section(QLatin1Char(':'), 1).trimmed();
+            if (line.trimmed().isEmpty())
+                break;  // end of headers
+        }
+        return QString();
+    };
+
+    QSignalSpy saved(&window, &ComposeWindow::draftSaved);
+
+    body->setPlainText(QStringLiteral("First revision."));
+    save->trigger();
+    QCOMPARE(saved.size(), 1);
+    const QString firstPath = saved.at(0).at(0).toString();
+    const QString firstId = messageIdIn(firstPath);
+    QVERIFY2(!firstId.isEmpty(), "the first revision carries no Message-ID");
+
+    // A REAL change, or the dirty check short-circuits and no second file is
+    // written at all, which would pass this test while proving nothing.
+    body->setPlainText(QStringLiteral("Second revision, genuinely different."));
+    save->trigger();
+    QCOMPARE(saved.size(), 2);
+    const QString secondPath = saved.at(1).at(0).toString();
+    QVERIFY2(secondPath != firstPath,
+             "the second save wrote no new file, so the ids cannot be compared");
+
+    QCOMPARE(messageIdIn(secondPath), firstId);
+}
+
+/// The constraint that makes item 165 safe, and the one a future edit is most
+/// likely to break: the SEND path must mint its own id.
+///
+/// The user's decision was a stable id while drafting, DISCARDED at send, so
+/// the sent copy is a different item from the draft. Two sent messages sharing
+/// a Message-ID would be far worse than the defect this fixed, and a
+/// Message-ID reaches the server and every recipient, so it is not a local
+/// matter. currentMessage() leaves the field empty and the send path passes it
+/// straight to build(); this pins that.
+void TestComposeWindow::aSentMessageDoesNotInheritTheDraftsMessageId()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::Draft;
+    context.accountKey = QStringLiteral("work");
+    context.draftMessageId = QStringLiteral("the-draft-id@example.org");
+
+    ComposeWindow window(context, config, m_dir->path());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("About to send."));
+
+    // The message the SEND path builds from, which is what decides the id.
+    const OutgoingMessage outgoing = window.currentMessage();
+    QVERIFY2(outgoing.messageId.isEmpty(),
+             "the send path carried the draft's Message-ID, so the sent copy "
+             "would share an id with a message already on the server");
 }
 
 /// A draft is authored by the user, so it is SEEN by definition and must never

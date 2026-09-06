@@ -371,6 +371,17 @@ private:
 
     QString m_draftPath;  ///< The revision on disk, unlinked on the next write.
 
+    /// The Message-ID this draft's revisions share, empty until the first
+    /// save.
+    ///
+    /// Item 165. Fed back into the next build so a save REPLACES the message
+    /// mbsync uploaded rather than adding one; without it the server kept one
+    /// message per revision, measured as four for a single reply. Seeded from
+    /// the file when a draft is resumed, so reopening does not start a second
+    /// identity. Deliberately NOT used on the send path: the sent copy is a
+    /// different item and mints its own id.
+    QString m_draftMessageId;
+
     /// A fingerprint of the message the last successful save wrote, for the
     /// dirty CHECK.
     ///

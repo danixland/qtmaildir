@@ -518,6 +518,7 @@ private slots:
     void doubleClickingADraftOpensTheComposer();
     void aResumedDraftReplacesItsFileRatherThanAddingOne();
     void aResumedDraftKeepsItsBlindRecipients();
+    void aResumedDraftKeepsTheMessageIdItWasSavedUnder();
     void aDraftRenamedByASyncStillReopensAndReplacesItsFile();
     void theComposerSplitsItsToolbarByScope();
     void ccAndBccHideBehindADisclosure();
@@ -14311,6 +14312,53 @@ void TestMainWindow::aDraftRenamedByASyncStillReopensAndReplacesItsFile()
     QVERIFY2(!QFile::exists(renamed),
              "the renamed draft survived the autosave, so the draft was forked "
              "into two files and both would reach the server");
+}
+
+/// Item 165, the third link in the chain and the one a composer-only test
+/// cannot reach: reopening a draft must keep the identity the FILE already
+/// has, or the next autosave starts a second one and the server ends up with
+/// two messages for one draft after all.
+void TestMainWindow::aResumedDraftKeepsTheMessageIdItWasSavedUnder()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build());
+
+    OutgoingMessage message;
+    message.accountKey = QStringLiteral("acct");
+    message.to = { QStringLiteral("someone@example.org") };
+    message.subject = QStringLiteral("Resumed");
+    message.markdownBody = QStringLiteral("Body.");
+    message.messageId = QStringLiteral("already-saved-under@example.org");
+
+    const QString folder = fixture.mailRoot() + QStringLiteral("/acct/Drafts");
+    const QString path = writeDraftFile(folder, message,
+                                        fixture.config().account(
+                                            QStringLiteral("acct")));
+    QVERIFY(!path.isEmpty());
+
+    const ComposeContext context =
+        ComposeContextBuilder::forDraft(fixture.config(), path);
+    QCOMPARE(context.draftMessageId,
+             QStringLiteral("already-saved-under@example.org"));
+
+    // And it reaches the next revision, which is the property that matters:
+    // the context carrying it is only half the chain.
+    ComposeWindow window(context, fixture.config(), fixture.mailRoot());
+    auto *body = window.findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("Edited after reopening."));
+
+    QSignalSpy saved(&window, &ComposeWindow::draftSaved);
+    auto *save = window.findChild<QAction *>(QStringLiteral("compose_save"));
+    QVERIFY(save);
+    save->trigger();
+    QCOMPARE(saved.size(), 1);
+
+    QFile written(saved.first().first().toString());
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    const QString text = QString::fromUtf8(written.readAll());
+    QVERIFY2(text.contains(QStringLiteral("<already-saved-under@example.org>")),
+             "the revision written after a reopen carries a different id");
 }
 
 void TestMainWindow::aResumedDraftKeepsItsBlindRecipients()

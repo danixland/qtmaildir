@@ -308,8 +308,21 @@ Result build(const OutgoingMessage &message, const Account &account)
     // invariant the next early return forgets; it is assigned once, beside the
     // bytes, on the one path that succeeds.
     QString messageId;
-    char *generatedId = g_mime_utils_generate_message_id(domainUtf8.constData());
-    if (generatedId) {
+    if (!message.messageId.isEmpty()) {
+        // Item 165. A draft revision reuses the id its previous build
+        // returned, so a save REPLACES the message on the server rather than
+        // adding one. Only the autosave path supplies this; a send leaves it
+        // empty and gets a fresh id below, because two sent messages must
+        // never share one.
+        //
+        // set_message_id takes the id WITHOUT angle brackets and adds them,
+        // which is the form generate_message_id returns and the form this is
+        // stored in.
+        const QByteArray supplied = message.messageId.toUtf8();
+        g_mime_message_set_message_id(mime, supplied.constData());
+        messageId = message.messageId;
+    } else if (char *generatedId =
+                   g_mime_utils_generate_message_id(domainUtf8.constData())) {
         g_mime_message_set_message_id(mime, generatedId);
         messageId = QString::fromUtf8(generatedId);
         g_free(generatedId);

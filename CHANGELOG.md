@@ -44,6 +44,16 @@ point at which they are stable.
 
 ### Fixed
 
+- **A draft no longer becomes a new message every time it is saved.** Each
+  autosave built the draft under a fresh Message-ID, and because mbsync
+  uploads each revision to the drafts folder before the next save removes the
+  local file, the server ended up holding one message per revision. Four
+  revisions of a single reply were found that way on real mail, all four
+  syncing back down and threading into the conversation. A draft now keeps one
+  identity across its revisions, including across being closed and reopened,
+  so a save replaces the message rather than adding one. The sent copy still
+  gets an id of its own: it is a different item from the draft, and the draft
+  is deleted once the message goes out.
 - **The Sent and Drafts views show every message you sent in a conversation,
   not just the first.** Both views are lists of your own messages rather than
   of conversations, but a thread you had replied to twice produced a single

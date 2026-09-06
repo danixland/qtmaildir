@@ -1277,6 +1277,24 @@ void MainWindow::openComposer(const ComposeContext &context)
     connect(composer, &ComposeWindow::draftRemoved, m_worker,
             &NotmuchWorker::removeIndexedFile);
 
+    // And the sent copy must be indexed at once, for the same reason a draft
+    // is (item 192): the Sent view is a path query over the index, so a file
+    // notmuch has not seen is invisible there until the next sync. This half
+    // was missing while the draft REMOVAL above was already wired.
+    //
+    // indexDraftFile despite the name: it calls notmuch_database_index_file
+    // and applies nothing draft-specific, and its previousPath defaults to
+    // empty, which is exactly right for a sent copy that replaces nothing.
+    // A lambda rather than a direct slot connection, because indexDraftFile
+    // takes two arguments and the signal carries one; a default argument does
+    // not fill the gap across a connect(). The lambda's context object is
+    // m_worker, so it RUNS ON THE WORKER'S THREAD: notmuch never touches the
+    // GUI thread, which is the boundary the whole design rests on.
+    connect(composer, &ComposeWindow::sentCopyFiled, m_worker,
+            [this](const QString &path) {
+                m_worker->indexDraftFile(path);
+            });
+
     // Item 68. The R and P Maildir flags, on the message the send answered.
     //
     // sendMessageTagChange, NOT tagSelected: this deliberately does not go on

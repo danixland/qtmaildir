@@ -44,6 +44,12 @@ point at which they are stable.
 
 ### Fixed
 
+- **A sent message appears in the Sent view straight away.** The sent copy was
+  written to the Sent folder correctly but never announced to notmuch, and
+  that view is a search over the index rather than a listing of the folder, so
+  the message stayed invisible until the next sync, up to ten minutes later.
+  Saved drafts have been indexed immediately since 0.22.0; the sent copy now
+  is too.
 - **A draft no longer becomes a new message every time it is saved.** Each
   autosave built the draft under a fresh Message-ID, and because mbsync
   uploads each revision to the drafts folder before the next save removes the

@@ -1616,6 +1616,14 @@ void ComposeWindow::send()
                 if (!filed.ok()) {
                     sentCopyFailed = true;
                     sentCopyError = filed.error;
+                } else {
+                    // Item 192. The Sent view queries the INDEX, so a file
+                    // notmuch has not seen is invisible there until the next
+                    // sync. The path was previously discarded, which is why a
+                    // message just sent did not appear: measured as 65 files
+                    // against 64 indexed. Only on the success branch, since
+                    // indexing a path that was never written leaves a ghost.
+                    emit sentCopyFiled(filed.path);
                 }
             }
 

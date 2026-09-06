@@ -190,6 +190,20 @@ signals:
     /// \p path is the file that was removed, absolute.
     void draftRemoved(const QString &path);
 
+    /// The sent copy was filed, so it must be indexed at once.
+    ///
+    /// Item 192. The Sent view is a `path:` query over the INDEX rather than a
+    /// directory listing, so a correctly written file notmuch has never seen
+    /// is invisible there until the next `notmuch new`, which is a cron tick
+    /// away. This is item 158's rule for drafts applied to the other half of
+    /// the send: that half already emits draftRemoved() so the draft's entry
+    /// goes, while nothing added the sent copy's.
+    ///
+    /// \p path is the file just written, absolute. Emitted ONLY when the write
+    /// succeeded: announcing a path that was never written would put a ghost
+    /// in the index.
+    void sentCopyFiled(const QString &path);
+
     /// A send succeeded, and the message it answers should record that.
     ///
     /// Item 68. \p sourceMessageId is the Message-ID of the message replied to

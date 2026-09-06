@@ -544,6 +544,7 @@ private slots:
     void aReplySeedsTheHtmlToggleFromTheOriginal();
     void aNewMessageSeedsTheHtmlToggleFromConfig();
     void disablingInputsCoversEveryFieldAndTheToolbar();
+    void aFiledSentCopyIsAnnouncedForIndexing();
     void aFailedSendCanBeRetriedWithoutFilingTheWrongCopy();
     void anUnchangedMessageIsNotWrittenAgain();
     void closingInsideTheDebounceStillSavesTheDraft();
@@ -15080,6 +15081,59 @@ void TestMainWindow::aNewMessageSeedsTheHtmlToggleFromConfig()
     QVERIFY(secondToggle);
     QVERIFY2(secondToggle->isChecked(),
              "a Forward seeded from the original rather than from config");
+}
+
+/// Item 192. The sent copy must be announced so it can be indexed at once.
+///
+/// The Sent view is a `path:` query over the INDEX, not a directory listing,
+/// so a file notmuch has never seen is invisible there however correctly it
+/// was written. Measured on real mail right after a send: 65 files in the Sent
+/// folder, 64 messages indexed for the same path. Item 158 established this
+/// for drafts and wired both halves; the send path was already telling the
+/// worker to DROP the draft's entry while never telling it to add the sent
+/// copy's.
+///
+/// Asserted on the SIGNAL rather than on a notmuch query: the worker's
+/// indexDraftFile() is already covered against a real database by
+/// test_notmuchworker, so what is unproven here is that anything calls it.
+void TestMainWindow::aFiledSentCopyIsAnnouncedForIndexing()
+{
+    ComposeFixture fixture;
+    QVERIFY(fixture.build(QStringLiteral("Drafts"), QStringLiteral("Sent"),
+                          QStringLiteral("send_delay_ms=0")));
+
+    ComposeContext context = newContext();
+    context.to = { QStringLiteral("someone@example.org") };
+
+    QPointer<ComposeWindow> window =
+        new ComposeWindow(context, fixture.config(), fixture.mailRoot());
+    auto *body = window->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    QVERIFY(body);
+    body->setPlainText(QStringLiteral("Text."));
+
+    QSignalSpy filed(window, &ComposeWindow::sentCopyFiled);
+
+    auto *sendAction = window->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(sendAction);
+    sendAction->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 15000);
+
+    QCOMPARE(filed.size(), 1);
+    const QString announced = filed.first().first().toString();
+    QVERIFY2(!announced.isEmpty(), "the sent copy was announced with no path");
+
+    // The path announced must be the file that was actually written, not the
+    // folder or a stale name: indexing a path that does not exist puts a ghost
+    // in the index, which is the defect removeIndexedFile() exists to undo.
+    QVERIFY2(QFile::exists(announced),
+             qPrintable(QStringLiteral("announced a path that does not exist: %1")
+                            .arg(announced)));
+    const QString sentCur =
+        fixture.mailRoot() + QStringLiteral("/acct/Sent/cur");
+    QVERIFY2(announced.startsWith(sentCur),
+             qPrintable(QStringLiteral("announced %1, which is not in %2")
+                            .arg(announced, sentCur)));
 }
 
 void TestMainWindow::disablingInputsCoversEveryFieldAndTheToolbar()

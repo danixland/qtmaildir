@@ -49,7 +49,9 @@ point at which they are stable.
   that view is a search over the index rather than a listing of the folder, so
   the message stayed invisible until the next sync, up to ten minutes later.
   Saved drafts have been indexed immediately since 0.22.0; the sent copy now
-  is too.
+  is too, and the view you are looking at refreshes to show it rather than
+  waiting for a sync. The same refresh reaches the Drafts view, so a saved
+  draft appears and a sent one's entry leaves without a sync either.
 - **A draft no longer becomes a new message every time it is saved.** Each
   autosave built the draft under a fresh Message-ID, and because mbsync
   uploads each revision to the drafts folder before the next save removes the

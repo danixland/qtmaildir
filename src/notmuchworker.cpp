@@ -1476,6 +1476,12 @@ void NotmuchWorker::indexDraftFile(const QString &path,
 
     notmuch_database_close(db);
     notmuch_database_destroy(db);
+
+    // AFTER the close, so a refresh that reaches the database on the next turn
+    // of the event loop cannot race the write handle this function still held.
+    // notmuch permits one open handle per process, which is the same ordering
+    // constraint applyTags() and moveMessages() obey.
+    emit indexChanged();
 }
 
 void NotmuchWorker::removeIndexedFile(const QString &path)
@@ -1509,6 +1515,8 @@ void NotmuchWorker::removeIndexedFile(const QString &path)
 
     notmuch_database_close(db);
     notmuch_database_destroy(db);
+
+    emit indexChanged();
 }
 
 void NotmuchWorker::resolveMessages(const QStringList &messageIds,

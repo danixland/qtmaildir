@@ -351,6 +351,21 @@ signals:
     void threadDigestLoaded(const ThreadDigest &digest, quint64 generation);
     void tagsApplied(const TagChange &change);
 
+    /// One file entered or left the index outside a query (item 192).
+    ///
+    /// Emitted by indexDraftFile() and removeIndexedFile(), the two entry
+    /// points that change what a path query would return without any query
+    /// having run. A view built on such a query, Sent and Drafts both, is
+    /// stale the moment either fires: indexing a sent copy is what makes the
+    /// message findable, and MainWindow refreshes on this so the view the user
+    /// is looking at gains the row rather than waiting for the next sync.
+    ///
+    /// Carries nothing. The refresh re-runs the whole query, so which file
+    /// moved is not the UI's question; a payload would only invite an
+    /// optimistic insert, which item 170 rules out for a thread the query
+    /// never returned.
+    void indexChanged();
+
     /// Carries the ids that ACTUALLY moved, which may be fewer than requested.
     /// A stale id, a missing folder or a failed rename drops out here rather
     /// than aborting the batch.

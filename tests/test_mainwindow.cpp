@@ -545,6 +545,7 @@ private slots:
     void aNewMessageSeedsTheHtmlToggleFromConfig();
     void disablingInputsCoversEveryFieldAndTheToolbar();
     void aFiledSentCopyIsAnnouncedForIndexing();
+    void aSentMessageAppearsInASentViewAlreadyOnScreen();
     void aFailedSendCanBeRetriedWithoutFilingTheWrongCopy();
     void anUnchangedMessageIsNotWrittenAgain();
     void closingInsideTheDebounceStillSavesTheDraft();
@@ -15134,6 +15135,87 @@ void TestMainWindow::aFiledSentCopyIsAnnouncedForIndexing()
     QVERIFY2(announced.startsWith(sentCur),
              qPrintable(QStringLiteral("announced %1, which is not in %2")
                             .arg(announced, sentCur)));
+}
+
+/// Item 192's second half, from the user: indexing is not repainting.
+///
+/// The sent copy became findable the instant it was indexed and the Sent view
+/// on screen still did not show it, because nothing re-ran the query. A
+/// `path:` view is built once and holds whatever the index said then; the
+/// model cannot insert the row optimistically either, since item 170's
+/// constraint applies, the query never returned that thread.
+///
+/// So the worker reports indexChanged() and the window refreshes. Asserted
+/// end to end through a real send rather than by emitting the signal: what is
+/// unproven is that the send path reaches the refresh, and a test that emits
+/// the signal itself proves only that the connection compiles.
+///
+/// refreshCurrentQuery(), which is why the query bar is never touched again
+/// after the first run: a test that re-ran the query by hand would pass
+/// against the defect.
+void TestMainWindow::aSentMessageAppearsInASentViewAlreadyOnScreen()
+{
+    WorkerBackedWindow backed;
+    // One message, in a folder the Sent view does NOT cover. It exists so the
+    // fixture indexes at all (notmuch refuses an empty tree) and so a Sent
+    // view showing zero rows is a real answer rather than an empty database.
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("work/inbox"), QStringLiteral("sv0@example.org"),
+        QStringLiteral("Unrelated"), QStringLiteral("other@example.org"),
+        // Friday, verified with `date -d 2026-08-14 +%A`. Qt::RFC2822Date
+        // validates the weekday against the date.
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text."), false));
+    QVERIFY2(backed.buildWithAccounts(
+                 { { QStringLiteral("work"), QStringLiteral("work"),
+                     QString(), QStringLiteral("/bin/true"),
+                     QStringLiteral("you@example.org"), QString(),
+                     QStringLiteral("Sent") } },
+                 QStringLiteral("send_delay_ms=0")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && queryEdit);
+
+    // The Sent view as the application builds it: a path query over the
+    // account's sent folder. Run BEFORE the send, which is the whole point,
+    // and never run again by this test.
+    queryEdit->setText(QStringLiteral("path:\"work/Sent/**\""));
+    queryEdit->returnPressed();
+
+    // The mail root is what the composer needs and it arrives asynchronously,
+    // so this waits on it as well: openComposer() refuses without one and the
+    // send would never happen, which reads exactly like the defect.
+    QTRY_VERIFY_WITH_TIMEOUT(!window.mailRootForTesting().isEmpty(), 15000);
+    QApplication::processEvents();
+
+    // The guard. An empty view here is the state the refresh must change, and
+    // a test that started from a non-empty one could not tell a refresh from
+    // the row that was already there.
+    QCOMPARE(model->rowCount(QModelIndex()), 0);
+
+    auto *compose = window.findChild<QAction *>(QStringLiteral("compose"));
+    QVERIFY(compose);
+    compose->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(window.openComposerCount() == 1, 15000);
+    ComposeWindow *composer = window.openComposersForTest().value(0);
+    QVERIFY(composer);
+
+    auto *to = composer->findChild<QLineEdit *>(QStringLiteral("to"));
+    auto *body = composer->findChild<QPlainTextEdit *>(QStringLiteral("body"));
+    auto *sendAction =
+        composer->findChild<QAction *>(QStringLiteral("compose_send"));
+    QVERIFY(to && body && sendAction);
+    to->setText(QStringLiteral("someone@example.org"));
+    body->setPlainText(QStringLiteral("Text."));
+    sendAction->trigger();
+
+    // No further gesture: no second returnPressed(), no sync. The row must
+    // arrive because the index changed and the window noticed.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
 }
 
 void TestMainWindow::disablingInputsCoversEveryFieldAndTheToolbar()

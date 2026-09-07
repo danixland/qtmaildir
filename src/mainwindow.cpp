@@ -2756,6 +2756,19 @@ void MainWindow::wireWorker()
     connect(m_worker, &NotmuchWorker::threadMessagesResolved,
             this, &MainWindow::onThreadMessagesResolved);
 
+    // Item 192's second half. Indexing a file is not repainting a view: the
+    // sent copy became findable the instant it was indexed, and a Sent view
+    // already on screen still did not show it, because nothing re-ran the
+    // query. Both index entry points report here, so a saved draft, a sent
+    // copy and a removed draft each reach the list that queries their folder.
+    //
+    // refreshCurrentQuery(), NOT runCurrentQuery(): a send must not clear the
+    // selection, the expansions or the undo stack of the window behind the
+    // composer. It returns early when no query has run and reconciles rather
+    // than replacing, so a view of another folder simply sees no change.
+    connect(m_worker, &NotmuchWorker::indexChanged,
+            this, &MainWindow::refreshCurrentQuery);
+
     m_workerThread.start();
 
     // Queued behind the thread start, so the completer has real tags as soon

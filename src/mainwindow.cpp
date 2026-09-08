@@ -5452,7 +5452,7 @@ void MainWindow::feedSyncPhase(const QString &chunk)
     m_statusLabel->setText(m_syncPhase.statusText());
 }
 
-void MainWindow::setSyncBusy(bool busy)
+void MainWindow::setSyncBusy(bool busy, const QStringList &channels)
 {
     m_localSyncBusy = busy;
     updateSyncControls();
@@ -5462,7 +5462,22 @@ void MainWindow::setSyncBusy(bool busy)
     // output by then. Setting the label is still right, since the tracker has
     // nothing to say until a line it recognises arrives.
     if (busy && m_syncPhase.statusText().isEmpty())
-        m_statusLabel->setText(tr("Syncing..."));
+        m_statusLabel->setText(syncStartedText(channels));
+}
+
+QString MainWindow::syncStartedText(const QStringList &channels) const
+{
+    // Item 101's visibility half. The run is already account-aware and the user
+    // could not tell: the same three dots appeared whether mbsync was about to
+    // collect one account or all of them. Naming the channels makes a narrowed
+    // run legible at the moment it starts, which is what the item asked for.
+    //
+    // Empty means every channel, since that is exactly what pendingSyncChannels()
+    // returns for a full fetch and what mailsync.sh turns into `mbsync -a`.
+    if (channels.isEmpty())
+        return tr("Syncing all accounts...");
+
+    return tr("Syncing %1...").arg(channels.join(QStringLiteral(", ")));
 }
 
 void MainWindow::updateSyncControls()
@@ -5515,11 +5530,15 @@ void MainWindow::startSync()
     m_syncPhase.reset();
     m_syncLineBuffer.clear();
 
-    if (!m_sync->start(pendingSyncChannels())) {
+    // Read once and passed on, rather than asked for twice: the label must
+    // describe the run that actually started, and a second call could disagree
+    // with the first if the selection moved in between.
+    const QStringList channels = pendingSyncChannels();
+    if (!m_sync->start(channels)) {
         showTransientStatus(tr("Sync already running"));
         return;
     }
-    setSyncBusy(true);
+    setSyncBusy(true, channels);
 }
 
 void MainWindow::scheduleAutoSync()
@@ -5607,16 +5626,34 @@ void MainWindow::recordPendingEdit(const QString &messageId, const QString &tag,
 
 QStringList MainWindow::pendingSyncChannels() const
 {
-    // Nothing pending means this run is a FETCH, and a fetch must cover every
-    // account: narrowing it to wherever the last edit happened to be would
+    // The account the user is LOOKING at narrows the run, per item 101 and the
+    // user's decision on it: one Sync action, steered by the dropdown. All
+    // accounts is the empty key and narrows nothing, which is what keeps item
+    // 49's property that a fetch collects everywhere by default.
+    //
+    // This is deliberately a UNION with the pending set below, never a
+    // replacement for it. Looking at one account while having edited another is
+    // ordinary rather than an edge case, and a run that dropped the edited
+    // account's channel would strand that write with nothing on screen to say
+    // so.
+    const QString selected = m_accountBox
+        ? m_accountBox->currentData().toString()
+        : QString();
+
+    QSet<QString> wanted = m_editedAccounts;
+    if (!selected.isEmpty())
+        wanted.insert(selected);
+
+    // Nothing pending and nothing selected means this run is a FETCH over
+    // everything: narrowing it to wherever the last edit happened to be would
     // quietly stop collecting mail everywhere else. Empty is the signal for
     // that, and MailSync::start() appends nothing.
-    if (m_editedAccounts.isEmpty())
+    if (wanted.isEmpty())
         return {};
 
     QStringList channels;
     for (const Account &account : m_config.accounts()) {
-        if (m_editedAccounts.contains(account.key))
+        if (wanted.contains(account.key))
             channels.append(account.syncChannel());
     }
 
@@ -5624,7 +5661,7 @@ QStringList MainWindow::pendingSyncChannels() const
     // channel, and syncing a subset that omits it would leave its edits behind
     // with nothing to say so. Fall back to a full sync, which is correct if
     // wasteful; the alternative is silently stranding an edit.
-    if (channels.size() != m_editedAccounts.size())
+    if (channels.size() != wanted.size())
         return {};
 
     // Stable order so a run is reproducible and the log reads the same way

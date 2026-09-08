@@ -1012,7 +1012,14 @@ private:
     /// the script's output is unstructured, so a bar that filled from left to
     /// right would be inventing a fraction nobody knows. An indeterminate one
     /// says "working, duration unknown", which is the truth.
-    void setSyncBusy(bool busy);
+    /// \p channels is the list the run was started with, used only for the
+    /// opening status line: empty means every account. Defaulted because the
+    /// exit paths overwrite the label with their own wording immediately after.
+    void setSyncBusy(bool busy, const QStringList &channels = {});
+
+    /// The opening status line for a run over \p channels. Item 101's
+    /// visibility half: a narrowed run must say so.
+    Q_INVOKABLE QString syncStartedText(const QStringList &channels) const;
 
     /// Reassembles lines from a sync output chunk and updates the status label
     /// when the phase or its detail changes.

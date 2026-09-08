@@ -438,6 +438,10 @@ private slots:
     void anUnknownExternalStateClearsNothing();
     void aSuccessfulCronSyncDrainsTheEditedAccounts();
     void aCronSyncDoesNotClearAnEditMadeWhileItRan();
+    void syncNarrowsToTheSelectedAccount();
+    void syncCoversEveryAccountWhenAllIsSelected();
+    void aNarrowedSyncStillCarriesAnEditFromAnotherAccount();
+    void theStatusLineNamesWhatASyncWillCover();
 
     void everyActionCarriesAnIcon();
     void everyActionIsReachableFromAMenu();
@@ -7494,6 +7498,198 @@ void TestMainWindow::aCronSyncDoesNotClearAnEditMadeWhileItRan()
     recordOneEdit(window, QStringLiteral("m2"), QStringLiteral("flagged"));
     QVERIFY2(!label->isHidden(),
              "an edit made after the sync ended was swallowed by it");
+}
+
+// Item 101.
+
+namespace {
+
+/// Writes a config with two accounts, each naming its own sync channel, so a
+/// narrowed run can be told from a full one by the channel list alone.
+void loadTwoAccountConfig(Config &config, const QTemporaryDir &dir,
+                          const QString &logPath)
+{
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write(QStringLiteral("[sync]\nlog=%1\nstatus=%2\n\n"
+                              "[account.work]\n"
+                              "maildir=work-mail\n"
+                              "channel=work-channel\n\n"
+                              "[account.personal]\n"
+                              "maildir=personal-mail\n"
+                              "channel=personal-channel\n")
+                   .arg(logPath, dir.filePath(QStringLiteral("no-status.json")))
+                   .toUtf8());
+    file.close();
+
+    config.load(path);
+    QCOMPARE(config.accounts().size(), 2);
+}
+
+/// Records one edit against \p accountKey, by giving the model a thread tagged
+/// for that account and sending a tag change over it. This is the route a real
+/// edit takes, so m_editedAccounts is populated the way production populates it.
+void recordEditForAccount(MainWindow &window, const QString &threadId,
+                          const QString &accountKey)
+{
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    ThreadSummary thread;
+    thread.threadId = threadId;
+    thread.subject = QStringLiteral("Subject");
+    thread.totalCount = 1;
+    thread.firstMessageId = threadId + QStringLiteral("-m1");
+    thread.tags = { QStringLiteral("account-") + accountKey,
+                    QStringLiteral("inbox") };
+    model->appendBatch({ thread });
+    QCOMPARE(model->accountKeysForThread(threadId), QStringList{ accountKey });
+
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "sendThreadTagChange",
+        Q_ARG(QStringList, QStringList{ threadId }),
+        Q_ARG(QStringList, QStringList{ QStringLiteral("flagged") }),
+        Q_ARG(QStringList, QStringList{}),
+        Q_ARG(QString, QStringLiteral("Flag"))));
+}
+
+/// QVERIFY2 expands to a bare `return`, so the invoke check cannot live in a
+/// value-returning helper. Out-param instead, called through the macro below.
+void readSyncChannels(MainWindow &window, QStringList &channels)
+{
+    QVERIFY2(QMetaObject::invokeMethod(&window, "pendingSyncChannels",
+                                       Q_RETURN_ARG(QStringList, channels)),
+             "pendingSyncChannels() could not be invoked");
+}
+
+#define SYNC_CHANNELS(window, out)                                             \
+    QStringList out;                                                           \
+    readSyncChannels((window), (out))
+
+} // namespace
+
+void TestMainWindow::syncNarrowsToTheSelectedAccount()
+{
+    // The user's decision on item 101: one Sync action, steered by the account
+    // dropdown. Selecting an account and pressing Sync collects that account
+    // only, rather than every channel.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("mailsync.log"));
+    writeSyncLog(logPath, QStringLiteral("OK"));
+
+    Config config;
+    loadTwoAccountConfig(config, dir, logPath);
+    MainWindow window(config);
+
+    // The guard, and it matters: an empty list is what a FULL sync looks like,
+    // so a test starting from a narrowed state could not tell the fix from a
+    // window that had never widened. Nothing is selected and nothing is edited,
+    // so this must be the full-fetch signal before the gesture.
+    SYNC_CHANNELS(window, before);
+    QVERIFY2(before.isEmpty(),
+             "a fresh window with All accounts selected did not ask for a "
+             "full fetch");
+
+    window.selectAccountForTesting(QStringLiteral("work"));
+
+    SYNC_CHANNELS(window, narrowed);
+    QCOMPARE(narrowed, QStringList{ QStringLiteral("work-channel") });
+}
+
+void TestMainWindow::syncCoversEveryAccountWhenAllIsSelected()
+{
+    // The other half of the same rule, and the one that keeps item 49's
+    // property: All accounts means a full fetch, which mailsync.sh turns into
+    // mbsync -a. Asserted after a narrowing so it proves the selection is read
+    // each time rather than latched once.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("mailsync.log"));
+    writeSyncLog(logPath, QStringLiteral("OK"));
+
+    Config config;
+    loadTwoAccountConfig(config, dir, logPath);
+    MainWindow window(config);
+
+    window.selectAccountForTesting(QStringLiteral("work"));
+    SYNC_CHANNELS(window, narrowed);
+    QCOMPARE(narrowed, QStringList{ QStringLiteral("work-channel") });
+
+    window.selectAccountForTesting(QString());
+
+    SYNC_CHANNELS(window, widened);
+    QVERIFY2(widened.isEmpty(),
+             "going back to All accounts left the run narrowed");
+}
+
+void TestMainWindow::aNarrowedSyncStillCarriesAnEditFromAnotherAccount()
+{
+    // Item 101's standing constraint, and the reason the selection is a UNION
+    // with the pending set rather than a replacement for it. Looking at one
+    // account while having edited another is ordinary, and a run that dropped
+    // the other account's channel would strand that edit with nothing on
+    // screen to say so.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("mailsync.log"));
+    writeSyncLog(logPath, QStringLiteral("OK"));
+
+    Config config;
+    loadTwoAccountConfig(config, dir, logPath);
+    MainWindow window(config);
+
+    // Edit in personal, then go and look at work.
+    recordEditForAccount(window, QStringLiteral("t1"),
+                         QStringLiteral("personal"));
+    SYNC_CHANNELS(window, edited);
+    QCOMPARE(edited, QStringList{ QStringLiteral("personal-channel") });
+
+    window.selectAccountForTesting(QStringLiteral("work"));
+
+    // Both: work because it is on screen, personal because it owes a write.
+    const QStringList expected{ QStringLiteral("personal-channel"),
+                                QStringLiteral("work-channel") };
+    SYNC_CHANNELS(window, both);
+    QCOMPARE(both, expected);
+}
+
+void TestMainWindow::theStatusLineNamesWhatASyncWillCover()
+{
+    // Item 101's visibility half. The run was already account-aware before this
+    // item and the user could not tell, since a narrowed run and a full one
+    // showed the same three dots. Asserted on the generated STRING, which has a
+    // right answer, rather than on the label after a real run, which would be a
+    // test of QProcess timing.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString logPath = dir.filePath(QStringLiteral("mailsync.log"));
+    writeSyncLog(logPath, QStringLiteral("OK"));
+
+    Config config;
+    loadTwoAccountConfig(config, dir, logPath);
+    MainWindow window(config);
+
+    QString text;
+
+    // Empty is the full-fetch signal, so it must not read as a channel list.
+    QVERIFY(QMetaObject::invokeMethod(&window, "syncStartedText",
+                                      Q_RETURN_ARG(QString, text),
+                                      Q_ARG(QStringList, QStringList{})));
+    QCOMPARE(text, QStringLiteral("Syncing all accounts..."));
+
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "syncStartedText", Q_RETURN_ARG(QString, text),
+        Q_ARG(QStringList, QStringList{ QStringLiteral("work-channel") })));
+    QCOMPARE(text, QStringLiteral("Syncing work-channel..."));
+
+    const QStringList two{ QStringLiteral("personal-channel"),
+                           QStringLiteral("work-channel") };
+    QVERIFY(QMetaObject::invokeMethod(&window, "syncStartedText",
+                                      Q_RETURN_ARG(QString, text),
+                                      Q_ARG(QStringList, two)));
+    QCOMPARE(text,
+             QStringLiteral("Syncing personal-channel, work-channel..."));
 }
 
 // Items 56 and 57.

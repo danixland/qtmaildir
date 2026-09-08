@@ -739,6 +739,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>&amp;Elimina conversazione</translation>
     </message>
     <message>
+        <source>Syncing all accounts...</source>
+        <translation>Sincronizzazione di tutti gli account...</translation>
+    </message>
+    <message>
+        <source>Syncing %1...</source>
+        <translation>Sincronizzazione di %1...</translation>
+    </message>
+    <message>
         <source>Undelete thread</source>
         <translation>Ripristina conversazione</translation>
     </message>
@@ -1408,10 +1416,6 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>%1, waiting for the running sync to finish</source>
         <translation>%1, in attesa che termini la sincronizzazione in corso</translation>
-    </message>
-    <message>
-        <source>Syncing...</source>
-        <translation>Sincronizzazione in corso...</translation>
     </message>
     <message numerus="yes">
         <source>%n unsynced change(s)</source>

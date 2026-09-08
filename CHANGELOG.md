@@ -41,6 +41,13 @@ point at which they are stable.
   themes draw as an exclamation mark; that was invisible while it only ever
   appeared beside its own label, and became an info glyph the moment it
   reached the icon-only message bar.
+- **Sync follows the account you are looking at.** With an account selected in
+  the dropdown, Sync collects that account rather than every one; with All
+  accounts selected it collects everything, as before. Any account with
+  unsynced edits is always included, whichever one is on screen, so choosing a
+  narrower view cannot leave a change stranded. The status line now names what
+  a run covers instead of saying only "Syncing...", so a narrowed run is
+  visible as one.
 
 ### Fixed
 

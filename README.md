@@ -655,11 +655,16 @@ Two things any replacement has to get right, both learned the hard way:
 
 ### Per-account sync
 
-When tag changes are outstanding, a sync passes only the affected accounts'
-channel names to the command. When nothing is outstanding the run is a plain
-fetch and no names are passed, so every account is synced: narrowing a fetch to
-wherever the last edit happened to be would quietly stop collecting mail
-everywhere else.
+A sync covers the account selected in the dropdown, plus any account with
+outstanding tag changes. With **All accounts** selected and nothing
+outstanding, no names are passed and the run is a plain fetch over everything:
+narrowing a fetch to wherever the last edit happened to be would quietly stop
+collecting mail everywhere else.
+
+The two are a union rather than a choice, so an edit is never left behind by
+looking somewhere else. Editing mail in `personal` and then switching the
+dropdown to `work` syncs both: `work` because it is on screen, `personal`
+because it owes a write. The status line names what a run covers as it starts.
 
 The name passed is the **mbsync channel**, which is not always the account's
 section key. `[account.mail-first.last]` may well be the channel

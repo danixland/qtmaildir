@@ -100,6 +100,8 @@ private slots:
     void requestFoldersOnUnreadableConfigEmitsError();
 
     void moveMessagesRelocatesTheFile();
+    void moveMessagesToSpamRelocatesTheFileAndTagsIt();
+    void aSecondMoveToSpamKeepsOnlyTheNewestOriginTag();
     void moveMessagesReindexesAtTheNewPath();
     void moveMessagesKeepsTheMessagesTags();
     void moveMessagesReportsOnlyWhatMoved();
@@ -1794,6 +1796,109 @@ void TestNotmuchWorker::moveMessagesRelocatesTheFile()
     QCOMPARE(QFileInfo(after).absolutePath(), expectedDir);
     QVERIFY2(QFile::exists(after), qPrintable(after));
     QVERIFY(!QFile::exists(before));
+}
+
+void TestNotmuchWorker::moveMessagesToSpamRelocatesTheFileAndTagsIt()
+{
+    // Mark spam is Delete's sibling, and its own fixture rather than the
+    // shared one: this needs an UNREAD message so the `unread` removal the
+    // account's spam folder config implies is actually observable. The shared
+    // fixture's movable messages are all read, which would make that assertion
+    // pass against nothing.
+    NotmuchFixture fixture;
+    QVERIFY(fixture.isValid());
+    const QString id = QStringLiteral("spam1@example.org");
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"), id,
+                               QStringLiteral("Suspect"),
+                               QStringLiteral("Erin <erin@example.org>"),
+                               QStringLiteral("Sun, 7 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body"), true));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    QVERIFY2(tagsOf(id, fixture.configPath()).contains(QStringLiteral("unread")),
+             "the fixture message is already read, so the unread removal below "
+             "would prove nothing");
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy moved(&worker, &NotmuchWorker::messagesMoved);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.moveMessages({ id }, QStringLiteral("spam"));
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    QCOMPARE(moved.size(), 1);
+    QCOMPARE(moved.first().at(0).toStringList(), QStringList{ id });
+    QCOMPARE(moved.first().at(1).toString(), QStringLiteral("spam"));
+
+    const QString expectedDir =
+        fixture.maildirPath() + QStringLiteral("/spam/cur");
+    const QString after = fileOf(id, fixture.configPath());
+    QVERIFY2(!after.isEmpty(),
+             "the message is not in the database after the move");
+    QCOMPARE(QFileInfo(after).absolutePath(), expectedDir);
+    QVERIFY2(QFile::exists(after), qPrintable(after));
+
+    // The tag half travels with the move the way onMessagesMoved() composes
+    // it: `spam` and the origin in, `unread` and `inbox` out.
+    worker.applyTags(TagChange{ { id },
+                                { QStringLiteral("spam"),
+                                  QStringLiteral("moved-from:inbox") },
+                                { QStringLiteral("unread"),
+                                  QStringLiteral("inbox") },
+                                QStringLiteral("Mark spam") });
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    const QStringList tags = tagsOf(id, fixture.configPath());
+    QVERIFY(tags.contains(QStringLiteral("spam")));
+    QVERIFY(tags.contains(QStringLiteral("moved-from:inbox")));
+    QVERIFY(!tags.contains(QStringLiteral("unread")));
+}
+
+void TestNotmuchWorker::aSecondMoveToSpamKeepsOnlyTheNewestOriginTag()
+{
+    // The overwrite rule, reached through a second move: inbox -> spam -> a
+    // later move that writes `moved-from:Spam` must leave exactly ONE
+    // `moved-from:` tag, the newest. Two would make Restore's first-match scan
+    // pick an origin arbitrarily, and the message would go home by a coin toss.
+    NotmuchFixture fixture;
+    QVERIFY(fixture.isValid());
+    const QString id = QStringLiteral("reorigin@example.org");
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"), id,
+                               QStringLiteral("Travelled"),
+                               QStringLiteral("Erin <erin@example.org>"),
+                               QStringLiteral("Sun, 7 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body"), true));
+    QVERIFY2(fixture.index(), qPrintable(fixture.error()));
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    // An earlier move left an origin behind.
+    worker.applyTags(TagChange{ { id },
+                                { QStringLiteral("moved-from:inbox") },
+                                {},
+                                QStringLiteral("Earlier move") });
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    // The move under test: a new origin lands while the old one is still there.
+    worker.applyTags(TagChange{ { id },
+                                { QStringLiteral("spam"),
+                                  QStringLiteral("moved-from:Spam") },
+                                { QStringLiteral("unread"),
+                                  QStringLiteral("inbox") },
+                                QStringLiteral("Mark spam") });
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    const QStringList tags = tagsOf(id, fixture.configPath());
+    QVERIFY(!tags.contains(QStringLiteral("moved-from:inbox")));
+    QVERIFY(tags.contains(QStringLiteral("moved-from:Spam")));
+
+    int origins = 0;
+    for (const QString &tag : tags) {
+        if (tag.startsWith(QStringLiteral("moved-from:")))
+            ++origins;
+    }
+    QCOMPARE(origins, 1);
 }
 
 void TestNotmuchWorker::purgeMessagesDoesNotClaimAnIdItCouldNotDelete()

@@ -1784,9 +1784,8 @@ void MainWindow::registerActions()
         purgeSelected();
     });
     addAction(QStringLiteral("spam"), tr("Mark &spam"),
-              tr("Add spam and remove inbox"), [this]() {
-        tagSelected({ QStringLiteral("spam") }, { QStringLiteral("inbox") },
-                    tr("Mark spam"));
+              tr("Move the selected messages to the spam folder"), [this]() {
+        spamSelected();
     });
     // Item 57. The LABEL is "Important"; the action name and the tag are both
     // still `flag`/`flagged`, deliberately. The name is what a user writes in
@@ -3972,7 +3971,8 @@ void MainWindow::refreshScopedActionLabels()
                 tr("Move every message of the selected threads out of the "
                    "trash"));
         relabel(QStringLiteral("spam"), tr("Mark thread as &spam"),
-                tr("Add spam and remove inbox on the selected threads"));
+                tr("Move every message of the selected threads to the spam "
+                   "folder"));
         relabel(QStringLiteral("flag"), tr("&Important thread"),
                 tr("Mark every message of the selected threads as important"));
     } else {
@@ -3983,7 +3983,7 @@ void MainWindow::refreshScopedActionLabels()
         relabel(QStringLiteral("restore"), tr("&Restore from trash"),
                 tr("Move the selected messages out of the trash"));
         relabel(QStringLiteral("spam"), tr("Mark &spam"),
-                tr("Add spam and remove inbox"));
+                tr("Move the selected messages to the spam folder"));
         relabel(QStringLiteral("flag"), tr("&Important"),
                 tr("Add or remove the important tag"));
     }
@@ -6413,6 +6413,105 @@ void MainWindow::trashThreads(const QStringList &threadIds)
                               Q_ARG(QString, QStringLiteral("delete_thread")));
 }
 
+void MainWindow::spamSelected()
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return;
+
+    // Delete's sibling, resolved the same per-row way (item 177): a
+    // conversation row spams its conversation, a thread of one spams its
+    // message. Both halves are run, because a selection really can hold one of
+    // each; they travel different routes for the reason trashSelected()
+    // records.
+    const ActionScope scope = m_model->scopeForSelection(rows);
+
+    if (!scope.threadIds.isEmpty())
+        spamThreads(scope.threadIds);
+
+    if (scope.messageIds.isEmpty())
+        return;
+
+    QHash<QString, QString> pathById;
+    for (const QString &messageId : scope.messageIds)
+        pathById.insert(messageId, m_model->messageById(messageId).filePath);
+
+    spamMessages(scope.messageIds, pathById, scope.messageIds.size());
+}
+
+void MainWindow::spamMessages(const QStringList &messageIds,
+                              const QHash<QString, QString> &pathById,
+                              int messageCount,
+                              const QStringList &wholeThreadIds)
+{
+    if (messageIds.isEmpty())
+        return;
+
+    // Grouped by destination, exactly as trashMessages() is: moveMessages()
+    // takes one folder per call, and a selection can span accounts with
+    // different spam folders.
+    QHash<QString, QStringList> bySpam;
+    QStringList unconfigured;
+    for (const QString &messageId : messageIds) {
+        const Account account =
+            accountForMessagePath(pathById.value(messageId));
+        if (account.spam.isEmpty()) {
+            unconfigured.append(messageId);
+            continue;
+        }
+        bySpam[account.maildir + QLatin1Char('/') + account.spam]
+            .append(messageId);
+    }
+
+    // The second line of defence, as for trash: the config loader warns, but a
+    // user who never fixed it still needs the gesture to say it did nothing
+    // rather than move the file somewhere invented.
+    if (!unconfigured.isEmpty()) {
+        m_statusLabel->setText(
+            tr("%n message(s) could not be marked as spam: no spam folder is "
+               "configured for their account.", "", int(unconfigured.size())));
+    }
+
+    if (bySpam.isEmpty())
+        return;
+
+    for (auto it = bySpam.cbegin(); it != bySpam.cend(); ++it) {
+        // `unread` and `inbox` go with the message, exactly as Delete strips
+        // them: marking spam is a decision about the message, and without the
+        // `inbox` removal a message spammed FROM the inbox keeps the tag the
+        // Inbox filter matches on and stays in that view. The origin is the
+        // placeholder, resolved per message once the move is confirmed.
+        sendMove(it.value(), it.key(),
+                 { QStringLiteral("spam"), kOriginTagPlaceholder() },
+                 { QStringLiteral("unread"), QStringLiteral("inbox") },
+                 tr("Mark spam"), false, wholeThreadIds);
+    }
+
+    announceAction(
+        tr("%1: %n message(s)", "", messageCount).arg(tr("Mark spam")));
+}
+
+void MainWindow::spamThreads(const QStringList &threadIds)
+{
+    if (threadIds.isEmpty())
+        return;
+
+    // Asked of the WORKER rather than resolved here, and repainted HERE
+    // synchronously before it: the same shape as trashThreads(), for the same
+    // two reasons. An unexpanded thread's reply ids and paths exist only in
+    // the database; and the card must not wait for that round trip.
+    for (const QString &threadId : threadIds)
+        m_model->applyTagChange(threadId, { QStringLiteral("spam") },
+                                { QStringLiteral("inbox") });
+
+    m_pendingThreadScope = threadIds;
+    QMetaObject::invokeMethod(m_worker, "resolveThreadMessages",
+                              Qt::QueuedConnection,
+                              Q_ARG(QStringList, threadIds),
+                              Q_ARG(QString, QStringLiteral("spam_thread")));
+}
+
 void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
                                           const QStringList &paths,
                                           const QStringList &tags,
@@ -6464,6 +6563,11 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
 
     if (requestTag == QStringLiteral("delete_thread")) {
         trashMessages(messageIds, pathById, messageIds.size(), threadScope);
+        return;
+    }
+
+    if (requestTag == QStringLiteral("spam_thread")) {
+        spamMessages(messageIds, pathById, messageIds.size(), threadScope);
         return;
     }
 

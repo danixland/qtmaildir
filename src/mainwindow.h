@@ -226,6 +226,15 @@ public:
         refreshTrashActions();
     }
 
+    /// The trash predicate, exposed because `spam` is a DIFFERENT folder and
+    /// the predicate must not answer for it. A test seam rather than a
+    /// behavioural one: asserting on Delete's visibility would prove the same
+    /// thing only through the label refresh.
+    bool everySelectedRowIsInATrashFolderForTesting() const
+    {
+        return everySelectedRowIsInATrashFolder();
+    }
+
     /// Runs a purge without the confirmation, which a test cannot drive: a
     /// modal blocks the thread it is shown on (item 84). What this exists to
     /// cover is what happens AFTER the user confirms.
@@ -1232,6 +1241,29 @@ private:
     /// The inverse of trashThreads(): moves every message of the named threads
     /// back where it came from.
     void untrashThreads(const QStringList &threadIds);
+
+    /// Moves each selected row's message to its account's spam folder, tagging
+    /// it `spam` and recording where it came from. Delete's sibling.
+    void spamSelected();
+
+    /// The half of spamSelected() that does the work, given the messages and
+    /// their paths.
+    ///
+    /// Shaped exactly like trashMessages(): paths are passed in rather than
+    /// looked up, because the thread-scoped caller has messages the MODEL has
+    /// never seen.
+    void spamMessages(const QStringList &messageIds,
+                      const QHash<QString, QString> &pathById,
+                      int messageCount,
+                      const QStringList &wholeThreadIds = {});
+
+    /// Moves every message of the named THREADS to their accounts' spam
+    /// folder.
+    ///
+    /// Asynchronous like trashThreads(), and for the same reason: the ids and
+    /// paths of an unexpanded thread's messages live only in the database, so
+    /// this asks the worker and finishes in onThreadMessagesResolved().
+    void spamThreads(const QStringList &threadIds);
 
     /// Runs the thread-scoped delete once the worker has resolved the
     /// threads to messages.

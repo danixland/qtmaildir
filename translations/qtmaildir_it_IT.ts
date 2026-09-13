@@ -293,6 +293,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>L&apos;account &apos;%1&apos; non ha un cestino configurato; aggiungere una chiave &apos;trash&apos; alla sua sezione. L&apos;eliminazione non funzionerà per questo account finché non verrà fatto.</translation>
     </message>
     <message>
+        <source>Account &apos;%1&apos; has no spam folder configured; add a &apos;spam&apos; key to its section. Mark spam will not work for this account until it does.</source>
+        <translation>L&apos;account &apos;%1&apos; non ha una cartella spam configurata; aggiungere una chiave &apos;spam&apos; alla sua sezione. Segna come spam non funzionerà per questo account finché non verrà fatto.</translation>
+    </message>
+    <message>
         <source>[compose] quote_position &apos;%1&apos; is not recognised; expected above or below. Using below.</source>
         <translation>[compose] quote_position &apos;%1&apos; non è riconosciuto; atteso above o below. Uso below.</translation>
     </message>
@@ -383,6 +387,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Trash</source>
         <translation>Cestino</translation>
+    </message>
+    <message>
+        <source>Spam</source>
+        <translation>Spam</translation>
     </message>
 </context>
 <context>
@@ -671,10 +679,6 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Segna come &amp;spam</translation>
     </message>
     <message>
-        <source>Add spam and remove inbox</source>
-        <translation>Aggiunge spam e rimuove inbox</translation>
-    </message>
-    <message>
         <source>Mark spam</source>
         <translation>Segna come spam</translation>
     </message>
@@ -745,6 +749,13 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Syncing %1...</source>
         <translation>Sincronizzazione di %1...</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n message(s) could not be marked as spam: no spam folder is configured for their account.</source>
+        <translation>
+            <numerusform>%n messaggio non è stato segnato come spam: nessuna cartella spam è configurata per il suo account.</numerusform>
+            <numerusform>%n messaggi non sono stati segnati come spam: nessuna cartella spam è configurata per il loro account.</numerusform>
+        </translation>
     </message>
     <message>
         <source>Undelete thread</source>
@@ -861,6 +872,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Aggiunge il tag unread a ogni messaggio delle conversazioni selezionate</translation>
     </message>
     <message>
+        <source>Move every message of the selected threads to the spam folder</source>
+        <translation>Sposta nella cartella spam ogni messaggio delle conversazioni selezionate</translation>
+    </message>
+    <message>
         <source>Mark every message of the selected threads as important</source>
         <translation>Segna come importante ogni messaggio delle conversazioni selezionate</translation>
     </message>
@@ -875,6 +890,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Permanently delete the selected messages</source>
         <translation>Elimina definitivamente i messaggi selezionati</translation>
+    </message>
+    <message>
+        <source>Move the selected messages to the spam folder</source>
+        <translation>Sposta nella cartella spam i messaggi selezionati</translation>
     </message>
     <message>
         <source>Edit the rules that tag mail as it arrives</source>
@@ -1307,10 +1326,6 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Move every message of the selected threads out of the trash</source>
         <translation>Sposta fuori dal cestino ogni messaggio delle conversazioni selezionate</translation>
-    </message>
-    <message>
-        <source>Add spam and remove inbox on the selected threads</source>
-        <translation>Aggiunge spam e rimuove inbox sulle conversazioni selezionate</translation>
     </message>
     <message>
         <source>&amp;Important thread</source>

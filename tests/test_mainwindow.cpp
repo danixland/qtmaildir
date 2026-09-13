@@ -148,7 +148,8 @@ public:
 
     bool build(const QString &accountKey = QString(),
                const QString &accountMaildir = QString(),
-               const QString &accountTrash = QString())
+               const QString &accountTrash = QString(),
+               const QString &accountSpam = QString())
     {
         if (!m_fixture.isValid()) {
             m_error = QStringLiteral("fixture directory invalid");
@@ -186,6 +187,11 @@ public:
                     << "maildir=" << accountMaildir << "\n";
                 if (!accountTrash.isEmpty())
                     out << "trash=" << accountTrash << "\n";
+                // Mark spam moves a file into this folder, exactly as Delete
+                // does into the trash, so a spam test needs it declared for
+                // the same reason a delete test needs `trash`.
+                if (!accountSpam.isEmpty())
+                    out << "spam=" << accountSpam << "\n";
                 // The fixture's folders are lowercase, unlike the Maildir
                 // convention Account::inboxFolder() defaults to. Stated rather
                 // than assumed, which is the whole point of the key: naming a
@@ -394,7 +400,7 @@ private slots:
     void importantOnAReplyReadsItsOwnStateNotItsThreads();
     void editTagsOnAReplyCountsItsOwnThreadNotTheFirstInTheList();
     void markCurrentThreadReadResolvesTheThreadThroughTheIndex();
-    void deletingAReplyRepaintsThatReplyRow();
+    void taggingAReplyRepaintsThatReplyRow();
     void deleteIsHiddenOnMailAlreadyInTheTrash();
     void aPartlyTrashedConversationIsNotJudgedOnOneMessage();
     void restoreIsHiddenOnMailThatWasNeverDeleted();
@@ -508,6 +514,12 @@ private slots:
     void restoringFromTheTrashViewRefreshesTheList();
     void theRefreshAfterARestoreLeavesUndoIntact();
     void deletingOutsideTheTrashViewLeavesTheRowInPlace();
+
+    // Mark spam is Delete's sibling: it moves the file into the account's spam
+    // folder rather than only tagging it.
+    void spamMovesTheMessageToTheSpamFolder();
+    void undoOfMarkingSpamReturnsTheFileAndDropsBothTags();
+    void aMessageInTheSpamFolderIsNotInTheTrash();
 
     // ComposeWindow, item 123. These need a window but no worker: the composer
     // never touches NotmuchWorker, it reads its context from the value struct
@@ -5227,13 +5239,15 @@ void TestMainWindow::markCurrentThreadReadResolvesTheThreadThroughTheIndex()
              QStringLiteral("t2"));
 }
 
-void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
+void TestMainWindow::taggingAReplyRepaintsThatReplyRow()
 {
-    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
-    // an account with a configured trash folder and a worker to do the move;
-    // this bare window has neither, and Delete correctly refuses. What is
-    // under test here is unchanged by that: `spam` is the other message-scoped
-    // tag-only action, and it paints the same doomed state.
+    // `flag`, not `delete` and not `spam`. Since item 103 Delete MOVES the
+    // file, and `spam` now does too, neither needs only a tag write; this bare
+    // window has no worker and no configured folders, and both correctly
+    // refuse. `flag` is the remaining message-scoped tag-only action, and what
+    // is under test is unchanged by that: the action reaches
+    // applyMessageTagChange on the reply's OWN row.
+    //
     // The user's report, at the gesture level: "I'm hitting delete on a reply
     // to a thread, I see the edits counter increasing but I have no feedback
     // if that message is being deleted." The model-level test proves
@@ -5246,7 +5260,7 @@ void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *action = window.findChild<QAction *>(QStringLiteral("spam"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY(action);
 
     const QModelIndex reply =
@@ -5255,24 +5269,21 @@ void TestMainWindow::deletingAReplyRepaintsThatReplyRow()
 
     // Nothing to see before the gesture, so the assertion after it means
     // something.
-    QVERIFY(!model->messageAt(reply).isSpam());
-    const QVariant before = model->data(reply, Qt::BackgroundRole);
+    QVERIFY(!model->messageAt(reply).isFlagged());
 
     QSignalSpy spy(model, &QAbstractItemModel::dataChanged);
     action->trigger();
 
-    QVERIFY2(model->messageAt(reply).isSpam(),
-             "Delete on a reply left the reply's own row unchanged, so the "
+    QVERIFY2(model->messageAt(reply).isFlagged(),
+             "the action on a reply left the reply's own row unchanged, so the "
              "pending count moved and the user saw nothing");
     QVERIFY2(spy.count() >= 1, "no repaint was requested for the reply's row");
-    QVERIFY2(model->data(reply, Qt::BackgroundRole) != before,
-             "the deleted reply paints exactly as it did before");
 
     // The THREAD row must not follow: it stands for the whole conversation,
-    // and one deleted reply does not doom it.
+    // and one changed reply does not change the conversation.
     const QModelIndex threadRow = reply.parent();
-    QVERIFY2(!model->threadFor(threadRow).isSpam(),
-             "deleting one reply marked its whole thread deleted");
+    QVERIFY2(!model->threadFor(threadRow).isFlagged(),
+             "changing one reply marked its whole thread flagged");
 }
 
 /// A window whose one account owns `acct/`, with its trash at `acct/trash`.
@@ -5289,6 +5300,7 @@ static Config configWithTrash(QTemporaryDir &dir)
         out << "[account.acct]\n"
             << "maildir = acct\n"
             << "trash = trash\n"
+            << "spam = spam\n"
             << "inbox = inbox\n";
     }
     Config config;
@@ -5890,11 +5902,11 @@ void TestMainWindow::toggleUnreadOnAReplyRepaintsItInBothDirections()
 
 void TestMainWindow::taggingTheOpenReplyUpdatesTheMessagePaneStrip()
 {
-    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
-    // an account with a configured trash folder and a worker to do the move;
-    // this bare window has neither, and Delete correctly refuses. What is
-    // under test here is unchanged by that: `spam` is the other message-scoped
-    // tag-only action, and it paints the same doomed state.
+    // `flag`, not `delete` and not `spam`. Since item 103 Delete MOVES the
+    // file, and `spam` now does too, neither is a tag-only action; this bare
+    // window has no worker and no configured folders, and both correctly
+    // refuse. `flag` is the remaining message-scoped tag-only action, and it
+    // exercises the same sendMessageTagChange() strip refresh.
     // The user's report: "the right pane chips are not [repainted], for it to
     // sync I have to change message and go back to the edited one".
     //
@@ -5921,7 +5933,7 @@ void TestMainWindow::taggingTheOpenReplyUpdatesTheMessagePaneStrip()
     const auto stripTags = [strip]() {
         return strip->visibleTags() + strip->hiddenTags();
     };
-    auto *action = window.findChild<QAction *>(QStringLiteral("spam"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY(action);
 
     // A tag the strip will actually draw. Account tags are filtered out by the
@@ -5936,11 +5948,11 @@ void TestMainWindow::taggingTheOpenReplyUpdatesTheMessagePaneStrip()
     QVERIFY2(stripTags().contains(QStringLiteral("todo")),
              "the strip does not show the selected reply's tags, so this test "
              "cannot tell a missing refresh from a strip that never had them");
-    QVERIFY(!stripTags().contains(QStringLiteral("spam")));
+    QVERIFY(!stripTags().contains(QStringLiteral("flagged")));
 
     action->trigger();
 
-    QVERIFY2(stripTags().contains(QStringLiteral("spam")),
+    QVERIFY2(stripTags().contains(QStringLiteral("flagged")),
              "the message pane's chips still describe the reply as it was "
              "before the edit; the user has to select away and back to see it");
 }
@@ -6021,11 +6033,11 @@ void TestMainWindow::taggingAnUnrelatedReplyLeavesTheStripAlone()
 
 void TestMainWindow::aHeldMessageEditIsSentWhenTheSyncEnds()
 {
-    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
-    // an account with a configured trash folder and a worker to do the move;
-    // this bare window has neither, and Delete correctly refuses. What is
-    // under test here is unchanged by that: `spam` is the other message-scoped
-    // tag-only action, and it paints the same doomed state.
+    // `flag`, not `delete` and not `spam`. Since item 103 Delete MOVES the
+    // file, and `spam` now does too, neither is a tag-only action; this bare
+    // window has no worker and no configured folders, and both correctly
+    // refuse. `flag` is the remaining message-scoped tag-only action, and the
+    // held-edit path it exercises is the same for every tag write.
     // Found by reading while fixing the strip refresh, not reported.
     //
     // flushHeldEdits() looped over edit.threadIds and called
@@ -6041,7 +6053,7 @@ void TestMainWindow::aHeldMessageEditIsSentWhenTheSyncEnds()
     QVERIFY(model);
     auto *view = window.findChild<QTreeView *>();
     QVERIFY(view);
-    auto *action = window.findChild<QAction *>(QStringLiteral("spam"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY(action);
 
     const QModelIndex reply =
@@ -6065,7 +6077,7 @@ void TestMainWindow::aHeldMessageEditIsSentWhenTheSyncEnds()
              "written");
 
     // Sent for the MESSAGE, not escalated to its thread. Losing the scope on
-    // the way out of the hold would delete every message in the thread.
+    // the way out of the hold would tag every message in the thread.
     QVERIFY2(window.pendingMessageIdsForTesting().contains(
                  QStringLiteral("m1@example.org")),
              "the held edit was not sent with its message scope");
@@ -6076,7 +6088,7 @@ void TestMainWindow::aHeldMessageEditIsSentWhenTheSyncEnds()
     // And the row still shows it: the flush takes the optimistic update back
     // before re-sending, so a bug there leaves the row wrong in the other
     // direction.
-    QVERIFY2(model->messageAt(reply).isSpam(),
+    QVERIFY2(model->messageAt(reply).isFlagged(),
              "sending the held edit lost the tag from the reply's row");
 }
 
@@ -6089,10 +6101,10 @@ void TestMainWindow::anActionOnAConversationRowTakesTheConversation()
     // with replies is now the conversation, and a row without them is still
     // its message.
     //
-    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
-    // an account with a configured trash folder and a worker to do the move;
-    // this bare window has neither. `spam` is the other tag-only action and
-    // resolves its scope through the same tagSelected().
+    // `flag`, not `delete` and not `spam`. Since item 103 Delete MOVES the
+    // file, and `spam` now does too, neither is tag-only any more; this bare
+    // window has no worker and no configured folders. `flag` is the remaining
+    // tag-only action and resolves its scope through the same tagSelected().
     const Config config;
     MainWindow window(config);
 
@@ -6109,12 +6121,12 @@ void TestMainWindow::anActionOnAConversationRowTakesTheConversation()
     one.totalCount = 1;
     model->appendBatch({ many, one });
 
-    auto *spam = window.findChild<QAction *>(QStringLiteral("spam"));
-    QVERIFY(spam);
+    auto *flag = window.findChild<QAction *>(QStringLiteral("flag"));
+    QVERIFY(flag);
 
     selectThreadRow(view, 0);
     QApplication::processEvents();
-    spam->trigger();
+    flag->trigger();
 
     QCOMPARE(window.pendingThreadIdsForTesting(),
              QStringList{ QStringLiteral("t1") });
@@ -6126,7 +6138,7 @@ void TestMainWindow::anActionOnAConversationRowTakesTheConversation()
     // than a blanket escalation: a thread of one is still its message.
     selectThreadRow(view, 1);
     QApplication::processEvents();
-    spam->trigger();
+    flag->trigger();
 
     QCOMPARE(window.pendingMessageIdsForTesting(),
              QStringList{ QStringLiteral("t2-first@example.org") });
@@ -6407,11 +6419,11 @@ void TestMainWindow::autoMarkReadArmsForAReplyToo()
 
 void TestMainWindow::taggingTheOpenRootMessageKeepsTheStripPopulated()
 {
-    // `spam`, not `delete`. Since item 103 Delete MOVES the file, so it needs
-    // an account with a configured trash folder and a worker to do the move;
-    // this bare window has neither, and Delete correctly refuses. What is
-    // under test here is unchanged by that: `spam` is the other message-scoped
-    // tag-only action, and it paints the same doomed state.
+    // `flag`, not `delete` and not `spam`. Since item 103 Delete MOVES the
+    // file, and `spam` now does too, neither is a tag-only action; this bare
+    // window has no worker and no configured folders, and both correctly
+    // refuse. `flag` is the remaining message-scoped tag-only action and
+    // exercises the same strip refresh.
     // The user, 2026-08-16: "right pane loses the chip row when repainting, it
     // simply disappears".
     //
@@ -6457,7 +6469,7 @@ void TestMainWindow::taggingTheOpenRootMessageKeepsTheStripPopulated()
     QVERIFY2(stripTags().contains(QStringLiteral("todo")),
              "the strip never showed the selected thread's tags");
 
-    auto *action = window.findChild<QAction *>(QStringLiteral("spam"));
+    auto *action = window.findChild<QAction *>(QStringLiteral("flag"));
     QVERIFY(action);
     action->trigger();
 
@@ -6467,7 +6479,7 @@ void TestMainWindow::taggingTheOpenRootMessageKeepsTheStripPopulated()
              "and set the strip to the resulting empty tag list");
     QVERIFY2(stripTags().contains(QStringLiteral("todo")),
              "the strip lost the tag the message still carries");
-    QVERIFY2(stripTags().contains(QStringLiteral("spam")),
+    QVERIFY2(stripTags().contains(QStringLiteral("flagged")),
              "the strip did not pick up the tag just written");
 }
 
@@ -11946,6 +11958,158 @@ void TestMainWindow::deleteMovesTheMessageToTrash()
     queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
     queryEdit->returnPressed();
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::spamMovesTheMessageToTheSpamFolder()
+{
+    // Mark spam is Delete's sibling: it MOVES the file into the account's spam
+    // folder, tagging it `spam` and recording `moved-from:inbox`. Before this
+    // item it only added a tag, so spam mail sat in the inbox for good.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("spam1@example.org"),
+        QStringLiteral("Spam me"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash"), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString inbox = root + QStringLiteral("/acct/inbox/new");
+    const QString stem = QStringLiteral("spam1.example.org");
+    QVERIFY(folderHasMessageFile(inbox, stem));
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("spam"))->trigger();
+
+    // The filesystem half. cur/, never new/: a file in new/ is re-announced as
+    // fresh mail by every reader of the Maildir.
+    const QString spam = root + QStringLiteral("/acct/Spam/cur");
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(spam, stem), 15000);
+    QVERIFY2(!folderHasMessageFile(inbox, stem),
+             "the file is in the spam folder and still in the inbox");
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
+                                   stem),
+             "the file is in the spam folder and still in the inbox");
+
+    // The tags land only once the worker confirms the move, so they are waited
+    // for separately. `unread` goes with it, exactly as Delete strips it: a
+    // decision about the message must not leave the unread count including it.
+    const QString cfg = backed.fixture().configPath();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:spam1@example.org and tag:spam "
+                                         "and tag:\"moved-from:inbox\" and "
+                                         "not tag:unread")) == 1,
+        15000);
+}
+
+void TestMainWindow::undoOfMarkingSpamReturnsTheFileAndDropsBothTags()
+{
+    // Undo is this project's stand-in for a confirmation dialog, so a move
+    // into the spam folder that cannot be undone is one with no safety net.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("spamundo@example.org"),
+        QStringLiteral("Undo my spam"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash"), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("spamundo.example.org");
+    const QString spam = root + QStringLiteral("/acct/Spam/cur");
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("spam"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(spam, stem), 15000);
+
+    // The command reaches the stack only once the worker CONFIRMS the move, and
+    // the file appearing is that move's rename, which lands a moment earlier.
+    // Undo before the push is a no-op, and the assertion below would then blame
+    // the move-back for a race in the test.
+    QTRY_VERIFY_WITH_TIMEOUT(window.undoDepthForTesting() >= 1, 15000);
+
+    window.findChild<QAction *>(QStringLiteral("undo"))->trigger();
+
+    // Back in its ORIGIN folder, not guessed. A move-back to a hardcoded inbox
+    // would pass a laxer assertion than this one.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    QVERIFY2(!folderHasMessageFile(spam, stem),
+             "undo returned the file and left a copy in the spam folder");
+
+    // Both tags gone, asked of the database: a `moved-from:` left behind makes
+    // Restore offer to move a message that is already home. Waited separately,
+    // since the undo's tag writes land after its rename.
+    const QString cfg = backed.fixture().configPath();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:spamundo@example.org and "
+                                         "(tag:spam or "
+                                         "tag:\"moved-from:inbox\")")) == 0,
+        15000);
+    // The guard the assertion above needs: a message that vanished would
+    // satisfy it too.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:spamundo@example.org")), 1);
+}
+
+void TestMainWindow::aMessageInTheSpamFolderIsNotInTheTrash()
+{
+    // The trash predicate must answer for the TRASH folder only. `spam` is a
+    // different folder, so mail in it is offered Delete like any other mail
+    // and never Restore.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const Config config = configWithTrash(dir);
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+
+    model->appendBatch({
+        threadAtPath(QStringLiteral("t1"),
+                     QStringLiteral("acct/trash/cur/1:2,S")),
+        threadAtPath(QStringLiteral("t2"),
+                     QStringLiteral("acct/spam/cur/2:2,S")),
+    });
+
+    view->setCurrentIndex(model->index(0, 0, {}));
+    QVERIFY2(window.everySelectedRowIsInATrashFolderForTesting(),
+             "the predicate does not recognise mail in the trash, so it "
+             "cannot tell the spam case apart");
+
+    view->setCurrentIndex(model->index(1, 0, {}));
+    QVERIFY2(!window.everySelectedRowIsInATrashFolderForTesting(),
+             "mail in the spam folder is judged to be in the trash");
 }
 
 void TestMainWindow::deleteRecordsWhereTheMessageCameFrom()

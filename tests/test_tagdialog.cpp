@@ -176,14 +176,14 @@ void TestTagDialog::aTagWithASpaceCanStillBeRemoved()
     // they can see and cannot get rid of.
     //
     // Reached by a real Maildir: a folder named "Inbox/SlackBuilds users"
-    // produced `deleted-from:Inbox/SlackBuilds users`, and the one dialog that
+    // produced `moved-from:Inbox/SlackBuilds users`, and the one dialog that
     // could have cleared it refused the only text that names it.
     //
     // Only the TYPED route was blocked. Unchecking appends to the removal list
     // after validation has run, so it worked throughout; that asymmetry is why
     // both routes are asserted here rather than just the one that failed.
     const QString spaced =
-        QStringLiteral("deleted-from:Inbox/SlackBuilds users");
+        QStringLiteral("moved-from:Inbox/SlackBuilds users");
     QHash<QString, int> current;
     current.insert(spaced, 1);
 

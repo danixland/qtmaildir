@@ -109,7 +109,7 @@ struct Account
     /// The account's inbox folder, relative to maildir. Optional.
     ///
     /// Only Restore reads it, as the destination for a message that carries no
-    /// `deleted-from:` origin, which is what mail trashed by another client
+    /// `moved-from:` origin, which is what mail trashed by another client
     /// looks like. Defaults to "Inbox", the Maildir convention and mbsync's
     /// own default.
     ///

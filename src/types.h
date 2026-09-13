@@ -23,6 +23,11 @@
 #include <QString>
 #include <QStringList>
 
+/// Prefix of the origin tag a move writes. One origin tag per message,
+/// overwritten on each move, so a reader cannot be handed two and forced to
+/// pick one silently. Not translated, not user-facing.
+inline constexpr auto kOriginTagPrefix = "moved-from:";
+
 struct ThreadSummary
 {
     QString threadId;

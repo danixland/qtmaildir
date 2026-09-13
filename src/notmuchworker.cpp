@@ -36,6 +36,7 @@
 #include <QSet>
 
 #include <cstdlib>
+#include <utility>
 
 #include "maildirname.h"
 #include "mimeparser.h"
@@ -1122,16 +1123,39 @@ void NotmuchWorker::applyTags(const TagChange &change)
         // write, so the only way to know is to look first.
         const QStringList before = tagsOf(message.get());
 
+        // One origin tag ever: writing a `moved-from:` tag strips any OTHER
+        // tag with that prefix the message still carries, so a message that
+        // travelled inbox -> spam -> trash ends with exactly one origin and
+        // Restore has one answer. Without this the reader's first-match
+        // break() picks silently.
+        QStringList strippedOrigins;
+        const bool writingOrigin =
+            std::any_of(change.added.cbegin(), change.added.cend(),
+                        [](const QString &t) {
+                            return t.startsWith(QLatin1String(kOriginTagPrefix));
+                        });
+        if (writingOrigin) {
+            for (const QString &tag : std::as_const(before)) {
+                if (tag.startsWith(QLatin1String(kOriginTagPrefix))
+                    && !change.added.contains(tag)) {
+                    strippedOrigins.append(tag);
+                }
+            }
+        }
+
         bool moves = false;
         for (const QString &tag : change.removed)
             moves = moves || before.contains(tag);
         for (const QString &tag : change.added)
             moves = moves || !before.contains(tag);
+        moves = moves || !strippedOrigins.isEmpty();
         if (moves)
             changedIds.append(id);
 
         notmuch_message_freeze(message.get());
         for (const QString &tag : change.removed)
+            notmuch_message_remove_tag(message.get(), tag.toUtf8().constData());
+        for (const QString &tag : strippedOrigins)
             notmuch_message_remove_tag(message.get(), tag.toUtf8().constData());
         for (const QString &tag : change.added)
             notmuch_message_add_tag(message.get(), tag.toUtf8().constData());
@@ -1689,7 +1713,7 @@ void NotmuchWorker::resolveQuery(const QString &query,
             QDir(dbRoot).relativeFilePath(QString::fromUtf8(rawName)));
         // Joined by a TAB, not a space. A notmuch tag may absolutely contain
         // a space: a Maildir folder named "Inbox/SlackBuilds users" produces
-        // `deleted-from:Inbox/SlackBuilds users`, and splitting that on spaces
+        // `moved-from:Inbox/SlackBuilds users`, and splitting that on spaces
         // truncated the folder to "Inbox/SlackBuilds". Restore then moved the
         // messages into a folder of that name, CREATING it, so four real
         // messages ended up in a directory mbsync does not sync and the user

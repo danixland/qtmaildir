@@ -398,7 +398,7 @@ signals:
     /// order. `requestTag` is echoed back so a caller can tell which request
     /// this answers.
     /// `tags` carries each message's tags joined by a space, in the same
-    /// order. Needed because Restore reads a message's `deleted-from:` tag to
+    /// order. Needed because Restore reads a message's `moved-from:` tag to
     /// decide where to send it, and an unexpanded thread's messages have no
     /// node in the model to read tags from.
     void threadMessagesResolved(const QStringList &messageIds,

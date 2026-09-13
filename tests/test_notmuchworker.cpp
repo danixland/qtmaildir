@@ -54,6 +54,7 @@ private slots:
     void applyTagsWithNoIdsDoesNothing();
     void applyTagsReportsOnlyTheMessagesItChanged();
     void applyTagsThatChangeNothingEmitNothing();
+    void applyTagsKeepsOnlyTheNewestOriginTag();
     void queryStillWorksAfterWrite();
     void aThreadCarriesItsCardMessagesOwnTags();
 
@@ -142,8 +143,10 @@ private:
     QString fileOf(const QString &messageId,
                    const QString &configPath = QString());
 
-    /// Tags of one message, read back through a fresh worker query.
-    QStringList tagsOf(const QString &messageId);
+    /// Tags of one message, read back through a fresh worker query. Defaults to
+    /// the shared fixture; a test with its own fixture passes its own path.
+    QStringList tagsOf(const QString &messageId,
+                       const QString &configPath = QString());
     QVector<MessageRef> messagesOfThread(const QString &threadId,
                                          const QString &matchQuery = QString(),
                                          bool matchedOnly = false);
@@ -401,9 +404,11 @@ QVector<MessageRef> TestNotmuchWorker::messagesOfThread(const QString &threadId,
     return loaded.first().at(0).value<QVector<MessageRef>>();
 }
 
-QStringList TestNotmuchWorker::tagsOf(const QString &messageId)
+QStringList TestNotmuchWorker::tagsOf(const QString &messageId,
+                                      const QString &configPath)
 {
-    NotmuchWorker worker(m_fixture.configPath());
+    NotmuchWorker worker(configPath.isEmpty() ? m_fixture.configPath()
+                                              : configPath);
     QSignalSpy loaded(&worker, &NotmuchWorker::threadLoaded);
     worker.loadThread(QStringLiteral("{id:%1}").arg(messageId), QString(), 1);
     if (loaded.isEmpty())
@@ -1115,6 +1120,68 @@ void TestNotmuchWorker::applyTagsThatChangeNothingEmitNothing()
 
     QVERIFY(spy.isEmpty());
     QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+}
+
+void TestNotmuchWorker::applyTagsKeepsOnlyTheNewestOriginTag()
+{
+    // A message that travelled inbox -> spam -> trash must hold exactly ONE
+    // `moved-from:` tag, the newest, or Restore's first-match scan picks an
+    // origin arbitrarily. Its own fixture, so the tags this test leaves behind
+    // cannot move the shared one's thread counts.
+    NotmuchFixture fixture;
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("origin1@example.org"),
+                               QStringLiteral("Travelled"),
+                               QStringLiteral("Erin <erin@example.org>"),
+                               QStringLiteral("Sun, 7 Jun 2026 10:00:00 +0000"),
+                               QStringLiteral("body"), false));
+    QVERIFY(fixture.addMessage(QStringLiteral("inbox"),
+                               QStringLiteral("origin2@example.org"),
+                               QStringLiteral("Fresh"),
+                               QStringLiteral("Erin <erin@example.org>"),
+                               QStringLiteral("Sun, 7 Jun 2026 11:00:00 +0000"),
+                               QStringLiteral("body"), false));
+    QVERIFY(fixture.index());
+
+    NotmuchWorker worker(fixture.configPath());
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    // An earlier move left an origin behind.
+    worker.applyTags(TagChange{ { QStringLiteral("origin1@example.org") },
+                                { QStringLiteral("moved-from:inbox") },
+                                {},
+                                QStringLiteral("Earlier move") });
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+    QVERIFY(tagsOf(QStringLiteral("origin1@example.org"), fixture.configPath())
+                .contains(QStringLiteral("moved-from:inbox")));
+
+    // The move under test: a new origin lands while the old one is still there.
+    worker.applyTags(TagChange{
+        { QStringLiteral("origin1@example.org"),
+          QStringLiteral("origin2@example.org") },
+        { QStringLiteral("moved-from:Spam"), QStringLiteral("spam") },
+        { QStringLiteral("inbox"), QStringLiteral("unread") },
+        QStringLiteral("Mark spam") });
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.value(0).value(0).toString()));
+
+    const QStringList travelled =
+        tagsOf(QStringLiteral("origin1@example.org"), fixture.configPath());
+    QVERIFY(!travelled.contains(QStringLiteral("moved-from:inbox")));
+    QVERIFY(travelled.contains(QStringLiteral("moved-from:Spam")));
+    int origins = 0;
+    for (const QString &tag : travelled) {
+        if (tag.startsWith(QStringLiteral("moved-from:")))
+            ++origins;
+    }
+    QCOMPARE(origins, 1);
+
+    // The message that never carried an origin keeps exactly the new one, and
+    // the move still removed what a move removes.
+    const QStringList fresh =
+        tagsOf(QStringLiteral("origin2@example.org"), fixture.configPath());
+    QVERIFY(fresh.contains(QStringLiteral("moved-from:Spam")));
+    QVERIFY(fresh.contains(QStringLiteral("spam")));
+    QVERIFY(!fresh.contains(QStringLiteral("inbox")));
 }
 
 void TestNotmuchWorker::queryStillWorksAfterWrite()

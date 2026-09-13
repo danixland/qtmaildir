@@ -5969,7 +5969,7 @@ MainWindow::TagPresence MainWindow::selectionTagPresence(
             // three-message thread left the replies undeleted, so the union
             // carried no `deleted`, so a second press read the row as
             // not-deleted and deleted it AGAIN, trash-to-trash, ending with
-            // `deleted-from:inbox` and `deleted-from:Trash` at once and no way
+            // `moved-from:inbox` and `moved-from:Trash` at once and no way
             // back. Item 177 removes the case rather than the symptom: a
             // three-message row is a conversation now and is asked about its
             // conversation, above.
@@ -5979,7 +5979,7 @@ MainWindow::TagPresence MainWindow::selectionTagPresence(
             // messageById() and NOT summary.firstMessageTags, which is the
             // value the QUERY delivered and is not refreshed by an optimistic
             // update: applyMessageTagChange() writes the row's node, so after
-            // a delete the node reads `deleted, deleted-from:inbox` while the
+            // a delete the node reads `deleted, moved-from:inbox` while the
             // summary still reads `inbox, unread`. Measured, and preferring
             // the summary left this defect exactly as it was.
             tags = own.messageId.isEmpty() ? summary.firstMessageTags
@@ -6349,7 +6349,7 @@ void MainWindow::trashMessages(const QStringList &messageIds,
         // view after being thrown away: measured 2026-08-26 on the user's own
         // mail, where it was the only message ever deleted from an inbox and
         // therefore the only one that could show it. Restore does not depend
-        // on it surviving, since `deleted-from:` carries the origin.
+        // on it surviving, since `moved-from:` carries the origin.
         sendMove(it.value(), it.key(),
                  { QStringLiteral("deleted"), kOriginTagPlaceholder() },
                  { QStringLiteral("unread"), QStringLiteral("inbox") },
@@ -6362,7 +6362,7 @@ void MainWindow::trashMessages(const QStringList &messageIds,
 
 QString MainWindow::originTagFor(const QString &dbRelativeFolder) const
 {
-    // `acct/inbox` becomes `deleted-from:inbox`. The tag stores the folder
+    // `acct/inbox` becomes `moved-from:inbox`. The tag stores the folder
     // relative to the ACCOUNT, never to the database: the account prefix is
     // recomposed from the message's own path when it is read back, so storing
     // it would duplicate it and would go stale the day the user renames a
@@ -6371,7 +6371,7 @@ QString MainWindow::originTagFor(const QString &dbRelativeFolder) const
     // Shared by the two sites that need the tag, rather than derived twice.
     // They disagreed once already: onMessagesMoved() resolved a placeholder
     // from the folder the worker reported, which on a RESTORE is the trash
-    // rather than the origin, so the restore stripped `deleted-from:Trash`
+    // rather than the origin, so the restore stripped `moved-from:Trash`
     // and left the real tag in place.
     const Account account =
         accountForMessagePath(dbRelativeFolder + QLatin1Char('/'));
@@ -6382,7 +6382,7 @@ QString MainWindow::originTagFor(const QString &dbRelativeFolder) const
     }
     if (accountRelative.isEmpty())
         return QString();
-    return QStringLiteral("deleted-from:%1").arg(accountRelative);
+    return QString(kOriginTagPrefix) + accountRelative;
 }
 
 void MainWindow::trashThreads(const QStringList &threadIds)
@@ -6476,9 +6476,9 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
         return;
 
     // Restore, resolved per message: each one goes back to the folder its own
-    // `deleted-from:` tag names, so a thread whose messages were deleted from
+    // `moved-from:` tag names, so a thread whose messages were deleted from
     // different folders reassembles correctly rather than collapsing into one.
-    const QString prefix = QStringLiteral("deleted-from:");
+    const QString prefix = QString::fromLatin1(kOriginTagPrefix);
     QHash<QString, QStringList> byOrigin;
     QStringList unknown;
     for (int i = 0; i < messageIds.size(); ++i) {
@@ -6592,7 +6592,7 @@ void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
     if (messageIds.size() != paths.size() || messageIds.size() != tags.size())
         return;
 
-    const QString prefix = QStringLiteral("deleted-from:");
+    const QString prefix = QString::fromLatin1(kOriginTagPrefix);
     QHash<QString, QStringList> byOrigin;
     QHash<QString, QStringList> byInbox;
     QStringList stranded;
@@ -6652,7 +6652,7 @@ void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
         // and is out of scope here.
         //
         // The destination FOLDER, taken from the key rather than from
-        // `origin` above: that is the finished TAG, `deleted-from:Inbox`,
+        // `origin` above: that is the finished TAG, `moved-from:Inbox`,
         // which never equals `Inbox` however the account spells it. The
         // comparison was therefore always false and the `inbox` tag never came
         // back, so a restored message sat in the inbox folder invisible to the
@@ -6900,7 +6900,7 @@ void MainWindow::restoreSelected(bool fallbackToInbox)
     // Where each message came from, read back off its own tag. This is what
     // the tag exists for: the file has moved, so nothing on disk and nothing
     // in notmuch still records the original folder.
-    const QString prefix = QStringLiteral("deleted-from:");
+    const QString prefix = QString::fromLatin1(kOriginTagPrefix);
     QHash<QString, QStringList> byOrigin;
     QStringList unknown;
     for (const QString &messageId : scope.messageIds) {
@@ -6986,8 +6986,8 @@ void MainWindow::restoreSelected(bool fallbackToInbox)
         // onMessagesMoved() resolves the placeholder from the origin the
         // WORKER reports, which is where the message is coming FROM. On a
         // delete that is the inbox and correct; on a restore it is the trash,
-        // so the placeholder resolved to `deleted-from:Trash` and asked to
-        // remove a tag that never existed, while the real `deleted-from:inbox`
+        // so the placeholder resolved to `moved-from:Trash` and asked to
+        // remove a tag that never existed, while the real `moved-from:inbox`
         // was never named. The message came home still claiming to have been
         // deleted from somewhere, which then made Restore offer to move a
         // message that was already back.
@@ -7102,7 +7102,7 @@ void MainWindow::sendMove(const QStringList &messageIds,
     // account before the first confirmation arrives both name `acct/Trash`,
     // so the second insert overwrote the first and the second confirmation
     // took an empty PendingMove. That file landed in the trash carrying
-    // neither `deleted` nor `deleted-from:`, which makes it unrestorable and
+    // neither `deleted` nor `moved-from:`, which makes it unrestorable and
     // invisible to a `tag:deleted` query. The worker handles one move at a
     // time on its own thread and emits in the order it was asked, so a plain
     // FIFO matches confirmations to requests without needing a key at all.
@@ -7279,7 +7279,7 @@ void MainWindow::onMessagesMoved(const QMap<QString, QString> &originByMessageId
         return;
 
     // The origin differs per message, so the tags do too: two messages deleted
-    // from different folders get different `deleted-from:` tags out of one
+    // from different folders get different `moved-from:` tags out of one
     // gesture. Grouped by the resolved tag list so identical ones still travel
     // as a single write.
     QHash<QString, QStringList> byOrigin;
@@ -7325,7 +7325,7 @@ void MainWindow::onMessagesMoved(const QMap<QString, QString> &originByMessageId
         // It used to be handed pending.add straight, which still holds the
         // unresolved placeholder: undo then asked to remove a tag by that
         // literal name, which no message carries, so the removal was a silent
-        // no-op and `deleted-from:inbox` survived the undo. The file came home
+        // no-op and `moved-from:inbox` survived the undo. The file came home
         // still claiming to have been deleted from somewhere. Same defect as
         // the one the second-Delete path had, reached through Ctrl+Z instead.
         //

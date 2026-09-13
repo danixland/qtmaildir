@@ -1187,7 +1187,7 @@ private:
     /// failed, which is the half-done state item 103 exists to remove.
     ///
     /// `add` may contain the placeholder kOriginTagPlaceholder, which
-    /// onMessagesMoved() replaces with `deleted-from:<origin>` per message.
+    /// onMessagesMoved() replaces with `moved-from:<origin>` per message.
     /// The origin is not known until the worker reports it, and it differs per
     /// message in a multi-row selection.
     /// `fromUndo` marks a move the undo stack itself started, which must NOT
@@ -1241,7 +1241,7 @@ private:
                                   const QString &requestTag);
 
     /// The inverse: moves each selected row's message back to the folder its
-    /// `deleted-from:` tag names, stripping both tags.
+    /// `moved-from:` tag names, stripping both tags.
     ///
     /// `fallbackToInbox` decides what happens to a message with NO origin tag,
     /// and the two callers want opposite things. From the trash view the
@@ -1320,7 +1320,7 @@ private:
     /// in it, and such a message carries no tag of ours.
     bool isShowingTrash() const;
 
-    /// The `deleted-from:` tag naming `dbRelativeFolder`, or empty when no
+    /// The `moved-from:` tag naming `dbRelativeFolder`, or empty when no
     /// account owns it.
     ///
     /// One rule for both sites that need the tag: the delete that writes it
@@ -1381,7 +1381,7 @@ private:
     /// account before the first confirmation arrives name the same folder, so
     /// a keyed map dropped the first entry and left the second confirmation
     /// with nothing to apply. That file reached the trash carrying neither
-    /// `deleted` nor `deleted-from:`, unrestorable and invisible to a
+    /// `deleted` nor `moved-from:`, unrestorable and invisible to a
     /// `tag:deleted` query. The worker moves one batch at a time and emits in
     /// request order, so position alone matches a confirmation to its request.
     struct PendingMove {
@@ -1477,7 +1477,7 @@ private:
     friend class MessageTagCommand;
     friend class MoveCommand;
 
-    /// Stands in for `deleted-from:<origin>` between asking for a move and
+    /// Stands in for `moved-from:<origin>` between asking for a move and
     /// learning where each message actually came from. Not a tag anyone ever
     /// sees: onMessagesMoved() substitutes the real one per message before
     /// anything is written.
@@ -2061,7 +2061,7 @@ private:
 /// Undo entry for a message MOVE, which is a file rename plus a tag change.
 ///
 /// The destination is CARRIED rather than derived, and that is the whole
-/// reason `deleted-from:` exists at all. A Maildir filename does not record
+/// reason `moved-from:` exists at all. A Maildir filename does not record
 /// where a message came from, and once the file has moved notmuch cannot
 /// answer either, so an undo that recomputed the origin would have nothing to
 /// recompute it from. Each message carries its own, since one selection can

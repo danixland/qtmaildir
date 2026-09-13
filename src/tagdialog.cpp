@@ -276,7 +276,7 @@ void TagDialog::accept()
     // troublesome tag being CREATED; a tag that already exists is a fact, and
     // refusing to remove it because it breaks a rule leaves the user with a
     // tag they can see, cannot type, and cannot get rid of. That happened with
-    // `deleted-from:Inbox/SlackBuilds users`: an origin tag naming a Maildir
+    // `moved-from:Inbox/SlackBuilds users`: an origin tag naming a Maildir
     // folder whose name contains a space, rejected by the space rule, so the
     // one dialog that could have cleared it refused the only text that names
     // it. Whether such a tag SHOULD exist is a separate question from whether

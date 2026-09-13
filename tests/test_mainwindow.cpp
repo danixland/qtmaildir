@@ -11981,7 +11981,7 @@ void TestMainWindow::deleteRecordsWhereTheMessageCameFrom()
     // would report the tag whether or not the write ever landed.
     // Re-queried by id and asserted on the TAG LIST the database returns.
     //
-    // Not with `tag:"deleted-from:inbox"` in the query: notmuch's parser does
+    // Not with `tag:"moved-from:inbox"` in the query: notmuch's parser does
     // not match a quoted tag containing a colon that way, so such a query
     // returns nothing against a perfectly tagged message and reads as the
     // feature being broken. Asking for the message and inspecting its tags
@@ -11998,7 +11998,7 @@ void TestMainWindow::deleteRecordsWhereTheMessageCameFrom()
         QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
         const QStringList tags = model->threadAt(0).tags;
         tagged = tags.contains(QStringLiteral("deleted"))
-                 && tags.contains(QStringLiteral("deleted-from:inbox"));
+                 && tags.contains(QStringLiteral("moved-from:inbox"));
         if (!tagged)
             QTest::qWait(200);
     }
@@ -12017,8 +12017,8 @@ void TestMainWindow::deletingTwiceLeavesNoOriginTagBehind()
     // onMessagesMoved() resolved the origin placeholder from the folder the
     // WORKER reported, which is where the message came FROM. On a delete that
     // is the inbox and correct. On a restore it is the TRASH, so the restore
-    // asked to remove `deleted-from:Trash`, a tag that had never been written,
-    // while the real `deleted-from:inbox` was never named and stayed on the
+    // asked to remove `moved-from:Trash`, a tag that had never been written,
+    // while the real `moved-from:inbox` was never named and stayed on the
     // message. It came home still claiming to have been deleted from
     // somewhere, which makes Restore offer to move a message already at home.
     //
@@ -12066,7 +12066,7 @@ void TestMainWindow::deletingTwiceLeavesNoOriginTagBehind()
     QTRY_VERIFY_WITH_TIMEOUT(
         notmuchCount(backed.fixture().configPath(),
                      QStringLiteral("id:twice@example.org and "
-                                    "tag:\"deleted-from:inbox\"")) == 1,
+                                    "tag:\"moved-from:inbox\"")) == 1,
         15000);
 
     // Second press on the same message, which restores it.
@@ -12096,11 +12096,11 @@ void TestMainWindow::deletingTwiceLeavesNoOriginTagBehind()
             == 0,
         15000);
 
-    // BOTH tags gone, asked of the database. `deleted-from:` left behind is
+    // BOTH tags gone, asked of the database. `moved-from:` left behind is
     // the defect this covers, and it survived a green suite before.
     // The origin tag specifically, asserted on its OWN query.
     //
-    // A combined `tag:deleted or tag:"deleted-from:inbox"` query is NOT
+    // A combined `tag:deleted or tag:"moved-from:inbox"` query is NOT
     // equivalent and passed against the bug: `deleted` is removed correctly
     // and promptly, so the disjunction went to zero on that term alone while
     // the origin tag was still on the message. Split, so the assertion can
@@ -12120,18 +12120,18 @@ void TestMainWindow::deletingTwiceLeavesNoOriginTagBehind()
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:twice@example.org")), 1);
 
     // The origin tag is gone. This is the defect: it used to survive the
-    // restore, because the placeholder resolved to `deleted-from:Trash`, the
+    // restore, because the placeholder resolved to `moved-from:Trash`, the
     // folder the message was coming FROM, and stripped a tag that had never
     // been written.
     QCOMPARE(notmuchCount(cfg,
                           QStringLiteral("id:twice@example.org and "
-                                         "tag:\"deleted-from:inbox\"")),
+                                         "tag:\"moved-from:inbox\"")),
              0);
 
     // And no tag naming the trash was invented in its place.
     QCOMPARE(notmuchCount(cfg,
                           QStringLiteral("id:twice@example.org and "
-                                         "tag:\"deleted-from:Trash\"")),
+                                         "tag:\"moved-from:Trash\"")),
              0);
 
     // `deleted` itself, so a fix that dropped this one instead cannot hide.
@@ -12151,7 +12151,7 @@ void TestMainWindow::undoOfADeleteRemovesTheOriginTagToo()
     // placeholder for the tags it wrote to the database, but handed the undo
     // command the raw list. Undo then asked to remove a tag by the
     // placeholder's literal name, which no message carries, so the removal
-    // was a silent no-op and `deleted-from:inbox` survived. The message came
+    // was a silent no-op and `moved-from:inbox` survived. The message came
     // home still claiming to have been deleted from somewhere, which makes
     // Restore offer to move a message that is already at home.
     //
@@ -12193,7 +12193,7 @@ void TestMainWindow::undoOfADeleteRemovesTheOriginTagToo()
     // about it being REMOVED rather than never having existed.
     QTRY_VERIFY_WITH_TIMEOUT(
         notmuchCount(cfg, QStringLiteral("id:undotag@example.org and "
-                                         "tag:\"deleted-from:inbox\"")) == 1,
+                                         "tag:\"moved-from:inbox\"")) == 1,
         15000);
 
     window.findChild<QAction *>(QStringLiteral("undo"))->trigger();
@@ -12217,11 +12217,11 @@ void TestMainWindow::undoOfADeleteRemovesTheOriginTagToo()
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:undotag@example.org")), 1);
     QCOMPARE(notmuchCount(cfg,
                           QStringLiteral("id:undotag@example.org and "
-                                         "tag:\"deleted-from:inbox\"")),
+                                         "tag:\"moved-from:inbox\"")),
              0);
     QCOMPARE(notmuchCount(cfg,
                           QStringLiteral("id:undotag@example.org and "
-                                         "tag:\"deleted-from:Trash\"")),
+                                         "tag:\"moved-from:Trash\"")),
              0);
 }
 
@@ -12237,8 +12237,8 @@ void TestMainWindow::deletingALoneMessageRemovesItFromTheInboxAndUndoReturnsIt()
     // from the mismatch: the toggle asked a thread ROW about its thread's
     // tags, which notmuch gives as a UNION, so deleting the root left the
     // union carrying no `deleted` and a second press ran Delete AGAIN,
-    // trash-to-trash, producing `deleted-from:inbox` and
-    // `deleted-from:Trash` at once with no way back. Item 177 dissolves the
+    // trash-to-trash, producing `moved-from:inbox` and
+    // `moved-from:Trash` at once with no way back. Item 177 dissolves the
     // mismatch rather than patching it: the row and the write now agree about
     // what they are for. The trash-to-trash assertions stay, because they are
     // what proves a delete cannot run twice on one message.
@@ -12286,7 +12286,7 @@ void TestMainWindow::deletingALoneMessageRemovesItFromTheInboxAndUndoReturnsIt()
     QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(trash, stem), 15000);
     QTRY_VERIFY_WITH_TIMEOUT(
         notmuchCount(cfg, QStringLiteral("id:tlone@example.org and "
-                                         "tag:\"deleted-from:inbox\"")) == 1,
+                                         "tag:\"moved-from:inbox\"")) == 1,
         15000);
 
     // There is no second press to make any more, and that is the point.
@@ -12330,12 +12330,12 @@ void TestMainWindow::deletingALoneMessageRemovesItFromTheInboxAndUndoReturnsIt()
     // query bar passes against any state of the database.
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:tlone@example.org")), 1);
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:tlone@example.org and "
-                                              "tag:\"deleted-from:inbox\"")),
+                                              "tag:\"moved-from:inbox\"")),
              0);
     // The tag a re-delete would invent. Its presence is the signature of a
     // trash-to-trash move rather than a variation on the origin-tag defects.
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:tlone@example.org and "
-                                              "tag:\"deleted-from:Trash\"")),
+                                              "tag:\"moved-from:Trash\"")),
              0);
     QVERIFY2(!folderHasMessageFile(trash, stem),
              "the message was left in the trash");
@@ -12349,7 +12349,7 @@ void TestMainWindow::deleteThreadMovesEveryMessageAndRepaintsTheRootCard()
     // when Delete became a move, so a whole conversation stayed in the inbox
     // wearing a `deleted` chip, which is the half-deleted state item 103
     // existed to remove. It moves every message now, each carrying its own
-    // `deleted-from:` origin so a thread spanning folders reassembles.
+    // `moved-from:` origin so a thread spanning folders reassembles.
     //
     // And the ROOT card did not repaint until it was clicked, while its
     // replies did. A thread-scoped move updated each message's node;
@@ -12418,7 +12418,7 @@ void TestMainWindow::deleteThreadMovesEveryMessageAndRepaintsTheRootCard()
     // Each with its own origin, which is what makes the move reversible.
     QCOMPARE(notmuchCount(cfg, thread
                                    + QStringLiteral(" and "
-                                                    "tag:\"deleted-from:inbox\"")),
+                                                    "tag:\"moved-from:inbox\"")),
              3);
 
     // The ROOT CARD's own state, which is what the user watches. Read from the
@@ -12441,7 +12441,7 @@ void TestMainWindow::deleteThreadMovesEveryMessageAndRepaintsTheRootCard()
     QCOMPARE(notmuchCount(cfg, thread), 3);
     QCOMPARE(notmuchCount(cfg, thread
                                    + QStringLiteral(" and "
-                                                    "tag:\"deleted-from:inbox\"")),
+                                                    "tag:\"moved-from:inbox\"")),
              0);
     QVERIFY(!folderHasMessageFile(trash, QStringLiteral("dt0.example.org")));
     QVERIFY(!folderHasMessageFile(trash, QStringLiteral("dt1.example.org")));
@@ -12452,8 +12452,8 @@ void TestMainWindow::aFolderNameWithASpaceSurvivesTheRoundTrip()
 {
     // A notmuch tag MAY contain a space, and a Maildir folder name may too.
     // The worker reported each message's tags as one space-joined string, so
-    // `deleted-from:Inbox/SlackBuilds users` was split back into
-    // "deleted-from:Inbox/SlackBuilds" and "users", and Restore moved the
+    // `moved-from:Inbox/SlackBuilds users` was split back into
+    // "moved-from:Inbox/SlackBuilds" and "users", and Restore moved the
     // messages to the truncated folder, CREATING it. On the user's real
     // Maildir that put four messages into a directory mbsync does not sync,
     // beside the real folder of 808, and they read as missing.
@@ -12505,7 +12505,7 @@ void TestMainWindow::aFolderNameWithASpaceSurvivesTheRoundTrip()
     // The origin tag carries the WHOLE folder name, space included.
     QCOMPARE(notmuchCount(cfg,
                           thread
-                              + QStringLiteral(" and tag:\"deleted-from:"
+                              + QStringLiteral(" and tag:\"moved-from:"
                                                "Inbox/SlackBuilds users\"")),
              2);
 
@@ -12521,13 +12521,13 @@ void TestMainWindow::aFolderNameWithASpaceSurvivesTheRoundTrip()
     // could see, could not type, and could not remove.
     QCOMPARE(notmuchCount(cfg,
                           thread
-                              + QStringLiteral(" and tag:\"deleted-from:"
+                              + QStringLiteral(" and tag:\"moved-from:"
                                                "Inbox/SlackBuilds users\"")),
              0);
     // Nor a truncated one, which is what a space-split would have written.
     QCOMPARE(notmuchCount(cfg,
                           thread
-                              + QStringLiteral(" and tag:\"deleted-from:"
+                              + QStringLiteral(" and tag:\"moved-from:"
                                                "Inbox/SlackBuilds\"")),
              0);
 
@@ -12754,7 +12754,7 @@ void TestMainWindow::restoreReturnsAMessageToItsOriginFolder()
     // removes the race rather than papering over it with a longer timeout.
     QTRY_VERIFY_WITH_TIMEOUT(
         notmuchCount(cfg, QStringLiteral("id:ro1@example.org and "
-                                         "tag:\"deleted-from:inbox\"")) == 0,
+                                         "tag:\"moved-from:inbox\"")) == 0,
         15000);
     QTRY_VERIFY_WITH_TIMEOUT(
         notmuchCount(cfg,
@@ -12784,7 +12784,7 @@ void TestMainWindow::restoreReturnsAMessageToItsOriginFolder()
 void TestMainWindow::restoreFallsBackToInboxWithoutAnOriginTag()
 {
     // A message trashed by ANOTHER client: it sits in the trash folder and
-    // carries no `deleted-from:` tag, because nothing here put it there. The
+    // carries no `moved-from:` tag, because nothing here put it there. The
     // real Maildir has such messages, which is why the trash view is path
     // based rather than tag based.
     //
@@ -12814,7 +12814,7 @@ void TestMainWindow::restoreFallsBackToInboxWithoutAnOriginTag()
     // The guard this test needs: no origin tag, so the fallback is what is
     // under test rather than an ordinary restore.
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:foreign@example.org and "
-                                              "tag:\"deleted-from:inbox\"")),
+                                              "tag:\"moved-from:inbox\"")),
              0);
 
     queryEdit->setText(QStringLiteral("path:\"acct/Trash/**\""));
@@ -12882,10 +12882,10 @@ void TestMainWindow::undoMovesTheMessageBack()
     QVERIFY2(!folderHasMessageFile(trash, stem),
              "undo restored the file and left a copy in the trash");
 
-    // Both tags gone, asked of the database. `deleted-from:` left behind would
+    // Both tags gone, asked of the database. `moved-from:` left behind would
     // make Restore offer to move a message that is already home.
     queryEdit->setText(QStringLiteral(
-        "id:del3@example.org and (tag:deleted or tag:\"deleted-from:inbox\")"));
+        "id:del3@example.org and (tag:deleted or tag:\"moved-from:inbox\")"));
     queryEdit->returnPressed();
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 0, 15000);
     // The guard the assertion above needs: a query that matches nothing
@@ -13101,7 +13101,7 @@ void TestMainWindow::twoDeletesToOneTrashBothGetTheirTags()
     // Deletes in one account before the first confirmation arrived both named
     // `acct/Trash`: the second insert overwrote the first and the second
     // confirmation took an empty entry. That file reached the trash carrying
-    // neither `deleted` nor `deleted-from:`, which makes it unrestorable by
+    // neither `deleted` nor `moved-from:`, which makes it unrestorable by
     // Restore and invisible to a `tag:deleted` query.
     WorkerBackedWindow backed;
     QVERIFY(backed.fixture().addMessage(
@@ -13156,7 +13156,7 @@ void TestMainWindow::twoDeletesToOneTrashBothGetTheirTags()
     // the defect was a write that never happened, and the model would have
     // shown the optimistic state either way.
     queryEdit->setText(QStringLiteral(
-        "tag:deleted and tag:\"deleted-from:inbox\" and "
+        "tag:deleted and tag:\"moved-from:inbox\" and "
         "(id:two1@example.org or id:two2@example.org)"));
     queryEdit->returnPressed();
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2, 15000);
@@ -13385,7 +13385,7 @@ void TestMainWindow::aMoveThatRelocatesNothingWritesNoTag()
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:nomove@example.org and "
                                               "tag:deleted")), 0);
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:nomove@example.org and "
-                                              "tag:\"deleted-from:inbox\"")), 0);
+                                              "tag:\"moved-from:inbox\"")), 0);
 
     // And the file never left.
     QVERIFY(folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),

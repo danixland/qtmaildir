@@ -80,6 +80,14 @@ struct Account
     /// reports a missing key through the warnings path.
     QString trash;
 
+    /// The account's spam folder, relative to maildir.
+    ///
+    /// MANDATORY, unlike `sent` and `drafts`. Mark spam moves a file into this
+    /// folder, so an account without one cannot mark spam at all, and the user
+    /// chose a config error over a per-account disabled state. Config::load()
+    /// reports a missing key through the warnings path.
+    QString spam;
+
     /// The command that sends mail from this account, receiving the complete
     /// RFC822 message on stdin. Optional, and its ABSENCE is meaningful:
     /// an account without one is receive-only by construction.
@@ -159,6 +167,13 @@ struct Account
     /// sentQuery(). The query helper still returns empty so callers compose
     /// uniformly; it is Config::load() that reports the problem.
     QString trashQuery() const;
+
+    /// Matches this account's spam folder, or empty when `spam` is unset.
+    ///
+    /// Empty is a config error rather than a legitimate state, unlike
+    /// sentQuery(). The query helper still returns empty so callers compose
+    /// uniformly; it is Config::load() that reports the problem.
+    QString spamQuery() const;
 
     /// Matches this account's inbox folder, using inboxFolder().
     QString inboxQuery() const;
@@ -407,6 +422,13 @@ public:
     /// allSentQuery() does: notmuch accepts a bare "or" without complaint and
     /// silently answers a different question.
     QString allTrashQuery() const;
+
+    /// Matches every configured account's spam, or empty when none has one.
+    ///
+    /// Joins only the NON-EMPTY spamQuery() results, for the same reason
+    /// allTrashQuery() does: notmuch accepts a bare "or" without complaint and
+    /// silently answers a different question.
+    QString allSpamQuery() const;
 
     /// Matches every configured account's drafts, or empty when none has one.
     ///

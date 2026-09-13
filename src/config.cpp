@@ -158,6 +158,11 @@ QString Account::trashQuery() const
     return folderQuery(maildir, trash);
 }
 
+QString Account::spamQuery() const
+{
+    return folderQuery(maildir, spam);
+}
+
 QString Account::inboxFolder() const
 {
     // Never empty: Restore needs a folder to name, and "Inbox" is both the
@@ -190,6 +195,11 @@ QString Config::allDraftsQuery() const
 QString Config::allTrashQuery() const
 {
     return joinAccountQueries(m_accounts, &Account::trashQuery);
+}
+
+QString Config::allSpamQuery() const
+{
+    return joinAccountQueries(m_accounts, &Account::spamQuery);
 }
 
 QString Config::defaultPath()
@@ -528,6 +538,12 @@ void Config::load(const QString &path)
         account.trash =
             settings.value(QStringLiteral("trash")).toString().trimmed();
 
+        // Mandatory, unlike sent: Mark spam moves a file into this folder, so
+        // an account without one cannot mark spam at all. Trimmed for the same
+        // reason as sent, above.
+        account.spam =
+            settings.value(QStringLiteral("spam")).toString().trimmed();
+
         // Optional, unlike trash: inboxFolder() defaults it to "Inbox", which
         // is right for any ordinary Maildir. Read so an account whose inbox is
         // named otherwise can say so, rather than having Restore create a
@@ -581,6 +597,19 @@ void Config::load(const QString &path)
             addProblem(
                 tr("Account '%1' has no trash folder configured; add a "
                    "'trash' key to its section. Delete will not work for "
+                   "this account until it does.")
+                    .arg(account.key));
+        }
+
+        // Mandatory, unlike sent: Mark spam moves a file into this folder, so
+        // an account without one cannot mark spam at all. Reported rather than
+        // silently disabled, so the user finds out from a warning rather than
+        // from a Mark spam that quietly does nothing. The account still loads;
+        // only Mark spam is unusable.
+        if (account.spam.isEmpty()) {
+            addProblem(
+                tr("Account '%1' has no spam folder configured; add a "
+                   "'spam' key to its section. Mark spam will not work for "
                    "this account until it does.")
                     .arg(account.key));
         }

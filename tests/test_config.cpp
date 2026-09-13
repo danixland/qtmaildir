@@ -120,6 +120,10 @@ private slots:
     void anAccountCarriesItsTrashFolder();
     void aBracketedTrashFolderIsQuoted();
     void anAccountWithoutATrashFolderWarns();
+    void anAccountCarriesItsSpamFolder();
+    void aBracketedSpamFolderIsQuoted();
+    void anAccountWithoutASpamFolderWarns();
+    void allSpamQueryJoinsAndSkips();
     void theDraftsFilterComposesPerAccount();
     void theDraftsFilterMatchesNothingWithoutAFolder();
     void theDraftsFilterIsFlatLikeSent();
@@ -451,7 +455,8 @@ void TestConfig::absentSyncCommandIsNoticeNotProblem()
     const QString path = writeIni(dir, QStringLiteral(
         "[account.work]\n"
         "maildir=work-mail\n"
-        "trash=Trash\n"));
+        "trash=Trash\n"
+        "spam=Spam\n"));
 
     Config config;
     config.load(path);
@@ -472,7 +477,8 @@ void TestConfig::brokenSyncCommandIsAProblem()
         "\n"
         "[account.work]\n"
         "maildir=work-mail\n"
-        "trash=Trash\n"));
+        "trash=Trash\n"
+        "spam=Spam\n"));
 
     Config config;
     config.load(path);
@@ -508,7 +514,8 @@ void TestConfig::validConfigHasNoProblems()
         "[account.work]\n"
         "maildir=work-mail\n"
         "address=user@example.org\n"
-        "trash=Trash\n"));
+        "trash=Trash\n"
+        "spam=Spam\n"));
 
     Config config;
     config.load(path);
@@ -929,7 +936,8 @@ void TestConfig::sentQueryIsEmptyWithoutTheKey()
     config.load(writeIni(dir, QStringLiteral(
         "[account.provider-c]\n"
         "maildir = provider-c\n"
-        "trash = Trash\n")));
+        "trash = Trash\n"
+        "spam = Spam\n")));
 
     QCOMPARE(config.accounts().size(), 1);
     QVERIFY(config.accounts().at(0).sentQuery().isEmpty());
@@ -1026,6 +1034,52 @@ void TestConfig::anAccountWithoutATrashFolderWarns()
     const QString joined = config.warnings().join(QLatin1Char('\n'));
     QVERIFY(joined.contains(QStringLiteral("work")));
     QVERIFY(joined.contains(QStringLiteral("trash")));
+}
+
+void TestConfig::anAccountCarriesItsSpamFolder()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\nmaildir=work\nspam=Spam\n")));
+    const Account account = config.account(QStringLiteral("work"));
+    QCOMPARE(account.spam, QStringLiteral("Spam"));
+    QCOMPARE(account.spamQuery(), QStringLiteral("path:\"work/Spam/**\""));
+}
+
+void TestConfig::aBracketedSpamFolderIsQuoted()
+{
+    Account account;
+    account.maildir = QStringLiteral("provider-a");
+    account.spam = QStringLiteral("[Provider]/Spam");
+    QCOMPARE(account.spamQuery(),
+             QStringLiteral("path:\"provider-a/[Provider]/Spam/**\""));
+}
+
+void TestConfig::anAccountWithoutASpamFolderWarns()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\nmaildir=work\n")));
+    QVERIFY(config.account(QStringLiteral("work")).isValid());
+    const QString joined = config.warnings().join(QLatin1Char('\n'));
+    QVERIFY(joined.contains(QStringLiteral("work")));
+    QVERIFY(joined.contains(QStringLiteral("spam")));
+}
+
+void TestConfig::allSpamQueryJoinsAndSkips()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\nmaildir=work\nspam=Spam\n"
+        "\n[account.personal]\nmaildir=personal\nspam=[Provider]/Spam\n"
+        "\n[account.none]\nmaildir=none\n")));
+    const QString all = config.allSpamQuery();
+    QVERIFY(all.contains(QStringLiteral("path:\"work/Spam/**\"")));
+    QVERIFY(all.contains(QStringLiteral("path:\"personal/[Provider]/Spam/**\"")));
+    QVERIFY(!all.contains(QStringLiteral("none")));
 }
 
 void TestConfig::theDraftsFilterComposesPerAccount()
@@ -1265,10 +1319,12 @@ void TestConfig::theStartupAccountIsReadAndValidated()
         "[account.work]\n"
         "maildir=work\n"
         "trash=Trash\n"
+        "spam=Spam\n"
         "\n"
         "[account.personal]\n"
         "maildir=personal\n"
-        "trash=Trash\n")));
+        "trash=Trash\n"
+        "spam=Spam\n")));
 
     QCOMPARE(config.startupAccount(), QStringLiteral("work"));
     QVERIFY(config.problems().isEmpty());
@@ -1294,7 +1350,8 @@ void TestConfig::theStartupAccountIsReadAndValidated()
         "\n"
         "[account.work]\n"
         "maildir=work\n"
-        "trash=Trash\n")));
+        "trash=Trash\n"
+        "spam=Spam\n")));
     QVERIFY2(wrong.startupAccount().isEmpty(),
              "an unknown startup account was passed through rather than "
              "falling back to All accounts");
@@ -1320,7 +1377,8 @@ void TestConfig::theStartupAccountTakesTheKeyNotTheSyncChannel()
         "[account.provider-work.mailbox]\n"
         "maildir=provider-work.mailbox\n"
         "channel=provider-workmailbox\n"
-        "trash=Trash\n")));
+        "trash=Trash\n"
+        "spam=Spam\n")));
 
     QCOMPARE(config.accounts().size(), 1);
     QCOMPARE(config.accounts().constFirst().key,
@@ -1343,7 +1401,8 @@ void TestConfig::theStartupAccountTakesTheKeyNotTheSyncChannel()
         "[account.provider-work.mailbox]\n"
         "maildir=provider-work.mailbox\n"
         "channel=provider-workmailbox\n"
-        "trash=Trash\n")));
+        "trash=Trash\n"
+        "spam=Spam\n")));
 
     QVERIFY2(byChannel.startupAccount().isEmpty(),
              "the sync channel was accepted as an account key");
@@ -1428,7 +1487,8 @@ void TestConfig::theStartupQuerySurvivesATranslatedFilterName()
         "[account.work]\n"
         "maildir=work\n"
         "sent=Sent\n"
-        "trash=Trash\n")));
+        "trash=Trash\n"
+        "spam=Spam\n")));
     QVERIFY2(!config.savedQueries().isEmpty(),
              "queries.json did not load, so the warning path is unreachable");
 
@@ -1454,7 +1514,8 @@ void TestConfig::theStartupQuerySurvivesATranslatedFilterName()
         "[account.work]\n"
         "maildir=work\n"
         "sent=Sent\n"
-        "trash=Trash\n")));
+        "trash=Trash\n"
+        "spam=Spam\n")));
     QVERIFY(!byLabel.savedQueries().isEmpty());
     QCOMPARE(byLabel.startupSavedQuery().generated, QStringLiteral("inbox"));
     QVERIFY(byLabel.problems().isEmpty());
@@ -1684,7 +1745,8 @@ void TestConfig::draftsQueryIsEmptyWithoutTheKey()
     config.load(writeIni(dir, QStringLiteral(
         "[account.provider-c]\n"
         "maildir = provider-c\n"
-        "trash = Trash\n")));
+        "trash = Trash\n"
+        "spam = Spam\n")));
 
     QCOMPARE(config.accounts().size(), 1);
     QVERIFY(config.accounts().at(0).draftsQuery().isEmpty());

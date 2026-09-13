@@ -129,6 +129,8 @@ private slots:
     void theDraftsFilterIsFlatLikeSent();
     void theTrashFilterComposesPerAccount();
     void theTrashFilterMatchesNothingWithoutAFolder();
+    void theSpamFilterComposesPerAccount();
+    void theSpamFilterMatchesNothingWithoutAFolder();
     void anAccountWithoutASendCommandIsReceiveOnly();
     void composeSettingsDefaultWhenTheSectionIsAbsent();
     void aZeroSendDelayIsHonouredRatherThanTreatedAsUnset();
@@ -1198,6 +1200,34 @@ void TestConfig::theTrashFilterMatchesNothingWithoutAFolder()
     QCOMPARE(config.resolvedQuery(trash, QString()), Config::matchNothingQuery());
 }
 
+void TestConfig::theSpamFilterComposesPerAccount()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\nmaildir=work\nspam=Spam\n"
+        "\n[account.personal]\nmaildir=personal\nspam=[Provider]/Spam\n")));
+    const SavedQuery spam = Config::builtinFilter(QStringLiteral("spam"));
+    QVERIFY(spam.isGenerated());
+    QVERIFY2(!spam.flat, "spam must be threaded, like trash");
+    const QString all = config.resolvedQuery(spam, QString());
+    QVERIFY(all.contains(QStringLiteral("path:\"work/Spam/**\"")));
+    QVERIFY(all.contains(QStringLiteral("path:\"personal/[Provider]/Spam/**\"")));
+    const QString scoped = config.resolvedQuery(spam, QStringLiteral("work"));
+    QCOMPARE(scoped, QStringLiteral("path:\"work/Spam/**\""));
+    QVERIFY(!scoped.contains(QStringLiteral("personal")));
+}
+
+void TestConfig::theSpamFilterMatchesNothingWithoutAFolder()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral(
+        "[account.work]\nmaildir=work\n")));
+    const SavedQuery spam = Config::builtinFilter(QStringLiteral("spam"));
+    QCOMPARE(config.resolvedQuery(spam, QString()), Config::matchNothingQuery());
+}
+
 void TestConfig::sentQueryComposesWithScopedQuery()
 {
     // A Sent view under one account must not show another account's sent mail.
@@ -1628,7 +1658,7 @@ void TestConfig::everyBuiltinFilterIsAKnownGenerator()
     Config config;
     const QList<SavedQuery> filters = config.builtinFilters();
 
-    QCOMPARE(filters.size(), 6);
+    QCOMPARE(filters.size(), 7);
 
     QStringList names;
     for (const SavedQuery &filter : filters) {
@@ -1651,7 +1681,8 @@ void TestConfig::everyBuiltinFilterIsAKnownGenerator()
                                   QStringLiteral("Important"),
                                   QStringLiteral("Sent"),
                                   QStringLiteral("Drafts"),
-                                  QStringLiteral("Trash") }));
+                                  QStringLiteral("Trash"),
+                                  QStringLiteral("Spam") }));
 }
 
 void TestConfig::aFilterAcrossAllAccountsIsTheUnscopedQuery()

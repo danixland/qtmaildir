@@ -11008,12 +11008,13 @@ void TestMainWindow::everyBuiltinFilterButtonCarriesAnIconAndItsText()
     });
     // A trash key too, or the Trash filter finds nothing and is skipped from
     // the row entirely (item 103), leaving no trashButton for this loop to
-    // find. Drafts behaves the same way since item 138.
+    // find. Drafts and Spam behave the same way since item 138.
     {
         QSettings s(path, QSettings::IniFormat);
         s.beginGroup(QStringLiteral("account.work"));
         s.setValue(QStringLiteral("trash"), QStringLiteral("Trash"));
         s.setValue(QStringLiteral("drafts"), QStringLiteral("Drafts"));
+        s.setValue(QStringLiteral("spam"), QStringLiteral("Spam"));
         s.endGroup();
     }
     Config config;

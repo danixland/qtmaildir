@@ -3119,6 +3119,7 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
             { QStringLiteral("sent"),    QStringLiteral("mail-folder-sent") },
             { QStringLiteral("drafts"),  QStringLiteral("document-edit") },
             { QStringLiteral("trash"),   QStringLiteral("user-trash") },
+            { QStringLiteral("spam"),    QStringLiteral("mail-mark-junk") },
         };
         button->setIcon(
             QIcon::fromTheme(filterIcons.value(filter.generated)));

@@ -778,10 +778,10 @@ Defaults, all rebindable through `[keys]`:
 | `Ctrl+Q` | `quit` | Quit |
 
 Every action in this table carries a default binding, and every one appears in
-a menu. Some actions carry none, because a chord for them would be arbitrary:
-Find stranded deleted mail, Find stranded spam, Empty trash, Empty spam, Delete
-permanently and Save message. They are reachable from the menus, and the
-shortcut reference prints them as unbound.
+a menu. Six actions carry none, because a chord for them would be arbitrary:
+Find stranded spam, Empty trash, Delete permanently, Empty spam, Edit draft and
+Save message. They are reachable from the menus, and the shortcut reference
+prints them as unbound.
 **Help > Keyboard shortcuts** lists the current bindings, generated from the
 actions themselves, so it shows your overrides rather than these defaults.
 

@@ -135,19 +135,17 @@ no longer knows the origin. Rename it once, per distinct folder, before you
 rely on either. The search term needs its OWN double quotes: the shell's
 quotes only glue the argument together, and notmuch then splits a bare
 `tag:deleted-from:My Folder` into a term and a stray word, matching nothing at
-all while looking like it worked. In a tag NAME a space is hex-encoded `%20`,
-which is how notmuch spells a space there:
+all while looking like it worked. The `+` and `-` tag arguments are a single
+token already, so the shell's quoting carries a space in the folder through to
+notmuch unchanged:
 
 ```bash
-notmuch tag +moved-from:'My%20Folder' -deleted-from:'My%20Folder' \
-  -- 'tag:"deleted-from:My Folder"'
+notmuch tag +moved-from:'<folder>' -deleted-from:'<folder>' \
+  -- 'tag:"deleted-from:<folder>"'
 ```
 
-Replace `My%20Folder` with the folder name, writing any space as `%20`, and
-`My Folder` in the quoted term with the same name keeping its spaces. A folder
-with no space needs neither `%20` nor the inner quotes, so `Inbox` is
-`+moved-from:'Inbox' ... -- 'tag:"deleted-from:Inbox"'`. Run it once per
-distinct folder.
+Run it once per distinct folder, with `<folder>` replaced everywhere by that
+folder's name.
 
 There is no compatibility branch on purpose: a reader accepting both prefixes
 would answer "first match wins" on a message holding one of each, which is the

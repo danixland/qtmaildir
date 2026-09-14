@@ -897,7 +897,7 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     </message>
     <message>
         <source>&amp;Check for stranded spam</source>
-        <translation>&amp;Cerca spam non spostato</translation>
+        <translation>Cerca spam &amp;fuori posto</translation>
     </message>
     <message>
         <source>Show mail tagged spam that is not in a spam folder</source>
@@ -913,7 +913,7 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     </message>
     <message>
         <source>Empty spam f&amp;older...</source>
-        <translation>S&amp;vuota cartella spam...</translation>
+        <translation>S&amp;gombera la cartella spam...</translation>
     </message>
     <message>
         <source>Move every message in the spam folder to the trash</source>

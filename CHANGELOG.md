@@ -28,25 +28,21 @@ point at which they are stable.
   another already held the lock. qtmaildir reads it instead of inferring the
   outcome from a line in the log. Set `status` under `[sync]` to move the file;
   the default matches what the script writes and no config change is needed.
-
-- **A Spam view, and Mark spam now moves the file.** Every account may name a
+- **A Spam view, and Mark spam now moves the file.** Every account needs a
   `spam` folder beside its `trash`, and a built-in Spam filter lists that folder
   as a threaded view the way the trash filter does. Mark spam moves the message
   into that folder and records the one it came from in a `moved-from:` tag, so
   Restore and Undo put it back where it was. Before this the action only added
   the tag and left the file in place, so a message marked spam on one machine
   did not appear in the folder on another.
-
 - **Empty Spam.** Moves every message in the account's spam folder to its trash
   in one act, scoped to the account selector like Empty trash, and asks nothing
   first: it is a move with an undo behind it, and a mutation that can be undone
   gets undo rather than a dialog.
-
 - **Find stranded spam.** Mail carrying the `spam` tag while sitting in no spam
   folder, usually because another client or an older version tagged it and left
   the file where it was, is listed by a menu entry so it can be selected and
   moved. It is the spam counterpart to Find stranded deleted mail.
-
 - **A spam button on the message pane's bar**, beside Star and Archive. It is
   drawn with a bug rather than the theme's junk glyph, and falls back to
   `mail-mark-junk` on a theme that ships no bug.
@@ -136,12 +132,22 @@ and writes `moved-from:<folder>` and nothing else. Until the old tags are
 renamed, Restore cannot find them, so such a message falls back to the
 account's inbox rather than the folder it came from, and Undo of an old delete
 no longer knows the origin. Rename it once, per distinct folder, before you
-rely on either:
+rely on either. The search term needs its OWN double quotes: the shell's
+quotes only glue the argument together, and notmuch then splits a bare
+`tag:deleted-from:My Folder` into a term and a stray word, matching nothing at
+all while looking like it worked. In a tag NAME a space is hex-encoded `%20`,
+which is how notmuch spells a space there:
 
 ```bash
-notmuch tag +moved-from:'<folder>' -deleted-from:'<folder>' \
-  -- tag:'deleted-from:<folder>'
+notmuch tag +moved-from:'My%20Folder' -deleted-from:'My%20Folder' \
+  -- 'tag:"deleted-from:My Folder"'
 ```
+
+Replace `My%20Folder` with the folder name, writing any space as `%20`, and
+`My Folder` in the quoted term with the same name keeping its spaces. A folder
+with no space needs neither `%20` nor the inner quotes, so `Inbox` is
+`+moved-from:'Inbox' ... -- 'tag:"deleted-from:Inbox"'`. Run it once per
+distinct folder.
 
 There is no compatibility branch on purpose: a reader accepting both prefixes
 would answer "first match wins" on a message holding one of each, which is the

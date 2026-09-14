@@ -770,6 +770,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Svuota spam</translation>
     </message>
     <message>
+        <source>Not junk</source>
+        <translation>Non spam</translation>
+    </message>
+    <message>
         <source>Undelete thread</source>
         <translation>Ripristina conversazione</translation>
     </message>
@@ -922,6 +926,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Move the selected messages to the spam folder</source>
         <translation>Sposta nella cartella spam i messaggi selezionati</translation>
+    </message>
+    <message>
+        <source>Not &amp;junk</source>
+        <translation>&amp;Non spam</translation>
+    </message>
+    <message>
+        <source>Move the selected messages out of the spam folder</source>
+        <translation>Sposta fuori dalla cartella spam i messaggi selezionati</translation>
     </message>
     <message>
         <source>Edit the rules that tag mail as it arrives</source>

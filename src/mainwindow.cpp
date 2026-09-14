@@ -1809,6 +1809,18 @@ void MainWindow::registerActions()
               tr("Move the selected messages to the spam folder"), [this]() {
         spamSelected();
     });
+    // Item 201. Mark spam's inverse, and Restore's twin: it moves each message
+    // back to the folder its `moved-from:` tag names, falling back to the
+    // account's inbox for mail a provider caught, which carries no origin.
+    //
+    // The mnemonic is on "&junk" rather than "spam": Alt+P is already Re&ply
+    // and Alt+S is a frozen collision, and no letter of "Not spam" is free in
+    // this menu. `junk` is the theme's own name for the folder and what its
+    // icon (`mail-mark-notjunk`) draws, so the wording stays honest.
+    addAction(QStringLiteral("not_spam"), tr("Not &junk"),
+              tr("Move the selected messages out of the spam folder"), [this]() {
+        notSpamSelected();
+    });
     // Item 57. The LABEL is "Important"; the action name and the tag are both
     // still `flag`/`flagged`, deliberately. The name is what a user writes in
     // the config's [keys] section, and `flagged` is a notmuch tag that neomutt,
@@ -2111,6 +2123,11 @@ const QHash<QString, QPair<QString, QString>> kThemeIcons = {
     // `bug` first, per the user's choice, with the standard junk name behind
     // it so a theme without the bug still draws a junk icon.
     { QStringLiteral("spam"),    { QStringLiteral("bug"), QStringLiteral("mail-mark-junk") } },
+    // Item 201. Mark spam's inverse. `mail-mark-notjunk` is the theme's own
+    // name for taking a message back out of the junk folder, it ships in Breeze
+    // and Adwaita, and nothing else in this table uses it, so no
+    // noTwoActionsShareAnIcon() exception is needed.
+    { QStringLiteral("not_spam"), { QStringLiteral("mail-mark-notjunk"), QString() } },
     // A STAR, which is what the user asked for and what every other mail
     // client draws for this. NOT mail-mark-important: Breeze draws that
     // as an exclamation mark, so on the icon-only message bar the action
@@ -2218,6 +2235,9 @@ void MainWindow::buildMenus()
     // that it exists.
     messageMenu->addAction(m_actions.value(QStringLiteral("purge")));
     messageMenu->addAction(m_actions.value(QStringLiteral("spam")));
+    // Beside Mark spam, whose inverse it is, and hidden everywhere Mark spam
+    // cannot be undone from: outside the spam folder it means nothing.
+    messageMenu->addAction(m_actions.value(QStringLiteral("not_spam")));
     messageMenu->addSeparator();
     messageMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
     messageMenu->addAction(m_actions.value(QStringLiteral("mark_all_read")));
@@ -2296,6 +2316,7 @@ void MainWindow::buildMenus()
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("delete")));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("restore")));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("spam")));
+    m_threadContextMenu->addAction(m_actions.value(QStringLiteral("not_spam")));
     m_threadContextMenu->addSeparator();
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("toggle_unread")));
     m_threadContextMenu->addAction(m_actions.value(QStringLiteral("flag")));
@@ -2443,6 +2464,13 @@ void MainWindow::populateMessageBar()
         // Restore alone. The two purges are the same act at two scopes and
         // need no colour to tell them from each other, only from this one.
         tinted = { m_actions.value(QStringLiteral("restore")) };
+    } else if (everySelectedRowIsInASpamFolder()
+               && !m_threadView->selectionModel()->selectedRows().isEmpty()) {
+        // Item 201. Mail in a spam folder affords one thing the ordinary bar
+        // cannot offer: a way back out. Ordered after the trash branch and
+        // before the draft one, because a draft thrown into the spam folder is
+        // no more useful to edit than one thrown into the trash.
+        messageActions = { m_actions.value(QStringLiteral("not_spam")) };
     } else if (currentMessageIsADraft()) {
         messageActions = { m_actions.value(QStringLiteral("edit_draft")) };
     } else {
@@ -3853,7 +3881,7 @@ void MainWindow::showThreadContextMenu(const QPoint &pos)
     m_threadContextMenu->popup(m_threadView->viewport()->mapToGlobal(pos));
 }
 
-bool MainWindow::everySelectedRowIsInATrashFolder() const
+bool MainWindow::everySelectedRowIsInAFolder(QString Account::*folder) const
 {
     const QModelIndexList rows =
         m_threadView->selectionModel()->selectedRows();
@@ -3861,7 +3889,7 @@ bool MainWindow::everySelectedRowIsInATrashFolder() const
         return false;
 
     for (const QModelIndex &index : rows) {
-        // A MESSAGE row is its one file. A CONVERSATION is in the trash only
+        // A MESSAGE row is its one file. A CONVERSATION is in the folder only
         // when ALL of its messages are (item 178), so it answers on every path
         // the digest reported rather than on the one the summary carries.
         //
@@ -3894,14 +3922,15 @@ bool MainWindow::everySelectedRowIsInATrashFolder() const
                 return false;
 
             const Account account = accountForMessagePath(path);
-            if (account.maildir.isEmpty() || account.trash.isEmpty())
+            const QString named = account.*folder;
+            if (account.maildir.isEmpty() || named.isEmpty())
                 return false;
 
             // Compared as a path segment, never with startsWith(): `trash-old`
             // starts with `trash` and is a different folder. The same trap the
             // attachment-save check records.
             const QString prefix = account.maildir + QLatin1Char('/')
-                                   + account.trash + QLatin1Char('/');
+                                   + named + QLatin1Char('/');
             // accountForMessagePath() accepts both shapes, so this must too: a
             // thread row's path is database-relative and a reply row's
             // absolute.
@@ -3912,9 +3941,20 @@ bool MainWindow::everySelectedRowIsInATrashFolder() const
     return true;
 }
 
+bool MainWindow::everySelectedRowIsInATrashFolder() const
+{
+    return everySelectedRowIsInAFolder(&Account::trash);
+}
+
+bool MainWindow::everySelectedRowIsInASpamFolder() const
+{
+    return everySelectedRowIsInAFolder(&Account::spam);
+}
+
 void MainWindow::refreshTrashActions()
 {
     const bool inTrash = everySelectedRowIsInATrashFolder();
+    const bool inSpam = everySelectedRowIsInASpamFolder();
     const bool haveSelection =
         !m_threadView->selectionModel()->selectedRows().isEmpty();
 
@@ -3938,6 +3978,16 @@ void MainWindow::refreshTrashActions()
     if (auto *spam = m_actions.value(QStringLiteral("spam"))) {
         spam->setVisible((!haveSelection || !inTrash)
                          && !m_replySelectionHidesDelete);
+    }
+
+    // Item 201. Not spam is Restore's twin, but scoped to the SPAM folder
+    // rather than the trash: shown when the selection is in a spam folder, and
+    // hidden on a reply row by the same flag Delete reads. Hidden rather than
+    // disabled, like Mark spam beside it: offering it where it does not apply
+    // teaches nothing.
+    if (auto *notSpam = m_actions.value(QStringLiteral("not_spam"))) {
+        notSpam->setVisible(haveSelection && inSpam
+                            && !m_replySelectionHidesDelete);
     }
 
     // The mirror, which shipped beside it: Restore was added unconditionally
@@ -6710,7 +6760,21 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
     }
 
     if (requestTag == QStringLiteral("restore_messages")) {
-        restoreResolvedMessages(messageIds, paths, tags);
+        restoreResolvedMessages(messageIds, paths, tags,
+                                QStringLiteral("deleted"), tr("Restore"),
+                                true, false);
+        return;
+    }
+
+    if (requestTag == QStringLiteral("not_spam_messages")) {
+        notSpamMessages(messageIds, paths, tags);
+        return;
+    }
+
+    if (requestTag == QStringLiteral("not_spam_thread")) {
+        restoreResolvedMessages(messageIds, paths, tags,
+                                QStringLiteral("spam"), tr("Not junk"),
+                                true, false, threadScope);
         return;
     }
 
@@ -6720,67 +6784,12 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
     // Restore, resolved per message: each one goes back to the folder its own
     // `moved-from:` tag names, so a thread whose messages were deleted from
     // different folders reassembles correctly rather than collapsing into one.
-    const QString prefix = QString::fromLatin1(kOriginTagPrefix);
-    QHash<QString, QStringList> byOrigin;
-    QStringList unknown;
-    for (int i = 0; i < messageIds.size(); ++i) {
-        // Split on TAB, matching resolveThreadMessages(). A space is not a
-        // safe separator: a folder name containing one produces a tag
-        // containing one, and splitting there silently truncates the origin
-        // to its first word.
-        const QStringList messageTags =
-            tags.at(i).split(QLatin1Char('\t'), Qt::SkipEmptyParts);
-        QString origin;
-        for (const QString &tag : messageTags) {
-            if (tag.startsWith(prefix)) {
-                origin = tag.mid(prefix.length());
-                break;
-            }
-        }
-        // A message with no `deleted` tag is not in the trash and has nothing
-        // to come back from. A thread-scoped restore reaches every message,
-        // including ones the user never deleted, and moving those would drag
-        // untouched mail out of whatever folder it legitimately sits in.
-        if (!messageTags.contains(QStringLiteral("deleted")))
-            continue;
-        const Account account =
-            accountForMessagePath(paths.at(i));
-        if (origin.isEmpty() || account.maildir.isEmpty()) {
-            unknown.append(messageIds.at(i));
-            continue;
-        }
-        byOrigin[account.maildir + QLatin1Char('/') + origin]
-            .append(messageIds.at(i));
-    }
-
-    if (!unknown.isEmpty()) {
-        // No origin recorded: deleted by an older version or tagged by hand.
-        // The tag comes off so the row stops claiming to be deleted, but no
-        // file moves, since guessing a folder would put the message somewhere
-        // the user never had it.
-        auto *command = new MessageTagCommand(this, unknown, {},
-                                              { QStringLiteral("deleted") },
-                                              tr("Undelete thread"));
-        awaitTagConfirmation(command);
-        sendMessageTagChange(unknown, {}, { QStringLiteral("deleted") },
-                             tr("Undelete thread"));
-        m_undoStack.push(command);
-    }
-
-    for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
-        // The origin tag is named here, not left as the placeholder: on a
-        // restore the placeholder would resolve to the folder the message is
-        // coming FROM, which is the trash, and strip a tag never written.
-        const QString origin = originTagFor(it.key());
-        QStringList remove{ QStringLiteral("deleted") };
-        if (!origin.isEmpty())
-            remove.append(origin);
-        sendMove(it.value(), it.key(), {}, remove, tr("Undelete thread"),
-                 false, threadScope);
-    }
-
-    showTransientStatus(tr("%1: %n message(s)", "", messageIds.size())
-                            .arg(tr("Undelete thread")));
+    //
+    // The same walk serves Not spam and both message-scoped callers; the flags
+    // say what a message with no origin gets, so the four paths cannot drift.
+    restoreResolvedMessages(messageIds, paths, tags,
+                            QStringLiteral("deleted"), tr("Undelete thread"),
+                            false, true, threadScope);
 }
 
 void MainWindow::untrashThreads(const QStringList &threadIds)
@@ -6797,6 +6806,62 @@ void MainWindow::untrashThreads(const QStringList &threadIds)
         m_worker, "resolveThreadMessages", Qt::QueuedConnection,
         Q_ARG(QStringList, threadIds),
         Q_ARG(QString, QStringLiteral("undelete_thread")));
+}
+
+void MainWindow::notSpamSelected()
+{
+    const QModelIndexList rows =
+        m_threadView->selectionModel()->selectedRows();
+    if (rows.isEmpty())
+        return;
+
+    // Mark spam's inverse, resolved the same per-row way (item 177): a
+    // conversation row moves its whole conversation, a thread of one moves its
+    // message. Both halves run, because a selection really can hold one of
+    // each; they travel different routes for the reason spamSelected()
+    // records.
+    const ActionScope scope = m_model->scopeForSelection(rows);
+
+    if (!scope.threadIds.isEmpty())
+        notSpamThreads(scope.threadIds);
+
+    if (scope.messageIds.isEmpty())
+        return;
+
+    // Resolved by the WORKER, not read from the model. A row whose move into
+    // the spam folder has not been re-queried still carries its pre-move tags,
+    // so reading the origin off the model would find none and send the message
+    // to the inbox instead of the folder it came from. The same reasoning
+    // restoreSelectedFromTrash() records.
+    QMetaObject::invokeMethod(
+        m_worker, "resolveMessages", Qt::QueuedConnection,
+        Q_ARG(QStringList, scope.messageIds),
+        Q_ARG(QString, QStringLiteral("not_spam_messages")));
+}
+
+void MainWindow::notSpamMessages(const QStringList &messageIds,
+                                 const QStringList &paths,
+                                 const QStringList &tags)
+{
+    restoreResolvedMessages(messageIds, paths, tags, QStringLiteral("spam"),
+                            tr("Not junk"), true, false);
+}
+
+void MainWindow::notSpamThreads(const QStringList &threadIds)
+{
+    if (threadIds.isEmpty())
+        return;
+
+    // Repainted synchronously, as the mark-spam direction is: the card is what
+    // the user watches, and it must not wait for the worker round trip.
+    for (const QString &threadId : threadIds)
+        m_model->applyTagChange(threadId, {}, { QStringLiteral("spam") });
+
+    m_pendingThreadScope = threadIds;
+    QMetaObject::invokeMethod(
+        m_worker, "resolveThreadMessages", Qt::QueuedConnection,
+        Q_ARG(QStringList, threadIds),
+        Q_ARG(QString, QStringLiteral("not_spam_thread")));
 }
 
 QString MainWindow::inboxFolderFor(const Account &account) const
@@ -6829,7 +6894,12 @@ QString MainWindow::inboxFolderFor(const Account &account) const
 
 void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
                                          const QStringList &paths,
-                                         const QStringList &tags)
+                                         const QStringList &tags,
+                                         const QString &clearedTag,
+                                         const QString &description,
+                                         bool moveUnoriginToInbox,
+                                         bool skipUnmarked,
+                                         const QStringList &wholeThreadIds)
 {
     if (messageIds.size() != paths.size() || messageIds.size() != tags.size())
         return;
@@ -6837,11 +6907,24 @@ void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
     const QString prefix = QString::fromLatin1(kOriginTagPrefix);
     QHash<QString, QStringList> byOrigin;
     QHash<QString, QStringList> byInbox;
+    QStringList unmarked;
     QStringList stranded;
 
     for (int i = 0; i < messageIds.size(); ++i) {
+        // Split on TAB, matching resolveThreadMessages(). A space is not a
+        // safe separator: a folder name containing one produces a tag
+        // containing one, and splitting there silently truncates the origin
+        // to its first word.
         const QStringList messageTags =
             tags.at(i).split(QLatin1Char('\t'), Qt::SkipEmptyParts);
+
+        // A thread-scoped restore reaches every message, including ones that
+        // never moved, so it skips the ones that do not carry the tag this
+        // move clears. The message-scoped callers selected mail that is
+        // demonstrably IN the folder, so they ask nothing.
+        if (skipUnmarked && !messageTags.contains(clearedTag))
+            continue;
+
         QString origin;
         for (const QString &tag : messageTags) {
             if (tag.startsWith(prefix)) {
@@ -6851,30 +6934,53 @@ void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
         }
 
         const Account account = accountForMessagePath(paths.at(i));
-        if (account.maildir.isEmpty()) {
-            stranded.append(messageIds.at(i));
-            continue;
-        }
 
-        if (origin.isEmpty()) {
-            // Trashed by another client, so there is no record of where it
-            // belongs. Inbox is the documented fallback, and it is reported:
-            // a guess the user is not told about is worse than the guess.
-            byInbox[account.maildir + QLatin1Char('/')
-                    + account.inboxFolder()]
-                .append(messageIds.at(i));
-            continue;
+        if (!moveUnoriginToInbox) {
+            // The thread-scoped restore out of the TRASH is also reached from
+            // Delete's toggle on stranded mail that sits outside the trash, so
+            // a message with no origin (or no account) only has its tag taken
+            // off: guessing a folder would put it somewhere the user never had
+            // it.
+            if (origin.isEmpty() || account.maildir.isEmpty()) {
+                unmarked.append(messageIds.at(i));
+                continue;
+            }
+        } else {
+            if (account.maildir.isEmpty()) {
+                stranded.append(messageIds.at(i));
+                continue;
+            }
+            if (origin.isEmpty()) {
+                // In the folder with no record of where it came from, usually
+                // because a provider put it there. Inbox is the documented
+                // fallback, and it is reported: a guess the user is not told
+                // about is worse than the guess.
+                byInbox[account.maildir + QLatin1Char('/')
+                        + account.inboxFolder()]
+                    .append(messageIds.at(i));
+                continue;
+            }
         }
         byOrigin[account.maildir + QLatin1Char('/') + origin]
             .append(messageIds.at(i));
     }
 
+    if (!unmarked.isEmpty()) {
+        // The tag comes off so the row stops claiming to be there, but no file
+        // moves. The undo is the same tag write, pushed like any other.
+        auto *command = new MessageTagCommand(this, unmarked, {},
+                                              { clearedTag }, description);
+        awaitTagConfirmation(command);
+        sendMessageTagChange(unmarked, {}, { clearedTag }, description);
+        m_undoStack.push(command);
+    }
+
     for (auto it = byOrigin.cbegin(); it != byOrigin.cend(); ++it) {
         // The origin tag is named here rather than left as the placeholder,
         // which onMessagesMoved() would resolve to the folder the message is
-        // coming FROM, namely the trash.
+        // coming FROM, namely the folder it is leaving.
         const QString origin = originTagFor(it.key());
-        QStringList remove{ QStringLiteral("deleted") };
+        QStringList remove{ clearedTag };
         if (!origin.isEmpty())
             remove.append(origin);
 
@@ -6913,7 +7019,8 @@ void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
             break;
         }
 
-        sendMove(it.value(), it.key(), add, remove, tr("Restore"));
+        sendMove(it.value(), it.key(), add, remove, description, false,
+                 wholeThreadIds);
     }
 
     for (auto it = byInbox.cbegin(); it != byInbox.cend(); ++it) {
@@ -6921,9 +7028,16 @@ void MainWindow::restoreResolvedMessages(const QStringList &messageIds,
         // message with no origin tag, and the folder it names is the
         // account's own inbox. So the tag always comes with it.
         sendMove(it.value(), it.key(), { QStringLiteral("inbox") },
-                 { QStringLiteral("deleted") }, tr("Restore"));
+                 { clearedTag }, description, false, wholeThreadIds);
     }
 
+    // A thread-scoped move is announced as a count, matching the delete and
+    // mark-spam directions. The message-scoped callers leave the bar's own
+    // status alone.
+    if (!wholeThreadIds.isEmpty()) {
+        showTransientStatus(tr("%1: %n message(s)", "", messageIds.size())
+                                .arg(description));
+    }
     if (!byInbox.isEmpty()) {
         m_statusLabel->setText(
             tr("%n message(s) had no record of where they came from and were "

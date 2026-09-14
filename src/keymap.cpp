@@ -54,6 +54,11 @@ QStringList KeyMap::knownActions()
         // is menu-reachable rather than broken.
         QStringLiteral("empty_spam"),
         QStringLiteral("spam"),
+        // Item 201. Mark spam's inverse: a message in the spam folder had no
+        // way back. No default binding, matching empty_spam: moving mail out of
+        // a folder is reached from a menu, and since item 132 an unbound action
+        // is menu-reachable rather than broken.
+        QStringLiteral("not_spam"),
         QStringLiteral("toggle_unread"),
         QStringLiteral("mark_all_read"),
         QStringLiteral("edit_tags"),

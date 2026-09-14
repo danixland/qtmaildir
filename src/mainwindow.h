@@ -1130,6 +1130,17 @@ private:
     /// Delete on exactly the mail a trash view is full of.
     bool everySelectedRowIsInATrashFolder() const;
 
+    /// Whether every selected row's file already sits in its account's spam
+    /// folder. Empty selection answers false. The spam twin of
+    /// everySelectedRowIsInATrashFolder(), and asked of the PATH for the same
+    /// reason: provider-caught mail in the spam folder carries no `spam` tag.
+    bool everySelectedRowIsInASpamFolder() const;
+
+    /// The one walk both predicates above share: \p folder names the Account
+    /// member (`&Account::trash` or `&Account::spam`) whose folder is asked
+    /// about.
+    bool everySelectedRowIsInAFolder(QString Account::*folder) const;
+
     /// Opens the tag dialog on the current selection and applies its result.
     ///
     /// The only route to an arbitrary tag: every other tag action writes a
@@ -1276,6 +1287,22 @@ private:
     /// this asks the worker and finishes in onThreadMessagesResolved().
     void spamThreads(const QStringList &threadIds);
 
+    /// Moves each selected row's message back OUT of the spam folder, to the
+    /// folder its `moved-from:` tag names. Mark spam's inverse and Restore's
+    /// twin, offered only on a selection that is in a spam folder.
+    void notSpamSelected();
+
+    /// The half of notSpamSelected() that does the work, given the tags and
+    /// paths the WORKER reported. Forwards to restoreResolvedMessages() with
+    /// `spam` as the cleared tag, so the two restore directions cannot drift.
+    void notSpamMessages(const QStringList &messageIds,
+                         const QStringList &paths,
+                         const QStringList &tags);
+
+    /// Moves every message of the named THREADS out of their accounts' spam
+    /// folders. Asynchronous like spamThreads(), and for the same reason.
+    void notSpamThreads(const QStringList &threadIds);
+
     /// Runs the thread-scoped delete once the worker has resolved the
     /// threads to messages.
     void onThreadMessagesResolved(const QStringList &messageIds,
@@ -1360,9 +1387,28 @@ private:
 
     /// Moves each resolved message home, using the tags and paths the WORKER
     /// reported rather than anything the model holds.
+    ///
+    /// One walk serves all four restore routes: Delete out of the trash
+    /// (message and thread scoped) and Not spam out of the spam folder
+    /// (message and thread scoped). \p clearedTag is the folder's marker tag
+    /// (`deleted` or `spam`) stripped by the move; \p description names the
+    /// action in the status line and on the undo entry.
+    ///
+    /// \p moveUnoriginToInbox picks what a message with no `moved-from:`
+    /// origin gets: the inbox, reported (the message-scoped routes and Not
+    /// spam, where the mail is demonstrably in the folder and must come out),
+    /// or a tag-only removal with no file move (the thread-scoped TRASH route,
+    /// which Delete's toggle also reaches on stranded mail sitting outside the
+    /// trash). \p skipUnmarked drops messages that do not carry \p clearedTag,
+    /// which only the thread-scoped trash route needs.
     void restoreResolvedMessages(const QStringList &messageIds,
                                  const QStringList &paths,
-                                 const QStringList &tags);
+                                 const QStringList &tags,
+                                 const QString &clearedTag,
+                                 const QString &description,
+                                 bool moveUnoriginToInbox,
+                                 bool skipUnmarked,
+                                 const QStringList &wholeThreadIds = {});
 
     /// The messages a resolveMessages() request was made for.
     QStringList m_pendingRestoreIds;

@@ -47,6 +47,13 @@ point at which they are stable.
 - **A spam button on the message pane's bar**, beside Star and Archive. It is
   drawn with a bug rather than the theme's junk glyph, and falls back to
   `mail-mark-junk` on a theme that ships no bug.
+- **Not junk**, the way back out of the spam folder. Selecting a message in the
+  Spam view offers it on both the Message menu and the message pane's bar, and
+  it returns each message to the folder its `moved-from:` origin names, or to
+  the account's inbox when a provider put it there and no origin was recorded,
+  which the status line reports. It is a move with an undo behind it, so it asks
+  nothing, and like Mark spam it is hidden on a reply row and everywhere outside
+  the spam folder.
 
 ### Changed
 

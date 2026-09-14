@@ -540,6 +540,15 @@ private slots:
     void spamIsHiddenOnMailAlreadyInTheTrash();
     void restoringAfterTwoMovesReturnsToTheLatestOrigin();
 
+    // Item 201: a message in the spam folder could not be un-spammed. Not spam
+    // is Mark spam's inverse, and Restore is its template.
+    void notSpamReturnsAMessageToItsOriginFolder();
+    void notSpamFallsBackToInboxWithoutAnOriginTag();
+    void notSpamIsOfferedInTheSpamView();
+    void notSpamIsAbsentOnAReplyRow();
+    void notSpamIsHiddenOutsideTheSpamFolder();
+    void undoOfNotSpamReturnsTheFileToTheSpamFolder();
+
     // ComposeWindow, item 123. These need a window but no worker: the composer
     // never touches NotmuchWorker, it reads its context from the value struct
     // MainWindow hands it, so a Config written to a temporary INI is the whole
@@ -17271,6 +17280,333 @@ void TestMainWindow::restoringAfterTwoMovesReturnsToTheLatestOrigin()
                                           stem),
              "the restore went to the inbox instead of the spam folder the "
              "message actually came from: the model held two origins");
+}
+
+void TestMainWindow::notSpamReturnsAMessageToItsOriginFolder()
+{
+    // Item 201. A message marked spam had no way back: the Spam view offered
+    // Mark spam and Delete, and Restore is trash-only. Not spam is Mark spam's
+    // inverse and Restore's twin, and it must return the file to the EXACT
+    // folder the origin tag names rather than to a guessed inbox.
+    //
+    // The origin here is a folder that is NOT the inbox, deliberately: a
+    // move-back that hardcoded the inbox would pass a laxer assertion, and it
+    // must also NOT add the `inbox` tag, which would make the message claim to
+    // belong to a view it was never returned to.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Archive"), QStringLiteral("ns1@example.org"),
+        QStringLiteral("Not spam me"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash"), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("ns1.example.org");
+    const QString spam = root + QStringLiteral("/acct/Spam/cur");
+
+    // Mark it spam first, from an `id:` query so the row survives the move.
+    queryEdit->setText(QStringLiteral("id:ns1@example.org"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("spam"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(spam, stem), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:ns1@example.org and tag:spam "
+                                         "and tag:\"moved-from:Archive\"")) == 1,
+        15000);
+
+    // Not spam, from the Spam view: the action is only offered there.
+    queryEdit->setText(QStringLiteral("path:\"acct/Spam/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("not_spam"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Archive/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/Archive/new"),
+                                    stem),
+        15000);
+    QVERIFY2(!folderHasMessageFile(spam, stem),
+             "Not spam left a copy in the spam folder");
+
+    // The tags this test is about: `spam` and the origin are gone, and `inbox`
+    // did NOT come back, because the destination is not an inbox.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:ns1@example.org and "
+                                         "(tag:spam or "
+                                         "tag:\"moved-from:Archive\")")) == 0,
+        15000);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ns1@example.org and "
+                                              "tag:inbox")),
+             0);
+    // The guard the assertion above needs: a message that vanished satisfies it.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ns1@example.org")), 1);
+}
+
+void TestMainWindow::notSpamFallsBackToInboxWithoutAnOriginTag()
+{
+    // A provider-caught message: it sits in the spam folder and carries no
+    // `moved-from:` tag, because nothing here put it there. The inbox is the
+    // documented fallback, and it is REPORTED: a guess the user is not told
+    // about is worse than the guess.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Spam"), QStringLiteral("nsfb@example.org"),
+        QStringLiteral("Caught upstream"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash"), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("nsfb.example.org");
+
+    // The guard: no origin, so the fallback is what is under test.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:nsfb@example.org and "
+                                              "tag:\"moved-from:inbox\"")),
+             0);
+
+    queryEdit->setText(QStringLiteral("path:\"acct/Spam/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("not_spam"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+            || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                    stem),
+        15000);
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct/Spam/cur"),
+                                   stem),
+             "the provider-caught message was copied rather than moved");
+
+    // And the user is told the destination was a fallback. The status is the
+    // only place that says so.
+    auto *status =
+        window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        status->text().contains(QStringLiteral("no record")), 15000);
+}
+
+void TestMainWindow::notSpamIsOfferedInTheSpamView()
+{
+    // The action is offered where it means something and only there: a
+    // selection in a spam folder. Asked of the PATH, never the `spam` tag: a
+    // provider-caught message carries no tag of ours and must still be
+    // un-spammable.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Spam"), QStringLiteral("nsv@example.org"),
+        QStringLiteral("Offered here"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash"), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+    auto *notSpam = window.findChild<QAction *>(QStringLiteral("not_spam"));
+    QVERIFY(notSpam);
+
+    queryEdit->setText(QStringLiteral("path:\"acct/Spam/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    QApplication::processEvents();
+
+    QVERIFY2(notSpam->isVisible() && notSpam->isEnabled(),
+             "Not spam is not offered in the spam view, where it is the point");
+}
+
+void TestMainWindow::notSpamIsAbsentOnAReplyRow()
+{
+    // Mark spam is Delete's sibling and Not spam is Restore's, so both follow
+    // item 177: a single reply cannot be moved out of its conversation. Absent
+    // on a reply, back on the conversation row.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const Config config = configWithTrash(dir);
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(model && view);
+
+    model->appendBatch({ threadAtPath(QStringLiteral("t1"),
+                                      QStringLiteral("acct/spam/cur/1:2,S")) });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m1");
+    root.threadId = QStringLiteral("t1");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m2");
+    reply.threadId = QStringLiteral("t1");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("t1"), { root, reply });
+
+    const QModelIndex thread = model->index(0, 0, QModelIndex());
+    view->expand(thread);
+    const QModelIndex replyRow = model->index(0, 0, thread);
+    view->selectionModel()->select(
+        replyRow, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(replyRow);
+    QApplication::processEvents();
+
+    auto *notSpam = window.findChild<QAction *>(QStringLiteral("not_spam"));
+    QVERIFY(notSpam);
+    QVERIFY2(!notSpam->isVisible(),
+             "Not spam is offered on a reply: one reply cannot be moved out of "
+             "its conversation, the rule Delete and Mark spam follow");
+
+    // The mirror: on the conversation row it is back, so the hide is about what
+    // the row IS and not a stuck flag.
+    selectThreadRow(view, 0);
+    QApplication::processEvents();
+    QVERIFY2(notSpam->isVisible(),
+             "Not spam stayed hidden on a conversation in the spam folder");
+}
+
+void TestMainWindow::notSpamIsHiddenOutsideTheSpamFolder()
+{
+    // Everywhere else the message is not in a spam folder, so there is nothing
+    // to come out of. Trash included: mail already thrown away is not offered a
+    // second move.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const Config config = configWithTrash(dir);
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *notSpam = window.findChild<QAction *>(QStringLiteral("not_spam"));
+    QVERIFY(notSpam);
+
+    model->appendBatch({
+        threadAtPath(QStringLiteral("t1"),
+                     QStringLiteral("acct/spam/cur/1:2,S")),
+        threadAtPath(QStringLiteral("t2"),
+                     QStringLiteral("acct/inbox/cur/2:2,S")),
+        threadAtPath(QStringLiteral("t3"),
+                     QStringLiteral("acct/trash/cur/3:2,S")),
+    });
+
+    view->setCurrentIndex(model->index(1, 0, {}));
+    QVERIFY2(!notSpam->isVisible(),
+             "Not spam is offered on mail in the inbox");
+
+    view->setCurrentIndex(model->index(2, 0, {}));
+    QVERIFY2(!notSpam->isVisible(),
+             "Not spam is offered on mail already in the trash");
+
+    // A folder whose name STARTS with the spam folder's is a different folder,
+    // so the prefix must be compared with its separator here too.
+    model->appendBatch({ threadAtPath(QStringLiteral("t4"),
+                                      QStringLiteral("acct/spam-old/cur/4:2,S")) });
+    view->setCurrentIndex(model->index(3, 0, {}));
+    QVERIFY2(!notSpam->isVisible(),
+             "Not spam is offered on mail in acct/spam-old, which is not the "
+             "spam folder");
+
+    view->setCurrentIndex(model->index(0, 0, {}));
+    QVERIFY2(notSpam->isVisible(),
+             "Not spam is hidden on mail in the spam folder, so this test "
+             "cannot tell the cases apart");
+}
+
+void TestMainWindow::undoOfNotSpamReturnsTheFileToTheSpamFolder()
+{
+    // Undo is the safety net that replaces the confirmation dialog, so an
+    // un-spam that cannot be retracted is one with no net at all. The undo puts
+    // the file back in the spam folder AND restores the tags the move removed.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("nsundo@example.org"),
+        QStringLiteral("Undo my not-spam"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash"), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("nsundo.example.org");
+    const QString spam = root + QStringLiteral("/acct/Spam/cur");
+
+    queryEdit->setText(QStringLiteral("id:nsundo@example.org"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("spam"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(spam, stem), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(window.undoDepthForTesting() >= 1, 15000);
+
+    // Not spam, and wait for its own command to reach the stack before undoing
+    // it: undo before the push is a no-op and would blame the wrong move. The
+    // query above cleared the stack, so this is the only entry on it.
+    queryEdit->setText(QStringLiteral("path:\"acct/Spam/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("not_spam"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(window.undoDepthForTesting() >= 1, 15000);
+
+    window.findChild<QAction *>(QStringLiteral("undo"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(folderHasMessageFile(spam, stem), 15000);
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"), stem)
+                 && !folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                          stem),
+             "undo returned the file to the inbox instead of the spam folder");
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:nsundo@example.org and tag:spam "
+                                         "and tag:\"moved-from:inbox\"")) == 1,
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:nsundo@example.org and "
+                                         "tag:inbox")) == 0,
+        15000);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:nsundo@example.org")), 1);
 }
 
 #include "test_mainwindow.moc"

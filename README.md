@@ -595,9 +595,13 @@ From: account re-seeds it only until you pick one yourself.
 
 Archive, mark-important and toggle-unread write fixed tags. Delete and spam
 move the file instead: each adds a fixed tag (`deleted` or `spam`) and records
-the folder the file left in a `moved-from:<folder>` origin. For anything else,
-**Ctrl+T** opens a dialog over the selected threads: type tags to add or
-remove, separated by commas, or clear a checkbox to drop a tag already present.
+the folder the file left in a `moved-from:<folder>` origin. Restore (in the
+trash) and Not junk (in the spam folder) are their inverses: each moves the
+message back to the folder its origin names, and mail caught by a provider with
+no origin at all goes to the account's inbox, which the status line reports. For
+anything else, **Ctrl+T** opens a dialog over the selected threads: type tags to
+add or remove, separated by commas, or clear a checkbox to drop a tag already
+present.
 
 Both fields complete against every tag in your database, which is a guard
 against typing `shoppping` beside `shopping`, not a restriction: a tag that does
@@ -778,9 +782,9 @@ Defaults, all rebindable through `[keys]`:
 | `Ctrl+Q` | `quit` | Quit |
 
 Every action in this table carries a default binding, and every one appears in
-a menu. Six actions carry none, because a chord for them would be arbitrary:
-Check for stranded spam, Empty trash, Delete permanently, Empty spam, Edit
-draft and Save message. They are reachable from the menus, and the shortcut
+a menu. Seven actions carry none, because a chord for them would be arbitrary:
+Check for stranded spam, Empty trash, Delete permanently, Empty spam, Not junk,
+Edit draft and Save message. They are reachable from the menus, and the shortcut
 reference prints them as unbound.
 **Help > Keyboard shortcuts** lists the current bindings, generated from the
 actions themselves, so it shows your overrides rather than these defaults.

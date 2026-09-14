@@ -1321,6 +1321,17 @@ private:
     /// which holds whatever the current view happens to show.
     void emptyTrash();
 
+    /// Moves every message in the spam folder to that account's trash. Unlike
+    /// emptyTrash() this is NOT a purge: it is a move, so it is undoable and
+    /// asks nothing. Scoped to the account selector like every other
+    /// account-aware surface, and grouped per account because the destination
+    /// differs: one account's spam moves to that account's own trash.
+    ///
+    /// Asynchronous for the same reason emptyTrash() is, but no confirm follows:
+    /// the answer arrives at onThreadMessagesResolved() tagged `empty_spam`,
+    /// which resolves the destinations from each message's own path.
+    void emptySpam();
+
     /// Empty trash's sibling, scoped to the SELECTION rather than to the
     /// account's whole trash. The act is identical, `purgeMessages()` in both
     /// cases, and so are its safeguards: it confirms, and it carries no
@@ -1361,6 +1372,11 @@ private:
     /// tag: the view is path-based so mail trashed by another client appears
     /// in it, and such a message carries no tag of ours.
     bool isShowingTrash() const;
+
+    /// Whether the current query IS a spam view, for either scope. The exact
+    /// sibling of isShowingTrash(), for the same reason: Empty Spam drops rows
+    /// from a path-based view that no tag change can express.
+    bool isShowingSpam() const;
 
     /// The `moved-from:` tag naming `dbRelativeFolder`, or empty when no
     /// account owns it.

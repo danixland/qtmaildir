@@ -1783,6 +1783,16 @@ void MainWindow::registerActions()
               tr("Permanently delete the selected messages"), [this]() {
         purgeSelected();
     });
+    // Empty Trash's other sibling, but a MOVE rather than a purge: it moves
+    // every message in the spam folder to that account's trash, so it is
+    // undoable and asks nothing. The mnemonic is on "f&older" rather than the
+    // brief's `s&pam` because Alt+P is already Re&ply and Alt+S is Mark &spam,
+    // and no letter of "Empty spam" is free in this menu.
+    addAction(QStringLiteral("empty_spam"), tr("Empty spam f&older..."),
+              tr("Move every message in the spam folder to the trash"),
+              [this]() {
+        emptySpam();
+    });
     addAction(QStringLiteral("spam"), tr("Mark &spam"),
               tr("Move the selected messages to the spam folder"), [this]() {
         spamSelected();
@@ -2072,6 +2082,13 @@ const QHash<QString, QPair<QString, QString>> kThemeIcons = {
     // different amounts of mail must not look identical. `user-trash` is
     // the theme's own wastebasket, which reads as "this one, gone".
     { QStringLiteral("purge"),   { QStringLiteral("user-trash"), QString() } },
+    // Empty Spam SHARES purge's `user-trash`, deliberately: both move mail
+    // into the trash, and the standard wastebasket is the honest glyph. The
+    // no-duplicates rule is about the icon-only TOOLBAR, and this is a
+    // Message-menu-only entry that always carries its text, so it is named in
+    // noTwoActionsShareAnIcon()'s exception list. Putting it on the toolbar
+    // fails that test rather than passing silently.
+    { QStringLiteral("empty_spam"), { QStringLiteral("user-trash"), QString() } },
     { QStringLiteral("undo"),    { QStringLiteral("edit-undo"), QString() } },
     // `bug` first, per the user's choice, with the standard junk name behind
     // it so a theme without the bug still draws a junk icon.
@@ -2197,6 +2214,7 @@ void MainWindow::buildMenus()
     // the five filters would read as one of them.
     messageMenu->addAction(m_actions.value(QStringLiteral("cleanup_stranded")));
     messageMenu->addAction(m_actions.value(QStringLiteral("empty_trash")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("empty_spam")));
     messageMenu->addAction(m_actions.value(QStringLiteral("tag_rules")));
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
@@ -3713,6 +3731,28 @@ bool MainWindow::isShowingTrash() const
     for (const Account &account : m_config.accounts()) {
         const QString trash = account.trashQuery().trimmed();
         if (!trash.isEmpty() && query == trash)
+            return true;
+    }
+    return false;
+}
+
+bool MainWindow::isShowingSpam() const
+{
+    // Exact sibling of isShowingTrash(), and path-based for the same reason:
+    // the Spam filter matches a folder rather than a tag, so a message put
+    // there by another client is in the view and carries no tag of ours. Both
+    // scopes, because the view composes with the account dropdown.
+    const QString query = m_lastQuery.trimmed();
+    if (query.isEmpty())
+        return false;
+
+    const QString all = m_config.allSpamQuery().trimmed();
+    if (!all.isEmpty() && query == all)
+        return true;
+
+    for (const Account &account : m_config.accounts()) {
+        const QString spam = account.spamQuery().trimmed();
+        if (!spam.isEmpty() && query == spam)
             return true;
     }
     return false;
@@ -6576,6 +6616,31 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
         return;
     }
 
+    if (requestTag == QStringLiteral("empty_spam")) {
+        // Grouped per account, because each group travels to that account's
+        // own trash: one destination composed once would put one account's
+        // junk in another's trash. The origin tag is the placeholder, resolved
+        // per message by onMessagesMoved() to the spam folder it is leaving;
+        // Task 3's overwrite rule strips the previous origin, so a message
+        // that travelled inbox -> spam -> trash keeps exactly one.
+        QHash<QString, QStringList> byTrash;
+        for (int i = 0; i < messageIds.size(); ++i) {
+            const Account account = accountForMessagePath(paths.at(i));
+            if (account.maildir.isEmpty() || account.trash.isEmpty())
+                continue;
+            byTrash[account.maildir + QLatin1Char('/') + account.trash]
+                .append(messageIds.at(i));
+        }
+        for (auto it = byTrash.cbegin(); it != byTrash.cend(); ++it) {
+            sendMove(it.value(), it.key(),
+                     { QStringLiteral("deleted"), kOriginTagPlaceholder() },
+                     { QStringLiteral("spam"), QStringLiteral("unread"),
+                       QStringLiteral("inbox") },
+                     tr("Empty spam"));
+        }
+        return;
+    }
+
     if (requestTag == QStringLiteral("purge_selection")) {
         // No scope named: the prompt says "the selection", which is what the
         // user pointed at, rather than an account they did not.
@@ -6897,6 +6962,37 @@ void MainWindow::emptyTrash()
                               Qt::QueuedConnection,
                               Q_ARG(QString, query),
                               Q_ARG(QString, QStringLiteral("empty_trash")));
+}
+
+void MainWindow::emptySpam()
+{
+    // Scoped to the account selector, like emptyTrash(): All accounts empties
+    // every configured spam folder, a selected account only its own. Unlike
+    // emptyTrash() there is no confirmation, because this is a MOVE and every
+    // mutation that can be undone gets undo instead of a dialog.
+    const QString accountKey = m_accountBox->currentData().toString();
+    const QString query = accountKey.isEmpty()
+                              ? m_config.allSpamQuery()
+                              : m_config.account(accountKey).spamQuery();
+
+    // An account with no spam folder configured produces an EMPTY query, and
+    // an empty notmuch query matches EVERYTHING. Refusing here rather than
+    // relying on the worker's guard is the whole safety of the action: the
+    // message names the cause.
+    if (query.isEmpty()) {
+        showTransientStatus(tr("No spam folder is configured"));
+        return;
+    }
+
+    if (!m_worker) {
+        showTransientStatus(tr("Not connected to the mail index"));
+        return;
+    }
+
+    QMetaObject::invokeMethod(m_worker, "resolveQueryMessages",
+                              Qt::QueuedConnection,
+                              Q_ARG(QString, query),
+                              Q_ARG(QString, QStringLiteral("empty_spam")));
 }
 
 void MainWindow::purgeSelected()
@@ -7488,8 +7584,10 @@ void MainWindow::onMessagesMoved(const QMap<QString, QString> &originByMessageId
     //
     // Gated on isShowingTrash() and not on the destination: a Delete is a move
     // too and reaches this same slot, and refreshing after every delete would
-    // make a row vanish from under the user in every other view.
-    if (isShowingTrash())
+    // make a row vanish from under the user in every other view. The Spam view
+    // is the same case: Empty Spam is path-based, so moved rows stop matching
+    // and only a refresh can say so.
+    if (isShowingTrash() || isShowingSpam())
         refreshCurrentQuery();
 
     // The undo entries are pushed inside the loop above, one per origin

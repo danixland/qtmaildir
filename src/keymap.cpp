@@ -41,6 +41,12 @@ QStringList KeyMap::knownActions()
         // carries no default binding for exactly the same reason: the act is
         // identical and so is the hazard.
         QStringLiteral("purge"),
+        // Empty trash's other sibling, per ACCOUNT: it MOVES every message in
+        // the spam folder to that account's trash, so it is undoable and
+        // carries no confirmation. No default binding either: a bulk move
+        // deserves a deliberate gesture, and since item 132 an unbound action
+        // is menu-reachable rather than broken.
+        QStringLiteral("empty_spam"),
         QStringLiteral("spam"),
         QStringLiteral("toggle_unread"),
         QStringLiteral("mark_all_read"),

@@ -130,6 +130,11 @@ public:
         /// account without one sends and files nothing, which is a real
         /// configuration rather than an error.
         QString sent;
+        /// Where spam is filed. Written only when non-empty, like trash: an
+        /// account without one has no Spam filter and no Empty Spam, and a
+        /// test that needs the per-account grouping has to say where each
+        /// account's spam folder is.
+        QString spam;
     };
 
     /// Writes several accounts, for the compose cases.
@@ -216,6 +221,8 @@ public:
                     out << "drafts=" << account.drafts << "\n";
                 if (!account.sent.isEmpty())
                     out << "sent=" << account.sent << "\n";
+                if (!account.spam.isEmpty())
+                    out << "spam=" << account.spam << "\n";
             }
         }
         file.close();
@@ -521,6 +528,9 @@ private slots:
     void spamMovesTheMessageToTheSpamFolder();
     void undoOfMarkingSpamReturnsTheFileAndDropsBothTags();
     void aMessageInTheSpamFolderIsNotInTheTrash();
+    void emptySpamMovesEachAccountsMailToItsOwnTrash();
+    void emptySpamRewritesTheOriginToTheSpamFolder();
+    void emptySpamRefusesAnUnconfiguredFolder();
 
     // ComposeWindow, item 123. These need a window but no worker: the composer
     // never touches NotmuchWorker, it reads its context from the value struct
@@ -8689,6 +8699,13 @@ void TestMainWindow::noTwoActionsShareAnIcon()
     // rather than silently passing it.
     static const QStringList menuOnlySharedIconActions = {
         QStringLiteral("reply_no_quote"),
+        // Empty Spam shares `purge`'s `user-trash`, Task 6. It is a
+        // Message-menu-only entry that always carries its text and never
+        // reaches the main toolbar, so the icon is not the whole control,
+        // exactly as for reply_no_quote above. The assertion below still
+        // fails if it is ever put on the toolbar, so this is not a hiding
+        // place.
+        QStringLiteral("empty_spam"),
     };
 
     const Config config;
@@ -12130,6 +12147,152 @@ void TestMainWindow::aMessageInTheSpamFolderIsNotInTheTrash()
     view->setCurrentIndex(model->index(1, 0, {}));
     QVERIFY2(!window.everySelectedRowIsInATrashFolderForTesting(),
              "mail in the spam folder is judged to be in the trash");
+}
+
+void TestMainWindow::emptySpamMovesEachAccountsMailToItsOwnTrash()
+{
+    // Empty Spam is per-ACCOUNT: one gesture over the All accounts view moves
+    // each account's spam to that account's own trash. A single destination
+    // composed once would put one account's junk in the other's trash, where
+    // its files' paths and its Restore origin would both be wrong.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct1/Spam"), QStringLiteral("espam1@example.org"),
+        QStringLiteral("First spam"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct2/Junk"), QStringLiteral("espam2@example.org"),
+        QStringLiteral("Second spam"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.buildWithAccounts(
+                 { { QStringLiteral("acct1"), QStringLiteral("acct1"),
+                     QStringLiteral("Trash"), {}, {}, {}, {},
+                     QStringLiteral("Spam") },
+                   { QStringLiteral("acct2"), QStringLiteral("acct2"),
+                     QStringLiteral("Trash"), {}, {}, {}, {},
+                     QStringLiteral("Junk") } }),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *action = window.findChild<QAction *>(QStringLiteral("empty_spam"));
+    QVERIFY2(action, "empty_spam does not exist");
+    action->trigger();
+
+    const QString root = backed.fixture().maildirPath();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct1/Trash/cur"),
+                             QStringLiteral("espam1.example.org")),
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct2/Trash/cur"),
+                             QStringLiteral("espam2.example.org")),
+        15000);
+
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct2/Trash/cur"),
+                                   QStringLiteral("espam1.example.org")),
+             "the first account's spam landed in the second account's trash");
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct1/Trash/cur"),
+                                   QStringLiteral("espam2.example.org")),
+             "the second account's spam landed in the first account's trash");
+}
+
+void TestMainWindow::emptySpamRewritesTheOriginToTheSpamFolder()
+{
+    // A message that travelled inbox -> spam -> trash carries exactly one
+    // origin, and it names the folder it left LAST: the spam folder. A stale
+    // `moved-from:inbox` left behind would make Restore send it back to the
+    // inbox instead of where Empty Spam took it from. The overwrite rule is
+    // Task 3's; this pins that Empty Spam asks for it.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("origin1@example.org"),
+        QStringLiteral("Travels"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash"), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("origin1.example.org");
+
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("spam"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Spam/cur"), stem),
+        15000);
+    // Wait for the FIRST move's origin tag before emptying, or the assertion
+    // below could observe a moment when neither tag has landed.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:origin1@example.org and "
+                                         "tag:\"moved-from:inbox\"")) == 1,
+        15000);
+
+    window.findChild<QAction *>(QStringLiteral("empty_spam"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
+        15000);
+
+    // Exactly one origin remains, and it names the spam folder.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("tag:\"moved-from:Spam\"")) == 1,
+        15000);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("tag:\"moved-from:inbox\"")), 0);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("tag:\"moved-from:Spam\"")), 1);
+    // The guard the count above needs: a message that vanished would satisfy
+    // the two assertions too.
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:origin1@example.org")), 1);
+}
+
+void TestMainWindow::emptySpamRefusesAnUnconfiguredFolder()
+{
+    // An account with no spam folder produces an EMPTY query, and an empty
+    // notmuch query matches EVERYTHING. Without the guard Empty Spam would
+    // move the whole Maildir into the trash, so the refusal is the whole
+    // safety of the action. Asserting the message is still in the inbox is
+    // the observable consequence of refusing; the status names the cause.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("guard1@example.org"),
+        QStringLiteral("Untouched"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    auto *action = window.findChild<QAction *>(QStringLiteral("empty_spam"));
+    QVERIFY2(action, "empty_spam does not exist");
+
+    action->trigger();
+
+    QCOMPARE(status->text(), QStringLiteral("No spam folder is configured"));
+
+    const QString root = backed.fixture().maildirPath();
+    const QString stem = QStringLiteral("guard1.example.org");
+    QVERIFY2(folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                  stem),
+             "the guard ran an empty query and moved the inbox");
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"),
+                                   stem),
+             "an unconfigured spam folder moved mail to the trash anyway");
 }
 
 void TestMainWindow::deleteRecordsWhereTheMessageCameFrom()

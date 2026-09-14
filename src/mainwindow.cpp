@@ -2467,11 +2467,18 @@ void MainWindow::populateMessageBar()
         // need no colour to tell them from each other, only from this one.
         tinted = { m_actions.value(QStringLiteral("restore")) };
     } else if (everySelectedRowIsInASpamFolder()
+               && !m_replySelectionHidesDelete
                && !m_threadView->selectionModel()->selectedRows().isEmpty()) {
         // Item 201. Mail in a spam folder affords one thing the ordinary bar
         // cannot offer: a way back out. Ordered after the trash branch and
         // before the draft one, because a draft thrown into the spam folder is
         // no more useful to edit than one thrown into the trash.
+        //
+        // NOT taken on a reply row. The only action here is not_spam and
+        // refreshTrashActions() hides it on a reply, so taking the branch left
+        // the bar EMPTY: a reply inside an expanded spam conversation lost
+        // Reply, Forward and Star. The trash branch needs no such guard because
+        // purge and empty_trash stay visible on a reply.
         messageActions = { m_actions.value(QStringLiteral("not_spam")) };
     } else if (currentMessageIsADraft()) {
         messageActions = { m_actions.value(QStringLiteral("edit_draft")) };

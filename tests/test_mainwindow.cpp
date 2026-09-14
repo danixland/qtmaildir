@@ -17429,12 +17429,25 @@ void TestMainWindow::notSpamIsOfferedInTheSpamView()
     // selection in a spam folder. Asked of the PATH, never the `spam` tag: a
     // provider-caught message carries no tag of ours and must still be
     // un-spammable.
+    //
+    // Asserted on the message BAR as well as on the QAction. The two are set by
+    // different code (populateMessageBar() vs refreshTrashActions()), so
+    // deleting the bar's spam branch leaves a QAction-only test green.
     WorkerBackedWindow backed;
     QVERIFY(backed.fixture().addMessage(
         QStringLiteral("acct/Spam"), QStringLiteral("nsv@example.org"),
         QStringLiteral("Offered here"), QStringLiteral("sender@example.org"),
         QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
         QStringLiteral("Body text.")));
+    // A reply in the same conversation, so the bar's reply behaviour inside a
+    // spam folder can be checked too: the only action the spam branch offers is
+    // hidden on a reply, so taking that branch would leave the bar EMPTY.
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/Spam"), QStringLiteral("nsv2@example.org"),
+        QStringLiteral("Re: Offered here"), QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Reply text."), true,
+        QStringLiteral("nsv@example.org")));
     QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
                           QStringLiteral("Trash"), QStringLiteral("Spam")),
              qPrintable(backed.error()));
@@ -17444,9 +17457,19 @@ void TestMainWindow::notSpamIsOfferedInTheSpamView()
     auto *view = window.findChild<ThreadListView *>();
     auto *queryEdit =
         window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
-    QVERIFY(model && view && queryEdit);
+    auto *bar = window.findChild<QToolBar *>(QStringLiteral("message_toolbar"));
+    QVERIFY(model && view && queryEdit && bar);
     auto *notSpam = window.findChild<QAction *>(QStringLiteral("not_spam"));
     QVERIFY(notSpam);
+
+    const auto barHolds = [&](const QString &name) {
+        const auto actions = bar->actions();
+        return std::any_of(actions.cbegin(), actions.cend(),
+                           [&](const QAction *action) {
+                               return action && action->objectName() == name
+                                      && action->isVisible();
+                           });
+    };
 
     queryEdit->setText(QStringLiteral("path:\"acct/Spam/**\""));
     queryEdit->returnPressed();
@@ -17456,6 +17479,31 @@ void TestMainWindow::notSpamIsOfferedInTheSpamView()
 
     QVERIFY2(notSpam->isVisible() && notSpam->isEnabled(),
              "Not spam is not offered in the spam view, where it is the point");
+    QVERIFY2(barHolds(QStringLiteral("not_spam")),
+             "the message bar does not carry Not spam in the spam view");
+
+    // The reply inside the spam conversation. Not spam is absent there, as on
+    // any reply, but the bar must fall back to the ordinary actions rather than
+    // go empty.
+    const QModelIndex thread = model->index(0, 0, QModelIndex());
+    view->expand(thread);
+    // Both messages are children since item 177; wait for the worker round trip
+    // or the reply row is not there and the selection below is a no-op.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(thread) == 2, 15000);
+    const QModelIndex replyRow = model->index(1, 0, thread);
+    QVERIFY(model->isMessageRow(replyRow));
+    view->selectionModel()->select(
+        replyRow, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(replyRow);
+    QApplication::processEvents();
+
+    QVERIFY2(!barHolds(QStringLiteral("not_spam")),
+             "Not spam is on the message bar for a reply inside the spam folder");
+    QVERIFY2(barHolds(QStringLiteral("reply")),
+             "the message bar went empty on a reply inside the spam folder: it "
+             "took the spam branch, whose only action is hidden on a reply");
+    QVERIFY2(barHolds(QStringLiteral("forward")),
+             "the message bar lost Forward on a reply inside the spam folder");
 }
 
 void TestMainWindow::notSpamIsAbsentOnAReplyRow()

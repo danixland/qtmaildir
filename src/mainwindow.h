@@ -1107,12 +1107,13 @@ private:
     SelectionKind selectionKind() const;
 
     /// Whether the selection holds a reply row, which is what hides Delete,
-    /// Restore and Archive (item 177).
+    /// Restore, Archive and Mark spam: all conversation-level acts, and a
+    /// single reply cannot be removed from its thread (item 177).
     ///
     /// Written by refreshScopedActionLabels() and read by
-    /// refreshTrashActions(), which runs after it and owns the same two
-    /// actions' visibility. A flag rather than a second walk over the
-    /// selection, so the two cannot answer differently.
+    /// refreshTrashActions(), which runs after it and owns the same actions'
+    /// visibility. A flag rather than a second walk over the selection, so the
+    /// two cannot answer differently.
     bool m_replySelectionHidesDelete = false;
 
     /// Hides Delete on mail already in the trash, and Restore on mail that
@@ -1392,6 +1393,21 @@ private:
     /// and the restore that strips it. Deriving it twice let them disagree,
     /// and a restore stripped a tag that had never been written.
     QString originTagFor(const QString &dbRelativeFolder) const;
+
+    /// The `moved-from:` tags these messages currently carry that a new origin
+    /// must replace, read from the MODEL.
+    ///
+    /// Mirrors the worker's overwrite rule (NotmuchWorker::applyTags): a
+    /// message carries exactly one origin, so writing a new one strips any
+    /// other. The worker does it against the database; this does it against
+    /// the optimistic model, where restoreSelected() reads the origin back and
+    /// a stale second tag would send the message to the wrong folder.
+    ///
+    /// Returns nothing unless `added` is writing a new origin, which is either
+    /// a resolved `moved-from:` tag or the unresolved placeholder the
+    /// optimistic update drops before painting.
+    QStringList originTagsToStrip(const QStringList &messageIds,
+                                  const QStringList &added) const;
 
     /// The account whose maildir contains `path`, or an invalid account when
     /// no configured maildir does.

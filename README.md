@@ -779,9 +779,9 @@ Defaults, all rebindable through `[keys]`:
 
 Every action in this table carries a default binding, and every one appears in
 a menu. Six actions carry none, because a chord for them would be arbitrary:
-Find stranded spam, Empty trash, Delete permanently, Empty spam, Edit draft and
-Save message. They are reachable from the menus, and the shortcut reference
-prints them as unbound.
+Check for stranded spam, Empty trash, Delete permanently, Empty spam, Edit
+draft and Save message. They are reachable from the menus, and the shortcut
+reference prints them as unbound.
 **Help > Keyboard shortcuts** lists the current bindings, generated from the
 actions themselves, so it shows your overrides rather than these defaults.
 

@@ -34,15 +34,16 @@ point at which they are stable.
   into that folder and records the one it came from in a `moved-from:` tag, so
   Restore and Undo put it back where it was. Before this the action only added
   the tag and left the file in place, so a message marked spam on one machine
-  did not appear in the folder on another.
+  did not appear in the folder on another. Like Delete, it is unavailable on a
+  reply row and on mail already in the trash.
 - **Empty Spam.** Moves every message in the account's spam folder to its trash
   in one act, scoped to the account selector like Empty trash, and asks nothing
   first: it is a move with an undo behind it, and a mutation that can be undone
   gets undo rather than a dialog.
-- **Find stranded spam.** Mail carrying the `spam` tag while sitting in no spam
-  folder, usually because another client or an older version tagged it and left
-  the file where it was, is listed by a menu entry so it can be selected and
-  moved. It is the spam counterpart to Find stranded deleted mail.
+- **Check for stranded spam.** Mail carrying the `spam` tag while sitting in
+  no spam folder, usually because another client or an older version tagged it
+  and left the file where it was, is listed by a menu entry so it can be
+  selected and moved. It is the spam counterpart to Find stranded deleted mail.
 - **A spam button on the message pane's bar**, beside Star and Archive. It is
   drawn with a bug rather than the theme's junk glyph, and falls back to
   `mail-mark-junk` on a theme that ships no bug.

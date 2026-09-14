@@ -3931,6 +3931,15 @@ void MainWindow::refreshTrashActions()
                         && !m_replySelectionHidesDelete);
     }
 
+    // Mark spam follows Delete exactly: one reply cannot be moved out of its
+    // conversation, and the trash view does not afford it. Same two hides, ORed
+    // rather than fought over, so it reads the same flag instead of walking the
+    // selection a second time.
+    if (auto *spam = m_actions.value(QStringLiteral("spam"))) {
+        spam->setVisible((!haveSelection || !inTrash)
+                         && !m_replySelectionHidesDelete);
+    }
+
     // The mirror, which shipped beside it: Restore was added unconditionally
     // to both menus and so was offered on mail that was never deleted.
     if (auto *restore = m_actions.value(QStringLiteral("restore"))) {
@@ -6466,6 +6475,29 @@ QString MainWindow::originTagFor(const QString &dbRelativeFolder) const
     return QString(kOriginTagPrefix) + accountRelative;
 }
 
+QStringList MainWindow::originTagsToStrip(const QStringList &messageIds,
+                                          const QStringList &added) const
+{
+    const bool writingOrigin =
+        std::any_of(added.cbegin(), added.cend(), [](const QString &tag) {
+            return tag == kOriginTagPlaceholder()
+                   || tag.startsWith(QLatin1String(kOriginTagPrefix));
+        });
+    if (!writingOrigin)
+        return {};
+
+    QStringList stripped;
+    for (const QString &messageId : messageIds) {
+        for (const QString &tag : m_model->messageById(messageId).tags) {
+            if (tag.startsWith(QLatin1String(kOriginTagPrefix))
+                && !added.contains(tag) && !stripped.contains(tag)) {
+                stripped.append(tag);
+            }
+        }
+    }
+    return stripped;
+}
+
 void MainWindow::trashThreads(const QStringList &threadIds)
 {
     if (threadIds.isEmpty())
@@ -7331,6 +7363,11 @@ void MainWindow::sendMove(const QStringList &messageIds,
         if (tag != kOriginTagPlaceholder())
             displayRemove.append(tag);
     }
+    // The model's half of the worker's overwrite rule. This move is writing a
+    // new origin, so every `moved-from:` the model still holds is stale and
+    // goes with it; otherwise the confirmed update below appends the new tag
+    // beside the old one and restoreSelected() reads whichever comes first.
+    displayRemove += originTagsToStrip(messageIds, add);
     // A thread-scoped move already repainted its rows in
     // trashThreads() / untrashThreads(), synchronously, before
     // the worker was asked to resolve the threads at all. Repeating it here
@@ -7586,7 +7623,11 @@ void MainWindow::onMessagesMoved(const QMap<QString, QString> &originByMessageId
         };
 
         const QStringList resolvedAdd = resolve(pending.add);
-        const QStringList resolvedRemove = resolve(pending.remove);
+        QStringList resolvedRemove = resolve(pending.remove);
+        // The confirmed half of the same rule, and the one that matters when
+        // the optimistic update was skipped (a whole-thread move): the new
+        // origin replaces any other the model still holds.
+        resolvedRemove += originTagsToStrip(it.value(), resolvedAdd);
         sendMessageTagChange(it.value(), resolvedAdd, resolvedRemove,
                              pending.description);
 

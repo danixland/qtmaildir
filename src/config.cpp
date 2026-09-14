@@ -68,8 +68,8 @@ const QStringList kQueryGenerators = { QStringLiteral("unread"),
                                        QStringLiteral("spam") };
 
 /// The tag a generator matches, for the three filters that are a plain tag
-/// query. Empty for "sent", "drafts" and "trash", which compose from each
-/// account's folder instead and are handled separately.
+/// query. Empty for "sent", "drafts", "trash" and "spam", which compose from
+/// each account's folder instead and are handled separately.
 QString generatorTag(const QString &generator)
 {
     if (generator == QStringLiteral("unread"))
@@ -85,8 +85,9 @@ QString generatorTag(const QString &generator)
 /// user's own message back into the conversation it answers, and "drafts" is
 /// worse: a thread row stands for its first matched message, which for a draft
 /// reply is the message being replied TO, so the draft itself is unreachable.
-/// "trash" stays threaded, since a deleted message still belongs to its
-/// conversation. Closed set, and the one place the three views are decided.
+/// "trash" and "spam" stay threaded, since a deleted or spammed message still
+/// belongs to its conversation. Closed set, and the one place the three views
+/// are decided.
 bool generatorIsFlat(const QString &generator)
 {
     return generator == QStringLiteral("sent")

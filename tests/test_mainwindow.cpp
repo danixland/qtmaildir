@@ -534,6 +534,12 @@ private slots:
     void theSpamCleanupQueryExcludesTheSpamFolder();
     void theSpamCleanupQueryWithoutASpamFolderIsJustTheTag();
 
+    // Item 187's final review. Mark spam is Delete's sibling, so it is hidden
+    // exactly where Delete is, and the model keeps one origin per message.
+    void spamIsAbsentOnAReplyRow();
+    void spamIsHiddenOnMailAlreadyInTheTrash();
+    void restoringAfterTwoMovesReturnsToTheLatestOrigin();
+
     // ComposeWindow, item 123. These need a window but no worker: the composer
     // never touches NotmuchWorker, it reads its context from the value struct
     // MainWindow hands it, so a Config written to a temporary INI is the whole
@@ -8496,7 +8502,8 @@ void TestMainWindow::theMessagePaneCarriesItsOwnActionBar()
     // this after seeing the first version, and the split is now by what the
     // action needs rather than by what it is about.
     const QStringList expected = { QStringLiteral("reply"),
-                                   QStringLiteral("forward") };
+                                   QStringLiteral("forward"),
+                                   QStringLiteral("spam") };
     for (const QString &name : expected) {
         auto *action = window.findChild<QAction *>(name);
         QVERIFY2(action, qPrintable(QStringLiteral("no action %1").arg(name)));
@@ -12249,7 +12256,9 @@ void TestMainWindow::emptySpamRewritesTheOriginToTheSpamFolder()
                                          "tag:\"moved-from:inbox\"")) == 1,
         15000);
 
-    window.findChild<QAction *>(QStringLiteral("empty_spam"))->trigger();
+    auto *emptySpam = window.findChild<QAction *>(QStringLiteral("empty_spam"));
+    QVERIFY2(emptySpam, "empty_spam does not exist");
+    emptySpam->trigger();
     QTRY_VERIFY_WITH_TIMEOUT(
         folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
         15000);
@@ -17082,6 +17091,186 @@ void TestMainWindow::undoingAMarkReadRestoresOnlyWhatWasUnread()
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:ur0@example.org and "
                                               "tag:unread")),
              0);
+}
+
+void TestMainWindow::spamIsAbsentOnAReplyRow()
+{
+    // Item 187's final review. Mark spam is Delete's sibling, so it follows the
+    // same rule (item 177): a single reply cannot be moved out of its
+    // conversation, and moving only that one message is not a gesture this
+    // application offers. Absent on a reply, back on the conversation row.
+    const Config config;
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(model && view);
+
+    ThreadSummary first = makeThread(QStringLiteral("t1"), {});
+    first.totalCount = 1;
+    ThreadSummary many = makeThread(QStringLiteral("t2"), {});
+    many.totalCount = 2;
+    model->appendBatch({ first, many });
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m1");
+    root.threadId = QStringLiteral("t2");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m2");
+    reply.threadId = QStringLiteral("t2");
+    reply.depth = 1;
+    model->setThreadMessages(QStringLiteral("t2"), { root, reply });
+
+    const QModelIndex thread = model->index(1, 0, QModelIndex());
+    view->expand(thread);
+    const QModelIndex replyRow = model->index(0, 0, thread);
+    view->selectionModel()->select(
+        replyRow, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(replyRow);
+    QApplication::processEvents();
+
+    auto *spam = window.findChild<QAction *>(QStringLiteral("spam"));
+    QVERIFY(spam);
+    QVERIFY2(!spam->isVisible() || !spam->isEnabled(),
+             "Mark spam is offered on a reply: one reply cannot be moved out of "
+             "its conversation, the same rule Delete and Archive follow");
+
+    // And the mirror: on the conversation row it is back, so the hide is about
+    // what the row IS and not a stuck flag.
+    selectThreadRow(view, 1);
+    QApplication::processEvents();
+    QVERIFY2(spam->isVisible() && spam->isEnabled(),
+             "Mark spam stayed hidden on a conversation row");
+}
+
+void TestMainWindow::spamIsHiddenOnMailAlreadyInTheTrash()
+{
+    // The trash view does not afford Mark spam, exactly as it does not afford
+    // Delete: the message is already thrown away, and a move from the trash
+    // into the spam folder is not a gesture the view offers. Asked of the PATH,
+    // never the `deleted` tag, for the reason Delete is.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const Config config = configWithTrash(dir);
+    MainWindow window(config);
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<QTreeView *>();
+    QVERIFY(view);
+    auto *spam = window.findChild<QAction *>(QStringLiteral("spam"));
+    QVERIFY(spam);
+
+    model->appendBatch({
+        threadAtPath(QStringLiteral("t1"),
+                     QStringLiteral("acct/inbox/cur/1:2,S")),
+        threadAtPath(QStringLiteral("t2"),
+                     QStringLiteral("acct/trash/cur/2:2,S")),
+    });
+
+    view->setCurrentIndex(model->index(0, 0, {}));
+    QVERIFY2(spam->isVisible(),
+             "Mark spam is hidden on mail that is NOT in the trash, so this "
+             "test cannot tell the two cases apart");
+
+    view->setCurrentIndex(model->index(1, 0, {}));
+    QVERIFY2(!spam->isVisible(),
+             "Mark spam is still offered on mail already in the trash");
+
+    // A folder whose name STARTS with the trash folder's is a different folder,
+    // so the prefix must be compared with its separator here too.
+    model->appendBatch({ threadAtPath(QStringLiteral("t3"),
+                                      QStringLiteral("acct/trash-old/cur/3:2,S")) });
+    view->setCurrentIndex(model->index(2, 0, {}));
+    QVERIFY2(spam->isVisible(),
+             "Mark spam vanished on mail in acct/trash-old, which is not the "
+             "trash");
+}
+
+void TestMainWindow::restoringAfterTwoMovesReturnsToTheLatestOrigin()
+{
+    // Item 187's final review. The worker keeps exactly ONE `moved-from:` per
+    // message, overwriting the old one (NotmuchWorker::applyTags). The
+    // optimistic MODEL update did not: on a second move it added the new origin
+    // beside the old, and restoreSelected() reads the model and takes the FIRST
+    // `moved-from:` with a break(). So a message that travelled
+    // inbox -> Spam -> Trash restored to the INBOX rather than to the spam
+    // folder it actually came from, silently and with no way back.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("twoorig@example.org"),
+        QStringLiteral("Two origins"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash"), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString stem = QStringLiteral("twoorig.example.org");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    // inbox -> Spam, origin moved-from:inbox.
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("spam"))->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Spam/cur"), stem),
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:twoorig@example.org and "
+                                         "tag:\"moved-from:inbox\"")) == 1,
+        15000);
+
+    // Spam -> Trash, which overwrites the origin with moved-from:Spam. An
+    // `id:` query keeps the row in the model across the move, so the second
+    // Delete press can select it.
+    queryEdit->setText(QStringLiteral("id:twoorig@example.org"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Trash/cur"), stem),
+        15000);
+
+    // The DATABASE holds exactly one origin, and it names the spam folder.
+    // This is the worker's overwrite rule, already correct.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, QStringLiteral("id:twoorig@example.org and "
+                                         "tag:\"moved-from:Spam\"")) == 1,
+        15000);
+    QCOMPARE(notmuchCount(cfg, QStringLiteral("id:twoorig@example.org and "
+                                              "tag:\"moved-from:inbox\"")),
+             0);
+
+    // A second Delete press restores it. The MODEL restoreSelected() reads must
+    // also hold one origin; without the model-side overwrite it still held
+    // moved-from:inbox and sent the message home to the inbox.
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("delete"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(root + QStringLiteral("/acct/Spam/cur"), stem),
+        15000);
+    QVERIFY2(!folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
+                                   stem)
+                 && !folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                          stem),
+             "the restore went to the inbox instead of the spam folder the "
+             "message actually came from: the model held two origins");
 }
 
 #include "test_mainwindow.moc"

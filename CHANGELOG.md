@@ -11,6 +11,14 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-09-14
+
+Spam is now a folder you can act on: Mark spam moves the file into a
+per-account `spam` folder, a built-in Spam view lists it, Empty Spam clears it
+into the trash, and Not spam brings a message back. Every account needs a new
+`spam` key and the origin tag is renamed `deleted-from:` to `moved-from:`, so
+read Upgrading below before the first run.
+
 ### Added
 
 - **The message pane's bar knows about the trash.** On a message that is

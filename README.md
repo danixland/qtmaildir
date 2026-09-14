@@ -150,7 +150,8 @@ identity.
 ; message_zoom = 1.0
 ; Optional. Which query to open at startup, by name. Defaults to Unread.
 ; Matches your own saved queries first, then the built-in filters (Unread,
-; Inbox, Important, Sent), so either can be named here. Falls back to the
+; Inbox, Important, Sent, Drafts, Trash, Spam), so either can be named here.
+; Falls back to the
 ; Unread filter if no query by this name exists, and warns if you named one
 ; explicitly.
 ; startup_query = Unread
@@ -242,6 +243,9 @@ maildir = work-mail        ; relative to notmuch's mail root
 trash = Trash              ; Delete moves the file here. Not optional in
                            ;   practice: without it the application reports a
                            ;   config problem and Delete does not work.
+spam = Spam                ; Mark spam moves the file here. The same warning
+                           ;   applies: without it the application reports a
+                           ;   config problem and Mark spam does not work.
 drafts = Drafts            ; optional; enables the Drafts button, and where
                            ;   the composer autosaves
 sent = Sent                ; optional; enables the Sent button, and where a
@@ -263,6 +267,7 @@ name = Your Name
 address = you@example.net
 maildir = personal
 trash = Trash
+spam = Spam
 drafts = Drafts
 
 ; Optional, and global rather than per-account. Every key below shows its
@@ -755,7 +760,7 @@ Defaults, all rebindable through `[keys]`:
 | `Return` | `open_thread` | Focus the thread list |
 | `Ctrl+E` | `archive` | Remove `inbox` from every selected thread |
 | `Ctrl+D` | `delete` | Add `deleted` |
-| `Ctrl+Shift+S` | `spam` | Add `spam`, remove `inbox` |
+| `Ctrl+Shift+S` | `spam` | Move the file to the spam folder and record where it came from |
 | `Ctrl+U` | `toggle_unread` | Toggle `unread` |
 | `Ctrl+Shift+U` | `mark_all_read` | Remove `unread` from every thread in the view |
 | `Ctrl+I` | `flag` | Mark important (adds `flagged`) |
@@ -770,7 +775,10 @@ Defaults, all rebindable through `[keys]`:
 | `Ctrl+G` | `sync` | Run the configured sync command |
 | `Ctrl+Q` | `quit` | Quit |
 
-Every action now carries a default binding, and every one appears in a menu.
+Every action in this table carries a default binding, and every one appears in
+a menu. Some actions carry no default, because a chord for them would be
+arbitrary (Empty trash, Empty spam, Delete permanently); they are reachable
+from the menus and the shortcut reference prints them as unbound.
 **Help > Keyboard shortcuts** lists the current bindings, generated from the
 actions themselves, so it shows your overrides rather than these defaults.
 

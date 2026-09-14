@@ -29,6 +29,28 @@ point at which they are stable.
   outcome from a line in the log. Set `status` under `[sync]` to move the file;
   the default matches what the script writes and no config change is needed.
 
+- **A Spam view, and Mark spam now moves the file.** Every account may name a
+  `spam` folder beside its `trash`, and a built-in Spam filter lists that folder
+  as a threaded view the way the trash filter does. Mark spam moves the message
+  into that folder and records the one it came from in a `moved-from:` tag, so
+  Restore and Undo put it back where it was. Before this the action only added
+  the tag and left the file in place, so a message marked spam on one machine
+  did not appear in the folder on another.
+
+- **Empty Spam.** Moves every message in the account's spam folder to its trash
+  in one act, scoped to the account selector like Empty trash, and asks nothing
+  first: it is a move with an undo behind it, and a mutation that can be undone
+  gets undo rather than a dialog.
+
+- **Find stranded spam.** Mail carrying the `spam` tag while sitting in no spam
+  folder, usually because another client or an older version tagged it and left
+  the file where it was, is listed by a menu entry so it can be selected and
+  moved. It is the spam counterpart to Find stranded deleted mail.
+
+- **A spam button on the message pane's bar**, beside Star and Archive. It is
+  drawn with a bug rather than the theme's junk glyph, and falls back to
+  `mail-mark-junk` on a theme that ships no bug.
+
 ### Changed
 
 - **Delete and Archive moved from the main toolbar to the message pane's
@@ -48,6 +70,11 @@ point at which they are stable.
   narrower view cannot leave a change stranded. The status line now names what
   a run covers instead of saying only "Syncing...", so a narrowed run is
   visible as one.
+- **The origin tag is `moved-from:` rather than `deleted-from:`.** The tag
+  records where a message was moved from, and now that Mark spam moves a file
+  too, "deleted" was no longer true of every message carrying one. A message
+  holds exactly one origin, overwritten on each move, so a message that
+  travelled inbox to spam to trash names the spam folder and nothing older.
 
 ### Fixed
 
@@ -93,6 +120,32 @@ point at which they are stable.
 - **A skipped sync no longer looks like a successful one.** When a run exits
   because another sync already holds the lock, it carried nothing, and the
   pending count stays where it was.
+
+### Upgrading
+
+**Every account needs a `spam` key beside `trash`.** Mark spam now moves the
+file into the account's `spam` folder, named relative to `maildir`, and an
+account without one cannot be marked spam at all. The config loader reports it
+at startup and the action names the cause rather than writing a file that has
+nowhere to go. Add the key under every `[account.*]` section, e.g. `spam =
+Spam`.
+
+**The origin tag is renamed, and the code does not rewrite the old one.** Mail
+moved by an earlier version carries `deleted-from:<folder>`; this version reads
+and writes `moved-from:<folder>` and nothing else. Until the old tags are
+renamed, Restore cannot find them, so such a message falls back to the
+account's inbox rather than the folder it came from, and Undo of an old delete
+no longer knows the origin. Rename it once, per distinct folder, before you
+rely on either:
+
+```bash
+notmuch tag +moved-from:'<folder>' -deleted-from:'<folder>' \
+  -- tag:'deleted-from:<folder>'
+```
+
+There is no compatibility branch on purpose: a reader accepting both prefixes
+would answer "first match wins" on a message holding one of each, which is the
+silent mis-restore the single tag exists to prevent.
 
 ## [0.28.0] - 2026-08-29
 

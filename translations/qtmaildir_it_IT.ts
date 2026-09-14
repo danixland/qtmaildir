@@ -611,6 +611,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Non connesso all&apos;indice della posta</translation>
     </message>
     <message>
+        <source>No spam folder is configured</source>
+        <translation>Nessuna cartella spam configurata</translation>
+    </message>
+    <message>
         <source>Nothing selected to delete</source>
         <translation>Nessun messaggio selezionato da eliminare</translation>
     </message>
@@ -651,6 +655,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Mail tagged deleted but not in a trash folder. Select what should go and press Delete.</source>
         <translation>Posta etichettata come eliminata ma non in un cestino. Seleziona cosa deve essere rimosso e premi Elimina.</translation>
+    </message>
+    <message>
+        <source>Mail tagged spam but not in a spam folder. Select what should go and press Mark spam.</source>
+        <translation>Posta etichettata come spam ma non in una cartella spam. Seleziona cosa deve essere rimosso e premi Segna come spam.</translation>
     </message>
     <message>
         <source>Undelete</source>
@@ -756,6 +764,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
             <numerusform>%n messaggio non è stato segnato come spam: nessuna cartella spam è configurata per il suo account.</numerusform>
             <numerusform>%n messaggi non sono stati segnati come spam: nessuna cartella spam è configurata per il loro account.</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Empty spam</source>
+        <translation>Svuota spam</translation>
     </message>
     <message>
         <source>Undelete thread</source>
@@ -884,12 +896,28 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>&amp;Regole di etichettatura...</translation>
     </message>
     <message>
+        <source>&amp;Check for stranded spam</source>
+        <translation>&amp;Cerca spam non spostato</translation>
+    </message>
+    <message>
+        <source>Show mail tagged spam that is not in a spam folder</source>
+        <translation>Mostra la posta etichettata come spam che non si trova in una cartella spam</translation>
+    </message>
+    <message>
         <source>Delete per&amp;manently...</source>
         <translation>Elimina definitiva&amp;mente...</translation>
     </message>
     <message>
         <source>Permanently delete the selected messages</source>
         <translation>Elimina definitivamente i messaggi selezionati</translation>
+    </message>
+    <message>
+        <source>Empty spam f&amp;older...</source>
+        <translation>S&amp;vuota cartella spam...</translation>
+    </message>
+    <message>
+        <source>Move every message in the spam folder to the trash</source>
+        <translation>Sposta nel cestino ogni messaggio della cartella spam</translation>
     </message>
     <message>
         <source>Move the selected messages to the spam folder</source>

@@ -328,13 +328,17 @@ user's real mail. Treat any code that composes a folder name as reaching the
 server, because it does.
 
 **A message records where it came from in a tag, because nothing else can.**
-`deleted-from:<folder>` is written when Delete moves the file, and read back by
-Restore. The file has moved, so neither the path nor anything in notmuch still
-knows the original folder. A notmuch tag MAY contain a space, so tags crossing
-the thread boundary are joined by a TAB rather than a space; joining on a space
-truncated every folder name containing one. A message trashed by another client
-carries no such tag at all, which is why the trash view is path-based and why
-Restore falls back to the account's inbox rather than refusing.
+`moved-from:<folder>` is written by any move, Delete into the trash and Mark
+spam into the spam folder alike, and read back by Restore. The file has moved,
+so neither the path nor anything in notmuch still knows the original folder. A
+message carries exactly ONE origin: a later move strips the tag it finds and
+writes the folder it is leaving now, so a message that travelled inbox -> spam
+-> trash names the spam folder and nothing older. A notmuch tag MAY contain a
+space, so tags crossing the thread boundary are joined by a TAB rather than a
+space; joining on a space truncated every folder name containing one. A message
+trashed by another client carries no such tag at all, which is why the trash
+view is path-based and why Restore falls back to the account's inbox rather
+than refusing.
 
 **Restore reads the DATABASE, never the model.** The model's tags come from the
 query, so a row whose delete has not been re-queried still carries its pre-delete

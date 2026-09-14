@@ -33,6 +33,12 @@ QStringList KeyMap::knownActions()
         QStringLiteral("delete"),
         QStringLiteral("restore"),
         QStringLiteral("cleanup_stranded"),
+        // Item 103's spam sibling: it reports mail tagged `spam` that is not in
+        // any account's spam folder, and moves nothing. No default binding,
+        // matching cleanup_stranded: a view-replacing report is reached from a
+        // menu, and since item 132 an unbound action is menu-reachable rather
+        // than broken.
+        QStringLiteral("cleanup_stranded_spam"),
         // Item 118. No default binding, deliberately: this is the one action
         // that destroys mail with no undo, and a chord is how it would be run
         // by accident. Menu only, which item 132 made a legitimate choice.

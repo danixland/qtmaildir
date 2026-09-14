@@ -1762,6 +1762,18 @@ void MainWindow::registerActions()
               [this]() {
         showStrandedDeletedMail();
     });
+    // The spam half of the same cleanup, beside its Delete sibling. Its
+    // mnemonic is on "&Check" rather than the brief's `s&pam`: Alt+P is
+    // already Re&ply and Alt+S is Mark &spam (and Find &stranded), and no
+    // letter of "Find stranded spam" is free in the Message menu. Menu only,
+    // like cleanup_stranded: it replaces the whole view like a filter does,
+    // and it moves nothing.
+    addAction(QStringLiteral("cleanup_stranded_spam"),
+              tr("&Check for stranded spam"),
+              tr("Show mail tagged spam that is not in a spam folder"),
+              [this]() {
+        showStrandedSpamMail();
+    });
     // The ONE irreversible action in this application, and the only one that
     // asks before it runs (item 118). CLAUDE.md rules out confirmation
     // dialogs for mutations because every mutation pushes its inverse onto
@@ -2076,6 +2088,12 @@ const QHash<QString, QPair<QString, QString>> kThemeIcons = {
     // nothing, so an icon from the delete family would promise the one
     // thing it deliberately does not do.
     { QStringLiteral("cleanup_stranded"), { QStringLiteral("system-search"), QString() } },
+    // The spam cleanup shares `system-search` for the same reason it shares
+    // the action's shape: both report what they find and move nothing. It is
+    // a Message-menu-only entry that always carries its text and never
+    // reaches the main toolbar, so it is named in noTwoActionsShareAnIcon()'s
+    // exception list, exactly as reply_no_quote and empty_spam are.
+    { QStringLiteral("cleanup_stranded_spam"), { QStringLiteral("system-search"), QString() } },
     { QStringLiteral("empty_trash"), { QStringLiteral("edit-delete-shred"), QString() } },
     // Item 185. Distinct from empty_trash's, because both reach the trash
     // bar and there the icon IS the control: two buttons that destroy
@@ -2213,6 +2231,7 @@ void MainWindow::buildMenus()
     // It replaces the whole view like a filter does, so a sixth button beside
     // the five filters would read as one of them.
     messageMenu->addAction(m_actions.value(QStringLiteral("cleanup_stranded")));
+    messageMenu->addAction(m_actions.value(QStringLiteral("cleanup_stranded_spam")));
     messageMenu->addAction(m_actions.value(QStringLiteral("empty_trash")));
     messageMenu->addAction(m_actions.value(QStringLiteral("empty_spam")));
     messageMenu->addAction(m_actions.value(QStringLiteral("tag_rules")));
@@ -7100,6 +7119,36 @@ void MainWindow::showStrandedDeletedMail()
     // looking at.
     m_statusLabel->setText(tr("Mail tagged deleted but not in a trash folder. "
                               "Select what should go and press Delete."));
+}
+
+void MainWindow::showStrandedSpamMail()
+{
+    // Not scoped to the selected account, deliberately, for the same reason
+    // showStrandedDeletedMail() is not: the stranded mail belongs to no view,
+    // and the user wants to see all of it at once. The account dropdown can
+    // still narrow it by hand afterwards.
+    const QString spam = m_config.allSpamQuery();
+
+    // No account configures a spam folder: everything tagged `spam` is by
+    // definition stranded, since there is nowhere for it to have gone. An
+    // empty exclusion must never be written as `not ()`, which notmuch parses
+    // without complaint and matches nothing, reporting a clean database.
+    const QString query =
+        spam.isEmpty()
+            ? QStringLiteral("tag:spam")
+            : QStringLiteral("tag:spam and not (%1)").arg(spam);
+
+    // Into the bar, like a filter: what ran is visible and editable, and
+    // AlreadyScoped stops runQuery() wrapping it in the selected account's
+    // path, which would hide every other account's stranded mail.
+    m_queryEdit->setText(query);
+    runQuery(FlatResult::No, AccountScope::AlreadyScoped);
+
+    // After runQuery(), which sets "Searching...": set before it, this would
+    // be overwritten and the user would be told nothing about what they are
+    // looking at.
+    m_statusLabel->setText(tr("Mail tagged spam but not in a spam folder. "
+                              "Select what should go and press Mark spam."));
 }
 
 void MainWindow::restoreSelected(bool fallbackToInbox)

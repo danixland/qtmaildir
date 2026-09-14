@@ -531,6 +531,8 @@ private slots:
     void emptySpamMovesEachAccountsMailToItsOwnTrash();
     void emptySpamRewritesTheOriginToTheSpamFolder();
     void emptySpamRefusesAnUnconfiguredFolder();
+    void theSpamCleanupQueryExcludesTheSpamFolder();
+    void theSpamCleanupQueryWithoutASpamFolderIsJustTheTag();
 
     // ComposeWindow, item 123. These need a window but no worker: the composer
     // never touches NotmuchWorker, it reads its context from the value struct
@@ -8706,6 +8708,11 @@ void TestMainWindow::noTwoActionsShareAnIcon()
         // fails if it is ever put on the toolbar, so this is not a hiding
         // place.
         QStringLiteral("empty_spam"),
+        // Find stranded spam shares `cleanup_stranded`'s `system-search`,
+        // Task 7. Same property again: a Message-menu-only entry that always
+        // carries its text and never reaches the main toolbar, allowed for the
+        // same reason and caught here if it is ever put on the toolbar.
+        QStringLiteral("cleanup_stranded_spam"),
     };
 
     const Config config;
@@ -13673,6 +13680,54 @@ void TestMainWindow::theCleanupQueryExcludesMailAlreadyInTrash()
     // wrong instrument for an emptiness claim, for the reason above.
     QTRY_VERIFY_WITH_TIMEOUT(!queryEdit->text().isEmpty(), 15000);
     QCOMPARE(notmuchCount(cfg, queryEdit->text()), 0);
+}
+
+void TestMainWindow::theSpamCleanupQueryExcludesTheSpamFolder()
+{
+    // Task 7, mirroring theCleanupQueryExcludesMailAlreadyInTrash(). Properly
+    // spammed mail carries the tag AND sits in the spam folder, so without the
+    // exclusion this reports every message ever moved to spam.
+    WorkerBackedWindow backed;
+    QVERIFY2(backed.build(QStringLiteral("work"), QStringLiteral("work"),
+                          QString(), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *cleanup =
+        window.findChild<QAction *>(QStringLiteral("cleanup_stranded_spam"));
+    QVERIFY(queryEdit);
+    QVERIFY2(cleanup, "there is no cleanup_stranded_spam action");
+
+    cleanup->trigger();
+
+    // The composed query, asserted whole: the exclusion has to wrap the
+    // account's own spam path, and the tag has to be there.
+    QCOMPARE(queryEdit->text(),
+             QStringLiteral("tag:spam and not (path:\"work/Spam/**\")"));
+}
+
+void TestMainWindow::theSpamCleanupQueryWithoutASpamFolderIsJustTheTag()
+{
+    // The other branch of the same composition. An empty exclusion must never
+    // be written as `not ()`: notmuch parses that happily and matches nothing,
+    // so an account with no spam folder would report a clean database.
+    WorkerBackedWindow backed;
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *cleanup =
+        window.findChild<QAction *>(QStringLiteral("cleanup_stranded_spam"));
+    QVERIFY(queryEdit);
+    QVERIFY2(cleanup, "there is no cleanup_stranded_spam action");
+
+    cleanup->trigger();
+
+    QCOMPARE(queryEdit->text(), QStringLiteral("tag:spam"));
 }
 
 void TestMainWindow::aMoveThatRelocatesNothingWritesNoTag()

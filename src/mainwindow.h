@@ -1314,6 +1314,13 @@ private:
     /// without moving.
     void showStrandedDeletedMail();
 
+    /// The spam half of the same cleanup: runs the query that finds mail
+    /// tagged `spam` whose file is not inside any account's spam folder. Like
+    /// its Delete sibling it REPORTS and moves nothing, and it is repeatable
+    /// for the same reason: mail reaches this state again whenever another
+    /// client tags without moving.
+    void showStrandedSpamMail();
+
     /// Asks the worker what is in the trash. The answer arrives at
     /// onThreadMessagesResolved() tagged `empty_trash` and goes to
     /// confirmAndPurge(): the count in the dialog has to be what will actually

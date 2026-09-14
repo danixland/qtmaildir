@@ -212,7 +212,7 @@ def test_a_protected_removal_is_skipped_whole_and_the_run_continues():
         assert count(env, "tag:new") == 0
 
 
-def setup_accounts(tmp, sent_config=True, split_index=False):
+def setup_accounts(tmp, sent_config=True, split_index=False, with_spam=False):
     """A maildir laid out as qtmaildir configures it: two accounts, each with
     an Inbox and a Sent folder, one message in each.
 
@@ -220,6 +220,9 @@ def setup_accounts(tmp, sent_config=True, split_index=False):
     thing that cares where a file sits. The folder names are the awkward
     ones deliberately: a bracketed, spaced provider folder is what the real
     config carries, and a flat `Sent` is what the other half carries.
+
+    `with_spam` adds each account's spam folder and its `spam` key, for the
+    test that a non-arrival folder added later is picked up the same way.
     """
     root = Path(tmp) / "Mail"
     folders = {
@@ -231,6 +234,10 @@ def setup_accounts(tmp, sent_config=True, split_index=False):
                 "acct-two/Inbox", "acct-two/[Provider]/Posta inviata"):
         for part in ("new", "cur", "tmp"):
             (root / sub / part).mkdir(parents=True)
+    if with_spam:
+        for sub in ("acct-one/Spam", "acct-two/[Provider]/Spam"):
+            for part in ("new", "cur", "tmp"):
+                (root / sub / part).mkdir(parents=True)
 
     make_message(root / "acct-one/Inbox", "arrived-one",
                  "friend@example.org", "an arrival")
@@ -269,8 +276,10 @@ def setup_accounts(tmp, sent_config=True, split_index=False):
         conf.parent.mkdir(parents=True, exist_ok=True)
         conf.write_text(
             "[account.one]\nmaildir = acct-one\nsent = Sent\n"
-            "[account.two]\nmaildir = acct-two\n"
-            "sent = [Provider]/Posta inviata\n")
+            + ("spam = Spam\n" if with_spam else "")
+            + "[account.two]\nmaildir = acct-two\n"
+            "sent = [Provider]/Posta inviata\n"
+            + ("spam = [Provider]/Spam\n" if with_spam else ""))
 
     subprocess.run(["notmuch", "new"], env=env, capture_output=True,
                    check=True)
@@ -344,6 +353,84 @@ def test_a_message_that_was_sent_AND_received_keeps_inbox():
         # folder, still loses it. Without this half the fix could simply be
         # "never strip anything".
         assert count(env, "tag:inbox and id:sent-one@example.org") == 0
+
+
+def test_spam_mail_does_not_keep_the_inbox_tag():
+    """Spam is not an arrival either. A provider's filter files it into a spam
+    folder, notmuch's new.tags still applies `inbox`, and without the carve-out
+    it shows up in the Inbox view (item 202)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env = setup_accounts(tmp, with_spam=True)
+        root = Path(tmp) / "Mail"
+        make_message(root / "acct-one/Spam", "spam-one",
+                     "spammer@example.net", "cheap stuff")
+        subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                       check=True)
+
+        write_rules(env, [])
+        assert count(env, 'tag:inbox and path:"acct-one/Spam/**"') == 1
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert count(env, 'tag:inbox and path:"acct-one/Spam/**"') == 0
+        # The arrival is untouched, which fails if the spam prefix is wrong.
+        assert count(env, 'tag:inbox and path:"acct-one/Inbox/**"') == 1
+
+
+def test_a_message_that_is_spam_AND_arrived_keeps_inbox():
+    """The all-files rule, for spam. notmuch deduplicates by Message-ID, so a
+    message with one file in a spam folder and one in an inbox DID arrive and
+    must keep `inbox` (item 202, same constraint as item 166 for sent)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env = setup_accounts(tmp, with_spam=True)
+        root = Path(tmp) / "Mail"
+        make_message(root / "acct-one/Spam", "spam-and-inbox",
+                     "spammer@example.net", "came twice")
+        make_message(root / "acct-one/Inbox", "spam-and-inbox",
+                     "spammer@example.net", "came twice")
+        subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                       check=True)
+        assert count(env, "id:spam-and-inbox@example.org") == 1
+        assert files(env, "id:spam-and-inbox@example.org") == 2
+
+        write_rules(env, [])
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert count(env, "tag:inbox and id:spam-and-inbox@example.org") == 1
+
+
+def test_an_account_without_a_spam_key_contributes_nothing():
+    """`spam` is per account. One account names its spam folder; the other
+    does not. Mail in the unconfigured account's Spam folder is an arrival by
+    the only rule the hook has and keeps `inbox`, which is the empty-path
+    guard: a missing key must not fall back to the account maildir, matching
+    everything under it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env = setup_accounts(tmp, with_spam=True)
+        root = Path(tmp) / "Mail"
+        make_message(root / "acct-one/Spam", "one-spam",
+                     "spammer@example.net", "spam for one")
+        make_message(root / "acct-two/[Provider]/Spam", "two-spam",
+                     "spammer@example.net", "spam for two")
+        subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                       check=True)
+
+        # Rewrite the config so only account one carries a spam key.
+        conf = Path(env["XDG_CONFIG_HOME"]) / "qtmaildir" / "qtmaildir.conf"
+        conf.write_text(
+            "[account.one]\nmaildir = acct-one\nsent = Sent\nspam = Spam\n"
+            "[account.two]\nmaildir = acct-two\n"
+            "sent = [Provider]/Posta inviata\n")
+
+        write_rules(env, [])
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert count(env, 'tag:inbox and path:"acct-one/Spam/**"') == 0
+        assert count(
+            env, 'tag:inbox and path:"acct-two/[Provider]/Spam/**"') == 1
 
 
 def test_the_carve_out_works_with_the_index_split_from_the_mail():

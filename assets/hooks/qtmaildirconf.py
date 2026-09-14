@@ -16,9 +16,9 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 """Reads the account layout out of qtmaildir.conf, for the post-new hook.
 
-Only the sent folders are read, and only so the hook can tell mail the user
-SENT from mail that arrived. Everything else in that file belongs to the
-application.
+Only the non-arrival folders are read, and only so the hook can tell mail
+this system filed itself (sent, drafts, spam) from mail that genuinely
+arrived. Everything else in that file belongs to the application.
 
 Stdlib only: this is imported by a notmuch hook that runs on every sync.
 
@@ -52,7 +52,7 @@ def _accounts(path):
     A file that will not parse yields NO accounts rather than raising. The
     caller is a hook running after `notmuch new` has already indexed the
     mail: failing the sync over a malformed application config is worse than
-    not protecting sent mail for one cycle, and the hook logs the miss.
+    not protecting non-arrival mail for one cycle, and the hook logs the miss.
     """
     parser = configparser.ConfigParser(
         # QSettings writes `;` comments, and `#` appears inside values (a
@@ -77,20 +77,27 @@ def _accounts(path):
 
 
 # Folders mail does not ARRIVE in: this system put the message there itself.
+# notmuch's `new.tags` applies `inbox` to every file it indexes, so a file in
+# any of these folders would otherwise appear in the tag:inbox Inbox view.
 #
-# Trash is deliberately absent. qtmaildir's own Delete leaves `inbox` on a
-# trashed message so Restore can put it back where it came from, and stripping
-# it here would fight that.
-NOT_ARRIVALS = ("sent", "drafts")
+# Trash is deliberately absent. This is scope, not a claim it can never
+# happen: measured 0 trashed files carried `inbox`, and the reported defect is
+# spam (item 202). qtmaildir's own Delete no longer leaves `inbox` on a
+# trashed message either: it strips `unread` and `inbox` (item 168), and
+# Restore re-adds `inbox` from the `moved-from:` origin tag once the message
+# returns to its origin folder. A file moved into the trash folder by another
+# client could still pick up `inbox` from `new.tags`; that is unmeasured and
+# out of scope for now, so it is not in this list.
+NOT_ARRIVALS = ("sent", "drafts", "spam")
 
 
-def sent_folders(path=None):
+def not_arrival_folders(path=None):
     """Every folder mail does not arrive in, relative to the mail root.
 
     An account contributes nothing unless it names a maildir: a bare `Sent`
     would match every account's folder of that name at once. Each of the keys
     in NOT_ARRIVALS is optional on its own, since an account may keep no sent
-    mail or no drafts locally.
+    mail, no drafts or no spam folder locally.
     """
     if path is None:
         path = default_path()
@@ -107,12 +114,12 @@ def sent_folders(path=None):
     return folders
 
 
-def sent_query(folders):
+def not_arrival_query(folders):
     """A notmuch query matching everything inside the given folders.
 
     Empty for an empty list, and the caller MUST check: an empty query means
     "match everything" to notmuch, so handing this straight to a tag command
-    would treat the whole corpus as sent mail.
+    would treat the whole corpus as non-arrival mail.
 
     `path:` is hierarchical, so `<folder>/**` covers `cur/` and `new/` and
     any nesting a provider invents underneath.

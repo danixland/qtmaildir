@@ -78,19 +78,19 @@ def _quote(value):
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def sent_only(query, folders):
+def not_arrival_only(query, folders):
     """The ids matching `query` whose files are ALL inside `folders`.
 
     None on failure, so the caller leaves `tag:new` in place rather than
     stripping on a half-read answer.
 
-    **Every file has to be in a sent folder, not merely one of them.** notmuch
-    deduplicates by Message-ID, so mail the user sends to another of their own
-    accounts is ONE message with two files: the sender's Sent copy and the
-    recipient's Inbox copy. The old query matched on a path and the tag applied
-    to the message, so matching the Sent copy stripped `inbox` from the copy
-    that had genuinely arrived, and the mail was missing from the account that
-    received it (item 166).
+    **Every file has to be in a non-arrival folder, not merely one of them.**
+    notmuch deduplicates by Message-ID, so mail the user sends to another of
+    their own accounts is ONE message with two files: the sender's Sent copy
+    and the recipient's Inbox copy. The old query matched on a path and the tag
+    applied to the message, so matching the Sent copy stripped `inbox` from the
+    copy that had genuinely arrived, and the mail was missing from the account
+    that received it (item 166).
 
     This cannot be expressed as a query, which is why it is a loop. Measured
     against a two-file message: `not path:"Inbox/**"` does NOT exclude it, and
@@ -101,7 +101,7 @@ def sent_only(query, folders):
     """
     root = mail_root()
     if root is None:
-        log("no mail root; leaving sent mail alone")
+        log("no mail root; leaving non-arrival mail alone")
         return None
 
     prefixes = [root / folder for folder in folders]
@@ -110,10 +110,11 @@ def sent_only(query, folders):
     if matched is None:
         return None
 
-    # ponytail: one `notmuch search` per matched message. N is the sent mail
-    # in tag:new, so an ordinary sync is a handful and a first-run reindex is
-    # the whole corpus. Batch by parsing --format=json once if that ever
-    # matters; it does not at this size, and the loop is the readable form.
+    # ponytail: one `notmuch search` per matched message. N is the
+    # non-arrival mail in tag:new, so an ordinary sync is a handful and a
+    # first-run reindex is the whole corpus. Batch by parsing --format=json
+    # once if that ever matters; it does not at this size, and the loop is the
+    # readable form.
     ids = []
     for message_id in matched:
         paths = search(f"id:{_quote(message_id)}", "files")
@@ -176,20 +177,21 @@ def search(query, output):
     return values
 
 
-def strip_inbox_from_sent(run):
-    """Take `inbox` off mail the user SENT, and nothing else.
+def strip_inbox_from_non_arrivals(run):
+    """Take `inbox` off mail that did not ARRIVE, and nothing else.
 
     `notmuch new` applies new.tags to every file it indexes, and it cannot
-    tell an arrival from the copy qtmaildir files into a sent folder after a
-    send. The result is sent mail carrying `inbox`, which puts it in an inbox
-    view it never arrived in and in any hand-typed `tag:inbox` search.
+    tell an arrival from a copy this system filed itself: sent mail, a saved
+    draft, or mail a provider's filter dropped into a spam folder. The result
+    is such mail carrying `inbox`, which puts it in an inbox view it never
+    arrived in and in any hand-typed `tag:inbox` search.
 
     This is NOT a relaxation of PROTECTED_REMOVALS below, and the difference
     is the whole reason it can run unattended. That guard is about a RULE
     removing `inbox` from mail whose provenance the hook cannot judge. Here
-    the provenance is the file's own path: a message inside a configured sent
-    folder is one this system sent, and `inbox` was never true of it. Nothing
-    the user could act on is being hidden.
+    the provenance is the file's own path: a message whose files are ALL
+    inside a configured sent, drafts or spam folder never arrived, and `inbox`
+    was never true of it. Nothing the user could act on is being hidden.
 
     Only `inbox`. `unread` is untouched, because maildir.synchronize_flags is
     true and removing it rewrites Maildir filenames, which reaches the server
@@ -198,17 +200,17 @@ def strip_inbox_from_sent(run):
     Scoped to tag:new like every rule, so a sync never rewrites tags across
     the whole corpus. Mail already indexed keeps whatever it has.
     """
-    folders = qtmaildirconf.sent_folders()
+    folders = qtmaildirconf.not_arrival_folders()
     if not folders:
-        # No config, or no account keeping sent mail locally. Nothing to
-        # protect, and this must NOT fall through to an empty query: notmuch
-        # reads that as "match everything", which would strip `inbox` from
-        # every newly indexed message on the system.
+        # No config, or no account keeping non-arrival folders locally.
+        # Nothing to protect, and this must NOT fall through to an empty
+        # query: notmuch reads that as "match everything", which would strip
+        # `inbox` from every newly indexed message on the system.
         return True
 
-    query = f"{SCOPE} and ({qtmaildirconf.sent_query(folders)})"
+    query = f"{SCOPE} and ({qtmaildirconf.not_arrival_query(folders)})"
 
-    ids = sent_only(query, folders)
+    ids = not_arrival_only(query, folders)
     if ids is None:
         return False
 
@@ -220,7 +222,7 @@ def strip_inbox_from_sent(run):
     # "applied" whether it stripped four messages or none, and item 164 is
     # exactly the case where that distinction is the whole question: a draft
     # that kept `inbox` on a pass whose log claimed the carve-out had run.
-    log(f"sent-folder carve-out applied over {len(folders)} folder(s), "
+    log(f"non-arrival carve-out applied over {len(folders)} folder(s), "
         f"{len(ids)} message(s)")
     return True
 
@@ -296,11 +298,11 @@ def main():
         applied += 1
 
     # AFTER the rules and BEFORE the marker is consumed. After, so a rule can
-    # still see its own sent mail with `inbox` on it and match the way it
-    # always did; before, because the marker is what scopes this to newly
+    # still see its own non-arrival mail with `inbox` on it and match the way
+    # it always did; before, because the marker is what scopes this to newly
     # indexed mail and consuming it first would leave nothing to match.
-    if not strip_inbox_from_sent(run_tag):
-        log("sent-folder carve-out failed; leaving tag:new in place")
+    if not strip_inbox_from_non_arrivals(run_tag):
+        log("non-arrival carve-out failed; leaving tag:new in place")
         return 1
 
     # Only after every rule succeeded. A failure part way through leaves the

@@ -465,6 +465,7 @@ private slots:
     void placeholderCountsDropAnUncountableQuery();
     void flatModeDoesNotSurviveTheNextQuery();
     void noTwoActionsShareAnIcon();
+    void theSpamActionCarriesTheBugIconWithAFallback();
     void theMessagePaneCarriesItsOwnActionBar();
     void theMainToolbarKeepsOnlyListWideActions();
     void theMessageBarSitsAboveTheBodyAndBelowTheHeader();
@@ -8754,6 +8755,25 @@ void TestMainWindow::noTwoActionsShareAnIcon()
     QVERIFY2(collisions.isEmpty(),
              qPrintable(QStringLiteral("actions sharing one icon: %1")
                             .arg(collisions.join(QStringLiteral("; ")))));
+}
+
+void TestMainWindow::theSpamActionCarriesTheBugIconWithAFallback()
+{
+    // Task 5. `bug` is the glyph the user asked for, and it is not a
+    // freedesktop name every theme carries, so the table pairs it with
+    // `mail-mark-junk` as a fallback: a theme without the bug still draws a
+    // junk icon rather than degrading the action to text alone.
+    const Config config;
+    MainWindow window(config);
+
+    auto *spam = window.findChild<QAction *>(QStringLiteral("spam"));
+    QVERIFY2(spam, "no action named spam");
+    QVERIFY2(!spam->icon().isNull(), "the spam action carries no icon");
+
+    const QPair<QString, QString> names =
+        MainWindow::iconNamesForTesting(QStringLiteral("spam"));
+    QCOMPARE(names.first, QStringLiteral("bug"));
+    QCOMPARE(names.second, QStringLiteral("mail-mark-junk"));
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

@@ -235,6 +235,16 @@ public:
         return everySelectedRowIsInATrashFolder();
     }
 
+    /// The icon table's two theme names for a known action: primary first,
+    /// fallback second (empty when the action has none), and a pair of empty
+    /// strings for an action the table does not carry.
+    ///
+    /// A test seam. The table lives at file scope in mainwindow.cpp and the
+    /// fallback is invisible from the resolved QIcon: a theme that has BOTH
+    /// names renders identically whichever one the code tried, so a test on
+    /// the icon alone cannot catch a fallback wired to the wrong entry.
+    static QPair<QString, QString> iconNamesForTesting(const QString &action);
+
     /// Runs a purge without the confirmation, which a test cannot drive: a
     /// modal blocks the thread it is shown on (item 84). What this exists to
     /// cover is what happens AFTER the user confirms.

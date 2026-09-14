@@ -2034,6 +2034,112 @@ void MainWindow::registerActions()
     updateComposeActions();
 }
 
+namespace {
+/// Action name -> the theme icon names that paint it: primary first, fallback
+/// second, and an empty fallback meaning none.
+///
+/// Item 56: every registered action, not a subset. Eight of these carried an
+/// icon and sixteen did not, which reads worse than none having one: two
+/// adjacent entries in the same menu disagreed, and the toolbar's
+/// TextBesideIcon style laid out an empty slot for each of the sixteen.
+///
+/// Names are freedesktop ones, and were probed against a real icon theme
+/// rather than taken from the spec on faith. A name the running theme lacks
+/// still degrades to text through the null check below.
+///
+/// The fallback exists for Mark spam's `bug` (Task 5): it is the glyph the
+/// user asked for, and it is not a freedesktop standard name, so a theme that
+/// does not ship it would otherwise drop the action to text while every
+/// standard theme has a junk icon. `mail-mark-junk` is that second chance, and
+/// every other entry leaves the fallback empty.
+const QHash<QString, QPair<QString, QString>> kThemeIcons = {
+    { QStringLiteral("sync"),    { QStringLiteral("view-refresh"), QString() } },
+    // NOT mail-mark-read, which mark_all_read below uses. The two shared it
+    // in 0.12.0, and with the toolbar icon-only the icon is the whole
+    // control: two buttons with different consequences looked identical.
+    { QStringLiteral("archive"), { QStringLiteral("mail-archive"), QString() } },
+    { QStringLiteral("delete"),  { QStringLiteral("edit-delete"), QString() } },
+    // The inverse of delete, and the theme's own name for it: the icon
+    // every desktop uses for taking something back out of the wastebasket.
+    { QStringLiteral("restore"), { QStringLiteral("edit-undelete"), QString() } },
+    // A SEARCH, not a delete. The action reports what it finds and moves
+    // nothing, so an icon from the delete family would promise the one
+    // thing it deliberately does not do.
+    { QStringLiteral("cleanup_stranded"), { QStringLiteral("system-search"), QString() } },
+    { QStringLiteral("empty_trash"), { QStringLiteral("edit-delete-shred"), QString() } },
+    // Item 185. Distinct from empty_trash's, because both reach the trash
+    // bar and there the icon IS the control: two buttons that destroy
+    // different amounts of mail must not look identical. `user-trash` is
+    // the theme's own wastebasket, which reads as "this one, gone".
+    { QStringLiteral("purge"),   { QStringLiteral("user-trash"), QString() } },
+    { QStringLiteral("undo"),    { QStringLiteral("edit-undo"), QString() } },
+    // `bug` first, per the user's choice, with the standard junk name behind
+    // it so a theme without the bug still draws a junk icon.
+    { QStringLiteral("spam"),    { QStringLiteral("bug"), QStringLiteral("mail-mark-junk") } },
+    // A STAR, which is what the user asked for and what every other mail
+    // client draws for this. NOT mail-mark-important: Breeze draws that
+    // as an exclamation mark, so on the icon-only message bar the action
+    // read as an "info" glyph rather than as Star. The label stays
+    // "Important" (item 57) and the tag stays `flagged`; only the picture
+    // changes. `starred` sits under status/ rather than actions/, which is
+    // fine: a theme without it falls to text alone, as every other name
+    // here already does.
+    { QStringLiteral("flag"),    { QStringLiteral("starred"), QString() } },
+    { QStringLiteral("quit"),    { QStringLiteral("application-exit"), QString() } },
+    { QStringLiteral("focus_query"), { QStringLiteral("edit-find"), QString() } },
+
+    { QStringLiteral("next_thread"),     { QStringLiteral("go-down"), QString() } },
+    { QStringLiteral("prev_thread"),     { QStringLiteral("go-up"), QString() } },
+    { QStringLiteral("open_thread"),     { QStringLiteral("document-open"), QString() } },
+    { QStringLiteral("toggle_unread"),   { QStringLiteral("mail-mark-unread"), QString() } },
+    { QStringLiteral("mark_all_read"),   { QStringLiteral("mail-mark-read"), QString() } },
+    { QStringLiteral("edit_tags"),       { QStringLiteral("tag"), QString() } },
+    // NOT "tag", which edit_tags uses: with the toolbar icon-only the icon
+    // is the whole control, and editing the standing rules is not editing
+    // the selection's tags.
+    { QStringLiteral("tag_rules"),       { QStringLiteral("configure"), QString() } },
+    { QStringLiteral("complete_query"),  { QStringLiteral("edit-find-replace"), QString() } },
+    // NOT "document-save": that is the floppy/disk shape, which reads as
+    // "write a file somewhere" and asks the user to guess what is being
+    // written. Saving a query is bookmarking a search, and bookmark-new is
+    // the icon set every desktop already uses for "keep this for later".
+    { QStringLiteral("save_query"),      { QStringLiteral("bookmark-new"), QString() } },
+    { QStringLiteral("select_all"),      { QStringLiteral("edit-select-all"), QString() } },
+    { QStringLiteral("clear_pane"),      { QStringLiteral("edit-clear"), QString() } },
+    { QStringLiteral("clear_selection"), { QStringLiteral("edit-clear-all"), QString() } },
+    { QStringLiteral("edit_draft"),      { QStringLiteral("document-edit"), QString() } },
+    { QStringLiteral("toggle_html"),     { QStringLiteral("text-html"), QString() } },
+    { QStringLiteral("load_remote"),     { QStringLiteral("image-loading"), QString() } },
+    { QStringLiteral("message_details"), { QStringLiteral("dialog-information"), QString() } },
+    { QStringLiteral("zoom_in"),         { QStringLiteral("zoom-in"), QString() } },
+    { QStringLiteral("zoom_out"),        { QStringLiteral("zoom-out"), QString() } },
+    { QStringLiteral("zoom_reset"),      { QStringLiteral("zoom-original"), QString() } },
+
+    // Compose and send (item 123). reply_no_quote SHARES reply's icon,
+    // which the no-duplicates rule allows because that rule exists for the
+    // icon-only TOOLBAR, where the icon is the entire control: it never
+    // reaches the toolbar, it is a menu entry that always carries its
+    // text, and "Reply without quoting" beside the reply icon is the
+    // honest pairing.
+    // It is named in the exception list in noTwoActionsShareAnIcon(), so
+    // putting it on the toolbar fails that test rather than passing
+    // silently.
+    { QStringLiteral("compose"),        { QStringLiteral("mail-message-new"), QString() } },
+    { QStringLiteral("reply"),          { QStringLiteral("mail-reply-sender"), QString() } },
+    { QStringLiteral("reply_all"),      { QStringLiteral("mail-reply-all"), QString() } },
+    { QStringLiteral("reply_no_quote"), { QStringLiteral("mail-reply-sender"), QString() } },
+    { QStringLiteral("forward"),        { QStringLiteral("mail-forward"), QString() } },
+    // NOT bookmark-new, which save_query uses: this really does write a
+    // file the user names, which is exactly what the disk shape means.
+    { QStringLiteral("save_message"),   { QStringLiteral("document-save-as"), QString() } },
+};
+} // namespace
+
+QPair<QString, QString> MainWindow::iconNamesForTesting(const QString &action)
+{
+    return kThemeIcons.value(action, { QString(), QString() });
+}
+
 void MainWindow::buildMenus()
 {
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
@@ -2126,101 +2232,16 @@ void MainWindow::buildMenus()
     auto *about = helpMenu->addAction(tr("&About"));
     connect(about, &QAction::triggered, this, &MainWindow::showAbout);
 
-    // Standard names from the icon theme, so the buttons match the rest of the
-    // desktop rather than shipping bespoke art. A theme that lacks one leaves
-    // that action with text alone, which still works.
-    // Item 56: every registered action, not a subset. Eight of these carried an
-    // icon and sixteen did not, which reads worse than none having one: two
-    // adjacent entries in the same menu disagreed, and the toolbar's
-    // TextBesideIcon style laid out an empty slot for each of the sixteen.
-    //
-    // Names are freedesktop ones, and were probed against a real icon theme
-    // rather than taken from the spec on faith. A name the running theme lacks
-    // still degrades to text through the null check below.
-    const QHash<QString, QString> themeIcons = {
-        { QStringLiteral("sync"),    QStringLiteral("view-refresh") },
-        // NOT mail-mark-read, which mark_all_read below uses. The two shared it
-        // in 0.12.0, and with the toolbar icon-only the icon is the whole
-        // control: two buttons with different consequences looked identical.
-        { QStringLiteral("archive"), QStringLiteral("mail-archive") },
-        { QStringLiteral("delete"),  QStringLiteral("edit-delete") },
-        // The inverse of delete, and the theme's own name for it: the icon
-        // every desktop uses for taking something back out of the wastebasket.
-        { QStringLiteral("restore"), QStringLiteral("edit-undelete") },
-        // A SEARCH, not a delete. The action reports what it finds and moves
-        // nothing, so an icon from the delete family would promise the one
-        // thing it deliberately does not do.
-        { QStringLiteral("cleanup_stranded"), QStringLiteral("system-search") },
-        { QStringLiteral("empty_trash"), QStringLiteral("edit-delete-shred") },
-        // Item 185. Distinct from empty_trash's, because both reach the trash
-        // bar and there the icon IS the control: two buttons that destroy
-        // different amounts of mail must not look identical. `user-trash` is
-        // the theme's own wastebasket, which reads as "this one, gone".
-        { QStringLiteral("purge"), QStringLiteral("user-trash") },
-        { QStringLiteral("undo"),    QStringLiteral("edit-undo") },
-        { QStringLiteral("spam"),    QStringLiteral("mail-mark-junk") },
-        // A STAR, which is what the user asked for and what every other mail
-        // client draws for this. NOT mail-mark-important: Breeze draws that
-        // as an exclamation mark, so on the icon-only message bar the action
-        // read as an "info" glyph rather than as Star. The label stays
-        // "Important" (item 57) and the tag stays `flagged`; only the picture
-        // changes. `starred` sits under status/ rather than actions/, which is
-        // fine: a theme without it falls to text alone, as every other name
-        // here already does.
-        { QStringLiteral("flag"),    QStringLiteral("starred") },
-        { QStringLiteral("quit"),    QStringLiteral("application-exit") },
-        { QStringLiteral("focus_query"), QStringLiteral("edit-find") },
-
-        { QStringLiteral("next_thread"),     QStringLiteral("go-down") },
-        { QStringLiteral("prev_thread"),     QStringLiteral("go-up") },
-        { QStringLiteral("open_thread"),     QStringLiteral("document-open") },
-        { QStringLiteral("toggle_unread"),   QStringLiteral("mail-mark-unread") },
-        { QStringLiteral("mark_all_read"),   QStringLiteral("mail-mark-read") },
-        { QStringLiteral("edit_tags"),       QStringLiteral("tag") },
-        // NOT "tag", which edit_tags uses: with the toolbar icon-only the icon
-        // is the whole control, and editing the standing rules is not editing
-        // the selection's tags.
-        { QStringLiteral("tag_rules"),       QStringLiteral("configure") },
-        { QStringLiteral("complete_query"),  QStringLiteral("edit-find-replace") },
-        // NOT "document-save": that is the floppy/disk shape, which reads as
-        // "write a file somewhere" and asks the user to guess what is being
-        // written. Saving a query is bookmarking a search, and bookmark-new is
-        // the icon set every desktop already uses for "keep this for later".
-        { QStringLiteral("save_query"),      QStringLiteral("bookmark-new") },
-        { QStringLiteral("select_all"),      QStringLiteral("edit-select-all") },
-        { QStringLiteral("clear_pane"),      QStringLiteral("edit-clear") },
-        { QStringLiteral("clear_selection"), QStringLiteral("edit-clear-all") },
-        { QStringLiteral("edit_draft"),      QStringLiteral("document-edit") },
-        { QStringLiteral("toggle_html"),     QStringLiteral("text-html") },
-        { QStringLiteral("load_remote"),     QStringLiteral("image-loading") },
-        { QStringLiteral("message_details"), QStringLiteral("dialog-information") },
-        { QStringLiteral("zoom_in"),         QStringLiteral("zoom-in") },
-        { QStringLiteral("zoom_out"),        QStringLiteral("zoom-out") },
-        { QStringLiteral("zoom_reset"),      QStringLiteral("zoom-original") },
-
-        // Compose and send (item 123). reply_no_quote SHARES reply's icon,
-        // which the no-duplicates rule allows because that rule exists for the
-        // icon-only TOOLBAR, where the icon is the entire control: it never
-        // reaches the toolbar, it is a menu entry that always carries its
-        // text, and "Reply without quoting" beside the reply icon is the
-        // honest pairing.
-        // It is named in the exception list in noTwoActionsShareAnIcon(), so
-        // putting it on the toolbar fails that test rather than passing
-        // silently.
-        { QStringLiteral("compose"),        QStringLiteral("mail-message-new") },
-        { QStringLiteral("reply"),          QStringLiteral("mail-reply-sender") },
-        { QStringLiteral("reply_all"),      QStringLiteral("mail-reply-all") },
-        { QStringLiteral("reply_no_quote"), QStringLiteral("mail-reply-sender") },
-        { QStringLiteral("forward"),        QStringLiteral("mail-forward") },
-        // NOT bookmark-new, which save_query uses: this really does write a
-        // file the user names, which is exactly what the disk shape means.
-        { QStringLiteral("save_message"),   QStringLiteral("document-save-as") },
-    };
-    for (auto it = themeIcons.cbegin(); it != themeIcons.cend(); ++it) {
+    // Painted from the file-scope table above. A theme that lacks the primary
+    // name falls back to the entry's second name when it has one, and to text
+    // alone when it does not; either way the action stays usable.
+    for (auto it = kThemeIcons.cbegin(); it != kThemeIcons.cend(); ++it) {
         QAction *action = m_actions.value(it.key());
         if (!action)
             continue;
-        const QIcon icon = QIcon::fromTheme(it.value());
+        QIcon icon = QIcon::fromTheme(it.value().first);
+        if (icon.isNull() && !it.value().second.isEmpty())
+            icon = QIcon::fromTheme(it.value().second);
         if (!icon.isNull())
             action->setIcon(icon);
     }
@@ -2405,6 +2426,7 @@ void MainWindow::populateMessageBar()
                            m_actions.value(QStringLiteral("forward")),
                            m_actions.value(QStringLiteral("flag")),
                            m_actions.value(QStringLiteral("archive")),
+                           m_actions.value(QStringLiteral("spam")),
                            m_actions.value(QStringLiteral("delete")) };
     }
 

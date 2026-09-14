@@ -1813,11 +1813,13 @@ void MainWindow::registerActions()
     // back to the folder its `moved-from:` tag names, falling back to the
     // account's inbox for mail a provider caught, which carries no origin.
     //
-    // The mnemonic is on "&junk" rather than "spam": Alt+P is already Re&ply
-    // and Alt+S is a frozen collision, and no letter of "Not spam" is free in
-    // this menu. `junk` is the theme's own name for the folder and what its
-    // icon (`mail-mark-notjunk`) draws, so the wording stays honest.
-    addAction(QStringLiteral("not_spam"), tr("Not &junk"),
+    // No mnemonic, deliberately: every letter of "Not spam" is already used in
+    // this menu (N, o, t, s, p, a, m), Alt+P and Alt+S are taken by Re&ply and
+    // the frozen Mark &spam collision, and no free letter spells "spam". The
+    // mnemonic test skips an entry that carries none, and the terminology
+    // matches the rest of the UI ("spam folder", the `spam` key) rather than
+    // inventing "junk" for a menu that says spam everywhere else.
+    addAction(QStringLiteral("not_spam"), tr("Not spam"),
               tr("Move the selected messages out of the spam folder"), [this]() {
         notSpamSelected();
     });
@@ -6773,7 +6775,7 @@ void MainWindow::onThreadMessagesResolved(const QStringList &messageIds,
 
     if (requestTag == QStringLiteral("not_spam_thread")) {
         restoreResolvedMessages(messageIds, paths, tags,
-                                QStringLiteral("spam"), tr("Not junk"),
+                                QStringLiteral("spam"), tr("Not spam"),
                                 true, false, threadScope);
         return;
     }
@@ -6844,7 +6846,7 @@ void MainWindow::notSpamMessages(const QStringList &messageIds,
                                  const QStringList &tags)
 {
     restoreResolvedMessages(messageIds, paths, tags, QStringLiteral("spam"),
-                            tr("Not junk"), true, false);
+                            tr("Not spam"), true, false);
 }
 
 void MainWindow::notSpamThreads(const QStringList &threadIds)

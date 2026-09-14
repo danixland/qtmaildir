@@ -596,7 +596,7 @@ From: account re-seeds it only until you pick one yourself.
 Archive, mark-important and toggle-unread write fixed tags. Delete and spam
 move the file instead: each adds a fixed tag (`deleted` or `spam`) and records
 the folder the file left in a `moved-from:<folder>` origin. Restore (in the
-trash) and Not junk (in the spam folder) are their inverses: each moves the
+trash) and Not spam (in the spam folder) are their inverses: each moves the
 message back to the folder its origin names, and mail caught by a provider with
 no origin at all goes to the account's inbox, which the status line reports. For
 anything else, **Ctrl+T** opens a dialog over the selected threads: type tags to
@@ -783,7 +783,7 @@ Defaults, all rebindable through `[keys]`:
 
 Every action in this table carries a default binding, and every one appears in
 a menu. Seven actions carry none, because a chord for them would be arbitrary:
-Check for stranded spam, Empty trash, Delete permanently, Empty spam, Not junk,
+Check for stranded spam, Empty trash, Delete permanently, Empty spam, Not spam,
 Edit draft and Save message. They are reachable from the menus, and the shortcut
 reference prints them as unbound.
 **Help > Keyboard shortcuts** lists the current bindings, generated from the

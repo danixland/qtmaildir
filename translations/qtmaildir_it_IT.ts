@@ -550,6 +550,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Aggiunge o rimuove l&apos;etichetta deleted</translation>
     </message>
     <message>
+        <source>Not spam</source>
+        <translation>Non spam</translation>
+    </message>
+    <message>
         <source>Remove the unread tag from every message of the selected threads</source>
         <translation>Rimuove il tag unread da ogni messaggio delle conversazioni selezionate</translation>
     </message>
@@ -770,10 +774,6 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Svuota spam</translation>
     </message>
     <message>
-        <source>Not junk</source>
-        <translation>Non spam</translation>
-    </message>
-    <message>
         <source>Undelete thread</source>
         <translation>Ripristina conversazione</translation>
     </message>
@@ -926,10 +926,6 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Move the selected messages to the spam folder</source>
         <translation>Sposta nella cartella spam i messaggi selezionati</translation>
-    </message>
-    <message>
-        <source>Not &amp;junk</source>
-        <translation>&amp;Non spam</translation>
     </message>
     <message>
         <source>Move the selected messages out of the spam folder</source>

@@ -47,7 +47,7 @@ point at which they are stable.
 - **A spam button on the message pane's bar**, beside Star and Archive. It is
   drawn with a bug rather than the theme's junk glyph, and falls back to
   `mail-mark-junk` on a theme that ships no bug.
-- **Not junk**, the way back out of the spam folder. Selecting a message in the
+- **Not spam**, the way back out of the spam folder. Selecting a message in the
   Spam view offers it on both the Message menu and the message pane's bar, and
   it returns each message to the folder its `moved-from:` origin names, or to
   the account's inbox when a provider put it there and no origin was recorded,
@@ -124,6 +124,12 @@ point at which they are stable.
 - **A skipped sync no longer looks like a successful one.** When a run exits
   because another sync already holds the lock, it carried nothing, and the
   pending count stays where it was.
+- **A thread-scoped Restore from the trash re-adds the `inbox` tag when it
+  returns mail to an inbox.** The message-scoped restore already did this; the
+  thread-scoped one moved the file back to the inbox folder but left the tag
+  off, so the conversation sat in the folder invisible to the Inbox view until
+  the next hook run. Both routes now share one implementation and both restore
+  the tag.
 
 ### Upgrading
 

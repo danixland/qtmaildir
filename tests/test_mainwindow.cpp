@@ -547,6 +547,7 @@ private slots:
     void notSpamIsOfferedInTheSpamView();
     void notSpamIsAbsentOnAReplyRow();
     void notSpamIsHiddenOutsideTheSpamFolder();
+    void notSpamThreadMovesEveryMessageHome();
     void undoOfNotSpamReturnsTheFileToTheSpamFolder();
 
     // ComposeWindow, item 123. These need a window but no worker: the composer
@@ -12818,6 +12819,16 @@ void TestMainWindow::deleteThreadMovesEveryMessageAndRepaintsTheRootCard()
     QVERIFY(!folderHasMessageFile(trash, QStringLiteral("dt0.example.org")));
     QVERIFY(!folderHasMessageFile(trash, QStringLiteral("dt1.example.org")));
     QVERIFY(!folderHasMessageFile(trash, QStringLiteral("dt2.example.org")));
+
+    // And the `inbox` tag came back with each message, not only the file. The
+    // message-scoped restore always did this; the thread-scoped one did not,
+    // because it passed an empty add list. Item 201 folded the two routes into
+    // one implementation, and this is the property that was silently missing:
+    // the conversation sat in the inbox FOLDER with no `inbox` tag, so the
+    // Inbox view could not see it until the next hook run.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:inbox")) == 3,
+        15000);
 }
 
 void TestMainWindow::aFolderNameWithASpaceSurvivesTheRoundTrip()
@@ -17468,15 +17479,24 @@ void TestMainWindow::notSpamIsAbsentOnAReplyRow()
     root.messageId = QStringLiteral("m1");
     root.threadId = QStringLiteral("t1");
     root.depth = 0;
+    root.filePath = QStringLiteral("acct/spam/cur/1:2,S");
     MessageNode reply;
     reply.messageId = QStringLiteral("m2");
     reply.threadId = QStringLiteral("t1");
     reply.depth = 1;
+    // A REAL spam path, so the predicate answers true for this row and the
+    // ONLY thing that can hide Not spam is the reply guard. Without it the
+    // empty path made everySelectedRowIsInAFolder() return false and the test
+    // would pass against a missing guard.
+    reply.filePath = QStringLiteral("acct/spam/cur/2:2,S");
     model->setThreadMessages(QStringLiteral("t1"), { root, reply });
 
     const QModelIndex thread = model->index(0, 0, QModelIndex());
     view->expand(thread);
-    const QModelIndex replyRow = model->index(0, 0, thread);
+    // Child 1, not child 0: since item 177 a conversation lists its FIRST
+    // message as a child too, so child 0 is the root message and child 1 is
+    // the reply whose row is under test.
+    const QModelIndex replyRow = model->index(1, 0, thread);
     view->selectionModel()->select(
         replyRow, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     view->setCurrentIndex(replyRow);
@@ -17607,6 +17627,108 @@ void TestMainWindow::undoOfNotSpamReturnsTheFileToTheSpamFolder()
                                          "tag:inbox")) == 0,
         15000);
     QCOMPARE(notmuchCount(cfg, QStringLiteral("id:nsundo@example.org")), 1);
+}
+
+void TestMainWindow::notSpamThreadMovesEveryMessageHome()
+{
+    // The thread-scoped half of Not spam, mirroring
+    // deleteThreadMovesEveryMessageAndRepaintsTheRootCard: a conversation row
+    // moves its whole conversation, each message back to its OWN origin. The
+    // single-message test cannot see notSpamThreads(), the optimistic
+    // applyTagChange, m_pendingThreadScope or the wholeThreadIds repaint.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("nst0@example.org"),
+        QStringLiteral("NST root"), QStringLiteral("sender@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Root body.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("nst1@example.org"),
+        QStringLiteral("Re: NST root"), QStringLiteral("other@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 11:00:00 +0200"),
+        QStringLiteral("Reply one."), true, QStringLiteral("nst0@example.org")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("acct/inbox"), QStringLiteral("nst2@example.org"),
+        QStringLiteral("Re: NST root"), QStringLiteral("third@example.org"),
+        QStringLiteral("Fri, 14 Aug 2026 12:00:00 +0200"),
+        QStringLiteral("Reply two."), true, QStringLiteral("nst0@example.org")));
+    QVERIFY2(backed.build(QStringLiteral("acct"), QStringLiteral("acct"),
+                          QStringLiteral("Trash"), QStringLiteral("Spam")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(model && view && queryEdit);
+
+    const QString root = backed.fixture().maildirPath();
+    const QString cfg = backed.fixture().configPath();
+    const QString spam = root + QStringLiteral("/acct/Spam/cur");
+    const QString thread = QStringLiteral("thread:{id:nst0@example.org}");
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    QCOMPARE(notmuchCount(cfg, thread), 3);
+
+    // A conversation row, so the move is thread-scoped.
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("spam"))->trigger();
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        folderHasMessageFile(spam, QStringLiteral("nst0.example.org"))
+            && folderHasMessageFile(spam, QStringLiteral("nst1.example.org"))
+            && folderHasMessageFile(spam, QStringLiteral("nst2.example.org")),
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:spam")) == 3,
+        15000);
+    QCOMPARE(notmuchCount(cfg, thread
+                                   + QStringLiteral(" and "
+                                                    "tag:\"moved-from:inbox\"")),
+             3);
+
+    // Now Not spam on the same conversation row, from the Spam view.
+    queryEdit->setText(QStringLiteral("path:\"acct/Spam/**\""));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    window.findChild<QAction *>(QStringLiteral("not_spam"))->trigger();
+
+    // Every message back in the inbox folder, none left in spam, each carrying
+    // the `inbox` tag its origin move stripped.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
+                             QStringLiteral("nst0.example.org"))
+         || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                 QStringLiteral("nst0.example.org")))
+            && (folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
+                                     QStringLiteral("nst1.example.org"))
+                || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                        QStringLiteral("nst1.example.org")))
+            && (folderHasMessageFile(root + QStringLiteral("/acct/inbox/cur"),
+                                     QStringLiteral("nst2.example.org"))
+                || folderHasMessageFile(root + QStringLiteral("/acct/inbox/new"),
+                                        QStringLiteral("nst2.example.org"))),
+        15000);
+    QVERIFY(!folderHasMessageFile(spam, QStringLiteral("nst0.example.org")));
+    QVERIFY(!folderHasMessageFile(spam, QStringLiteral("nst1.example.org")));
+    QVERIFY(!folderHasMessageFile(spam, QStringLiteral("nst2.example.org")));
+
+    QCOMPARE(notmuchCount(cfg, thread), 3);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:spam")) == 0,
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread
+                          + QStringLiteral(" and "
+                                           "tag:\"moved-from:inbox\"")) == 0,
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        notmuchCount(cfg, thread + QStringLiteral(" and tag:inbox")) == 3,
+        15000);
 }
 
 #include "test_mainwindow.moc"

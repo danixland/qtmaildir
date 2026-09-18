@@ -19,13 +19,19 @@
 #include <QtTest>
 #include <QTemporaryDir>
 
+#include <QHash>
 #include <QLineEdit>
 #include <QImage>
 #include <QListView>
 #include <QPixmap>
 
 #include "config.h"
+#include "contactstore.h"
 #include "querycompleter.h"
+#include "searchterm.h"
+
+// Defined further down, beside the popup tests that also need it.
+static QListView *findPopup();
 
 class TestQueryCompleter : public QObject
 {
@@ -51,6 +57,11 @@ private slots:
     void tagAndIsShareTheTagModel();
     void pathOffersAccountMaildirsBothForms();
     void folderOffersNothing();
+    void fromOffersQuotedAddressesWithNamesAsDescriptions();
+    void toOffersTheSameContactsAsFrom();
+    void anEmptyContactStoreOffersNoAddresses();
+    void anAddressValueIsTheBareAddressNotAName();
+    void addressesTakeTheValueBranchNotThePrefixVocabulary();
     void mimetypeAppendsConfiguredEntries();
     void rangeContextDropsRelativeDates();
     void acceptReplacesOnlyThePrefixToken();
@@ -294,12 +305,119 @@ void TestQueryCompleter::pathOffersAccountMaildirsBothForms()
 void TestQueryCompleter::folderOffersNothing()
 {
     // folder: matches a Maildir folder name, not a path, and its values are
-    // not enumerable from config. Prefix-only, like from: and to:.
+    // not enumerable from config. Prefix-only, unlike from: and to:, whose
+    // values come from the vCard store.
     Config config;
     QueryCompleter completer(nullptr, config);
     const QStringList candidates = completer.candidatesFor(
         completionContext(QStringLiteral("folder:"), 7));
     QVERIFY(candidates.isEmpty());
+}
+
+void TestQueryCompleter::fromOffersQuotedAddressesWithNamesAsDescriptions()
+{
+    // The popup shows who an address belongs to: the value is the address,
+    // the description is the contact's name. Read through the real popup model
+    // rather than candidatesFor(), which carries the values alone.
+    Config config;
+    QLineEdit edit;
+    edit.show();
+    QueryCompleter completer(&edit, config);
+    completer.setContacts({
+        { QStringLiteral("Alice Example"), QStringLiteral("alice@example.org") },
+        { QStringLiteral("Bob Example"), QStringLiteral("bob@example.org") },
+    });
+
+    QTest::keyClicks(&edit, QStringLiteral("from:"));
+    QListView *popup = findPopup();
+    QVERIFY(popup && popup->isVisible());
+
+    QStringList values;
+    QHash<QString, QString> namesByValue;
+    for (int row = 0; row < popup->model()->rowCount(); ++row) {
+        const QString value = popup->model()->index(row, 0).data().toString();
+        values << value;
+        namesByValue.insert(
+            value, popup->model()->index(row, 1).data().toString());
+    }
+
+    const QString alice = SearchTerm::quote(QStringLiteral("alice@example.org"));
+    QVERIFY(values.contains(alice));
+    QCOMPARE(namesByValue.value(alice), QStringLiteral("Alice Example"));
+    QCOMPARE(namesByValue.value(SearchTerm::quote(QStringLiteral("bob@example.org"))),
+             QStringLiteral("Bob Example"));
+}
+
+void TestQueryCompleter::toOffersTheSameContactsAsFrom()
+{
+    Config config;
+    QueryCompleter completer(nullptr, config);
+    completer.setContacts({
+        { QStringLiteral("Alice Example"), QStringLiteral("alice@example.org") },
+    });
+
+    const QStringList from = completer.candidatesFor(
+        completionContext(QStringLiteral("from:"), 5));
+    const QStringList to = completer.candidatesFor(
+        completionContext(QStringLiteral("to:"), 3));
+
+    QCOMPARE(to, from);
+    QCOMPARE(to, QStringList({ SearchTerm::quote(QStringLiteral("alice@example.org")) }));
+}
+
+void TestQueryCompleter::anEmptyContactStoreOffersNoAddresses()
+{
+    // No store configured is today's behaviour: from: and to: offer nothing,
+    // and the other addressless keywords are unchanged.
+    Config config;
+    QueryCompleter completer(nullptr, config);
+
+    QVERIFY(completer.candidatesFor(
+        completionContext(QStringLiteral("from:"), 5)).isEmpty());
+    QVERIFY(completer.candidatesFor(
+        completionContext(QStringLiteral("to:"), 3)).isEmpty());
+    QVERIFY(completer.candidatesFor(
+        completionContext(QStringLiteral("folder:"), 7)).isEmpty());
+}
+
+void TestQueryCompleter::anAddressValueIsTheBareAddressNotAName()
+{
+    // notmuch matches on the address, so "Name <addr>" would be one token that
+    // never matches. The display name is the description, never the value.
+    Config config;
+    QueryCompleter completer(nullptr, config);
+    completer.setContacts({
+        { QStringLiteral("Alice Example"), QStringLiteral("alice@example.org") },
+    });
+
+    const QStringList candidates = completer.candidatesFor(
+        completionContext(QStringLiteral("from:"), 5));
+
+    QCOMPARE(candidates,
+             QStringList({ SearchTerm::quote(QStringLiteral("alice@example.org")) }));
+    QVERIFY(!candidates.first().contains(QStringLiteral("Alice")));
+}
+
+void TestQueryCompleter::addressesTakeTheValueBranchNotThePrefixVocabulary()
+{
+    // A from: value is a Value context, resolved by the same branch that serves
+    // path: and tag:, never the prefix vocabulary. If the kind were misjudged
+    // the popup would offer "from:" itself back at the user.
+    const CompletionContext ctx =
+        completionContext(QStringLiteral("from:"), 5);
+    QCOMPARE(ctx.kind, CompletionContext::Value);
+    QCOMPARE(ctx.prefix, QStringLiteral("from"));
+
+    Config config;
+    QueryCompleter completer(nullptr, config);
+    completer.setContacts({
+        { QStringLiteral("Alice Example"), QStringLiteral("alice@example.org") },
+    });
+
+    const QStringList candidates = completer.candidatesFor(ctx);
+    QVERIFY(candidates.contains(
+        SearchTerm::quote(QStringLiteral("alice@example.org"))));
+    QVERIFY(!candidates.contains(QStringLiteral("tag:")));
 }
 
 void TestQueryCompleter::mimetypeAppendsConfiguredEntries()

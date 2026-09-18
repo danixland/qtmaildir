@@ -24,6 +24,7 @@
 #include <QStringList>
 
 #include "completionentry.h"
+#include "contactstore.h"
 
 class Config;
 class QCompleter;
@@ -98,6 +99,11 @@ public:
     /// Replaces the tag candidates. Called with the worker's allTagsReady.
     void setTags(const QStringList &tags);
 
+    /// Replaces the address candidates. Called by MainWindow after the vCard
+    /// store is read, and REPLACES rather than merges for the same reason
+    /// setTags does: the caller owns the list.
+    void setContacts(const QList<Contact> &contacts);
+
     /// The candidate values for a context, in the order they are offered.
     QStringList candidatesFor(const CompletionContext &context) const;
 
@@ -134,6 +140,7 @@ private:
     QLineEdit *m_edit = nullptr;
     const Config &m_config;
     QStringList m_tags;
+    QList<Contact> m_contacts;
 
     /// Set while the filter is redelivering a key to the popup. The filter is
     /// installed on the application and sendEvent re-runs application filters,

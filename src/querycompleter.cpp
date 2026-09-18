@@ -19,6 +19,7 @@
 #include "querycompleter.h"
 
 #include "config.h"
+#include "searchterm.h"
 
 #include <QCompleter>
 #include <QCoreApplication>
@@ -597,6 +598,11 @@ void QueryCompleter::setTags(const QStringList &tags)
     m_tags = tags;
 }
 
+void QueryCompleter::setContacts(const QList<Contact> &contacts)
+{
+    m_contacts = contacts;
+}
+
 QList<CompletionEntry> QueryCompleter::entriesFor(
     const CompletionContext &context) const
 {
@@ -649,10 +655,27 @@ QList<CompletionEntry> QueryCompleter::entriesFor(
         return entries;
     }
 
-    // from:, to:, folder:, subject:, attachment:, thread:, id: complete no
-    // values. Addresses need an enumerator libnotmuch does not expose;
-    // folder: matches a Maildir folder name that config cannot enumerate, and
-    // the rest are free text.
+    // The addresses live in the vCard store, which is the enumerator
+    // libnotmuch does not expose. The VALUE is the bare address because that
+    // is what notmuch matches on; the contact's name is the description, so
+    // the popup says who owns it.
+    if (context.prefix == QStringLiteral("from")
+        || context.prefix == QStringLiteral("to")) {
+        QList<CompletionEntry> entries;
+        entries.reserve(m_contacts.size());
+        for (const Contact &contact : m_contacts) {
+            const QString address = SearchTerm::quote(contact.email);
+            if (address.isEmpty())
+                continue;
+            entries.append({ address, contact.name });
+        }
+        return entries;
+    }
+
+    // folder:, subject:, attachment:, thread:, id: complete no values. folder:
+    // matches a Maildir folder name that config cannot enumerate, and the rest
+    // are free text. from: and to: no longer belong in this list: the vCards
+    // are the enumerator they lacked.
     return {};
 }
 

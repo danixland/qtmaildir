@@ -27,12 +27,17 @@
 #include <memory>
 
 #include "config.h"
+#include "contactstore.h"
 #include "formattoolbar.h"  // MarkdownFormat::Edit is used by value below, and
                             // a type nested in a namespace cannot be
                             // forward-declared from outside it.
 #include "types.h"
 
 class QAction;
+class QCompleter;
+class QEvent;
+class QModelIndex;
+class QStandardItemModel;
 class QCheckBox;
 class QSplitter;
 class QComboBox;
@@ -113,6 +118,19 @@ public:
     /// A setter rather than a config key: nothing yet suggests the user wants
     /// a second location, and the tests need to not read the real one.
     void setSignatureDir(const QString &dir);
+
+    /// The address book the recipient fields complete from.
+    ///
+    /// MainWindow owns the load and calls this right after constructing the
+    /// window, because it already holds the list for its own account picker and
+    /// a composer must not read the store itself. Empty (the store off, or no
+    /// vdir) is the ordinary state and leaves the fields behaving exactly as
+    /// they did before completion existed: no candidates, no popup.
+    ///
+    /// A setter rather than a constructor parameter on purpose: the three-
+    /// argument constructor is used by every other test, and a fourth argument
+    /// would turn one load into forty edits.
+    void setContacts(const QList<Contact> &contacts);
 
     /// Seeds the signature from config and fills the switch.
     ///
@@ -220,9 +238,18 @@ protected:
     /// The one place the registry is told, whichever route closes the window.
     void closeEvent(QCloseEvent *event) override;
 
+    /// Re-points the shared contact completer at whichever recipient field just
+    /// took focus. One completer serves To, Cc and Bcc, and QCompleter anchors
+    /// its popup and its key handling to a single widget.
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     void buildUi();
     void buildFormatToolbar();
+    void buildContactCompleter();
+    void rebuildContactModel();
+    void completeRecipientToken(QLineEdit *field);
+    void acceptContactCompletion(const QModelIndex &index);
     void seedFields();
 
     /// Extracts a forwarded message's parts into m_forwardedParts and appends
@@ -324,6 +351,16 @@ private:
     QComboBox *m_from = nullptr;
     QPlainTextEdit *m_body = nullptr;
     QToolButton *m_sendHtml = nullptr;
+
+    /// ONE completer over ONE model, shared by To, Cc and Bcc. Owned here and
+    /// parented to the window; the model's rows are the insertion strings, see
+    /// contactInsertionText() in the .cpp.
+    QCompleter *m_contactCompleter = nullptr;
+    QStandardItemModel *m_contactModel = nullptr;
+
+    /// The contacts MainWindow handed in, kept so setContacts() can rebuild the
+    /// model without reaching back for them.
+    QList<Contact> m_contacts;
 
     /// Item 171. Strips remote content from the forwarded original, checked by
     /// default. Only created for a Forward whose original carries remote

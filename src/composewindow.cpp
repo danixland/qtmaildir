@@ -36,6 +36,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -49,8 +50,10 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPair>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QStandardItemModel>
 #include <QStatusBar>
 #include <QStandardPaths>
 #include <QTextCursor>
@@ -70,16 +73,123 @@ namespace {
 /// rendering of it joins with ", ". A display name containing a comma has to
 /// be quoted by the user, exactly as it has to be in the wire format, and
 /// MessageBuilder is what turns each entry into a mailbox.
+///
+/// QUOTE-AWARE, and that is the half that makes the completion safe. This
+/// application now inserts `"Rossi, Mario" <m@example.org>` for a contact whose
+/// name carries a comma, and a naive split would cut that name in half before
+/// MessageBuilder ever saw it. A `"` toggles in-quote; a `\"` inside a quoted
+/// span is an escaped quote and does not close it; a comma inside quotes does
+/// not split. The quotes are KEPT, because GMime's parser needs them to know
+/// the comma belongs to the name.
 QStringList splitRecipients(const QString &text)
 {
     QStringList out;
-    const QStringList parts = text.split(QLatin1Char(','), Qt::SkipEmptyParts);
-    for (const QString &part : parts) {
-        const QString trimmed = part.trimmed();
-        if (!trimmed.isEmpty())
-            out.append(trimmed);
+    QString current;
+    bool inQuote = false;
+
+    for (int i = 0; i < text.size(); ++i) {
+        const QChar c = text.at(i);
+
+        // An escaped character inside a quoted span is literal. Both characters
+        // are kept so the wire format survives to MessageBuilder.
+        if (c == QLatin1Char('\\') && inQuote && i + 1 < text.size()) {
+            current.append(c);
+            current.append(text.at(i + 1));
+            ++i;
+            continue;
+        }
+
+        if (c == QLatin1Char('"')) {
+            inQuote = !inQuote;
+            current.append(c);
+            continue;
+        }
+
+        if (c == QLatin1Char(',') && !inQuote) {
+            const QString trimmed = current.trimmed();
+            if (!trimmed.isEmpty())
+                out.append(trimmed);
+            current.clear();
+            continue;
+        }
+
+        current.append(c);
     }
+
+    const QString trimmed = current.trimmed();
+    if (!trimmed.isEmpty())
+        out.append(trimmed);
     return out;
+}
+
+/// The text a completion inserts for \p contact.
+///
+/// A display name containing a comma must be QUOTED, because the recipient
+/// fields are comma-separated and splitRecipients() would otherwise cut the
+/// name in half before the message was built. A name containing a double quote
+/// is quoted too, with its quotes backslash-escaped: an unquoted `"` in an
+/// address header is malformed. The backslash is escaped FIRST, or escaping the
+/// quote would then double the backslashes it just introduced.
+QString contactInsertionText(const Contact &contact)
+{
+    if (contact.name.isEmpty())
+        return contact.email;
+
+    if (contact.name.contains(QLatin1Char(','))
+        || contact.name.contains(QLatin1Char('"'))) {
+        QString escaped = contact.name;
+        escaped.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+        escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+        return QStringLiteral("\"%1\" <%2>").arg(escaped, contact.email);
+    }
+
+    return QStringLiteral("%1 <%2>").arg(contact.name, contact.email);
+}
+
+/// The span an accepted completion replaces: the comma-delimited token the
+/// cursor sits in, with the whitespace around it excluded so it survives.
+///
+/// A token is bounded by the last comma before the cursor and the first comma
+/// after it, which is the same unit splitRecipients() will read the field back
+/// as. First is the offset, second the length.
+QPair<int, int> recipientTokenRange(const QString &text, int cursor)
+{
+    cursor = qBound(0, cursor, text.size());
+
+    int start = 0;
+    for (int i = cursor - 1; i >= 0; --i) {
+        if (text.at(i) == QLatin1Char(',')) {
+            start = i + 1;
+            break;
+        }
+    }
+
+    int end = text.size();
+    for (int i = cursor; i < text.size(); ++i) {
+        if (text.at(i) == QLatin1Char(',')) {
+            end = i;
+            break;
+        }
+    }
+
+    while (start < end && text.at(start).isSpace())
+        ++start;
+    while (end > start && text.at(end - 1).isSpace())
+        --end;
+
+    return { start, end - start };
+}
+
+/// What the completer matches on: the token's text up to the cursor. Trimmed,
+/// because the leading space after a comma is not part of what was typed, and
+/// QCompleter would look for it literally.
+QString recipientCompletionPrefix(const QString &text, int cursor)
+{
+    const QPair<int, int> range = recipientTokenRange(text, cursor);
+    const int start = range.first;
+    const int end = start + range.second;
+    const int upTo = qBound(start, cursor, end);
+    return text.mid(start, upTo - start).trimmed();
 }
 
 /// Everything about a message the user can change, as one comparable string.
@@ -578,6 +688,113 @@ void ComposeWindow::buildUi()
         }
         applySignature(seeded);
     });
+
+    // Last, because it connects to the three fields buildUi() just created.
+    buildContactCompleter();
+}
+
+void ComposeWindow::buildContactCompleter()
+{
+    m_contactModel = new QStandardItemModel(this);
+
+    m_contactCompleter = new QCompleter(m_contactModel, this);
+    m_contactCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    // MatchContains over a display string carrying BOTH name and address is the
+    // whole matching rule: "Ali" finds the name, "alice@" finds the address,
+    // and QCompleter's default prefix-on-one-string could do neither.
+    m_contactCompleter->setFilterMode(Qt::MatchContains);
+    m_contactCompleter->setCompletionMode(QCompleter::PopupCompletion);
+    m_contactCompleter->setCompletionColumn(0);
+
+    // setWidget, NEVER QLineEdit::setCompleter. This is the trap CLAUDE.md
+    // records twice already (QueryCompleter 01ba356, TagDialog): setCompleter
+    // hands completion to the line edit, which then overwrites
+    // completionPrefix with the field's ENTIRE text on every keystroke, so
+    // after the first comma nothing matches and the popup stops appearing.
+    // setWidget still gives complete() the widget it dereferences
+    // unconditionally; the prefix is set by hand from textEdited instead.
+    for (QLineEdit *field : { m_to, m_cc, m_bcc }) {
+        field->installEventFilter(this);
+        connect(field, &QLineEdit::textEdited, this,
+                [this, field]() { completeRecipientToken(field); });
+    }
+
+    connect(m_contactCompleter,
+            QOverload<const QModelIndex &>::of(&QCompleter::activated), this,
+            [this](const QModelIndex &index) {
+                acceptContactCompletion(index);
+            });
+}
+
+void ComposeWindow::setContacts(const QList<Contact> &contacts)
+{
+    m_contacts = contacts;
+    rebuildContactModel();
+}
+
+void ComposeWindow::rebuildContactModel()
+{
+    if (!m_contactModel)
+        return;
+
+    m_contactModel->clear();
+    for (const Contact &contact : m_contacts) {
+        auto *item = new QStandardItem(contactInsertionText(contact));
+        item->setEditable(false);
+        m_contactModel->appendRow(item);
+    }
+}
+
+void ComposeWindow::completeRecipientToken(QLineEdit *field)
+{
+    if (!m_contactCompleter || !field)
+        return;
+
+    // Re-pointed here as well as on focus: a keystroke is the signal every
+    // platform delivers, and complete() dereferences widget() unconditionally.
+    m_contactCompleter->setWidget(field);
+    m_contactCompleter->setCompletionPrefix(
+        recipientCompletionPrefix(field->text(), field->cursorPosition()));
+    m_contactCompleter->complete();
+}
+
+void ComposeWindow::acceptContactCompletion(const QModelIndex &index)
+{
+    auto *field = qobject_cast<QLineEdit *>(m_contactCompleter->widget());
+    if (!field)
+        return;
+
+    const QString value = index.data(Qt::DisplayRole).toString();
+    if (value.isEmpty())
+        return;
+
+    QString text = field->text();
+    const QPair<int, int> range =
+        recipientTokenRange(text, field->cursorPosition());
+    text.replace(range.first, range.second, value);
+
+    // setText emits textChanged, not textEdited, so this cannot re-enter the
+    // completion handler. The caret lands after the insertion, ready for the
+    // comma and the next recipient.
+    field->setText(text);
+    field->setCursorPosition(range.first + value.size());
+}
+
+bool ComposeWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    // One completer serves three fields, so whichever takes focus must become
+    // the widget it is anchored to, or the popup opens over the wrong field and
+    // its keys are routed to a line edit the user has left.
+    if (event->type() == QEvent::FocusIn && m_contactCompleter) {
+        for (QLineEdit *field : { m_to, m_cc, m_bcc }) {
+            if (watched == field) {
+                m_contactCompleter->setWidget(field);
+                break;
+            }
+        }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void ComposeWindow::buildFormatToolbar()

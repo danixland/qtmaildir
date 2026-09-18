@@ -22,6 +22,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLineEdit>
+#include <QListView>
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QSignalSpy>
@@ -40,7 +42,40 @@
 #include "composecontext.h"
 #include "composewindow.h"
 #include "config.h"
+#include "contactstore.h"
 #include "signatures.h"
+
+/// The popup QCompleter shows while it is offering contacts.
+///
+/// activePopupWidget, not a scan of every QListView in the process: the
+/// composer already owns an attachment QListWidget, which a scan would find
+/// and this must not.
+static QListView *contactPopup()
+{
+    return qobject_cast<QListView *>(QApplication::activePopupWidget());
+}
+
+/// The two contacts the completion tests offer. Names and addresses differ so a
+/// candidate matched by the wrong half of the string is visible in the result.
+static QList<Contact> twoContacts()
+{
+    return { { QStringLiteral("Alice Example"), QStringLiteral("alice@example.org") },
+             { QStringLiteral("Bob Example"), QStringLiteral("bob@example.org") } };
+}
+
+/// Accepts the top suggestion by clicking it, which is the route QCompleter
+/// reports as activated() without depending on how a keyboard layout delivers
+/// Return.
+static void acceptFirstPopupRow()
+{
+    QListView *popup = contactPopup();
+    QVERIFY(popup);
+    const QModelIndex row = popup->model()->index(0, 0);
+    QVERIFY(row.isValid());
+    popup->setCurrentIndex(row);
+    QTest::mouseClick(popup->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      popup->visualRect(row).center());
+}
 
 class TestComposeWindow : public QObject
 {
@@ -73,6 +108,14 @@ private slots:
     void theMenusReuseTheToolbarActions();
     void theHtmlMenuItemTracksTheToolbarButton();
     void theAgeLineFollowsTheClock();
+
+    void completionOffersAContactOnTheFirstRecipient();
+    void completionMatchesTheAddressAsWellAsTheName();
+    void completionStillWorksAfterAComma();
+    void insertingACommaNameQuotesItAndKeepsOneRecipient();
+    void insertingANameWithAQuoteEscapesIt();
+    void anEmptyNameInsertsTheBareAddress();
+    void noContactsLeavesTheBehaviourUnchanged();
 
 private:
     /// A config pointing at a signatures directory holding \p files, with one
@@ -1152,6 +1195,219 @@ void TestComposeWindow::theHtmlMenuItemTracksTheToolbarButton()
 
     item->setChecked(initial);
     QCOMPARE(button->isChecked(), initial);
+}
+
+/// Completion exists to save typing a contact the user already has. The test
+/// TYPES, never setText(): QLineEdit::setText does not drive a completer at
+/// all, so a test using it passes against the very bug this task exists to
+/// avoid and would endorse the mutation that reintroduces it.
+void TestComposeWindow::completionOffersAContactOnTheFirstRecipient()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setContacts(twoContacts());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setFocus();
+
+    QTest::keyClicks(to, QStringLiteral("Ali"));
+    QVERIFY2(contactPopup() && contactPopup()->isVisible(),
+             "typing a contact's name must offer it");
+    QCOMPARE(contactPopup()->model()->index(0, 0).data(Qt::DisplayRole).toString(),
+             QStringLiteral("Alice Example <alice@example.org>"));
+
+    acceptFirstPopupRow();
+    QCOMPARE(to->text(), QStringLiteral("Alice Example <alice@example.org>"));
+}
+
+/// The candidate is matched on the ADDRESS as well as the name. A single
+/// display string carrying both is what makes that true; matching only the
+/// prefix of the name would leave the address unusable as a query.
+void TestComposeWindow::completionMatchesTheAddressAsWellAsTheName()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setContacts(twoContacts());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setFocus();
+
+    // "alice@" occurs in the address and nowhere in either name.
+    QTest::keyClicks(to, QStringLiteral("alice@"));
+    QVERIFY2(contactPopup() && contactPopup()->isVisible(),
+             "typing an address must offer the contact");
+    QCOMPARE(contactPopup()->model()->index(0, 0).data(Qt::DisplayRole).toString(),
+             QStringLiteral("Alice Example <alice@example.org>"));
+
+    acceptFirstPopupRow();
+    QCOMPARE(to->text(), QStringLiteral("Alice Example <alice@example.org>"));
+}
+
+/// The case this whole task exists for: `setCompleter()` would set the
+/// completion prefix to the field's ENTIRE text on every keystroke, so after
+/// the first comma nothing matches and the popup never appears again. The
+/// prefix must be the comma-delimited token under the cursor.
+void TestComposeWindow::completionStillWorksAfterAComma()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setContacts(twoContacts());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setFocus();
+
+    QTest::keyClicks(to, QStringLiteral("alice@example.org, bo"));
+    QVERIFY2(contactPopup() && contactPopup()->isVisible(),
+             "completion stopped after the first recipient");
+    // Bob, not Alice: the prefix is the token after the comma, so Alice must
+    // not be offered any more.
+    QCOMPARE(contactPopup()->model()->index(0, 0).data(Qt::DisplayRole).toString(),
+             QStringLiteral("Bob Example <bob@example.org>"));
+
+    acceptFirstPopupRow();
+    QCOMPARE(to->text(),
+             QStringLiteral("alice@example.org, Bob Example <bob@example.org>"));
+}
+
+/// A display name containing a comma must be QUOTED on insertion, or
+/// splitRecipients() cuts it in half on the way to OutgoingMessage. The name is
+/// asserted as ONE entry, which is the property the quoting buys.
+void TestComposeWindow::insertingACommaNameQuotesItAndKeepsOneRecipient()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setContacts({ { QStringLiteral("Rossi, Mario"),
+                           QStringLiteral("mario@example.org") } });
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setFocus();
+
+    QTest::keyClicks(to, QStringLiteral("Rossi"));
+    QVERIFY(contactPopup() && contactPopup()->isVisible());
+    acceptFirstPopupRow();
+
+    QCOMPARE(to->text(),
+             QStringLiteral("\"Rossi, Mario\" <mario@example.org>"));
+
+    // The quoted name survives splitRecipients() as a single recipient.
+    const OutgoingMessage message = window.currentMessage();
+    QCOMPARE(message.to.size(), 1);
+    QCOMPARE(message.to.first(),
+             QStringLiteral("\"Rossi, Mario\" <mario@example.org>"));
+}
+
+/// A double quote in a display name is backslash-escaped inside the quoted
+/// string, so the header the user sees is valid. The backslash is escaped
+/// first, or escaping the quotes would double the backslashes just added.
+void TestComposeWindow::insertingANameWithAQuoteEscapesIt()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setContacts({ { QStringLiteral("He said \"hi\""),
+                           QStringLiteral("q@example.org") } });
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setFocus();
+
+    QTest::keyClicks(to, QStringLiteral("He"));
+    QVERIFY(contactPopup() && contactPopup()->isVisible());
+    acceptFirstPopupRow();
+
+    QCOMPARE(to->text(),
+             QStringLiteral("\"He said \\\"hi\\\"\" <q@example.org>"));
+
+    const OutgoingMessage message = window.currentMessage();
+    QCOMPARE(message.to.size(), 1);
+}
+
+/// A card with an address but no name completes on the address alone, with no
+/// empty angle brackets.
+void TestComposeWindow::anEmptyNameInsertsTheBareAddress()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setContacts({ { QString(), QStringLiteral("plain@example.org") } });
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setFocus();
+
+    QTest::keyClicks(to, QStringLiteral("plai"));
+    QVERIFY(contactPopup() && contactPopup()->isVisible());
+    acceptFirstPopupRow();
+
+    QCOMPARE(to->text(), QStringLiteral("plain@example.org"));
+}
+
+/// The store is optional. With no contacts the fields behave exactly as they
+/// did before completion existed: text goes in and no popup appears.
+void TestComposeWindow::noContactsLeavesTheBehaviourUnchanged()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setFocus();
+
+    QTest::keyClicks(to, QStringLiteral("Ali"));
+    QVERIFY2(!contactPopup() || !contactPopup()->isVisible(),
+             "a composer with no contacts must offer none");
+    QCOMPARE(to->text(), QStringLiteral("Ali"));
 }
 
 QTEST_MAIN(TestComposeWindow)

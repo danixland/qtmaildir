@@ -114,6 +114,8 @@ private slots:
     void completionStillWorksAfterAComma();
     void insertingACommaNameQuotesItAndKeepsOneRecipient();
     void insertingANameWithAQuoteEscapesIt();
+    void insertingANameWithAControlCharacterStripsIt();
+    void insertingANameWithHeaderSpecialsQuotesIt();
     void anEmptyNameInsertsTheBareAddress();
     void noContactsLeavesTheBehaviourUnchanged();
 
@@ -1222,10 +1224,11 @@ void TestComposeWindow::completionOffersAContactOnTheFirstRecipient()
     QVERIFY2(contactPopup() && contactPopup()->isVisible(),
              "typing a contact's name must offer it");
     QCOMPARE(contactPopup()->model()->index(0, 0).data(Qt::DisplayRole).toString(),
-             QStringLiteral("Alice Example <alice@example.org>"));
+             QStringLiteral("\"Alice Example\" <alice@example.org>"));
 
     acceptFirstPopupRow();
-    QCOMPARE(to->text(), QStringLiteral("Alice Example <alice@example.org>"));
+    QCOMPARE(to->text(),
+             QStringLiteral("\"Alice Example\" <alice@example.org>"));
 }
 
 /// The candidate is matched on the ADDRESS as well as the name. A single
@@ -1253,10 +1256,11 @@ void TestComposeWindow::completionMatchesTheAddressAsWellAsTheName()
     QVERIFY2(contactPopup() && contactPopup()->isVisible(),
              "typing an address must offer the contact");
     QCOMPARE(contactPopup()->model()->index(0, 0).data(Qt::DisplayRole).toString(),
-             QStringLiteral("Alice Example <alice@example.org>"));
+             QStringLiteral("\"Alice Example\" <alice@example.org>"));
 
     acceptFirstPopupRow();
-    QCOMPARE(to->text(), QStringLiteral("Alice Example <alice@example.org>"));
+    QCOMPARE(to->text(),
+             QStringLiteral("\"Alice Example\" <alice@example.org>"));
 }
 
 /// The case this whole task exists for: `setCompleter()` would set the
@@ -1286,11 +1290,13 @@ void TestComposeWindow::completionStillWorksAfterAComma()
     // Bob, not Alice: the prefix is the token after the comma, so Alice must
     // not be offered any more.
     QCOMPARE(contactPopup()->model()->index(0, 0).data(Qt::DisplayRole).toString(),
-             QStringLiteral("Bob Example <bob@example.org>"));
+             QStringLiteral("\"Bob Example\" <bob@example.org>"));
 
     acceptFirstPopupRow();
-    QCOMPARE(to->text(),
-             QStringLiteral("alice@example.org, Bob Example <bob@example.org>"));
+    QCOMPARE(
+        to->text(),
+        QStringLiteral(
+            "alice@example.org, \"Bob Example\" <bob@example.org>"));
 }
 
 /// A display name containing a comma must be QUOTED on insertion, or
@@ -1358,6 +1364,69 @@ void TestComposeWindow::insertingANameWithAQuoteEscapesIt()
 
     const OutgoingMessage message = window.currentMessage();
     QCOMPARE(message.to.size(), 1);
+}
+
+/// FN is untrusted and ContactStore faithfully decodes `\n` to a real newline,
+/// so a hostile card can try to smuggle a header line through a display name.
+/// Nothing the completion inserts may carry a control character.
+void TestComposeWindow::insertingANameWithAControlCharacterStripsIt()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setContacts({ { QStringLiteral("Evil\nBcc: x"),
+                           QStringLiteral("evil@example.org") } });
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setFocus();
+
+    QTest::keyClicks(to, QStringLiteral("Evil"));
+    QVERIFY(contactPopup() && contactPopup()->isVisible());
+    acceptFirstPopupRow();
+
+    for (const QChar c : to->text())
+        QVERIFY2(c.category() != QChar::Other_Control,
+                 "the inserted name must carry no control character");
+
+    QCOMPARE(to->text(),
+             QStringLiteral("\"Evil Bcc: x\" <evil@example.org>"));
+    QCOMPARE(window.currentMessage().to.size(), 1);
+}
+
+/// `<`, `>`, `;` and `@` are RFC 5322 specials. Quoting the whole name keeps
+/// every one of them inside the display name instead of in the header grammar.
+void TestComposeWindow::insertingANameWithHeaderSpecialsQuotesIt()
+{
+    const Config config = configWithDrafts();
+
+    ComposeContext context;
+    context.kind = ComposeContext::Kind::New;
+    context.accountKey = QStringLiteral("work");
+
+    ComposeWindow window(context, config, m_dir->path());
+    window.setContacts({ { QStringLiteral("Weird <Name>; @here"),
+                           QStringLiteral("weird@example.org") } });
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *to = window.findChild<QLineEdit *>(QStringLiteral("to"));
+    QVERIFY(to);
+    to->setFocus();
+
+    QTest::keyClicks(to, QStringLiteral("Weird"));
+    QVERIFY(contactPopup() && contactPopup()->isVisible());
+    acceptFirstPopupRow();
+
+    QCOMPARE(to->text(),
+             QStringLiteral("\"Weird <Name>; @here\" <weird@example.org>"));
+    QCOMPARE(window.currentMessage().to.size(), 1);
 }
 
 /// A card with an address but no name completes on the address alone, with no

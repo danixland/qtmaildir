@@ -124,26 +124,34 @@ QStringList splitRecipients(const QString &text)
 
 /// The text a completion inserts for \p contact.
 ///
-/// A display name containing a comma must be QUOTED, because the recipient
-/// fields are comma-separated and splitRecipients() would otherwise cut the
-/// name in half before the message was built. A name containing a double quote
-/// is quoted too, with its quotes backslash-escaped: an unquoted `"` in an
-/// address header is malformed. The backslash is escaped FIRST, or escaping the
-/// quote would then double the backslashes it just introduced.
+/// UNTRUSTED INPUT ARRIVES HERE. A display name comes from a vCard's FN, and
+/// ContactStore::unescapeText() faithfully decodes `\n` to a real newline, so a
+/// hostile card can carry `Evil\nBcc: x` and be inserted raw into a recipient
+/// header. The name is sanitised and then ALWAYS quoted when non-empty, rather
+/// than only for a comma or a quote: quoting contains every RFC 5322 special
+/// (`<`, `>`, `;`, `@`, spaces, commas) in one step, and escaping `\` before `"`
+/// is what makes the quoted form valid. Control characters become single spaces
+/// and runs collapse, so a decoded newline cannot forge a header line.
 QString contactInsertionText(const Contact &contact)
 {
-    if (contact.name.isEmpty())
+    QString name;
+    name.reserve(contact.name.size());
+    for (const QChar c : contact.name) {
+        if (c.isSpace() || c.category() == QChar::Other_Control) {
+            if (!name.isEmpty() && !name.endsWith(QLatin1Char(' ')))
+                name.append(QLatin1Char(' '));
+            continue;
+        }
+        name.append(c);
+    }
+    name = name.trimmed();
+
+    if (name.isEmpty())
         return contact.email;
 
-    if (contact.name.contains(QLatin1Char(','))
-        || contact.name.contains(QLatin1Char('"'))) {
-        QString escaped = contact.name;
-        escaped.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-        escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
-        return QStringLiteral("\"%1\" <%2>").arg(escaped, contact.email);
-    }
-
-    return QStringLiteral("%1 <%2>").arg(contact.name, contact.email);
+    name.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    name.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return QStringLiteral("\"%1\" <%2>").arg(name, contact.email);
 }
 
 /// The span an accepted completion replaces: the comma-delimited token the

@@ -48,6 +48,10 @@
 // asserted through it without reaching into the delegate.
 #include "businesssenders.h"
 
+// Held by value, like the business-senders list above: the parsed contact list
+// is a member, so its size must be known here.
+#include "contactstore.h"
+
 class QAction;
 class QLineEdit;
 class QMenu;
@@ -1835,6 +1839,16 @@ private:
     /// the completer so a mutation can ask whether it introduced a tag the
     /// completer does not yet offer, without a round trip.
     QStringList m_knownTags;
+
+    /// The address book, loaded ONCE when the window is built and handed to
+    /// both consumers: the query-bar completer and every composer.
+    ///
+    /// Held here so the list is read from disk a single time per session. A
+    /// vdirsyncer directory can change while the application runs, but a
+    /// QFileSystemWatcher would be speculative: a restart picks up the new
+    /// file, and the store is 117 files of two fields, not a live index.
+    /// Empty when contactsDir() is unset, which is the feature being off.
+    QList<Contact> m_contacts;
 
     quint64 m_generation = 0;
 

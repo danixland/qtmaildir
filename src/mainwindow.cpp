@@ -770,6 +770,17 @@ void MainWindow::buildUi()
     m_queryEdit->installEventFilter(this);
     m_queryCompleter = new QueryCompleter(m_queryEdit, m_config, this);
 
+    // The address book, read once for the whole session. A vdirsyncer
+    // directory is a handful of small vCards, so the parse is paid at startup
+    // rather than per keystroke, and a restart is the refresh route: watching
+    // the directory would be a live-index feature nobody asked for. An empty
+    // contactsDir() is the feature switched off, so the loader is not even
+    // called, and no warning is raised for a machine with no address book.
+    if (!m_config.contactsDir().isEmpty()) {
+        m_contacts = ContactStore::loadDirectory(m_config.contactsDir());
+        m_queryCompleter->setContacts(m_contacts);
+    }
+
     m_markReadTimer = new QTimer(this);
     // Named so a test can observe whether it is armed without the window
     // having to expose the timer or the decision that armed it.
@@ -1253,6 +1264,11 @@ void MainWindow::openComposer(const ComposeContext &context)
     auto *composer = new ComposeWindow(context, m_config, m_mailRoot);
     composer->setAttribute(Qt::WA_DeleteOnClose);
     m_composers.append(QPointer<ComposeWindow>(composer));
+
+    // The same list the query bar offers, from the once-per-session load. The
+    // composer builds its own model over it, so a recipient field completes on
+    // the address book the query bar completes from.
+    composer->setContacts(m_contacts);
 
     // Compaction, and ONLY compaction. The QPointer above is what keeps
     // composersBlockingQuit() safe against a destroyed window, since it nulls

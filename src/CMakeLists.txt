@@ -42,6 +42,7 @@ add_library(qtmaildir_lib STATIC
     querycompleter.cpp
     rulequery.cpp
     searchterm.cpp
+    contactstore.cpp
     signatures.cpp
 )
 

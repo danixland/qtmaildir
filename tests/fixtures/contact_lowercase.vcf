@@ -1,0 +1,5 @@
+BEGIN:VCARD
+VERSION:3.0
+fn:Carol Example
+email:carol@example.org
+END:VCARD

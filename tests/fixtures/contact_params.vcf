@@ -1,0 +1,6 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:Bob Example
+EMAIL;TYPE=WORK:bob@example.org
+EMAIL;TYPE=INTERNET;LABEL="work: main":bob.work@example.org
+END:VCARD

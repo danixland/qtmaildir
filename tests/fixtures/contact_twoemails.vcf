@@ -1,0 +1,6 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:Dana Two
+EMAIL:dana@example.org
+EMAIL;TYPE=HOME:dana.home@example.org
+END:VCARD

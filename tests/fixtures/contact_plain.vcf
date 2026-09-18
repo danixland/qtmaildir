@@ -1,0 +1,6 @@
+BEGIN:VCARD
+VERSION:3.0
+N:Example;Alice;;;
+FN:Alice Example
+EMAIL:alice@example.org
+END:VCARD

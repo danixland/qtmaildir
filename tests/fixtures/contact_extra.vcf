@@ -1,0 +1,9 @@
+BEGIN:VCARD
+VERSION:3.0
+N:Extra;Fields;;;
+FN:Extra Fields
+ADR;TYPE=HOME:;;2 Example Rd;Exampleton;;11111;Examplestan
+TEL;TYPE=CELL:+1-555-0199
+PHOTO;ENCODING=b;TYPE=JPEG:iVBORw0KGgo=
+EMAIL:extra@example.org
+END:VCARD

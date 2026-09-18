@@ -212,6 +212,11 @@ identity.
 ; your mail server. It is unrelated to the "passed" tag, which is the Maildir
 ; P flag and means "I forwarded this".
 ; forward_prefixes = Doorst, VS, VL
+; Optional. A directory of vCards to complete addresses from, in the composer
+; and in the query bar's from: and to:. A leading ~ is expanded. Omit it and
+; the feature is off. See "Contact completion" for the usual value and the
+; directory you must NOT use.
+; contacts_dir = ~/.local/share/vdirsyncer/contacts/
 
 [completion]
 ; Optional. Extra content types offered after mimetype:, APPENDED to the
@@ -458,6 +463,30 @@ Sent mail is presented differently from the rest, because it reads differently:
 This applies only to the Sent button. The same query typed into the bar by hand
 behaves like any other query, threads and all.
 
+### Contact completion
+
+`contacts_dir` under `[general]` names a directory of vCards to complete
+addresses from:
+
+```ini
+[general]
+contacts_dir = ~/.local/share/vdirsyncer/contacts/
+```
+
+That path is where vdirsyncer keeps a contacts collection and is the usual
+value. A leading `~` is expanded. **Do not point it at
+`~/.local/share/contacts/`**: that is Akonadi's directory, and it is the wrong
+one.
+
+With the key set, the composer's To, Cc and Bcc fields complete against the
+store (accepting a candidate inserts `Name <address>`), and the query bar
+offers addresses after `from:` and `to:`. The store is read **once at startup
+and is read-only**: editing contacts is not part of this application.
+
+Omit the key and the feature is off, exactly as if it did not exist. A path
+that is set and missing is reported at startup, since there you asked for
+something and are not getting it.
+
 ## The query bar
 
 The bar at the top takes a notmuch query and shows the matching threads.
@@ -485,10 +514,13 @@ What completes:
   extend through `[completion] extra_mimetypes`.
 - **Account directories**, after `path:`, in both the plain and the
   recursive `<maildir>/**` form.
+- **Addresses**, after `from:` and `to:`, from the vCard store configured by
+  `contacts_dir`. The value inserted is the bare address; the contact's name
+  is shown as its description.
 
-`from:`, `to:`, `subject:`, `folder:`, `attachment:`, `thread:` and `id:`
-offer no values. Addresses and folder names would need an enumerator
-libnotmuch does not expose, and the rest are free text.
+`subject:`, `folder:`, `attachment:`, `thread:` and `id:` offer no values.
+Folder names would need an enumerator libnotmuch does not expose, and the rest
+are free text.
 
 notmuch's date parser also accepts free-form dates such as `2026-01-15` or
 `15/01/2026..today`. Those cannot be offered as candidates, since there is no

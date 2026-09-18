@@ -11,6 +11,14 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- **Contact completion.** Point `contacts_dir` under `[general]` at a directory
+  of vCards, vdirsyncer's `~/.local/share/vdirsyncer/contacts/` being the usual
+  one, and the composer's To, Cc and Bcc fields and the query bar's `from:` and
+  `to:` complete against it. The store is read-only and loaded once at startup;
+  omit the key and the feature is off.
+
 ## [0.29.0] - 2026-09-14
 
 Spam is now a folder you can act on: Mark spam moves the file into a

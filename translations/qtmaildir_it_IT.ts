@@ -245,6 +245,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
 <context>
     <name>Config</name>
     <message>
+        <source>Contacts directory &apos;%1&apos; does not exist; contact completion will find no contacts.</source>
+        <translation>La directory dei contatti &apos;%1&apos; non esiste; il completamento dei contatti non troverà alcun contatto.</translation>
+    </message>
+    <message>
         <source>Language &apos;%1&apos; is not a locale name; using the system language. Expected something like &apos;it&apos; or &apos;it_IT&apos;.</source>
         <translation>&apos;%1&apos; non è un nome di locale; verrà usata la lingua di sistema. Atteso qualcosa come &apos;it&apos; o &apos;it_IT&apos;.</translation>
     </message>

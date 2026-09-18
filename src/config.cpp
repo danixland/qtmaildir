@@ -94,6 +94,21 @@ bool generatorIsFlat(const QString &generator)
            || generator == QStringLiteral("drafts");
 }
 
+/// Expands a leading "~" to the home directory.
+///
+/// No other key in config.cpp expands one; contacts_dir is the first, and only
+/// because the README documents its usual value as
+/// "~/.local/share/vdirsyncer/contacts/". A shared helper would serve one
+/// caller, so this stays local until a second one exists.
+QString expandTilde(const QString &path)
+{
+    if (path == QLatin1String("~"))
+        return QDir::homePath();
+    if (path.startsWith(QLatin1String("~/")))
+        return QDir::homePath() + path.mid(1);
+    return path;
+}
+
 } // namespace
 
 QString Account::scopedQuery(const QString &query) const
@@ -235,6 +250,27 @@ void Config::load(const QString &path)
     // childKeys() ordering already documented in CLAUDE.md.
     m_notmuchConfig =
         settings.value(QStringLiteral("notmuch_config")).toString();
+
+    // [general], so no prefix, per the note above. Tilde is expanded for the
+    // README's documented value, "~/.local/share/vdirsyncer/contacts/", which
+    // would otherwise name a literal "~" directory that does not exist.
+    //
+    // Absent or empty is silent: the feature is simply off, which is an
+    // ordinary machine rather than a misconfiguration. A path that is set and
+    // missing is reported, because there the user asked for something and is
+    // not getting it. The value is KEPT rather than cleared: a vdirsyncer
+    // target may not exist until its first run, and ContactStore's walk treats
+    // a missing directory as empty anyway, so the warning is the whole report.
+    const QString contactsDir =
+        settings.value(QStringLiteral("contacts_dir")).toString().trimmed();
+    if (!contactsDir.isEmpty()) {
+        m_contactsDir = expandTilde(contactsDir);
+        if (!QFileInfo::exists(m_contactsDir)) {
+            addProblem(tr("Contacts directory '%1' does not exist; contact "
+                          "completion will find no contacts.")
+                           .arg(m_contactsDir));
+        }
+    }
 
     // Absent is fine and silent: the default is 1.0. Present but unparseable
     // is a problem, since the user asked for something and is not getting it.

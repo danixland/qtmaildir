@@ -144,6 +144,11 @@ private slots:
     void theSignatureKeysAreRead();
     void anAccountSignatureOverridesTheComposeDefault();
     void aMalformedSignaturePositionIsReportedAndFallsBack();
+    void contactsDirIsEmptyWithoutTheKey();
+    void contactsDirIsEmptyWhenBlank();
+    void contactsDirIsActuallyRead();
+    void contactsDirExpandsATilde();
+    void contactsDirThatDoesNotExistIsReported();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -2759,6 +2764,101 @@ void TestConfig::aMalformedSignaturePositionIsReportedAndFallsBack()
     }
     QVERIFY2(reported,
              "an unrecognised signature_position was accepted silently");
+}
+
+void TestConfig::contactsDirIsEmptyWithoutTheKey()
+{
+    // Absent is the feature off, and silently so: a machine with no address
+    // book is an ordinary machine, not a misconfiguration. A modal on every
+    // launch about a key the user never wrote would train them to dismiss
+    // dialogs without reading them. Only problems() is asserted, not
+    // warnings(): a bare [general] also carries the "no sync command" notice.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n")));
+
+    QVERIFY(config.contactsDir().isEmpty());
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::contactsDirIsEmptyWhenBlank()
+{
+    // A key written with no value is the same "off" as an absent one, not a
+    // problem: the user named nothing, so nothing is missing. Trimmed too, so
+    // a stray space cannot become a path that does not exist and warn.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "contacts_dir = \n")));
+
+    QVERIFY(config.contactsDir().isEmpty());
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::contactsDirIsActuallyRead()
+{
+    // [general] keys are read WITHOUT the general/ prefix, per the note at the
+    // top of Config::load(). A "general/contacts_dir" lookup matches nothing
+    // and would leave the accessor empty, which looks exactly like the feature
+    // being off: the whole key would be silently inert.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "contacts_dir=%1\n")
+                                  .arg(dir.path())));
+
+    QCOMPARE(config.contactsDir(), dir.path());
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::contactsDirExpandsATilde()
+{
+    // The README documents the usual value as
+    // "~/.local/share/vdirsyncer/contacts/", so a leading "~" has to reach
+    // QDir::homePath() or the user gets a literal "~" directory that does not
+    // exist. config.cpp expands no other path key; this is the first, which is
+    // why the expansion lives here rather than in a shared helper nothing else
+    // calls.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "contacts_dir=~\n")));
+
+    QCOMPARE(config.contactsDir(), QDir::homePath());
+    QVERIFY(config.problems().isEmpty());
+
+    // Under a subpath, which is the form the README actually names. The
+    // directory deliberately does not exist, which also pins the missing-path
+    // decision: the value is KEPT, not cleared, and the warning is what
+    // reports it. A vdirsyncer target may not exist until its first run.
+    QTemporaryDir other;
+    Config nested;
+    const QString sub = QStringLiteral(".qtmaildir-test-no-such-contacts");
+    nested.load(writeIni(other, QStringLiteral("[general]\n"
+                                               "contacts_dir=~/%1\n")
+                                    .arg(sub)));
+    QCOMPARE(nested.contactsDir(),
+             QDir::homePath() + QLatin1Char('/') + sub);
+}
+
+void TestConfig::contactsDirThatDoesNotExistIsReported()
+{
+    // Present and not there is a problem, the same line message_zoom and
+    // forward_prefixes draw: the user asked for something and is not getting
+    // it. The value is kept so the accessor still says what was asked for.
+    QTemporaryDir dir;
+    const QString missing = dir.filePath(QStringLiteral("no-such-contacts"));
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "contacts_dir=%1\n")
+                                  .arg(missing)));
+
+    QVERIFY2(!config.problems().isEmpty(),
+             "a configured but missing contacts directory must be reported");
+    const QString joined = config.problems().join(QLatin1Char('\n'));
+    QVERIFY2(joined.contains(missing),
+             "the warning must name the path the user wrote");
+    QCOMPARE(config.contactsDir(), missing);
 }
 
 QTEST_MAIN(TestConfig)

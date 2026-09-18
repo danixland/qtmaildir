@@ -404,6 +404,19 @@ public:
     /// Optional alternate notmuch config file. Empty means "let notmuch decide".
     QString notmuchConfig() const { return m_notmuchConfig; }
 
+    /// The vdirsyncer contacts directory (vCard 3.0 files), or empty to turn
+    /// contact completion off.
+    ///
+    /// A [general] key, read WITHOUT the "general/" prefix like notmuch_config
+    /// above. There is no default: guessing a vdir would make the application
+    /// read a directory the user never named, and a machine with no address
+    /// book is an ordinary machine. A leading "~" is expanded, because the
+    /// README documents the usual value in that form. A set path that does not
+    /// exist is reported through addProblem(), because the user asked for
+    /// something and is not getting it; an absent key is silent, because that
+    /// is simply the feature being off rather than a misconfiguration.
+    QString contactsDir() const { return m_contactsDir; }
+
     /// Matches every configured account's sent mail, or empty when no account
     /// configures one.
     ///
@@ -578,6 +591,7 @@ private:
     QString m_syncStatus;
     int m_toolbarIconSize = 24;
     QString m_notmuchConfig;
+    QString m_contactsDir;
     QString m_dateFormat;
     QStringList m_forwardPrefixes;
     QString m_language;

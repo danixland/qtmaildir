@@ -19,7 +19,13 @@
 #include "calendarstore.h"
 #include "icalraii.h"
 
+#include <QCryptographicHash>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QTimeZone>
+
+#include <algorithm>
 
 namespace {
 
@@ -118,6 +124,28 @@ QDateTime endOf(icalcomponent *c, const QDateTime &start, bool allDay, bool *unk
 
 } // namespace
 
+namespace {
+
+QString readTrimmed(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return QString::fromUtf8(file.readAll()).trimmed();
+}
+
+/// A colour for a collection with no `color` file, derived from its directory
+/// name so it is the same on every load and on every machine.
+QColor hashedColour(const QString &dir)
+{
+    const QByteArray hash = QCryptographicHash::hash(dir.toUtf8(), QCryptographicHash::Md5);
+    const int hue = (static_cast<unsigned char>(hash[0]) * 256
+                     + static_cast<unsigned char>(hash[1])) % 360;
+    return QColor::fromHsl(hue, 150, 140);
+}
+
+} // namespace
+
 namespace CalendarStore {
 
 CalEvent parseEvent(const QByteArray &text, const QString &filePath,
@@ -160,7 +188,50 @@ CalEvent parseEvent(const QByteArray &text, const QString &filePath,
     return event;
 }
 
-LoadResult load(const QString &) { return {}; }
+LoadResult load(const QString &dir)
+{
+    LoadResult result;
+    const QFileInfoList subdirs =
+        QDir(dir).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &sub : subdirs) {
+        CalCollection collection;
+        collection.dir = sub.fileName();
+        collection.path = sub.absoluteFilePath();
+        collection.displayName = readTrimmed(collection.path + QStringLiteral("/displayname"));
+        if (collection.displayName.isEmpty())
+            collection.displayName = collection.dir;
+        collection.color = QColor(readTrimmed(collection.path + QStringLiteral("/color")));
+        if (!collection.color.isValid())
+            collection.color = hashedColour(collection.dir);
+        collection.readOnly = !sub.isWritable();
+        result.collections.append(collection);
+
+        const QFileInfoList files =
+            QDir(collection.path).entryInfoList({ QStringLiteral("*.ics") }, QDir::Files, QDir::Name);
+        for (const QFileInfo &file : files) {
+            QFile f(file.absoluteFilePath());
+            if (!f.open(QIODevice::ReadOnly)) {
+                ++result.unparsable;
+                continue;
+            }
+            bool unknown = false;
+            CalEvent event = parseEvent(f.readAll(), file.absoluteFilePath(),
+                                        collection.dir, &unknown);
+            if (event.uid.isEmpty() || !event.start.isValid()) {
+                ++result.unparsable;
+                continue;
+            }
+            if (unknown)
+                ++result.unknownZones;
+            result.events.append(event);
+        }
+    }
+    std::sort(result.collections.begin(), result.collections.end(),
+              [](const CalCollection &a, const CalCollection &b) {
+                  return a.displayName.localeAwareCompare(b.displayName) < 0;
+              });
+    return result;
+}
 QList<Occurrence> occurrences(const QList<CalEvent> &, const QDateTime &, const QDateTime &) { return {}; }
 bool isEditable(const CalEvent &, const CalCollection &, const QStringList &) { return false; }
 QByteArray applyEdit(const QByteArray &, const EventEdit &, Scope, const QDateTime &) { return {}; }

@@ -122,6 +122,50 @@ QDateTime endOf(icalcomponent *c, const QDateTime &start, bool allDay, bool *unk
     return allDay ? start.addDays(1) : start;
 }
 
+/// ponytail: iterates from DTSTART rather than icalrecur_iterator_set_start,
+/// which is unsupported with COUNT. Capped per series; raise the cap only if
+/// a real rule is measured hitting it.
+constexpr int kMaxIterations = 10000;
+
+bool overlaps(const QDateTime &start, const QDateTime &end,
+              const QDateTime &from, const QDateTime &to)
+{
+    // A zero-length event (no DTEND) still shows on its instant.
+    return start < to && (end > from || (end == start && start >= from));
+}
+
+/// The occurrence start times of the master in `text`, up to `to`, in the
+/// event's own zone and converted after: a weekly 10:00 Rome meeting stays
+/// 10:00 in Rome across DST (spec, "Time and recurrence").
+QList<QDateTime> seriesStarts(const QByteArray &text, const QDateTime &to)
+{
+    QList<QDateTime> starts;
+    IcalComponent root = parseRoot(text);
+    icalcomponent *master = root ? masterOf(root.get()) : nullptr;
+    icalproperty *rrule = master ? icalcomponent_get_first_property(master, ICAL_RRULE_PROPERTY) : nullptr;
+    if (!rrule)
+        return starts;
+    icalproperty *startProp = icalcomponent_get_first_property(master, ICAL_DTSTART_PROPERTY);
+    const QByteArray tzid = tzidOf(startProp);
+    const icaltimetype dtstart = icalcomponent_get_dtstart(master);
+
+    IcalRecurIterator it(icalrecur_iterator_new(icalproperty_get_rrule(rrule), dtstart));
+    if (!it)
+        return starts;
+    for (int i = 0; i < kMaxIterations; ++i) {
+        icaltimetype t = icalrecur_iterator_next(it.get());
+        if (icaltime_is_null_time(t))
+            break;
+        t.zone = dtstart.zone;
+        t.is_date = dtstart.is_date;
+        const QDateTime start = toDateTime(t, tzid, nullptr);
+        if (start >= to)
+            break;
+        starts.append(start);
+    }
+    return starts;
+}
+
 } // namespace
 
 namespace {
@@ -184,7 +228,34 @@ CalEvent parseEvent(const QByteArray &text, const QString &filePath,
          a; a = icalcomponent_get_next_property(master, ICAL_ATTENDEE_PROPERTY))
         event.attendees.append(personOf(a));
 
-    // Recurrence, exceptions and overrides: Task 4.
+    if (icalproperty *rrule = icalcomponent_get_first_property(master, ICAL_RRULE_PROPERTY)) {
+        // The value text rather than icalproperty_get_rrule(): RepeatRule is
+        // pure text, and libical re-serialising the struct would reorder parts.
+        IcalString value(icalproperty_get_value_as_string_r(rrule));
+        event.repeat = RepeatRule::fromRRule(str(value.get()), event.start.date());
+    }
+    for (icalproperty *ex = icalcomponent_get_first_property(master, ICAL_EXDATE_PROPERTY);
+         ex; ex = icalcomponent_get_next_property(master, ICAL_EXDATE_PROPERTY))
+        event.exdates.append(toDateTime(icalproperty_get_exdate(ex), tzidOf(ex), unknownZone));
+
+    for (icalcomponent *c = icalcomponent_get_first_component(root.get(), ICAL_VEVENT_COMPONENT);
+         c; c = icalcomponent_get_next_component(root.get(), ICAL_VEVENT_COMPONENT)) {
+        icalproperty *rid = icalcomponent_get_first_property(c, ICAL_RECURRENCEID_PROPERTY);
+        if (c == master || !rid)
+            continue;
+        CalOverride ov;
+        ov.recurrenceId = toDateTime(icalcomponent_get_recurrenceid(c), tzidOf(rid), unknownZone);
+        icalproperty *sp = icalcomponent_get_first_property(c, ICAL_DTSTART_PROPERTY);
+        const icaltimetype s = icalcomponent_get_dtstart(c);
+        ov.allDay = s.is_date;
+        ov.start = toDateTime(s, tzidOf(sp), unknownZone);
+        ov.end = endOf(c, ov.start, ov.allDay, unknownZone);
+        ov.summary = str(icalcomponent_get_summary(c));
+        ov.location = str(icalcomponent_get_location(c));
+        ov.description = str(icalcomponent_get_description(c));
+        ov.cancelled = icalcomponent_get_status(c) == ICAL_STATUS_CANCELLED;
+        event.overrides.append(ov);
+    }
     return event;
 }
 
@@ -232,7 +303,46 @@ LoadResult load(const QString &dir)
               });
     return result;
 }
-QList<Occurrence> occurrences(const QList<CalEvent> &, const QDateTime &, const QDateTime &) { return {}; }
+QList<Occurrence> occurrences(const QList<CalEvent> &events,
+                              const QDateTime &from, const QDateTime &to)
+{
+    QList<Occurrence> result;
+    for (int i = 0; i < events.size(); ++i) {
+        const CalEvent &e = events[i];
+        const qint64 length = e.start.msecsTo(e.end);
+
+        if (e.repeat.freq == RepeatRule::Freq::None) {
+            if (overlaps(e.start, e.end, from, to))
+                result.append({ i, e.start, e.end, e.allDay, {}, false, -1 });
+            continue;
+        }
+
+        for (const QDateTime &slot : seriesStarts(e.rawText, to)) {
+            // An EXDATE or an override takes this slot. Compared as instants:
+            // an EXDATE may be written in UTC while DTSTART carries a TZID.
+            const auto sameInstant = [&](const QDateTime &d) { return d == slot; };
+            if (std::any_of(e.exdates.cbegin(), e.exdates.cend(), sameInstant))
+                continue;
+            if (std::any_of(e.overrides.cbegin(), e.overrides.cend(),
+                            [&](const CalOverride &o) { return o.recurrenceId == slot; }))
+                continue;
+            const QDateTime end = e.allDay ? slot.addDays(e.start.daysTo(e.end))
+                                           : slot.addMSecs(length);
+            if (overlaps(slot, end, from, to))
+                result.append({ i, slot, end, e.allDay, slot, false, -1 });
+        }
+        // Placed by their OWN start: an override may move into a window its
+        // slot is outside of, or out of the window its slot is in.
+        for (int o = 0; o < e.overrides.size(); ++o) {
+            const CalOverride &ov = e.overrides[o];
+            if (!ov.cancelled && overlaps(ov.start, ov.end, from, to))
+                result.append({ i, ov.start, ov.end, e.allDay, ov.recurrenceId, true, o });
+        }
+    }
+    std::sort(result.begin(), result.end(),
+              [](const Occurrence &a, const Occurrence &b) { return a.start < b.start; });
+    return result;
+}
 bool isEditable(const CalEvent &, const CalCollection &, const QStringList &) { return false; }
 QByteArray applyEdit(const QByteArray &, const EventEdit &, Scope, const QDateTime &) { return {}; }
 QByteArray newEvent(const EventEdit &, const QByteArray &) { return {}; }

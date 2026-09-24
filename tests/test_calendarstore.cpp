@@ -64,6 +64,20 @@ void writeFile(const QString &path, const QByteArray &content)
     file.write(content);
 }
 
+QList<Occurrence> expand(const QString &body, const QDateTime &from, const QDateTime &to,
+                         CalEvent *out = nullptr)
+{
+    const CalEvent event = parse(body);
+    if (out)
+        *out = event;
+    return CalendarStore::occurrences({ event }, from, to);
+}
+
+QDateTime utc(int y, int m, int d, int h = 0, int min = 0)
+{
+    return QDateTime(QDate(y, m, d), QTime(h, min), QTimeZone::utc());
+}
+
 } // namespace
 
 class TestCalendarStore : public QObject
@@ -79,6 +93,14 @@ private slots:
     void readsAnAllDayEventWithAnExclusiveEnd();
     void loadReadsCollectionsAndFallsBack();
     void loadSkipsAndCountsABrokenFile();
+    void expandsAWeeklyEventAcrossDstInItsOwnZone();
+    void expandsAnAllDayEventOntoOneDay();
+    void removesAnExdate();
+    void anOverrideReplacesItsSlotAndMovesFreely();
+    void anInfiniteSeriesYieldsOnlyTheWindow();
+    void honoursCountAndUntil();
+    void expandsMonthlyLastFridayAndYearlyByMonth();
+    void readsTheRepeatRuleExdatesAndOverrides();
 };
 
 void TestCalendarStore::parsesAUtcEvent()
@@ -193,6 +215,121 @@ void TestCalendarStore::loadSkipsAndCountsABrokenFile()
     const LoadResult r = CalendarStore::load(dir.path());
     QCOMPARE(r.events.size(), 1);
     QCOMPARE(r.unparsable, 1);
+}
+
+void TestCalendarStore::expandsAWeeklyEventAcrossDstInItsOwnZone()
+{
+    // 2026-10-25 is the last Sunday of October: Rome leaves CEST (+2) for CET
+    // (+1). A weekly 10:00 meeting must stay at 10:00 in Rome on both sides,
+    // which means its UTC time MOVES. Expanding in UTC would keep 08:00Z and
+    // draw the second one at 09:00 local.
+    const QTimeZone rome("Europe/Rome");
+    const QList<Occurrence> occ = expand(vevent(QStringLiteral(
+        "UID:w@example.org\r\nDTSTART;TZID=Europe/Rome:20261019T100000\r\n"
+        "DTEND;TZID=Europe/Rome:20261019T110000\r\nRRULE:FREQ=WEEKLY\r\n")),
+        utc(2026, 10, 18), utc(2026, 11, 1));
+    QCOMPARE(occ.size(), 2);
+    QCOMPARE(occ[0].start.toTimeZone(rome).time(), QTime(10, 0));
+    QCOMPARE(occ[1].start.toTimeZone(rome).time(), QTime(10, 0));
+    QCOMPARE(occ[0].start.toUTC().time(), QTime(8, 0));
+    QCOMPARE(occ[1].start.toUTC().time(), QTime(9, 0));
+    QCOMPARE(occ[1].end.toTimeZone(rome).time(), QTime(11, 0));
+}
+
+void TestCalendarStore::expandsAnAllDayEventOntoOneDay()
+{
+    const QList<Occurrence> occ = expand(vevent(QStringLiteral(
+        "UID:ad@example.org\r\nDTSTART;VALUE=DATE:20260924\r\nDTEND;VALUE=DATE:20260925\r\n")),
+        QDateTime(QDate(2026, 9, 25), QTime(0, 0)), QDateTime(QDate(2026, 9, 26), QTime(0, 0)));
+    // The window starts on the 25th, where the event has already ENDED: an
+    // inclusive end would draw it on the 25th too.
+    QCOMPARE(occ.size(), 0);
+}
+
+void TestCalendarStore::removesAnExdate()
+{
+    const QList<Occurrence> occ = expand(vevent(QStringLiteral(
+        "UID:x@example.org\r\nDTSTART:20260921T080000Z\r\nDTEND:20260921T090000Z\r\n"
+        "RRULE:FREQ=DAILY\r\nEXDATE:20260922T080000Z\r\n")),
+        utc(2026, 9, 21), utc(2026, 9, 24));
+    QCOMPARE(occ.size(), 2);
+    QCOMPARE(occ[0].start, utc(2026, 9, 21, 8));
+    QCOMPARE(occ[1].start, utc(2026, 9, 23, 8));
+}
+
+void TestCalendarStore::anOverrideReplacesItsSlotAndMovesFreely()
+{
+    // A five-day series (21st-25th) whose 22nd is moved to the 30th. A window
+    // over the 21st-23rd must NOT show the 22nd, since its slot is taken; a
+    // window over the 30th, where the series has no slot at all, MUST show
+    // the override, since an override is placed by its own start.
+    const QString body = vevent(QStringLiteral(
+        "UID:o@example.org\r\nDTSTART:20260921T080000Z\r\nDTEND:20260921T090000Z\r\n"
+        "RRULE:FREQ=DAILY;COUNT=5\r\nSUMMARY:Series\r\n"))
+        + vevent(QStringLiteral(
+        "UID:o@example.org\r\nRECURRENCE-ID:20260922T080000Z\r\n"
+        "DTSTART:20260930T150000Z\r\nDTEND:20260930T160000Z\r\nSUMMARY:Moved\r\n"));
+    CalEvent event;
+    QList<Occurrence> occ = expand(body, utc(2026, 9, 21), utc(2026, 9, 24), &event);
+    QCOMPARE(occ.size(), 2);  // the 21st and 23rd
+    QCOMPARE(event.overrides.size(), 1);
+    QCOMPARE(event.overrides[0].summary, QStringLiteral("Moved"));
+
+    occ = expand(body, utc(2026, 9, 30), utc(2026, 10, 1));
+    QCOMPARE(occ.size(), 1);  // COUNT=5 ends on the 25th; only the override is here
+    QVERIFY(occ[0].isOverride);
+    QCOMPARE(occ[0].start, utc(2026, 9, 30, 15));
+    QCOMPARE(occ[0].recurrenceId, utc(2026, 9, 22, 8));
+}
+
+void TestCalendarStore::anInfiniteSeriesYieldsOnlyTheWindow()
+{
+    const QList<Occurrence> occ = expand(vevent(QStringLiteral(
+        "UID:inf@example.org\r\nDTSTART:20000101T080000Z\r\nRRULE:FREQ=DAILY\r\n")),
+        utc(2026, 9, 1), utc(2026, 9, 8));
+    QCOMPARE(occ.size(), 7);
+    QCOMPARE(occ.first().start, utc(2026, 9, 1, 8));
+}
+
+void TestCalendarStore::honoursCountAndUntil()
+{
+    QCOMPARE(expand(vevent(QStringLiteral(
+        "UID:c@example.org\r\nDTSTART:20260901T080000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\n")),
+        utc(2026, 9, 1), utc(2026, 10, 1)).size(), 3);
+    QCOMPARE(expand(vevent(QStringLiteral(
+        "UID:u@example.org\r\nDTSTART:20260901T080000Z\r\n"
+        "RRULE:FREQ=DAILY;UNTIL=20260905T080000Z\r\n")),
+        utc(2026, 9, 1), utc(2026, 10, 1)).size(), 5);
+}
+
+void TestCalendarStore::expandsMonthlyLastFridayAndYearlyByMonth()
+{
+    // Last Fridays: 2026-09-25, 2026-10-30.
+    QList<Occurrence> occ = expand(vevent(QStringLiteral(
+        "UID:lf@example.org\r\nDTSTART:20260925T080000Z\r\nRRULE:FREQ=MONTHLY;BYDAY=-1FR\r\n")),
+        utc(2026, 9, 1), utc(2026, 11, 1));
+    QCOMPARE(occ.size(), 2);
+    QCOMPARE(occ[1].start.date(), QDate(2026, 10, 30));
+
+    // Last Friday of September: 2026-09-25, 2027-09-24.
+    occ = expand(vevent(QStringLiteral(
+        "UID:ly@example.org\r\nDTSTART:20260925T080000Z\r\n"
+        "RRULE:FREQ=YEARLY;BYMONTH=9;BYDAY=-1FR\r\n")),
+        utc(2026, 1, 1), utc(2028, 1, 1));
+    QCOMPARE(occ.size(), 2);
+    QCOMPARE(occ[1].start.date(), QDate(2027, 9, 24));
+}
+
+void TestCalendarStore::readsTheRepeatRuleExdatesAndOverrides()
+{
+    CalEvent e;
+    expand(vevent(QStringLiteral(
+        "UID:r@example.org\r\nDTSTART:20260921T080000Z\r\n"
+        "RRULE:FREQ=MONTHLY;BYDAY=-1FR\r\nEXDATE:20261030T080000Z\r\n")),
+        utc(2026, 9, 1), utc(2026, 9, 2), &e);
+    QCOMPARE(e.repeat.freq, RepeatRule::Freq::Monthly);
+    QCOMPARE(e.repeat.ordinal, -1);
+    QCOMPARE(e.exdates, QList<QDateTime>{ utc(2026, 10, 30, 8) });
 }
 
 QTEST_MAIN(TestCalendarStore)

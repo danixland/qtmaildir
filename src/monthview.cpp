@@ -100,7 +100,10 @@ void MonthView::paintEvent(QPaintEvent *)
     for (int c = 0; c < MonthLayout::kCells; ++c) {
         const QRect cell = l.cellRect(c);
         const QDate date = l.dateAt(c);
+        // The previous cell's chip or today pill left its brush set, and
+        // drawRect fills with it.
         p.setPen(palette().color(QPalette::Mid));
+        p.setBrush(Qt::NoBrush);
         p.drawRect(cell.adjusted(0, 0, -1, -1));
 
         QRect number(cell.left() + 4, cell.top() + 1,

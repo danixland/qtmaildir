@@ -38,8 +38,12 @@ CalendarSync::CalendarSync(const QString &command, int delayMs, QObject *parent)
     });
     connect(&m_process, &QProcess::errorOccurred, this,
             [this](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart)
+        if (error == QProcess::FailedToStart) {
+            // finished() never fires for a failed start, so the queued-run flag
+            // would otherwise leak into the next successful run.
+            m_again = false;
             emit finished(false, m_process.errorString());
+        }
     });
 }
 

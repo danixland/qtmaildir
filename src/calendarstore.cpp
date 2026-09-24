@@ -385,9 +385,26 @@ QByteArray serialise(icalcomponent *root)
     return text ? QByteArray(text.get()) : QByteArray();
 }
 
-icalcomponent *overrideFor(icalcomponent *, icalcomponent *master, const QDateTime &)
+/// The override component for `recurrenceId`, created when absent: a copy of
+/// the master without RRULE, RDATE or EXDATE, carrying a RECURRENCE-ID in the
+/// master's own time form.
+icalcomponent *overrideFor(icalcomponent *root, icalcomponent *master,
+                           const QDateTime &recurrenceId)
 {
-    return master;  // replaced in Task 7
+    for (icalcomponent *c = icalcomponent_get_first_component(root, ICAL_VEVENT_COMPONENT);
+         c; c = icalcomponent_get_next_component(root, ICAL_VEVENT_COMPONENT)) {
+        icalproperty *rid = icalcomponent_get_first_property(c, ICAL_RECURRENCEID_PROPERTY);
+        if (c != master && rid
+            && toDateTime(icalcomponent_get_recurrenceid(c), tzidOf(rid), nullptr) == recurrenceId)
+            return c;
+    }
+    icalcomponent *copy = icalcomponent_new_clone(master);
+    removeAll(copy, ICAL_RRULE_PROPERTY);
+    removeAll(copy, ICAL_RDATE_PROPERTY);
+    removeAll(copy, ICAL_EXDATE_PROPERTY);
+    setTime(copy, ICAL_RECURRENCEID_PROPERTY, recurrenceId, formOf(root, master));
+    icalcomponent_add_component(root, copy);
+    return copy;
 }
 
 } // namespace
@@ -595,7 +612,35 @@ QByteArray newEvent(const EventEdit &edit, const QByteArray &zoneId)
     return serialise(root.get());
 }
 
-QByteArray deleteOccurrence(const QByteArray &, const QDateTime &) { return {}; }
+QByteArray deleteOccurrence(const QByteArray &text, const QDateTime &recurrenceId)
+{
+    IcalComponent root = parseRoot(text);
+    icalcomponent *master = root ? masterOf(root.get()) : nullptr;
+    if (!master)
+        return {};
+    // Collect first: removing a component mid-walk invalidates the iterator.
+    QList<icalcomponent *> doomed;
+    for (icalcomponent *c = icalcomponent_get_first_component(root.get(), ICAL_VEVENT_COMPONENT);
+         c; c = icalcomponent_get_next_component(root.get(), ICAL_VEVENT_COMPONENT)) {
+        icalproperty *rid = icalcomponent_get_first_property(c, ICAL_RECURRENCEID_PROPERTY);
+        if (c != master && rid
+            && toDateTime(icalcomponent_get_recurrenceid(c), tzidOf(rid), nullptr) == recurrenceId)
+            doomed.append(c);
+    }
+    for (icalcomponent *c : doomed) {
+        icalcomponent_remove_component(root.get(), c);
+        icalcomponent_free(c);
+    }
+    // setTime replaces every property of its kind, which for EXDATE would
+    // drop the existing ones: add this one alongside instead.
+    const TimeForm form = formOf(root.get(), master);
+    icalproperty *ex = icalproperty_new_exdate(wallTime(recurrenceId, form));
+    if (form.kind == TimeForm::Zoned)
+        icalproperty_add_parameter(ex, icalparameter_new_tzid(form.tzid.constData()));
+    icalcomponent_add_property(master, ex);
+    stamp(master, true);
+    return serialise(root.get());
+}
 
 bool sameMeaning(const QByteArray &a, const QByteArray &b)
 {

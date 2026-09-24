@@ -23,6 +23,8 @@
 #include <QTemporaryDir>
 #include <QTimeZone>
 
+#include <algorithm>
+
 #include "calendarstore.h"
 
 namespace {
@@ -98,6 +100,16 @@ CalEvent reparse(const QByteArray &text)
     return CalendarStore::parseEvent(text, QStringLiteral("/x/e.ics"), QStringLiteral("x"), &unknown);
 }
 
+const QString kDailySeries = QStringLiteral(
+    "UID:d@example.org\r\nDTSTAMP:20260901T000000Z\r\n"
+    "DTSTART;TZID=Europe/Rome:20260921T100000\r\nDTEND;TZID=Europe/Rome:20260921T110000\r\n"
+    "RRULE:FREQ=DAILY;COUNT=5\r\nSUMMARY:Daily\r\n");
+
+QDateTime rome(int d, int h)
+{
+    return QDateTime(QDate(2026, 9, d), QTime(h, 0), QTimeZone("Europe/Rome"));
+}
+
 const QString kRichEvent = QStringLiteral(
     "UID:rich@example.org\r\nDTSTAMP:20260901T000000Z\r\nSEQUENCE:2\r\n"
     "DTSTART;TZID=Europe/Rome:20260922T100000\r\nDTEND;TZID=Europe/Rome:20260922T110000\r\n"
@@ -141,6 +153,10 @@ private slots:
     void sameMeaningIgnoresFormatting();
     void sameMeaningMatchesOverridesRegardlessOfOrder();
     void sameMeaningRejectsDifferentUids();
+
+    void editingOneOccurrenceWritesAnOverride();
+    void editingTheSameOccurrenceAgainReplacesItsOverride();
+    void deletingOneOccurrenceAddsAnExdateAndDropsItsOverride();
 };
 
 void TestCalendarStore::parsesAUtcEvent()
@@ -585,6 +601,64 @@ void TestCalendarStore::sameMeaningRejectsDifferentUids()
         "UID:two@example.org\r\nDTSTART:20260922T080000Z\r\nSUMMARY:Standup\r\n")));
     QVERIFY(!CalendarStore::sameMeaning(a, b));
     QVERIFY(CalendarStore::sameMeaning(a, a));
+}
+
+void TestCalendarStore::editingOneOccurrenceWritesAnOverride()
+{
+    const CalEvent series = parse(vevent(kDailySeries));
+    EventEdit edit = editOf(series);
+    edit.summary = QStringLiteral("Just this one");
+    edit.start = rome(22, 15);
+    edit.end = rome(22, 16);
+    const QByteArray after = CalendarStore::applyEdit(
+        series.rawText, edit, CalendarStore::Scope::ThisOccurrence, rome(22, 10));
+
+    const CalEvent e = reparse(after);
+    QCOMPARE(e.summary, QStringLiteral("Daily"));          // master untouched
+    QCOMPARE(e.repeat.count, 5);
+    QCOMPARE(e.overrides.size(), 1);
+    QCOMPARE(e.overrides[0].recurrenceId, rome(22, 10));
+    QCOMPARE(e.overrides[0].summary, QStringLiteral("Just this one"));
+    QCOMPARE(after.count("RRULE"), 1);                     // the override carries none
+
+    const QList<Occurrence> occ = CalendarStore::occurrences(
+        { e }, rome(21, 0), rome(26, 0));
+    QCOMPARE(occ.size(), 5);                               // still five, one moved
+    QVERIFY(std::any_of(occ.cbegin(), occ.cend(),
+                        [](const Occurrence &o) { return o.isOverride && o.start == rome(22, 15); }));
+}
+
+void TestCalendarStore::editingTheSameOccurrenceAgainReplacesItsOverride()
+{
+    const CalEvent series = parse(vevent(kDailySeries));
+    EventEdit edit = editOf(series);
+    edit.start = rome(22, 15);
+    edit.end = rome(22, 16);
+    QByteArray text = CalendarStore::applyEdit(
+        series.rawText, edit, CalendarStore::Scope::ThisOccurrence, rome(22, 10));
+    edit.start = rome(22, 17);
+    edit.end = rome(22, 18);
+    text = CalendarStore::applyEdit(text, edit, CalendarStore::Scope::ThisOccurrence, rome(22, 10));
+    const CalEvent e = reparse(text);
+    QCOMPARE(e.overrides.size(), 1);
+    QCOMPARE(e.overrides[0].start, rome(22, 17));
+}
+
+void TestCalendarStore::deletingOneOccurrenceAddsAnExdateAndDropsItsOverride()
+{
+    const CalEvent series = parse(vevent(kDailySeries));
+    EventEdit edit = editOf(series);
+    edit.start = rome(23, 15);
+    edit.end = rome(23, 16);
+    const QByteArray withOverride = CalendarStore::applyEdit(
+        series.rawText, edit, CalendarStore::Scope::ThisOccurrence, rome(23, 10));
+
+    const QByteArray after = CalendarStore::deleteOccurrence(withOverride, rome(23, 10));
+    const CalEvent e = reparse(after);
+    QCOMPARE(e.overrides.size(), 0);
+    QCOMPARE(e.exdates, QList<QDateTime>{ rome(23, 10) });
+    QVERIFY2(after.contains("EXDATE;TZID=Europe/Rome:20260923T100000"), after.constData());
+    QCOMPARE(CalendarStore::occurrences({ e }, rome(21, 0), rome(26, 0)).size(), 4);
 }
 
 QTEST_MAIN(TestCalendarStore)

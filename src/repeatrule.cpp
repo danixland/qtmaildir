@@ -79,6 +79,9 @@ RepeatRule RepeatRule::fromRRule(const QString &value, const QDate &start)
         return custom;
     };
 
+    if (value.trimmed().isEmpty())
+        return rule;
+
     QMap<QString, QString> parts;
     for (const QString &pair : value.split(QLatin1Char(';'), Qt::SkipEmptyParts)) {
         const int eq = pair.indexOf(QLatin1Char('='));

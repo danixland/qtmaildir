@@ -28,6 +28,7 @@ private slots:
     void roundTripsEveryRowOfTheTable_data();
     void roundTripsEveryRowOfTheTable();
     void fillsWhatAnRruleLeavesImplicit();
+    void anEmptyRruleMeansDoesNotRepeat();
     void recognisesACustomRule_data();
     void recognisesACustomRule();
     void keepsWkst();
@@ -74,6 +75,18 @@ void TestRepeatRule::fillsWhatAnRruleLeavesImplicit()
     const RepeatRule monthly = RepeatRule::fromRRule(QStringLiteral("FREQ=MONTHLY"), QDate(2026, 9, 18));
     QCOMPARE(monthly.by, RepeatRule::By::MonthDay);
     QCOMPARE(monthly.monthDay, 18);
+}
+
+void TestRepeatRule::anEmptyRruleMeansDoesNotRepeat()
+{
+    const QDate start(2026, 9, 18);
+    for (const QString &value : { QString(), QStringLiteral(""), QStringLiteral("  ") }) {
+        const RepeatRule rule = RepeatRule::fromRRule(value, start);
+        QCOMPARE(rule.freq, RepeatRule::Freq::None);
+        QVERIFY(!rule.custom);
+        QCOMPARE(rule.describe(), QStringLiteral("Does not repeat"));
+        QCOMPARE(rule.toRRule(), QString());
+    }
 }
 
 void TestRepeatRule::recognisesACustomRule_data()

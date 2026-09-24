@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <algorithm>
+
 #include <QProcess>
 #include <QtTest>
 
@@ -44,6 +46,7 @@
 #include <QTreeView>
 #include <QTimer>
 
+#include "calendarwindow.h"
 #include "config.h"
 #include "keymap.h"
 #include "mainwindow.h"
@@ -617,6 +620,10 @@ private slots:
     // Item 177, task 6: membership is the union over the conversation.
     void aConversationStaysWhileAnyMessageMatches();
     void aConversationLeavesWhenItsUnionEmpties();
+
+    // Item 206, task 15: the calendar opens from the View menu and toolbar,
+    // and does nothing at all when no calendars_dir is configured.
+    void theCalendarActionWithNoCalendarOpensNothing();
 
 private:
     /// Owns the throwaway lock table init() points every test at. A pointer
@@ -8815,6 +8822,25 @@ void TestMainWindow::theSpamActionCarriesTheBugIconWithAFallback()
         MainWindow::iconNamesForTesting(QStringLiteral("spam"));
     QCOMPARE(names.first, QStringLiteral("bug"));
     QCOMPARE(names.second, QStringLiteral("mail-mark-junk"));
+}
+
+void TestMainWindow::theCalendarActionWithNoCalendarOpensNothing()
+{
+    // Item 206, task 15. The default test config leaves calendars_dir empty, so
+    // the feature is off: the action must exist (it is registered like any
+    // other) but triggering it may not crash or open an empty window.
+    const Config config;
+    MainWindow window(config);
+    auto *action = window.findChild<QAction *>(QStringLiteral("calendar"));
+    QVERIFY2(action, "no action named calendar");
+
+    action->trigger();
+
+    const QWidgetList tops = QApplication::topLevelWidgets();
+    QVERIFY2(std::none_of(tops.cbegin(), tops.cend(), [](QWidget *w) {
+                 return qobject_cast<CalendarWindow *>(w) != nullptr;
+             }),
+             "a calendar window opened with no calendars_dir configured");
 }
 
 // Constructing a MainWindow needs a QApplication and a platform plugin. The

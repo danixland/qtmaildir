@@ -63,6 +63,9 @@ QStringList KeyMap::knownActions()
         QStringLiteral("mark_all_read"),
         QStringLiteral("edit_tags"),
         QStringLiteral("tag_rules"),
+        // Item 206. No default chord: the calendar is opened from the View
+        // menu and the toolbar, and a shortcut is a chosen subset (item 132).
+        QStringLiteral("calendar"),
         QStringLiteral("flag"),
         // Compose and send (item 123). save_message deliberately carries no
         // default chord: since item 132 a shortcut is a chosen subset rather

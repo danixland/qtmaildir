@@ -76,6 +76,7 @@ class NotmuchWorker;
 class QueryCompleter;
 class TagRulesDialog;
 class ComposeWindow;
+class CalendarWindow;
 
 class MainWindow : public QMainWindow
 {
@@ -887,6 +888,15 @@ private:
     /// free on a large database and a dialog that hangs first is worse than one
     /// that populates.
     void showMaildirOverview();
+
+    /// Opens the calendar window (item 206), or raises the one already open.
+    ///
+    /// A single instance: the window is parentless, like a composer, so it
+    /// gets its own task-switcher entry, and WA_DeleteOnClose frees it when the
+    /// user closes it. Does nothing but hint when no calendars_dir is
+    /// configured, rather than opening an empty window over a feature that is
+    /// off.
+    void openCalendar();
 
     /// Opens a composer on a blank message (item 123).
     void composeNew();
@@ -1947,6 +1957,10 @@ private:
     /// the list would otherwise grow for the session's lifetime. Removing the
     /// signal leaks entries; removing the QPointer crashes.
     QList<QPointer<ComposeWindow>> m_composers;
+
+    /// The open calendar window, or null. Parentless and WA_DeleteOnClose, like
+    /// a composer, so the QPointer is what nulls it when the user closes it.
+    QPointer<CalendarWindow> m_calendar;
 
     /// Confirmed tag mutations not yet known to have reached the mail store.
     ///

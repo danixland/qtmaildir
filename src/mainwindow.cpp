@@ -53,6 +53,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "calendarwindow.h"
 #include "composecontext.h"
 #include "composewindow.h"
 #include "mailsync.h"
@@ -244,6 +245,19 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if (m_syncingForExit) {
         event->ignore();
         return;
+    }
+
+    // The calendar is parentless, so Qt would leave it open with nothing
+    // behind it (the composer precedent below). Its own closeEvent asks about
+    // an unsaved event; a Cancel there cancels the quit. Done before the first
+    // prompt so the whole quit stops here rather than after the user has
+    // answered something else.
+    if (m_calendar) {
+        m_calendar->close();
+        if (m_calendar && m_calendar->isVisible()) {
+            event->ignore();
+            return;
+        }
     }
 
     // Case 3 FIRST, because it is the one where saving is what is already not
@@ -1033,6 +1047,28 @@ void MainWindow::buildUi()
 
     resize(1200, 800);
     setWindowTitle(QStringLiteral("qtmaildir %1").arg(QTMAILDIR_VERSION));
+}
+
+void MainWindow::openCalendar()
+{
+    if (m_config.calendarsDir().isEmpty()) {
+        showTransientStatus(
+            tr("No calendar is configured: set calendars_dir under [general]."));
+        return;
+    }
+    if (m_calendar) {
+        m_calendar->raise();
+        m_calendar->activateWindow();
+        return;
+    }
+    QStringList own;
+    for (const Account &account : m_config.accounts())
+        if (!account.address.isEmpty())
+            own << account.address;
+    // Parentless, like a composer: its own entry in the task switcher.
+    m_calendar = new CalendarWindow(m_config, own, uiStatePath());
+    m_calendar->setAttribute(Qt::WA_DeleteOnClose);
+    m_calendar->show();
 }
 
 void MainWindow::composeNew()
@@ -1913,6 +1949,10 @@ void MainWindow::registerActions()
               tr("Edit the rules that tag mail as it arrives"), [this]() {
         showTagRulesDialog();
     });
+    addAction(QStringLiteral("calendar"), tr("&Calendar"),
+              tr("Open the calendar"), [this]() {
+        openCalendar();
+    });
     addAction(QStringLiteral("save_query"), tr("&Save query..."),
               tr("Keep the current query as a saved query"), [this]() {
         saveCurrentQuery();
@@ -2168,6 +2208,7 @@ const QHash<QString, QPair<QString, QString>> kThemeIcons = {
     // is the whole control, and editing the standing rules is not editing
     // the selection's tags.
     { QStringLiteral("tag_rules"),       { QStringLiteral("configure"), QString() } },
+    { QStringLiteral("calendar"),        { QStringLiteral("x-office-calendar"), QString() } },
     { QStringLiteral("complete_query"),  { QStringLiteral("edit-find-replace"), QString() } },
     // NOT "document-save": that is the floppy/disk shape, which reads as
     // "write a file somewhere" and asks the user to guess what is being
@@ -2292,6 +2333,8 @@ void MainWindow::buildMenus()
     viewMenu->addAction(m_actions.value(QStringLiteral("zoom_in")));
     viewMenu->addAction(m_actions.value(QStringLiteral("zoom_out")));
     viewMenu->addAction(m_actions.value(QStringLiteral("zoom_reset")));
+    viewMenu->addSeparator();
+    viewMenu->addAction(m_actions.value(QStringLiteral("calendar")));
 
     auto *helpMenu = menuBar()->addMenu(tr("&Help"));
     auto *shortcuts = helpMenu->addAction(tr("&Keyboard shortcuts"));
@@ -2400,6 +2443,7 @@ void MainWindow::buildMenus()
     // message is exactly where it must not be: that is how a user marks a
     // thousand threads read meaning to mark one.
     toolBar->addAction(m_actions.value(QStringLiteral("mark_all_read")));
+    toolBar->addAction(m_actions.value(QStringLiteral("calendar")));
     toolBar->addSeparator();
     toolBar->addAction(m_actions.value(QStringLiteral("undo")));
 }

@@ -74,7 +74,11 @@ EventPane::EventPane(QWidget *parent) : QStackedWidget(parent)
     addWidget(buildDetails());      // 1
     addWidget(buildForm());         // 2
     setMinimumWidth(260);
+    // Collapsed while nothing is selected, so the grid takes the whole
+    // window; the splitter gives the space back when the pane shows.
+    connect(this, &QStackedWidget::currentChanged, this, [this](int page) { setVisible(page != 0); });
     showNothing();
+    hide();
 }
 
 QWidget *EventPane::buildDetails()

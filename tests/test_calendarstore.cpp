@@ -157,6 +157,7 @@ private slots:
     void editingOneOccurrenceWritesAnOverride();
     void editingTheSameOccurrenceAgainReplacesItsOverride();
     void deletingOneOccurrenceAddsAnExdateAndDropsItsOverride();
+    void deletingOneOccurrenceKeepsExistingExdates();
 };
 
 void TestCalendarStore::parsesAUtcEvent()
@@ -659,6 +660,24 @@ void TestCalendarStore::deletingOneOccurrenceAddsAnExdateAndDropsItsOverride()
     QCOMPARE(e.exdates, QList<QDateTime>{ rome(23, 10) });
     QVERIFY2(after.contains("EXDATE;TZID=Europe/Rome:20260923T100000"), after.constData());
     QCOMPARE(CalendarStore::occurrences({ e }, rome(21, 0), rome(26, 0)).size(), 4);
+}
+
+void TestCalendarStore::deletingOneOccurrenceKeepsExistingExdates()
+{
+    // A series that already skips the 21st; deleting the 22nd must leave that
+    // existing exception alone. A setTime-style replace would drop it.
+    const QString body = QStringLiteral(
+        "UID:d@example.org\r\nDTSTAMP:20260901T000000Z\r\n"
+        "DTSTART;TZID=Europe/Rome:20260921T100000\r\nDTEND;TZID=Europe/Rome:20260921T110000\r\n"
+        "RRULE:FREQ=DAILY;COUNT=5\r\n"
+        "EXDATE;TZID=Europe/Rome:20260921T100000\r\nSUMMARY:Daily\r\n");
+    const QByteArray after = CalendarStore::deleteOccurrence(ics(vevent(body)), rome(22, 10));
+
+    const CalEvent e = reparse(after);
+    QVERIFY(e.exdates.contains(rome(21, 10)));
+    QVERIFY(e.exdates.contains(rome(22, 10)));
+    QCOMPARE(e.exdates.size(), 2);
+    QCOMPARE(CalendarStore::occurrences({ e }, rome(21, 0), rome(26, 0)).size(), 3);
 }
 
 QTEST_MAIN(TestCalendarStore)

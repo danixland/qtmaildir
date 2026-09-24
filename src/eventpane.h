@@ -82,6 +82,7 @@ private:
     QLabel *m_when;
     QLabel *m_repeatText;
     QLabel *m_calendar;
+    QLabel *m_calendarSwatch;
     QLabel *m_location;
     QLabel *m_notes;
     QLabel *m_reminder;

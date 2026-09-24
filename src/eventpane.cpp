@@ -96,9 +96,17 @@ QWidget *EventPane::buildDetails()
     m_notes = plainLabel(page);
     m_reminder = plainLabel(page);
     m_people = plainLabel(page);
+    m_calendarSwatch = new QLabel(page);
+    m_calendarSwatch->setFixedSize(12, 12);
+    auto *calendarRow = new QWidget(page);
+    auto *calendarLayout = new QHBoxLayout(calendarRow);
+    calendarLayout->setContentsMargins(0, 0, 0, 0);
+    calendarLayout->setSpacing(4);
+    calendarLayout->addWidget(m_calendarSwatch);
+    calendarLayout->addWidget(m_calendar, 1);
     form->addRow(tr("When"), m_when);
     form->addRow(tr("Repeats"), m_repeatText);
-    form->addRow(tr("Calendar"), m_calendar);
+    form->addRow(tr("Calendar"), calendarRow);
     form->addRow(tr("Location"), m_location);
     form->addRow(tr("Notes"), m_notes);
     form->addRow(tr("Reminder"), m_reminder);
@@ -407,6 +415,10 @@ void EventPane::showDetails(const CalEvent &event, const CalCollection &collecti
     m_repeatText->setText(event.repeat.freq == RepeatRule::Freq::None && !event.repeat.custom
                               ? tr("Does not repeat") : event.repeat.describe());
     m_calendar->setText(collection.displayName);
+    if (collection.color.isValid())
+        m_calendarSwatch->setPixmap(swatch(collection.color).pixmap(12, 12));
+    else
+        m_calendarSwatch->clear();
     m_location->setText(ov ? ov->location : event.location);
     m_notes->setText(ov ? ov->description : event.description);
     m_reminder->setText(event.hasAlarm ? tr("Yes, kept as set elsewhere") : tr("None"));
@@ -416,8 +428,8 @@ void EventPane::showDetails(const CalEvent &event, const CalCollection &collecti
         people << tr("Organiser: %1").arg(event.organizer.name.isEmpty()
                                               ? event.organizer.address : event.organizer.name);
     for (const CalPerson &a : event.attendees)
-        people << QStringLiteral("%1 (%2)").arg(a.name.isEmpty() ? a.address : a.name,
-                                                 a.partstat.isEmpty() ? tr("no reply") : a.partstat.toLower());
+        people << tr("%1 (%2)").arg(a.name.isEmpty() ? a.address : a.name,
+                                    a.partstat.isEmpty() ? tr("no reply") : a.partstat.toLower());
     m_people->setText(people.join(QLatin1Char('\n')));
 
     QString notice;

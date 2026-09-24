@@ -19,14 +19,17 @@
 #include <QtTest>
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QToolBar>
 #include <QUndoStack>
 
 #include <memory>
@@ -120,6 +123,9 @@ private slots:
     void saveWritesAndUndoRestoresTheOriginalBytes();
     void aNewEventGoesToTheDefaultCalendar();
     void aStaleSaveKeepsTheFormAndTheSyncedFile();
+    void theToolbarCarriesTheNewEventAction();
+    void aFreshWindowShowsTheCurrentMonth();
+    void aStaleSaveCanBeRetried();
 };
 
 void TestCalendarWindow::loadsAndSelects()
@@ -216,6 +222,49 @@ void TestCalendarWindow::aStaleSaveKeepsTheFormAndTheSyncedFile()
     QCOMPARE(read(f.a()), synced);           // nothing clobbered
     QVERIFY(w->isEditing());                  // the user's values are still there
     QCOMPARE(w->findChild<QLineEdit *>(QStringLiteral("eventTitle"))->text(), QStringLiteral("Mine"));
+}
+
+void TestCalendarWindow::theToolbarCarriesTheNewEventAction()
+{
+    Fixture f;
+    std::unique_ptr<CalendarWindow> w(f.window());
+    auto *bar = w->findChild<QToolBar *>(QStringLiteral("calendarToolbar"));
+    QVERIFY(bar);
+    auto *newEvent = w->findChild<QAction *>(QStringLiteral("newEvent"));
+    QVERIFY(newEvent);
+    QVERIFY(bar->actions().contains(newEvent));
+}
+
+void TestCalendarWindow::aFreshWindowShowsTheCurrentMonth()
+{
+    Fixture f;
+    std::unique_ptr<CalendarWindow> w(
+        new CalendarWindow(f.config, { QStringLiteral("me@example.org") },
+                          f.dir.filePath(QStringLiteral("uistate.conf"))));
+    const QDate today = QDate::currentDate();
+    QCOMPARE(w->findChild<QComboBox *>(QStringLiteral("monthBox"))->currentData().toInt(),
+             today.month());
+    QCOMPARE(w->findChild<QSpinBox *>(QStringLiteral("yearSpin"))->value(), today.year());
+}
+
+void TestCalendarWindow::aStaleSaveCanBeRetried()
+{
+    Fixture f;
+    std::unique_ptr<CalendarWindow> w(f.window());
+    w->selectEvent(QStringLiteral("one@example.org"));
+    editTitle(w.get(), QStringLiteral("Mine"));
+    // A sync pulls a server change while the form is open.
+    const QByteArray synced = eventText(QStringLiteral("one@example.org"), QStringLiteral("Theirs"), 22);
+    writeFile(f.a(), synced);
+    w->findChild<QPushButton *>(QStringLiteral("saveEvent"))->click();
+    QCOMPARE(read(f.a()), synced);           // first Save refuses, nothing clobbered
+    QVERIFY(w->isEditing());
+
+    // The user checks what arrived and saves again deliberately: the form's
+    // bytes were rebased on the synced file, so this one lands.
+    w->findChild<QPushButton *>(QStringLiteral("saveEvent"))->click();
+    QVERIFY(read(f.a()).contains("SUMMARY:Mine"));
+    QVERIFY(!w->isEditing());
 }
 
 QTEST_MAIN(TestCalendarWindow)

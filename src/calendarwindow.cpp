@@ -140,6 +140,7 @@ CalendarWindow::CalendarWindow(const Config &config, const QStringList &ownAddre
     state.endGroup();
 
     reload();
+    refreshToolbar();
     const int index = m_collectionBox->findData(collectionDir);
     if (index >= 0)
         m_collectionBox->setCurrentIndex(index);
@@ -180,10 +181,12 @@ void CalendarWindow::buildUi()
     })->setToolTip(tr("Next month"));
 
     m_monthBox = new QComboBox(this);
+    m_monthBox->setObjectName(QStringLiteral("monthBox"));
     for (int m = 1; m <= 12; ++m)
         m_monthBox->addItem(QLocale().standaloneMonthName(m), m);
     toolbar->addWidget(m_monthBox);
     m_yearSpin = new QSpinBox(this);
+    m_yearSpin->setObjectName(QStringLiteral("yearSpin"));
     m_yearSpin->setRange(1900, 2200);
     toolbar->addWidget(m_yearSpin);
     connect(m_monthBox, &QComboBox::activated, this,
@@ -260,6 +263,11 @@ void CalendarWindow::buildActions()
     QAction *newEvent = make(QStringLiteral("newEvent"), tr("&New event"),
                              QKeySequence(Qt::CTRL | Qt::Key_N), nullptr,
                              [this]() { startNew(defaultNewDay()); });
+    // The spec's toolbar ends with + New, after the Month | Agenda toggle.
+    // buildUi() has already placed every widget there, so appending now lands
+    // it last.
+    if (auto *bar = findChild<QToolBar *>(QStringLiteral("calendarToolbar")))
+        bar->addAction(newEvent);
     QAction *close = make(QStringLiteral("closeCalendar"), tr("&Close"),
                           QKeySequence(Qt::CTRL | Qt::Key_W), nullptr, [this]() { this->close(); });
     QAction *edit = make(QStringLiteral("editEvent"), tr("&Edit event"),
@@ -589,8 +597,16 @@ bool CalendarWindow::save()
         label = tr("Edit event");
     }
 
-    if (!writeAndRecord(label, changes))
+    if (!writeAndRecord(label, changes)) {
+        // The spec promises a stale save can be checked and tried again. The
+        // write refused because the file moved under the form, so rebase the
+        // form's bytes on what is on disk NOW; a deliberate second Save then
+        // proceeds and overwrites with the user's values. A file that is gone
+        // is left alone, so Save keeps refusing and Cancel is the way out.
+        if (m_lastStale && !m_editPath.isEmpty() && QFile::exists(m_editPath))
+            m_editBase = readFile(m_editPath);
         return false;  // the form stays open with the user's values
+    }
     m_pane->stopEdit();
     bool ignored = false;
     m_selectedUid = CalendarStore::parseEvent(*changes.first().after, {}, {}, &ignored).uid;
@@ -627,10 +643,18 @@ void CalendarWindow::deleteSelected()
         QPushButton *one = box.addButton(tr("This occurrence"), QMessageBox::AcceptRole);
         QPushButton *all = box.addButton(tr("All occurrences"), QMessageBox::AcceptRole);
         box.exec();
-        if (box.clickedButton() == one)
-            after = CalendarStore::deleteOccurrence(e.rawText, o.recurrenceId);
-        else if (box.clickedButton() != all)
+        if (box.clickedButton() == one) {
+            const QByteArray removed = CalendarStore::deleteOccurrence(e.rawText, o.recurrenceId);
+            // A parse failure returns empty; writing it would TRUNCATE the file
+            // instead of removing one occurrence. Same guard as save().
+            if (removed.isEmpty()) {
+                status(tr("Could not remove this occurrence."));
+                return;
+            }
+            after = removed;
+        } else if (box.clickedButton() != all) {
             return;
+        }
     }
     if (writeAndRecord(tr("Delete event"), { { e.filePath, e.rawText, after } })) {
         m_selectedUid.clear();
@@ -648,6 +672,7 @@ bool CalendarWindow::applyChanges(const QList<Change> &changes, bool reverse)
         QString error;
         const CalendarWriter::Result r = CalendarWriter::replace(c.path, from, to, &error);
         if (r != CalendarWriter::Result::Ok) {
+            m_lastStale = r == CalendarWriter::Result::Stale;
             // Roll back what this call already did, newest first.
             // ponytail: best effort; a rollback that itself fails is reported
             // by the file being wrong on the next reload, not handled here.

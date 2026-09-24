@@ -104,6 +104,9 @@ private:
     int m_selected = -1;
     QString m_selectedUid;         ///< survives a reload
     QDateTime m_selectedStart;
+    /// Set by applyChanges: the last refusal was a stale check, so a retry can
+    /// rebase the form's bytes on what is on disk now.
+    bool m_lastStale = false;
 
     // The open edit. m_editPath empty with m_editing: a new event.
     QString m_editPath;

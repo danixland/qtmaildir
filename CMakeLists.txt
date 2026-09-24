@@ -40,6 +40,11 @@ message(STATUS "Found notmuch: ${NOTMUCH_LIBRARY}")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GMIME REQUIRED IMPORTED_TARGET gmime-3.0)
 
+# libical parses and writes the calendar's iCalendar files (item 206). Unlike
+# notmuch it ships a .pc, so pkg-config finds it; unlike GMime it pulls in no
+# glib, so its headers may sit anywhere in an include list.
+pkg_check_modules(LIBICAL REQUIRED IMPORTED_TARGET libical)
+
 # cmark-gfm renders the composer's markdown body into the HTML part.
 #
 # TWO lookups, not one, and this is the trap: only the CORE library ships a

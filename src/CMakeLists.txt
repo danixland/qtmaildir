@@ -44,6 +44,8 @@ add_library(qtmaildir_lib STATIC
     searchterm.cpp
     contactstore.cpp
     signatures.cpp
+    repeatrule.cpp
+    calendarstore.cpp
 )
 
 target_include_directories(qtmaildir_lib
@@ -58,7 +60,7 @@ endif()
 
 target_link_libraries(qtmaildir_lib
     PUBLIC Qt6::Widgets Qt6::Svg Qt6::WebEngineWidgets PkgConfig::GMIME
-           ${NOTMUCH_LIBRARY} PkgConfig::CMARK_GFM
+           PkgConfig::LIBICAL ${NOTMUCH_LIBRARY} PkgConfig::CMARK_GFM
            ${CMARK_GFM_EXTENSIONS_LIBRARY})
 
 # resources.qrc belongs to the executable, not to the static library. A qrc

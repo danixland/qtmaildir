@@ -604,10 +604,20 @@ bool sameMeaning(const QByteArray &a, const QByteArray &b)
     const CalEvent y = parseEvent(b, {}, {}, &ignored);
     if (x.uid.isEmpty() || y.uid.isEmpty())
         return x.uid.isEmpty() && y.uid.isEmpty();
+    if (x.uid != y.uid)
+        return false;
     if (x.overrides.size() != y.overrides.size())
         return false;
-    for (int i = 0; i < x.overrides.size(); ++i) {
-        const CalOverride &p = x.overrides[i], &q = y.overrides[i];
+    // Overrides are separate VEVENTs whose file order is not semantic, and a
+    // server may normalise it, so pair them by recurrence id, not by index.
+    QList<CalOverride> xo = x.overrides, yo = y.overrides;
+    const auto byRecurrenceId = [](const CalOverride &a, const CalOverride &b) {
+        return a.recurrenceId < b.recurrenceId;
+    };
+    std::stable_sort(xo.begin(), xo.end(), byRecurrenceId);
+    std::stable_sort(yo.begin(), yo.end(), byRecurrenceId);
+    for (int i = 0; i < xo.size(); ++i) {
+        const CalOverride &p = xo[i], &q = yo[i];
         if (p.recurrenceId != q.recurrenceId || p.start != q.start
             || p.end != q.end || p.summary != q.summary || p.cancelled != q.cancelled)
             return false;

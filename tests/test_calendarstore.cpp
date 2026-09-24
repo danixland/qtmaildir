@@ -139,6 +139,8 @@ private slots:
     void anEditCanTurnAnEventAllDayAndBack();
     void aNewEventIsCompleteAndEmbedsItsZone();
     void sameMeaningIgnoresFormatting();
+    void sameMeaningMatchesOverridesRegardlessOfOrder();
+    void sameMeaningRejectsDifferentUids();
 };
 
 void TestCalendarStore::parsesAUtcEvent()
@@ -547,6 +549,42 @@ void TestCalendarStore::sameMeaningIgnoresFormatting()
         "UID:s@example.org\r\nDTSTART:20260922T090000Z\r\nSUMMARY:Standup\r\n")));
     QVERIFY(CalendarStore::sameMeaning(a, b));
     QVERIFY(!CalendarStore::sameMeaning(a, moved));
+}
+
+void TestCalendarStore::sameMeaningMatchesOverridesRegardlessOfOrder()
+{
+    // Two SERVER-normalised texts: the same master and the same two overrides,
+    // but the overrides are separate VEVENTs and their file order is not
+    // semantic, so a reordered pair still describes one event.
+    const QString master = vevent(QStringLiteral(
+        "UID:ord@example.org\r\nDTSTART:20260921T080000Z\r\nDTEND:20260921T090000Z\r\n"
+        "RRULE:FREQ=DAILY;COUNT=5\r\nSUMMARY:Series\r\n"));
+    const QString first = vevent(QStringLiteral(
+        "UID:ord@example.org\r\nRECURRENCE-ID:20260922T080000Z\r\n"
+        "DTSTART:20260922T080000Z\r\nDTEND:20260922T090000Z\r\nSUMMARY:Moved A\r\n"));
+    const QString second = vevent(QStringLiteral(
+        "UID:ord@example.org\r\nRECURRENCE-ID:20260923T080000Z\r\n"
+        "DTSTART:20260923T100000Z\r\nDTEND:20260923T110000Z\r\nSUMMARY:Moved B\r\n"));
+    const QByteArray a = ics(master + first + second);
+    const QByteArray b = ics(master + second + first);
+    QVERIFY(CalendarStore::sameMeaning(a, b));
+
+    // The order is only ignored, not the contents.
+    const QString changed = vevent(QStringLiteral(
+        "UID:ord@example.org\r\nRECURRENCE-ID:20260923T080000Z\r\n"
+        "DTSTART:20260923T100000Z\r\nDTEND:20260923T110000Z\r\nSUMMARY:Moved C\r\n"));
+    QVERIFY(!CalendarStore::sameMeaning(a, ics(master + second + changed)));
+}
+
+void TestCalendarStore::sameMeaningRejectsDifferentUids()
+{
+    // Identical fields, different events: the UID is the identity.
+    const QByteArray a = ics(vevent(QStringLiteral(
+        "UID:one@example.org\r\nDTSTART:20260922T080000Z\r\nSUMMARY:Standup\r\n")));
+    const QByteArray b = ics(vevent(QStringLiteral(
+        "UID:two@example.org\r\nDTSTART:20260922T080000Z\r\nSUMMARY:Standup\r\n")));
+    QVERIFY(!CalendarStore::sameMeaning(a, b));
+    QVERIFY(CalendarStore::sameMeaning(a, a));
 }
 
 QTEST_MAIN(TestCalendarStore)

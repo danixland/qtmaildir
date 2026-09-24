@@ -75,6 +75,7 @@ target_compile_definitions(test_contactstore PRIVATE
 add_qtmaildir_test(repeatrule)
 add_qtmaildir_test(calendarstore)
 add_qtmaildir_test(calendarwriter)
+add_qtmaildir_test(calendarsync)
 add_qtmaildir_test(signatures)
 add_qtmaildir_test(busyindicator)
 add_qtmaildir_test(tagstrip)

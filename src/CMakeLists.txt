@@ -47,6 +47,7 @@ add_library(qtmaildir_lib STATIC
     repeatrule.cpp
     calendarstore.cpp
     calendarwriter.cpp
+    calendarsync.cpp
 )
 
 target_include_directories(qtmaildir_lib

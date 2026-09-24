@@ -123,9 +123,11 @@ QDateTime endOf(icalcomponent *c, const QDateTime &start, bool allDay, bool *unk
 }
 
 /// ponytail: iterates from DTSTART rather than icalrecur_iterator_set_start,
-/// which is unsupported with COUNT. Capped per series; raise the cap only if
-/// a real rule is measured hitting it.
-constexpr int kMaxIterations = 10000;
+/// which is unsupported with COUNT. The cap guards against a pathological rule
+/// (FREQ=SECONDLY over a wide window), not against age: a daily series from
+/// 1970 to a 22nd-century window is under 50k steps, well inside 100000. 100k
+/// iterator steps is still microseconds, so the cap is not a performance knob.
+constexpr int kMaxIterations = 100000;
 
 bool overlaps(const QDateTime &start, const QDateTime &end,
               const QDateTime &from, const QDateTime &to)
@@ -336,7 +338,7 @@ QList<Occurrence> occurrences(const QList<CalEvent> &events,
         for (int o = 0; o < e.overrides.size(); ++o) {
             const CalOverride &ov = e.overrides[o];
             if (!ov.cancelled && overlaps(ov.start, ov.end, from, to))
-                result.append({ i, ov.start, ov.end, e.allDay, ov.recurrenceId, true, o });
+                result.append({ i, ov.start, ov.end, ov.allDay, ov.recurrenceId, true, o });
         }
     }
     std::sort(result.begin(), result.end(),

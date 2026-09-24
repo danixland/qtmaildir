@@ -101,6 +101,8 @@ private slots:
     void honoursCountAndUntil();
     void expandsMonthlyLastFridayAndYearlyByMonth();
     void readsTheRepeatRuleExdatesAndOverrides();
+    void expandsADenseOldSeriesToTheWindow();
+    void anAllDayOverrideKeepsItsOwnAllDayFlag();
 };
 
 void TestCalendarStore::parsesAUtcEvent()
@@ -282,6 +284,24 @@ void TestCalendarStore::anOverrideReplacesItsSlotAndMovesFreely()
     QCOMPARE(occ[0].recurrenceId, utc(2026, 9, 22, 8));
 }
 
+void TestCalendarStore::anAllDayOverrideKeepsItsOwnAllDayFlag()
+{
+    // The master is timed, the override is an all-day "day off". The override
+    // occurrence must carry its OWN all-day state, not the master's.
+    const QString body = vevent(QStringLiteral(
+        "UID:adov@example.org\r\nDTSTART:20260921T080000Z\r\nDTEND:20260921T090000Z\r\n"
+        "RRULE:FREQ=DAILY\r\n"))
+        + vevent(QStringLiteral(
+        "UID:adov@example.org\r\nRECURRENCE-ID:20260922T080000Z\r\n"
+        "DTSTART;VALUE=DATE:20260922\r\nDTEND;VALUE=DATE:20260923\r\nSUMMARY:Day off\r\n"));
+    const QDateTime day0(QDate(2026, 9, 22), QTime(0, 0));
+    const QList<Occurrence> occ = expand(body, day0, day0.addDays(1));
+    QCOMPARE(occ.size(), 1);
+    QVERIFY(occ[0].isOverride);
+    QVERIFY(occ[0].allDay);
+    QCOMPARE(occ[0].recurrenceId, utc(2026, 9, 22, 8));
+}
+
 void TestCalendarStore::anInfiniteSeriesYieldsOnlyTheWindow()
 {
     const QList<Occurrence> occ = expand(vevent(QStringLiteral(
@@ -289,6 +309,19 @@ void TestCalendarStore::anInfiniteSeriesYieldsOnlyTheWindow()
         utc(2026, 9, 1), utc(2026, 9, 8));
     QCOMPARE(occ.size(), 7);
     QCOMPARE(occ.first().start, utc(2026, 9, 1, 8));
+}
+
+void TestCalendarStore::expandsADenseOldSeriesToTheWindow()
+{
+    // A daily series from 1970 needs ~20700 iterator steps to reach a 2026
+    // window. At a 10000 cap the walk dies around 1997 and returns nothing.
+    const QList<Occurrence> occ = expand(vevent(QStringLiteral(
+        "UID:dense@example.org\r\nDTSTART:19700101T080000Z\r\n"
+        "DTEND:19700101T090000Z\r\nRRULE:FREQ=DAILY\r\n")),
+        utc(2026, 9, 21), utc(2026, 9, 28));
+    QCOMPARE(occ.size(), 7);
+    QCOMPARE(occ.first().start, utc(2026, 9, 21, 8));
+    QCOMPARE(occ.last().start, utc(2026, 9, 27, 8));
 }
 
 void TestCalendarStore::honoursCountAndUntil()

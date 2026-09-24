@@ -28,6 +28,9 @@ MonthView::MonthView(QWidget *parent)
       m_year(QDate::currentDate().year()), m_month(QDate::currentDate().month())
 {
     setMinimumSize(420, 320);
+    // A click must move focus here, or it stays in the edit form and the
+    // view-scoped shortcuts and the Escape guard read the wrong widget.
+    setFocusPolicy(Qt::StrongFocus);
 }
 
 void MonthView::setMonth(int year, int month)

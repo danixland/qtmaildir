@@ -25,6 +25,7 @@
 #include "monthview.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -276,8 +277,10 @@ void CalendarWindow::buildActions()
                          QKeySequence(Qt::CTRL | Qt::Key_E), nullptr, &CalendarWindow::startEdit);
     QAction *del = make(QStringLiteral("deleteEvent"), tr("&Delete event"),
                         QKeySequence(Qt::Key_Delete), m_views, &CalendarWindow::deleteSelected);
-    QAction *cancel = make(QStringLiteral("cancelEdit"), tr("Cancel &editing"),
-                           QKeySequence(Qt::Key_Escape), m_pane, &CalendarWindow::cancelEdit);
+    // Window-wide, so Escape closes the details pane from the grid too; the
+    // combo and spin box popups take their own Escape first.
+    QAction *cancel = make(QStringLiteral("cancelEdit"), tr("C&lose event"),
+                           QKeySequence(Qt::Key_Escape), nullptr, &CalendarWindow::cancelEdit);
 
     QAction *undo = m_undo.createUndoAction(this, tr("&Undo"));
     undo->setShortcut(QKeySequence::Undo);
@@ -619,9 +622,18 @@ bool CalendarWindow::save()
 
 void CalendarWindow::cancelEdit()
 {
-    if (!m_pane->isEditing())
-        return;
-    m_pane->stopEdit();
+    // Cancelling an edit returns to the details; with no edit, closing the
+    // details clears the selection, which hides the pane.
+    if (m_pane->isEditing()) {
+        // Escape used to be scoped to the pane; keep a stray one from the
+        // grid from throwing away an edit.
+        if (!m_pane->isAncestorOf(QApplication::focusWidget()))
+            return;
+        m_pane->stopEdit();
+    } else {
+        m_selectedUid.clear();
+        m_selectedStart = {};
+    }
     rebuildItems();
 }
 

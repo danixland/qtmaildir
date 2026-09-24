@@ -128,6 +128,7 @@ private slots:
     void aFreshWindowShowsTheCurrentMonth();
     void aStaleSaveCanBeRetried();
     void aRolledBackWriteIsNotReportedLostAfterSync();
+    void escapeClosesTheDetailsButNotAnEditFromOutsideThePane();
 };
 
 void TestCalendarWindow::loadsAndSelects()
@@ -318,6 +319,24 @@ void TestCalendarWindow::aRolledBackWriteIsNotReportedLostAfterSync()
     QTRY_VERIFY_WITH_TIMEOUT(
         w->statusBar()->currentMessage().contains(QStringLiteral("Calendars synced.")),
         5000);
+}
+
+
+void TestCalendarWindow::escapeClosesTheDetailsButNotAnEditFromOutsideThePane()
+{
+    Fixture f;
+    std::unique_ptr<CalendarWindow> w(f.window());
+    auto *close = w->findChild<QAction *>(QStringLiteral("cancelEdit"));
+    QVERIFY(close);
+    QVERIFY(w->selectEvent(QStringLiteral("one@example.org")));
+    close->trigger();
+    QVERIFY(w->selectedUid().isEmpty());
+
+    // Focus is nowhere inside the pane, as after a click on the grid.
+    QVERIFY(w->selectEvent(QStringLiteral("one@example.org")));
+    editTitle(w.get(), QStringLiteral("Changed"));
+    close->trigger();
+    QVERIFY(w->isEditing());
 }
 
 QTEST_MAIN(TestCalendarWindow)

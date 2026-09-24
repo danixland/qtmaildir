@@ -1059,7 +1059,9 @@ scoped to the views with `Qt::WidgetWithChildrenShortcut`.** They are window
 shortcuts otherwise, and a bare `Delete` or `Ctrl+Z` then fires while the user
 is typing in the edit form's Title field, deleting the event or undoing the
 calendar instead of editing text. `EventPane` and the stacked views are the
-scopes; Escape is scoped to the pane.
+scopes. Escape is the exception and is a WINDOW shortcut, so it closes the
+details pane from the grid; with an edit open it cancels only when focus is
+inside the pane, so a stray Escape from the grid cannot discard the form.
 
 **`calendar_sync_command` is read through a `QStringList` join.** With no quote
 around the value, QSettings splits a comma-holding string into a `QStringList`

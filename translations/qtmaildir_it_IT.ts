@@ -71,8 +71,8 @@
         <translation>&amp;Elimina evento</translation>
     </message>
     <message>
-        <source>Cancel &amp;editing</source>
-        <translation>Annulla &amp;modifica</translation>
+        <source>C&amp;lose event</source>
+        <translation>C&amp;hiudi evento</translation>
     </message>
     <message>
         <source>&amp;Undo</source>

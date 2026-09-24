@@ -312,7 +312,9 @@ Edit and View holding every action; `Ctrl+N` New, `Ctrl+E` Edit, `Delete`,
 `Home` would otherwise fire while the cursor is in the edit form's Title field,
 deleting the event or moving the month instead of editing text. `Delete`,
 `PgUp`/`PgDn` and `Home` sit on the stacked views; Undo and Redo sit there too;
-Escape is scoped to `EventPane`. `Ctrl+N`, `Ctrl+E` and `Ctrl+W` stay window
+Escape is a window shortcut: it closes the details pane (the pane is hidden
+while nothing is selected) and cancels an edit only when focus is inside
+`EventPane`. `Ctrl+N`, `Ctrl+E` and `Ctrl+W` stay window
 shortcuts, since no text field wants them.
 
 **i18n.** Every string in `tr()`; the Italian `.ts` refreshed, `lrelease`

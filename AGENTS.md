@@ -102,7 +102,8 @@ those types have ever existed, and looking for them wastes a search. The widget
 classes that do exist are `MessageView`, `ThreadListView`, `TagStrip`,
 `TagDialog`, `MessageDetailsDialog`, `PendingChangesDialog`,
 `RowStyleDelegate`, `CardDelegate`, `ComposeWindow`, `SendDialog`,
-`ThreadDashboard`, `BusyIndicator`, `CalendarWindow` and `EventPane`; `TagChip`
+`ThreadDashboard`, `BusyIndicator`, `CalendarWindow`, `MonthView`,
+`AgendaView` and `EventPane`; `TagChip`
 is a namespace of painting helpers, not a widget, `SearchTerm` is a namespace of
 query builders, and `ThreadCidMap`, `CardLayout`, `SearchOffer`, `HeaderRow`,
 `ThreadDigest` and `PendingChangeRow` are structs.

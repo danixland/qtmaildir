@@ -29,10 +29,11 @@ point at which they are stable.
 ### Upgrading
 
 **The calendar is off until `calendars_dir` is set.** No existing config key
-changes meaning and nothing breaks by doing nothing: without the key the
-calendar action is simply absent and no vdir is read. To turn it on, point it
-at your vdir root and, if new events should land in one collection rather than
-the first, name that collection's directory in `default_calendar`.
+changes meaning and nothing breaks by doing nothing: without the key no vdir is
+read, and the View menu and toolbar entry stays in place, reporting that
+`calendars_dir` must be set under `[general]` when you trigger it. To turn it
+on, point it at your vdir root and, if new events should land in one collection
+rather than the first, name that collection's directory in `default_calendar`.
 
 **A vdirsyncer cron line should take the same lock the calendar uses.** The
 default `calendar_sync_command` is prefixed with

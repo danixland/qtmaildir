@@ -324,7 +324,7 @@ All in `[general]`, read without the `general/` prefix per AGENTS.md:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `calendars_dir` | unset (off) | The vdir root, tilde-expanded like `contacts_dir`. Empty turns the feature off: no action, no error. |
+| `calendars_dir` | unset (off) | The vdir root, tilde-expanded like `contacts_dir`. Empty turns the feature off; the menu and toolbar entry remains and shows a hint naming the key (no window opens). |
 | `default_calendar` | first collection by name | Directory name of the collection new events go to. |
 | `calendar_sync_command` | `flock -w 60 /tmp/vdirsyncer.lock vdirsyncer sync calendars` | Run after writes. Empty disables. |
 | `calendar_sync_delay_ms` | `2000` | Debounce before the sync runs. |

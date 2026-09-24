@@ -528,8 +528,13 @@ of this yet.
 | `calendar_sync_command` | `flock -w 60 /tmp/vdirsyncer.lock vdirsyncer sync calendars` | Run after writes; empty disables. |
 | `calendar_sync_delay_ms` | `2000` | Delay before it runs. |
 
-With `calendars_dir` unset the feature is off: the View menu entry is not there
-and nothing is read. Point it at the vdir and the action appears.
+With `calendars_dir` unset the feature is off and no vdir is read, but the
+entry stays in the View menu and on the toolbar. Trigger it and the status bar
+says the key must be set, rather than the window opening empty:
+
+> No calendar is configured: set calendars_dir under [general].
+
+Point the key at the vdir and the same entry opens the window.
 
 `calendar_sync_command` takes the same `flock` vdirsyncer uses, so a save here
 and a cron run cannot sync at once. If vdirsyncer already runs from cron,

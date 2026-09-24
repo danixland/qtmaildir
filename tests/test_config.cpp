@@ -152,6 +152,8 @@ private slots:
     void calendarKeysAreOffWithoutThem();
     void calendarKeysAreRead();
     void calendarSyncCommandSurvivesACommaAndDefaults();
+    void calendarsDirThatDoesNotExistIsReported();
+    void calendarSyncDelayRejectsGarbage();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -2911,6 +2913,54 @@ void TestConfig::calendarSyncCommandSurvivesACommaAndDefaults()
     Config off;
     off.load(writeIni(dir, QStringLiteral("[general]\ncalendar_sync_command = \n")));
     QVERIFY(off.calendarSyncCommand().isEmpty());
+}
+
+void TestConfig::calendarsDirThatDoesNotExistIsReported()
+{
+    // The same line contacts_dir draws: a path the user wrote that is not
+    // there is something they asked for and are not getting, so it is
+    // reported. The value is KEPT, because a vdirsyncer target may not exist
+    // until its first run and the accessor should still say what was asked for.
+    QTemporaryDir dir;
+    const QString missing = dir.filePath(QStringLiteral("no-such-calendars"));
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "calendars_dir=%1\n")
+                                  .arg(missing)));
+
+    QVERIFY2(!config.problems().isEmpty(),
+             "a configured but missing calendars directory must be reported");
+    const QString joined = config.problems().join(QLatin1Char('\n'));
+    QVERIFY2(joined.contains(missing),
+             "the warning must name the path the user wrote");
+    QCOMPARE(config.calendarsDir(), missing);
+
+    // A leading "~" is expanded, like contacts_dir, and the report names the
+    // EXPANDED path. This pins the expansion: a bare "~/..." kept literally
+    // would mention the tilde instead and this fails.
+    QTemporaryDir other;
+    Config nested;
+    const QString sub = QStringLiteral(".qtmaildir-test-no-such-calendars");
+    nested.load(writeIni(other, QStringLiteral("[general]\n"
+                                               "calendars_dir=~/%1\n")
+                                    .arg(sub)));
+    const QString expanded = QDir::homePath() + QLatin1Char('/') + sub;
+    QCOMPARE(nested.calendarsDir(), expanded);
+    QVERIFY2(nested.problems().join(QLatin1Char('\n')).contains(expanded),
+             "the warning must name the tilde-expanded path");
+}
+
+void TestConfig::calendarSyncDelayRejectsGarbage()
+{
+    // Present but unparseable is a problem: the user asked for something and
+    // is not getting it, so it falls back to the default and says so, matching
+    // mark_read_delay_ms and auto_sync_delay_ms.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "calendar_sync_delay_ms=abc\n")));
+    QCOMPARE(config.calendarSyncDelayMs(), 2000);
+    QVERIFY(!config.problems().isEmpty());
 }
 
 QTEST_MAIN(TestConfig)

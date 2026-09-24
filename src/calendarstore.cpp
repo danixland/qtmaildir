@@ -345,7 +345,15 @@ QList<Occurrence> occurrences(const QList<CalEvent> &events,
               [](const Occurrence &a, const Occurrence &b) { return a.start < b.start; });
     return result;
 }
-bool isEditable(const CalEvent &, const CalCollection &, const QStringList &) { return false; }
+bool isEditable(const CalEvent &event, const CalCollection &collection,
+                const QStringList &ownAddresses)
+{
+    if (collection.readOnly)
+        return false;
+    if (event.organizer.address.isEmpty())
+        return true;
+    return ownAddresses.contains(event.organizer.address, Qt::CaseInsensitive);
+}
 QByteArray applyEdit(const QByteArray &, const EventEdit &, Scope, const QDateTime &) { return {}; }
 QByteArray newEvent(const EventEdit &, const QByteArray &) { return {}; }
 QByteArray deleteOccurrence(const QByteArray &, const QDateTime &) { return {}; }

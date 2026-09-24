@@ -103,6 +103,7 @@ private slots:
     void readsTheRepeatRuleExdatesAndOverrides();
     void expandsADenseOldSeriesToTheWindow();
     void anAllDayOverrideKeepsItsOwnAllDayFlag();
+    void editableOnlyWhenTheUserOrganisesIt();
 };
 
 void TestCalendarStore::parsesAUtcEvent()
@@ -363,6 +364,37 @@ void TestCalendarStore::readsTheRepeatRuleExdatesAndOverrides()
     QCOMPARE(e.repeat.freq, RepeatRule::Freq::Monthly);
     QCOMPARE(e.repeat.ordinal, -1);
     QCOMPARE(e.exdates, QList<QDateTime>{ utc(2026, 10, 30, 8) });
+}
+
+void TestCalendarStore::editableOnlyWhenTheUserOrganisesIt()
+{
+    const QStringList own = { QStringLiteral("me@example.org"), QStringLiteral("alt@example.org") };
+    CalCollection writable;
+    writable.dir = QStringLiteral("x");
+    CalCollection readOnly = writable;
+    readOnly.readOnly = true;
+
+    const CalEvent mine = parse(vevent(QStringLiteral(
+        "UID:1@example.org\r\nDTSTART:20260922T080000Z\r\n"
+        "ORGANIZER;CN=Me:mailto:ME@Example.org\r\n"
+        "ATTENDEE;CN=Other;PARTSTAT=ACCEPTED:mailto:other@example.org\r\n")));
+    const CalEvent theirs = parse(vevent(QStringLiteral(
+        "UID:2@example.org\r\nDTSTART:20260922T080000Z\r\n"
+        "ORGANIZER;CN=Other:mailto:other@example.org\r\n"
+        "ATTENDEE:mailto:me@example.org\r\n")));
+    const CalEvent nobodys = parse(vevent(QStringLiteral(
+        "UID:3@example.org\r\nDTSTART:20260922T080000Z\r\n")));
+
+    // Case-insensitive, and "mailto:" is not part of the address.
+    QVERIFY(CalendarStore::isEditable(mine, writable, own));
+    QVERIFY(!CalendarStore::isEditable(theirs, writable, own));
+    QVERIFY(CalendarStore::isEditable(nobodys, writable, own));
+    QVERIFY(!CalendarStore::isEditable(nobodys, readOnly, own));
+
+    QCOMPARE(mine.organizer.name, QStringLiteral("Me"));
+    QCOMPARE(mine.attendees.size(), 1);
+    QCOMPARE(mine.attendees[0].partstat, QStringLiteral("ACCEPTED"));
+    QCOMPARE(mine.attendees[0].address, QStringLiteral("other@example.org"));
 }
 
 QTEST_MAIN(TestCalendarStore)

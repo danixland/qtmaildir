@@ -24,6 +24,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTimeZone>
+#include <QUuid>
 
 #include <algorithm>
 
@@ -192,6 +193,205 @@ QColor hashedColour(const QString &dir)
 
 } // namespace
 
+namespace {
+
+/// How a component's times are written, read off its DTSTART and reused for
+/// every time written back, so an edit keeps the event's zone.
+struct TimeForm
+{
+    enum Kind { Date, Utc, Zoned, Floating } kind = Floating;
+    QByteArray tzid;
+    icaltimezone *zone = nullptr;  ///< Embedded or built-in; not owned.
+};
+
+TimeForm formOf(icalcomponent *root, icalcomponent *c)
+{
+    TimeForm form;
+    icalproperty *prop = icalcomponent_get_first_property(c, ICAL_DTSTART_PROPERTY);
+    const icaltimetype t = icalcomponent_get_dtstart(c);
+    if (t.is_date) {
+        form.kind = TimeForm::Date;
+    } else if (icaltime_is_utc(t)) {
+        form.kind = TimeForm::Utc;
+    } else if (!tzidOf(prop).isEmpty()) {
+        form.kind = TimeForm::Zoned;
+        form.tzid = tzidOf(prop);
+        form.zone = icalcomponent_get_timezone(root, form.tzid.constData());
+        if (!form.zone)
+            form.zone = icaltimezone_get_builtin_timezone(form.tzid.constData());
+    }
+    return form;
+}
+
+TimeForm zonedForm(const QByteArray &tzid)
+{
+    TimeForm form;
+    form.kind = TimeForm::Zoned;
+    form.tzid = tzid;
+    form.zone = icaltimezone_get_builtin_timezone(tzid.constData());
+    return form;
+}
+
+/// A QDateTime as the wall-clock icaltimetype `form` writes, zone left unset:
+/// the TZID travels as a parameter, so the output never depends on whether
+/// the file carried a VTIMEZONE.
+icaltimetype wallTime(const QDateTime &dt, const TimeForm &form)
+{
+    if (form.kind == TimeForm::Date) {
+        icaltimetype t = icaltime_null_date();
+        const QDate d = dt.date();
+        t.year = d.year(); t.month = d.month(); t.day = d.day();
+        return t;
+    }
+    QDateTime local;
+    if (form.kind == TimeForm::Utc) {
+        local = dt.toUTC();
+    } else if (form.kind == TimeForm::Zoned && form.zone) {
+        icaltimetype t = icaltime_from_timet_with_zone(dt.toSecsSinceEpoch(), 0, form.zone);
+        t.zone = nullptr;
+        return t;
+    } else if (form.kind == TimeForm::Zoned && QTimeZone(form.tzid).isValid()) {
+        local = dt.toTimeZone(QTimeZone(form.tzid));
+    } else {
+        local = dt.toLocalTime();
+    }
+    icaltimetype t = icaltime_null_time();
+    t.is_date = 0;
+    t.year = local.date().year(); t.month = local.date().month(); t.day = local.date().day();
+    t.hour = local.time().hour(); t.minute = local.time().minute(); t.second = local.time().second();
+    if (form.kind == TimeForm::Utc)
+        t = icaltime_convert_to_zone(t, icaltimezone_get_utc_timezone());
+    return t;
+}
+
+/// Replaces every `kind` property on `c` with one holding `dt` in `form`.
+/// DTSTART, DTEND and RECURRENCE-ID only: EXDATE is ADDITIVE, and replacing
+/// it would drop every exception but the newest (deleteOccurrence adds its
+/// own).
+void setTime(icalcomponent *c, icalproperty_kind kind, const QDateTime &dt, const TimeForm &form)
+{
+    while (icalproperty *old = icalcomponent_get_first_property(c, kind)) {
+        icalcomponent_remove_property(c, old);
+        icalproperty_free(old);
+    }
+    const icaltimetype t = wallTime(dt, form);
+    icalproperty *prop = kind == ICAL_DTSTART_PROPERTY ? icalproperty_new_dtstart(t)
+                       : kind == ICAL_DTEND_PROPERTY   ? icalproperty_new_dtend(t)
+                                                       : icalproperty_new_recurrenceid(t);
+    if (form.kind == TimeForm::Zoned)
+        icalproperty_add_parameter(prop, icalparameter_new_tzid(form.tzid.constData()));
+    icalcomponent_add_property(c, prop);
+}
+
+void removeAll(icalcomponent *c, icalproperty_kind kind)
+{
+    while (icalproperty *p = icalcomponent_get_first_property(c, kind)) {
+        icalcomponent_remove_property(c, p);
+        icalproperty_free(p);
+    }
+}
+
+void setText(icalcomponent *c, icalproperty_kind kind, const QString &value)
+{
+    removeAll(c, kind);
+    if (value.isEmpty())
+        return;
+    const QByteArray utf8 = value.toUtf8();
+    icalproperty *p = kind == ICAL_SUMMARY_PROPERTY ? icalproperty_new_summary(utf8.constData())
+                    : kind == ICAL_LOCATION_PROPERTY ? icalproperty_new_location(utf8.constData())
+                                                     : icalproperty_new_description(utf8.constData());
+    icalcomponent_add_property(c, p);
+}
+
+/// Embeds the VTIMEZONE for `tzid` from libical's built-in database unless
+/// the calendar already carries one, so what this application writes is
+/// RFC-correct even where what it read was not.
+void ensureVtimezone(icalcomponent *root, const QByteArray &tzid)
+{
+    if (tzid.isEmpty() || icalcomponent_get_timezone(root, tzid.constData()))
+        return;
+    icaltimezone *zone = icaltimezone_get_builtin_timezone(tzid.constData());
+    if (!zone)
+        return;
+    icalcomponent *vtz = icalcomponent_new_clone(icaltimezone_get_component(zone));
+    // libical's built-in components carry a "/freeassociation.sourceforge.net/..."
+    // style TZID; rewrite it to the plain IANA name the events reference.
+    removeAll(vtz, ICAL_TZID_PROPERTY);
+    icalcomponent_add_property(vtz, icalproperty_new_tzid(tzid.constData()));
+    icalcomponent_add_component(root, vtz);
+}
+
+void stamp(icalcomponent *c, bool bumpSequence)
+{
+    const icaltimetype now = icaltime_current_time_with_zone(icaltimezone_get_utc_timezone());
+    removeAll(c, ICAL_DTSTAMP_PROPERTY);
+    icalcomponent_add_property(c, icalproperty_new_dtstamp(now));
+    removeAll(c, ICAL_LASTMODIFIED_PROPERTY);
+    icalcomponent_add_property(c, icalproperty_new_lastmodified(now));
+    if (bumpSequence)
+        icalcomponent_set_sequence(c, icalcomponent_get_sequence(c) + 1);
+}
+
+/// The form a written time takes after an edit: all-day is a date; a timed
+/// event keeps its zone, or takes the system zone when it was all-day.
+TimeForm editedForm(icalcomponent *root, icalcomponent *c, bool allDay)
+{
+    if (allDay) {
+        TimeForm date;
+        date.kind = TimeForm::Date;
+        return date;
+    }
+    TimeForm form = formOf(root, c);
+    if (form.kind == TimeForm::Date) {
+        form = zonedForm(QTimeZone::systemTimeZoneId());
+        ensureVtimezone(root, form.tzid);
+    }
+    return form;
+}
+
+/// Writes the fields the form owns onto `c`. RRULE only for a master.
+void writeFields(icalcomponent *root, icalcomponent *c, const EventEdit &edit, bool master)
+{
+    setText(c, ICAL_SUMMARY_PROPERTY, edit.summary);
+    setText(c, ICAL_LOCATION_PROPERTY, edit.location);
+    setText(c, ICAL_DESCRIPTION_PROPERTY, edit.description);
+    const TimeForm form = editedForm(root, c, edit.allDay);
+    removeAll(c, ICAL_DURATION_PROPERTY);
+    setTime(c, ICAL_DTSTART_PROPERTY, edit.start, form);
+    setTime(c, ICAL_DTEND_PROPERTY, edit.end, form);
+
+    if (!master || edit.repeat.custom)
+        return;  // a custom RRULE is never rewritten (spec, repeat control)
+    removeAll(c, ICAL_RRULE_PROPERTY);
+    if (edit.repeat.freq == RepeatRule::Freq::None)
+        return;
+    // UNTIL follows DTSTART's type: a DATE for all-day, else UTC (RFC 5545).
+    QString until;
+    if (edit.repeat.end == RepeatRule::End::Until) {
+        until = edit.allDay
+            ? edit.repeat.until.toString(QStringLiteral("yyyyMMdd"))
+            : QDateTime(edit.repeat.until, QTime(23, 59, 59),
+                        form.kind == TimeForm::Zoned && QTimeZone(form.tzid).isValid()
+                            ? QTimeZone(form.tzid) : QTimeZone::systemTimeZone())
+                  .toUTC().toString(QStringLiteral("yyyyMMdd'T'HHmmss'Z'"));
+    }
+    const QByteArray rule = "RRULE:" + edit.repeat.toRRule(until).toUtf8();
+    icalcomponent_add_property(c, icalproperty_new_from_string(rule.constData()));
+}
+
+QByteArray serialise(icalcomponent *root)
+{
+    IcalString text(icalcomponent_as_ical_string_r(root));
+    return text ? QByteArray(text.get()) : QByteArray();
+}
+
+icalcomponent *overrideFor(icalcomponent *, icalcomponent *master, const QDateTime &)
+{
+    return master;  // replaced in Task 7
+}
+
+} // namespace
+
 namespace CalendarStore {
 
 CalEvent parseEvent(const QByteArray &text, const QString &filePath,
@@ -354,9 +554,66 @@ bool isEditable(const CalEvent &event, const CalCollection &collection,
         return true;
     return ownAddresses.contains(event.organizer.address, Qt::CaseInsensitive);
 }
-QByteArray applyEdit(const QByteArray &, const EventEdit &, Scope, const QDateTime &) { return {}; }
-QByteArray newEvent(const EventEdit &, const QByteArray &) { return {}; }
+QByteArray applyEdit(const QByteArray &text, const EventEdit &edit,
+                     Scope scope, const QDateTime &recurrenceId)
+{
+    IcalComponent root = parseRoot(text);
+    icalcomponent *master = root ? masterOf(root.get()) : nullptr;
+    if (!master)
+        return {};
+    icalcomponent *target = master;
+    if (scope == Scope::ThisOccurrence)
+        target = overrideFor(root.get(), master, recurrenceId);  // Task 7
+    writeFields(root.get(), target, edit, target == master);
+    stamp(target, true);
+    return serialise(root.get());
+}
+
+QByteArray newEvent(const EventEdit &edit, const QByteArray &zoneId)
+{
+    IcalComponent root(icalcomponent_new(ICAL_VCALENDAR_COMPONENT));
+    icalcomponent_add_property(root.get(), icalproperty_new_version("2.0"));
+    icalcomponent_add_property(root.get(), icalproperty_new_prodid("-//qtmaildir//EN"));
+    icalcomponent *event = icalcomponent_new(ICAL_VEVENT_COMPONENT);
+    icalcomponent_add_component(root.get(), event);
+    icalcomponent_set_uid(event, QUuid::createUuid()
+                                     .toString(QUuid::WithoutBraces).toUtf8().constData());
+    // A DTSTART must exist before editedForm() reads it; a date one makes the
+    // form fall through to the system zone for a timed event, which is
+    // exactly the rule for new events, so pass the requested zone instead.
+    if (!edit.allDay) {
+        ensureVtimezone(root.get(), zoneId);
+        setTime(event, ICAL_DTSTART_PROPERTY, edit.start, zonedForm(zoneId));
+    } else {
+        TimeForm date;
+        date.kind = TimeForm::Date;
+        setTime(event, ICAL_DTSTART_PROPERTY, edit.start, date);
+    }
+    writeFields(root.get(), event, edit, true);
+    icalcomponent_set_sequence(event, 0);
+    stamp(event, false);
+    return serialise(root.get());
+}
+
 QByteArray deleteOccurrence(const QByteArray &, const QDateTime &) { return {}; }
-bool sameMeaning(const QByteArray &, const QByteArray &) { return false; }
+
+bool sameMeaning(const QByteArray &a, const QByteArray &b)
+{
+    bool ignored = false;
+    const CalEvent x = parseEvent(a, {}, {}, &ignored);
+    const CalEvent y = parseEvent(b, {}, {}, &ignored);
+    if (x.uid.isEmpty() || y.uid.isEmpty())
+        return x.uid.isEmpty() && y.uid.isEmpty();
+    if (x.overrides.size() != y.overrides.size())
+        return false;
+    for (int i = 0; i < x.overrides.size(); ++i) {
+        const CalOverride &p = x.overrides[i], &q = y.overrides[i];
+        if (p.recurrenceId != q.recurrenceId || p.start != q.start
+            || p.end != q.end || p.summary != q.summary || p.cancelled != q.cancelled)
+            return false;
+    }
+    return x.summary == y.summary && x.start == y.start && x.end == y.end
+        && x.allDay == y.allDay && x.repeat == y.repeat && x.exdates == y.exdates;
+}
 
 }  // namespace CalendarStore

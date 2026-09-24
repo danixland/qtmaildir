@@ -78,6 +78,34 @@ QDateTime utc(int y, int m, int d, int h = 0, int min = 0)
     return QDateTime(QDate(y, m, d), QTime(h, min), QTimeZone::utc());
 }
 
+EventEdit editOf(const CalEvent &e)
+{
+    EventEdit edit;
+    edit.summary = e.summary;
+    edit.location = e.location;
+    edit.description = e.description;
+    edit.start = e.start;
+    edit.end = e.end;
+    edit.allDay = e.allDay;
+    edit.repeat = e.repeat;
+    edit.collectionDir = e.collectionDir;
+    return edit;
+}
+
+CalEvent reparse(const QByteArray &text)
+{
+    bool unknown = false;
+    return CalendarStore::parseEvent(text, QStringLiteral("/x/e.ics"), QStringLiteral("x"), &unknown);
+}
+
+const QString kRichEvent = QStringLiteral(
+    "UID:rich@example.org\r\nDTSTAMP:20260901T000000Z\r\nSEQUENCE:2\r\n"
+    "DTSTART;TZID=Europe/Rome:20260922T100000\r\nDTEND;TZID=Europe/Rome:20260922T110000\r\n"
+    "SUMMARY:Review\r\nORGANIZER;CN=Me:mailto:me@example.org\r\n"
+    "ATTENDEE;CN=Other;PARTSTAT=ACCEPTED:mailto:other@example.org\r\n"
+    "X-EXAMPLE-FLAG:keep me\r\n"
+    "BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\n");
+
 } // namespace
 
 class TestCalendarStore : public QObject
@@ -104,6 +132,13 @@ private slots:
     void expandsADenseOldSeriesToTheWindow();
     void anAllDayOverrideKeepsItsOwnAllDayFlag();
     void editableOnlyWhenTheUserOrganisesIt();
+
+    void anEditKeepsWhatTheFormDoesNotOwn();
+    void anEditKeepsTheEventsZone();
+    void anEditRewritesTheRepeatRuleButNeverACustomOne();
+    void anEditCanTurnAnEventAllDayAndBack();
+    void aNewEventIsCompleteAndEmbedsItsZone();
+    void sameMeaningIgnoresFormatting();
 };
 
 void TestCalendarStore::parsesAUtcEvent()
@@ -395,6 +430,123 @@ void TestCalendarStore::editableOnlyWhenTheUserOrganisesIt()
     QCOMPARE(mine.attendees.size(), 1);
     QCOMPARE(mine.attendees[0].partstat, QStringLiteral("ACCEPTED"));
     QCOMPARE(mine.attendees[0].address, QStringLiteral("other@example.org"));
+}
+
+void TestCalendarStore::anEditKeepsWhatTheFormDoesNotOwn()
+{
+    const CalEvent before = parse(vevent(kRichEvent));
+    EventEdit edit = editOf(before);
+    edit.summary = QStringLiteral("Review, moved");
+    const QByteArray after = CalendarStore::applyEdit(
+        before.rawText, edit, CalendarStore::Scope::All, {});
+    QVERIFY(!after.isEmpty());
+
+    const CalEvent e = reparse(after);
+    QCOMPARE(e.summary, QStringLiteral("Review, moved"));
+    QCOMPARE(e.uid, before.uid);
+    QCOMPARE(e.sequence, 3);  // bumped
+    // Value for value, not byte for byte: libical re-serialises (plan ruling 2).
+    QVERIFY(e.hasAlarm);
+    QVERIFY(after.contains("TRIGGER:-PT15M"));
+    QVERIFY(after.contains("X-EXAMPLE-FLAG:keep me"));
+    QCOMPARE(e.attendees.size(), 1);
+    QCOMPARE(e.attendees[0].partstat, QStringLiteral("ACCEPTED"));
+    QVERIFY(after.contains("LAST-MODIFIED:"));
+}
+
+void TestCalendarStore::anEditKeepsTheEventsZone()
+{
+    // The source has NO VTIMEZONE, as 120 of the user's files do: the TZID
+    // must still be written back, not converted to UTC or floating.
+    const CalEvent before = parse(vevent(kRichEvent));
+    EventEdit edit = editOf(before);
+    edit.start = before.start.addSecs(3600);
+    edit.end = before.end.addSecs(3600);
+    const QByteArray after = CalendarStore::applyEdit(before.rawText, edit, CalendarStore::Scope::All, {});
+    QVERIFY2(after.contains("DTSTART;TZID=Europe/Rome:20260922T110000"), after.constData());
+    QCOMPARE(reparse(after).start, edit.start);
+}
+
+void TestCalendarStore::anEditRewritesTheRepeatRuleButNeverACustomOne()
+{
+    const CalEvent weekly = parse(vevent(QStringLiteral(
+        "UID:r@example.org\r\nDTSTART:20260921T080000Z\r\nRRULE:FREQ=WEEKLY;WKST=MO\r\n")));
+    EventEdit edit = editOf(weekly);
+    edit.repeat = RepeatRule::fromRRule(QStringLiteral("FREQ=MONTHLY;BYDAY=-1FR"), weekly.start.date());
+    QByteArray after = CalendarStore::applyEdit(weekly.rawText, edit, CalendarStore::Scope::All, {});
+    QCOMPARE(reparse(after).repeat.toRRule(), QStringLiteral("FREQ=MONTHLY;BYDAY=-1FR"));
+    QCOMPARE(after.count("RRULE"), 1);
+
+    const CalEvent custom = parse(vevent(QStringLiteral(
+        "UID:c@example.org\r\nDTSTART:20260921T080000Z\r\n"
+        "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1\r\n")));
+    edit = editOf(custom);
+    edit.summary = QStringLiteral("Renamed");
+    after = CalendarStore::applyEdit(custom.rawText, edit, CalendarStore::Scope::All, {});
+    QVERIFY(after.contains("BYSETPOS=-1"));
+
+    edit.repeat = RepeatRule();  // Does not repeat
+    after = CalendarStore::applyEdit(custom.rawText, edit, CalendarStore::Scope::All, {});
+    QVERIFY(!after.contains("RRULE"));
+}
+
+void TestCalendarStore::anEditCanTurnAnEventAllDayAndBack()
+{
+    const CalEvent timed = parse(vevent(kRichEvent));
+    EventEdit edit = editOf(timed);
+    edit.allDay = true;
+    edit.start = QDateTime(QDate(2026, 9, 22), QTime(0, 0));
+    edit.end = QDateTime(QDate(2026, 9, 23), QTime(0, 0));
+    const QByteArray allDay = CalendarStore::applyEdit(timed.rawText, edit, CalendarStore::Scope::All, {});
+    QVERIFY(allDay.contains("DTSTART;VALUE=DATE:20260922"));
+    QVERIFY(allDay.contains("DTEND;VALUE=DATE:20260923"));
+
+    const CalEvent back = reparse(allDay);
+    edit = editOf(back);
+    edit.allDay = false;
+    edit.start = QDateTime(QDate(2026, 9, 22), QTime(9, 0), QTimeZone("Europe/Rome"));
+    edit.end = edit.start.addSecs(3600);
+    const QByteArray timedAgain = CalendarStore::applyEdit(allDay, edit, CalendarStore::Scope::All, {});
+    const CalEvent e = reparse(timedAgain);
+    QVERIFY(!e.allDay);
+    QCOMPARE(e.start, edit.start);
+}
+
+void TestCalendarStore::aNewEventIsCompleteAndEmbedsItsZone()
+{
+    EventEdit edit;
+    edit.summary = QStringLiteral("Dentist");
+    edit.start = QDateTime(QDate(2026, 9, 24), QTime(15, 0), QTimeZone("Europe/Rome"));
+    edit.end = edit.start.addSecs(1800);
+    const QByteArray text = CalendarStore::newEvent(edit, "Europe/Rome");
+    QVERIFY(text.contains("BEGIN:VCALENDAR"));
+    QVERIFY(text.contains("PRODID:-//qtmaildir//EN"));
+    QVERIFY(text.contains("BEGIN:VTIMEZONE"));
+    QVERIFY(text.contains("TZID:Europe/Rome"));
+    QVERIFY(text.contains("SEQUENCE:0"));
+    QVERIFY(text.contains("DTSTAMP:"));
+    const CalEvent e = reparse(text);
+    QVERIFY(!e.uid.isEmpty());
+    QCOMPARE(e.summary, QStringLiteral("Dentist"));
+    QCOMPARE(e.start, edit.start);
+    QCOMPARE(e.end, edit.end);
+
+    // Two new events never share a UID.
+    QVERIFY(reparse(CalendarStore::newEvent(edit, "Europe/Rome")).uid != e.uid);
+}
+
+void TestCalendarStore::sameMeaningIgnoresFormatting()
+{
+    const QByteArray a = ics(vevent(QStringLiteral(
+        "UID:s@example.org\r\nDTSTART:20260922T080000Z\r\nSUMMARY:Standup\r\n")));
+    // Folded, properties reordered, DTSTAMP added: what a server may send back.
+    const QByteArray b = ics(vevent(QStringLiteral(
+        "SUMMARY:Stand\r\n up\r\nDTSTAMP:20260930T000000Z\r\n"
+        "DTSTART:20260922T080000Z\r\nUID:s@example.org\r\n")));
+    const QByteArray moved = ics(vevent(QStringLiteral(
+        "UID:s@example.org\r\nDTSTART:20260922T090000Z\r\nSUMMARY:Standup\r\n")));
+    QVERIFY(CalendarStore::sameMeaning(a, b));
+    QVERIFY(!CalendarStore::sameMeaning(a, moved));
 }
 
 QTEST_MAIN(TestCalendarStore)

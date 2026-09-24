@@ -48,6 +48,7 @@ add_library(qtmaildir_lib STATIC
     calendarstore.cpp
     calendarwriter.cpp
     calendarsync.cpp
+    monthlayout.cpp
 )
 
 target_include_directories(qtmaildir_lib

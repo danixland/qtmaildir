@@ -145,6 +145,8 @@ CalendarWindow::CalendarWindow(const Config &config, const QStringList &ownAddre
     if (index >= 0)
         m_collectionBox->setCurrentIndex(index);
     (agenda ? m_agendaButton : m_monthButton)->click();
+    if (agenda)
+        m_agendaView->scrollToDay(QDate::currentDate());
 }
 
 CalendarWindow::~CalendarWindow() = default;
@@ -679,6 +681,9 @@ bool CalendarWindow::applyChanges(const QList<Change> &changes, bool reverse)
             for (int j = done.size() - 1; j >= 0; --j) {
                 QString ignored;
                 CalendarWriter::replace(done[j].path, done[j].after, done[j].before, &ignored);
+                // The write was reverted, so it must not be reported as a
+                // difference at the next sync.
+                m_written.remove(done[j].path);
             }
             status(r == CalendarWriter::Result::Stale
                        ? tr("The event changed on disk, probably from a sync. Check it and try again.")

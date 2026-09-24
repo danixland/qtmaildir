@@ -152,10 +152,12 @@ private slots:
     void aNewEventIsCompleteAndEmbedsItsZone();
     void sameMeaningIgnoresFormatting();
     void sameMeaningMatchesOverridesRegardlessOfOrder();
+    void sameMeaningTreatsExdatesAsASet();
     void sameMeaningRejectsDifferentUids();
 
     void editingOneOccurrenceWritesAnOverride();
     void editingTheSameOccurrenceAgainReplacesItsOverride();
+    void stoppingASeriesDropsItsOverrides();
     void deletingOneOccurrenceAddsAnExdateAndDropsItsOverride();
     void deletingOneOccurrenceKeepsExistingExdates();
 
@@ -595,6 +597,25 @@ void TestCalendarStore::sameMeaningMatchesOverridesRegardlessOfOrder()
     QVERIFY(!CalendarStore::sameMeaning(a, ics(master + second + changed)));
 }
 
+void TestCalendarStore::sameMeaningTreatsExdatesAsASet()
+{
+    // EXDATE properties are a set; a server may reorder them on the round
+    // trip, and a list comparison would then warn about a version it kept.
+    const QByteArray a = ics(vevent(QStringLiteral(
+        "UID:ex@example.org\r\nDTSTART:20260922T080000Z\r\n"
+        "EXDATE:20260923T080000Z\r\nEXDATE:20260924T080000Z\r\n")));
+    const QByteArray b = ics(vevent(QStringLiteral(
+        "UID:ex@example.org\r\nDTSTART:20260922T080000Z\r\n"
+        "EXDATE:20260924T080000Z\r\nEXDATE:20260923T080000Z\r\n")));
+    QVERIFY(CalendarStore::sameMeaning(a, b));
+
+    // Only the order is ignored, not the contents.
+    const QByteArray changed = ics(vevent(QStringLiteral(
+        "UID:ex@example.org\r\nDTSTART:20260922T080000Z\r\n"
+        "EXDATE:20260923T080000Z\r\nEXDATE:20260925T080000Z\r\n")));
+    QVERIFY(!CalendarStore::sameMeaning(a, changed));
+}
+
 void TestCalendarStore::sameMeaningRejectsDifferentUids()
 {
     // Identical fields, different events: the UID is the identity.
@@ -645,6 +666,34 @@ void TestCalendarStore::editingTheSameOccurrenceAgainReplacesItsOverride()
     const CalEvent e = reparse(text);
     QCOMPARE(e.overrides.size(), 1);
     QCOMPARE(e.overrides[0].start, rome(22, 17));
+}
+
+void TestCalendarStore::stoppingASeriesDropsItsOverrides()
+{
+    // A series with one overridden occurrence, then the repeat is stopped
+    // (Scope::All with RepeatRule() = Freq::None). The override is not a real
+    // occurrence any more: occurrences() never reads it for a non-repeating
+    // event, so leaving it in the file is invalid iCalendar that other clients
+    // may render as a phantom, and it would spring back if a repeat were
+    // re-enabled. EXDATEs are left inert.
+    const CalEvent series = parse(vevent(kDailySeries));
+    EventEdit edit = editOf(series);
+    edit.summary = QStringLiteral("Just this one");
+    edit.start = rome(22, 15);
+    edit.end = rome(22, 16);
+    const QByteArray withOverride = CalendarStore::applyEdit(
+        series.rawText, edit, CalendarStore::Scope::ThisOccurrence, rome(22, 10));
+    QCOMPARE(reparse(withOverride).overrides.size(), 1);
+
+    EventEdit stop = editOf(reparse(withOverride));
+    stop.repeat = RepeatRule();  // does not repeat
+    const QByteArray after = CalendarStore::applyEdit(
+        withOverride, stop, CalendarStore::Scope::All, {});
+
+    const CalEvent e = reparse(after);
+    QVERIFY(e.overrides.isEmpty());
+    QVERIFY2(!after.contains("RECURRENCE-ID"), after.constData());
+    QVERIFY2(!after.contains("RRULE"), after.constData());
 }
 
 void TestCalendarStore::deletingOneOccurrenceAddsAnExdateAndDropsItsOverride()

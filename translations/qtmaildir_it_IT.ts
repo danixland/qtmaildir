@@ -469,6 +469,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>Il ritardo di sincronizzazione del calendario &apos;%1&apos; non è un numero; uso il valore predefinito.</translation>
     </message>
     <message>
+        <source>Calendar sync delay %1 is out of range; using the default.</source>
+        <translation>Il ritardo di sincronizzazione del calendario %1 è fuori intervallo; uso il valore predefinito.</translation>
+    </message>
+    <message>
         <source>Language &apos;%1&apos; is not a locale name; using the system language. Expected something like &apos;it&apos; or &apos;it_IT&apos;.</source>
         <translation>&apos;%1&apos; non è un nome di locale; verrà usata la lingua di sistema. Atteso qualcosa come &apos;it&apos; o &apos;it_IT&apos;.</translation>
     </message>

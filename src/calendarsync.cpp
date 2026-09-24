@@ -29,6 +29,7 @@ CalendarSync::CalendarSync(const QString &command, int delayMs, QObject *parent)
             [this]() { m_output += m_process.readAll(); });
     connect(&m_process, &QProcess::finished, this,
             [this](int code, QProcess::ExitStatus status) {
+        m_output += m_process.readAll();  // drain the last chunk, delivered with finished
         emit finished(status == QProcess::NormalExit && code == 0,
                       QString::fromLocal8Bit(m_output));
         if (m_again) {

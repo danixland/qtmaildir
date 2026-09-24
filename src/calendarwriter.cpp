@@ -49,6 +49,11 @@ Result replace(const QString &path, const std::optional<QByteArray> &expected,
         return Result::Ok;
     }
 
+    // ponytail: the stale read above and QSaveFile::commit() are not one
+    // atomic operation; a cron sync landing between them is lost. The writer
+    // holds no lock, because the sync command owns the flock. Upgrade path:
+    // take the same lock here if that window ever costs real data.
+    //
     // QSaveFile is the platform's atomic write: a temporary in the same
     // directory, renamed on commit(). Its temporary is named "<name>.XXXXXX",
     // which does not end in .ics, so vdirsyncer never lists it.

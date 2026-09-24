@@ -363,8 +363,25 @@ void writeFields(icalcomponent *root, icalcomponent *c, const EventEdit &edit, b
     if (!master || edit.repeat.custom)
         return;  // a custom RRULE is never rewritten (spec, repeat control)
     removeAll(c, ICAL_RRULE_PROPERTY);
-    if (edit.repeat.freq == RepeatRule::Freq::None)
+    if (edit.repeat.freq == RepeatRule::Freq::None) {
+        // Stopping a series orphans its RECURRENCE-ID overrides: occurrences()
+        // skips the override loop for a non-repeating event, so they would
+        // vanish from every view while staying in the synced file, ready to
+        // spring back if a repeat is re-enabled. EXDATEs are inert once the
+        // series does not repeat, and removing them would drop data, so they
+        // stay. Collect first: removing a component mid-walk invalidates it.
+        QList<icalcomponent *> doomed;
+        for (icalcomponent *v = icalcomponent_get_first_component(root, ICAL_VEVENT_COMPONENT);
+             v; v = icalcomponent_get_next_component(root, ICAL_VEVENT_COMPONENT)) {
+            if (v != c && icalcomponent_get_first_property(v, ICAL_RECURRENCEID_PROPERTY))
+                doomed.append(v);
+        }
+        for (icalcomponent *v : doomed) {
+            icalcomponent_remove_component(root, v);
+            icalcomponent_free(v);
+        }
         return;
+    }
     // UNTIL follows DTSTART's type: a DATE for all-day, else UTC (RFC 5545).
     QString until;
     if (edit.repeat.end == RepeatRule::End::Until) {
@@ -667,8 +684,13 @@ bool sameMeaning(const QByteArray &a, const QByteArray &b)
             || p.end != q.end || p.summary != q.summary || p.cancelled != q.cancelled)
             return false;
     }
+    // EXDATE properties are a SET: a server may reorder them, so compare
+    // sorted copies rather than the lists as read.
+    QList<QDateTime> xd = x.exdates, yd = y.exdates;
+    std::sort(xd.begin(), xd.end());
+    std::sort(yd.begin(), yd.end());
     return x.summary == y.summary && x.start == y.start && x.end == y.end
-        && x.allDay == y.allDay && x.repeat == y.repeat && x.exdates == y.exdates;
+        && x.allDay == y.allDay && x.repeat == y.repeat && xd == yd;
 }
 
 }  // namespace CalendarStore

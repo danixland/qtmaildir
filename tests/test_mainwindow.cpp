@@ -8833,6 +8833,9 @@ void TestMainWindow::theCalendarActionWithNoCalendarOpensNothing()
     MainWindow window(config);
     auto *action = window.findChild<QAction *>(QStringLiteral("calendar"));
     QVERIFY2(action, "no action named calendar");
+    // Enabled, not disabled: a future edit that greys it out would otherwise
+    // make the trigger below a no-op and leave this test passing vacuously.
+    QVERIFY2(action->isEnabled(), "the calendar action is disabled");
 
     action->trigger();
 

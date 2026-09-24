@@ -27,6 +27,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolBar>
@@ -126,6 +127,7 @@ private slots:
     void theToolbarCarriesTheNewEventAction();
     void aFreshWindowShowsTheCurrentMonth();
     void aStaleSaveCanBeRetried();
+    void aRolledBackWriteIsNotReportedLostAfterSync();
 };
 
 void TestCalendarWindow::loadsAndSelects()
@@ -265,6 +267,57 @@ void TestCalendarWindow::aStaleSaveCanBeRetried()
     w->findChild<QPushButton *>(QStringLiteral("saveEvent"))->click();
     QVERIFY(read(f.a()).contains("SUMMARY:Mine"));
     QVERIFY(!w->isEditing());
+}
+
+void TestCalendarWindow::aRolledBackWriteIsNotReportedLostAfterSync()
+{
+    // applyChanges records every successful write in m_written for the next
+    // sync to verify. A later change in the same call fails, rolling the
+    // earlier one back, so that write never reached disk and must be
+    // forgotten. Keeping it makes the next sync compare the file against
+    // bytes that were reverted and warn that the server kept a different
+    // version, a difference that never happened.
+    QTemporaryDir dir;
+    const QString cal = dir.filePath(QStringLiteral("cal"));
+    const QString one = cal + QStringLiteral("/a/one.ics");
+    const QString two = cal + QStringLiteral("/a/two.ics");
+    const QByteArray original =
+        eventText(QStringLiteral("one@example.org"), QStringLiteral("One"), 22);
+    writeFile(one, original);
+    writeFile(two, eventText(QStringLiteral("two@example.org"), QStringLiteral("Two"), 23));
+
+    // A real sync command, so the post-sync check actually runs.
+    const QString ini = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    writeFile(ini, QStringLiteral("[general]\ncalendars_dir = %1\n"
+                                  "calendar_sync_command = /bin/true\n"
+                                  "calendar_sync_delay_ms = 0\n").arg(cal).toUtf8());
+    Config config;
+    config.load(ini);
+    std::unique_ptr<CalendarWindow> w(
+        new CalendarWindow(config, { QStringLiteral("me@example.org") },
+                           dir.filePath(QStringLiteral("uistate.conf"))));
+
+    // Change 1 succeeds; change 2 is stale (its expected bytes do not match a
+    // missing file), so change 1 is rolled back.
+    const QByteArray rolled =
+        eventText(QStringLiteral("one@example.org"), QStringLiteral("Rolled"), 22);
+    const QList<CalendarWindow::Change> changes = {
+        { one, original, rolled },
+        { cal + QStringLiteral("/a/ghost.ics"), QByteArray("gone"), QByteArray("x") },
+    };
+    QVERIFY(!w->applyChanges(changes, false));
+    QCOMPARE(read(one), original);  // the first change was reverted
+
+    // A later successful write triggers the sync. The rolled-back path must
+    // not reappear in the post-sync check: with the fix the sync reports
+    // clean, without it the stale entry produces a false "different version".
+    const QByteArray twoAfter =
+        eventText(QStringLiteral("two@example.org"), QStringLiteral("Two, edited"), 23);
+    QVERIFY(w->applyChanges({ { two, read(two), twoAfter } }, false));
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        w->statusBar()->currentMessage().contains(QStringLiteral("Calendars synced.")),
+        5000);
 }
 
 QTEST_MAIN(TestCalendarWindow)

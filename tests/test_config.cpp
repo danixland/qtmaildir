@@ -154,6 +154,7 @@ private slots:
     void calendarSyncCommandSurvivesACommaAndDefaults();
     void calendarsDirThatDoesNotExistIsReported();
     void calendarSyncDelayRejectsGarbage();
+    void aNegativeCalendarSyncDelayIsOutOfRange();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -2961,6 +2962,20 @@ void TestConfig::calendarSyncDelayRejectsGarbage()
                                              "calendar_sync_delay_ms=abc\n")));
     QCOMPARE(config.calendarSyncDelayMs(), 2000);
     QVERIFY(!config.problems().isEmpty());
+}
+
+void TestConfig::aNegativeCalendarSyncDelayIsOutOfRange()
+{
+    // "-5" parses, so "is not a number" would be a lie; the value is simply
+    // outside what the key accepts. It falls back to the default and says so.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "calendar_sync_delay_ms=-5\n")));
+    QCOMPARE(config.calendarSyncDelayMs(), 2000);
+    const QString joined = config.problems().join(QLatin1Char('\n'));
+    QVERIFY2(joined.contains(QStringLiteral("out of range")), qPrintable(joined));
+    QVERIFY2(!joined.contains(QStringLiteral("not a number")), qPrintable(joined));
 }
 
 QTEST_MAIN(TestConfig)

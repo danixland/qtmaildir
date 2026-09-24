@@ -303,6 +303,9 @@ void Config::load(const QString &path)
         const int value = calDelay.toString().toInt(&ok);
         if (ok && value >= 0)
             m_calendarSyncDelayMs = value;
+        else if (ok)
+            addProblem(tr("Calendar sync delay %1 is out of range; using the default.")
+                           .arg(calDelay.toString()));
         else
             addProblem(tr("Calendar sync delay '%1' is not a number; using the default.")
                            .arg(calDelay.toString()));

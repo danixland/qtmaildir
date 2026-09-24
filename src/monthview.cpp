@@ -156,6 +156,8 @@ void MonthView::paintEvent(QPaintEvent *)
 
 void MonthView::mousePressEvent(QMouseEvent *event)
 {
+    if (event->button() != Qt::LeftButton)
+        return;
     const MonthLayout l = layout();
     const int cell = l.cellAt(event->position().toPoint());
     if (cell < 0)
@@ -178,10 +180,14 @@ void MonthView::mouseDoubleClickEvent(QMouseEvent *event)
     const int cell = l.cellAt(event->position().toPoint());
     if (cell < 0)
         return;
-    // A double-click on a chip is two clicks on the chip, not a new event.
+    // A double-click on a chip, or on the "+N more" line, is two clicks on
+    // that thing, not a new event.
     const QList<int> items = itemsPerCell(l)[cell];
-    for (int slot = 0; slot < l.visibleChips(items.size()); ++slot)
+    const int shown = l.visibleChips(items.size());
+    for (int slot = 0; slot < shown; ++slot)
         if (l.chipRect(cell, slot).contains(event->position().toPoint()))
             return;
+    if (shown < items.size() && l.chipRect(cell, shown).contains(event->position().toPoint()))
+        return;
     emit dayDoubleClicked(l.dateAt(cell));
 }

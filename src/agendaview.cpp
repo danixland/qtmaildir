@@ -73,6 +73,12 @@ void AgendaView::setItems(const QList<CalendarItem> &items)
 
 void AgendaView::setSelected(int item)
 {
+    // Headers carry -1 in kItemRole, so a bare loop would match the first
+    // header for "nothing selected" and leave the previous row highlighted.
+    if (item < 0) {
+        clearSelection();
+        return;
+    }
     for (int r = 0; r < count(); ++r) {
         if (this->item(r)->data(kItemRole).toInt() == item) {
             setCurrentRow(r);

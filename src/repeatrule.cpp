@@ -18,7 +18,6 @@
 
 #include "repeatrule.h"
 
-#include <QCoreApplication>
 #include <QLocale>
 #include <QMap>
 
@@ -58,13 +57,11 @@ const char *const kOrdinals[] = {
     QT_TRANSLATE_NOOP("RepeatRule", "fourth"),
 };
 
-QString tr(const char *text) { return QCoreApplication::translate("RepeatRule", text); }
-
 QString ordinalWord(int ordinal)
 {
     if (ordinal == -1)
-        return tr("last");
-    return (ordinal >= 1 && ordinal <= 4) ? tr(kOrdinals[ordinal - 1]) : QString();
+        return RepeatRule::tr("last");
+    return (ordinal >= 1 && ordinal <= 4) ? RepeatRule::tr(kOrdinals[ordinal - 1]) : QString();
 }
 
 } // namespace

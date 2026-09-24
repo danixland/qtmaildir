@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QCoreApplication>
 #include <QDate>
 #include <QList>
 #include <QString>
@@ -29,6 +30,13 @@
 /// is what lets every row of the spec's repeat table be tested as a string.
 struct RepeatRule
 {
+    // describe() formats the rule in words, and lupdate needs the class's own
+    // context to extract them (AGENTS.md: a class needs this macro, an array
+    // needs QT_TRANSLATE_NOOP on the literal). The macro ends in a private:
+    // section, so the explicit public: restores the fields below.
+    Q_DECLARE_TR_FUNCTIONS(RepeatRule)
+public:
+
     enum class Freq { None, Daily, Weekly, Monthly, Yearly };
     /// Monthly and Yearly only: on a day of the month, or on the Nth weekday.
     enum class By { MonthDay, Weekday };

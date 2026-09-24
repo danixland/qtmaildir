@@ -79,6 +79,13 @@ ComposeWindow (its own top-level window, one per message being written)
  ├ MessageSender (QProcess, the per-account send_command on stdin)
  └ SendDialog (the undo countdown)   DraftStore (autosave to the drafts folder)
 
+CalendarWindow (its own top-level window, opened from MainWindow)
+ ├ toolbar: collection combo · ‹ Today › · month combo · year spin · Month|Agenda · + New
+ ├ QStackedWidget: MonthView | AgendaView   ← read QList<Occurrence> only
+ ├ EventPane: read-only details ⇄ edit form
+ └ CalendarStore (the only libical user)   CalendarWriter (atomic write)
+    MonthLayout (pure geometry)   CalendarSync (QProcess)   RepeatRule
+
 ComposeContext (a struct: what a Reply or Forward inherits)
 ComposeContextBuilder (namespace: fills one, and picks the account)
 CardLayout (pure geometry, no painting)
@@ -95,20 +102,24 @@ those types have ever existed, and looking for them wastes a search. The widget
 classes that do exist are `MessageView`, `ThreadListView`, `TagStrip`,
 `TagDialog`, `MessageDetailsDialog`, `PendingChangesDialog`,
 `RowStyleDelegate`, `CardDelegate`, `ComposeWindow`, `SendDialog`,
-`ThreadDashboard` and `BusyIndicator`; `TagChip` is a namespace of
-painting helpers, not a widget, `SearchTerm` is a namespace of query builders,
-and `ThreadCidMap`, `CardLayout`, `SearchOffer`, `HeaderRow`, `ThreadDigest`
-and `PendingChangeRow` are structs.
+`ThreadDashboard`, `BusyIndicator`, `CalendarWindow` and `EventPane`; `TagChip`
+is a namespace of painting helpers, not a widget, `SearchTerm` is a namespace of
+query builders, and `ThreadCidMap`, `CardLayout`, `SearchOffer`, `HeaderRow`,
+`ThreadDigest` and `PendingChangeRow` are structs.
 `SubjectDelegate` existed until item 53 and is gone.
 
 **The compose units are mostly NAMESPACES, and the same warning applies to
 them.** `MarkdownRenderer`, `MarkdownFormat`, `MessageBuilder`,
-`ComposeContextBuilder`, `DraftStore` and `MaildirName` are namespaces of free
-functions over values, deliberately, so the markdown, the MIME assembly and
-the account-picking are all testable without a widget. `MessageSender` IS a
-QObject, because it owns a `QProcess`. There is no `FormatToolbar` class: the
-composer's formatting row is built inline in `ComposeWindow` and asks
-`MarkdownFormat` what each button does to the selection.
+`ComposeContextBuilder`, `DraftStore`, `MaildirName`, `CalendarStore` and
+`CalendarWriter` are namespaces of free functions over values, deliberately, so
+the markdown, the MIME assembly, the account-picking, the iCalendar work and
+the atomic write are all testable without a widget. `MessageSender` IS a
+QObject, because it owns a `QProcess`, and so is `CalendarSync`. There is no
+`FormatToolbar` class: the composer's formatting row is built inline in
+`ComposeWindow` and asks `MarkdownFormat` what each button does to the
+selection. `MonthLayout` is the calendar's counterpart to `CardLayout` and, like
+it, a class that computes every rect with no painter and no widget, so the 6×7
+grid is tested as a function call.
 
 **`MessageDetailsDialog` was a `QPlainTextEdit` inside `MessageView` until item
 85.** It is rows now so each value can carry its own context menu, and its
@@ -1011,6 +1022,51 @@ since the user runs it daily while it is being built.
 Nothing here licenses dropping a test that CAN fail. The data-safety properties
 are exactly the measurable kind, and items 87, 105 and 176 are each a case where
 the missing test was the whole problem.
+
+## Calendar
+
+The calendar is a second application inside this one, and its traps are its own.
+Each was learned while building item 206; the spec is
+`docs/superpowers/specs/2026-09-24-calendar-design.md`.
+
+**libical is confined to `calendarstore.cpp` behind `icalraii.h`, the nmraii
+rule.** C handles are owned by RAII aliases and no `icalcomponent*` crosses out
+of that file; everything the rest of the tree sees is the plain value structs in
+`src/caltypes.h`. `calendarstore.h` includes no libical header, so a file that
+merely calls the store cannot leak a handle.
+
+**Expansion runs in the event's own zone, not in UTC.** A weekly 10:00
+`Europe/Rome` meeting is 10:00 on both sides of the DST change, so its UTC time
+moves: 08:00Z before the last Sunday of October, 09:00Z after. Expanding in UTC
+would keep 08:00Z and draw the second occurrence at 09:00 local, an hour wrong
+for half the year. `Expansion runs in the event's own zone, and converts to
+local after` is the rule; the test asserts the hour in Rome, not the UTC time.
+
+**An all-day `DTEND;VALUE=DATE` is exclusive.** A one-day event on the 24th ends
+at the start of the 25th, so a window beginning on the 25th must not show it.
+The side pane shows the inclusive last day and converts back on save; do not
+grow an off-by-one by treating the stored end as the day to display.
+
+**120 of the user's files name a `TZID` without embedding the `VTIMEZONE` the
+RFC requires.** The `TZID` resolves through `QTimeZone` as an IANA name, and an
+edit must write the `TZID` PARAMETER back rather than converting to UTC or
+floating: `DTSTART;TZID=Europe/Rome:...` stays what it was. Converting would
+silently move an event for every client that later reads it.
+
+**The calendar's `Delete`, `Ctrl+Z`, `PgUp`/`PgDn` and `Home` shortcuts are
+scoped to the views with `Qt::WidgetWithChildrenShortcut`.** They are window
+shortcuts otherwise, and a bare `Delete` or `Ctrl+Z` then fires while the user
+is typing in the edit form's Title field, deleting the event or undoing the
+calendar instead of editing text. `EventPane` and the stacked views are the
+scopes; Escape is scoped to the pane.
+
+**`calendar_sync_command` is read through a `QStringList` join.** With no quote
+around the value, QSettings splits a comma-holding string into a `QStringList`
+whose `toString()` is EMPTY, so `vdirsyncer sync calendars,other` would reach
+the runner as nothing at all. The loader joins the list back with commas;
+`calendar_sync_delay_ms` is read as a string for the same reason, since a
+`toString().toInt()` on a list value is also empty and silently keeps the
+default.
 
 ## Web view security
 

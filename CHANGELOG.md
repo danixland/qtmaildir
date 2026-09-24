@@ -13,11 +13,36 @@ point at which they are stable.
 
 ### Added
 
+- **A calendar window.** **View > Calendar** opens a month grid, with an Agenda
+  view one toggle away and a side pane that shows the selected event and turns
+  into the edit form. Events can be created, edited and deleted, each undoable
+  with `Ctrl+Z`, and the pane says when an event was organised by someone else,
+  which is read-only. It reads and writes the vdirsyncer vdir directly, so khal
+  is not needed; names and colours come from the collections' own `displayname`
+  and `color` files. The feature is off until `calendars_dir` names the vdir.
 - **Contact completion.** Point `contacts_dir` under `[general]` at a directory
   of vCards, vdirsyncer's `~/.local/share/vdirsyncer/contacts/` being the usual
   one, and the composer's To, Cc and Bcc fields and the query bar's `from:` and
   `to:` complete against it. The store is read-only and loaded once at startup;
   omit the key and the feature is off.
+
+### Upgrading
+
+**The calendar is off until `calendars_dir` is set.** No existing config key
+changes meaning and nothing breaks by doing nothing: without the key the
+calendar action is simply absent and no vdir is read. To turn it on, point it
+at your vdir root and, if new events should land in one collection rather than
+the first, name that collection's directory in `default_calendar`.
+
+**A vdirsyncer cron line should take the same lock the calendar uses.** The
+default `calendar_sync_command` is prefixed with
+`flock -w 60 /tmp/vdirsyncer.lock`, so a save in the calendar and a cron run do
+not sync at once. Add the same prefix to your cron line and append
+`&& vdirsyncer metasync` to keep the collections' names and colours current:
+
+```cron
+*/30 * * * * flock -w 60 /tmp/vdirsyncer.lock vdirsyncer sync calendars && vdirsyncer metasync
+```
 
 ## [0.29.0] - 2026-09-14
 

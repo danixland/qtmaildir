@@ -158,6 +158,8 @@ private slots:
     void editingTheSameOccurrenceAgainReplacesItsOverride();
     void deletingOneOccurrenceAddsAnExdateAndDropsItsOverride();
     void deletingOneOccurrenceKeepsExistingExdates();
+
+    void theLiveVdirLoadsCleanly();
 };
 
 void TestCalendarStore::parsesAUtcEvent()
@@ -678,6 +680,24 @@ void TestCalendarStore::deletingOneOccurrenceKeepsExistingExdates()
     QVERIFY(e.exdates.contains(rome(22, 10)));
     QCOMPARE(e.exdates.size(), 2);
     QCOMPARE(CalendarStore::occurrences({ e }, rome(21, 0), rome(26, 0)).size(), 3);
+}
+
+void TestCalendarStore::theLiveVdirLoadsCleanly()
+{
+    // Opt-in, READ-ONLY: never writes. Run by hand before handing the build
+    // over: QTMAILDIR_LIVE_CALENDARS=~/.local/share/calendars ./test_calendarstore
+    const QString dir = qEnvironmentVariable("QTMAILDIR_LIVE_CALENDARS");
+    if (dir.isEmpty())
+        QSKIP("QTMAILDIR_LIVE_CALENDARS not set");
+    const LoadResult r = CalendarStore::load(dir);
+    qInfo("collections=%lld events=%lld unparsable=%d unknownZones=%d",
+          qlonglong(r.collections.size()), qlonglong(r.events.size()),
+          r.unparsable, r.unknownZones);
+    QCOMPARE(r.unparsable, 0);
+    const QList<Occurrence> year = CalendarStore::occurrences(
+        r.events, QDateTime(QDate(2026, 1, 1), QTime(0, 0)),
+        QDateTime(QDate(2027, 1, 1), QTime(0, 0)));
+    qInfo("occurrences in 2026=%lld", qlonglong(year.size()));
 }
 
 QTEST_MAIN(TestCalendarStore)

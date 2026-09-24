@@ -1,7 +1,7 @@
 # A calendar window: view, add, edit and delete events
 
 Date: 2026-09-24
-Status: approved, not yet implemented
+Status: approved, implemented on branch calendar
 Backlog: item 206 (blocks 207; answers 205's write-during-sync question)
 
 ## Problem
@@ -201,9 +201,9 @@ fourth Thursday"), as Thunderbird does.
    event is reloaded, the form stays open holding the user's values, and the
    status bar says the event changed on disk and needs checking before saving
    again. Nothing is overwritten blind.
-2. **Atomic write.** Write `.<name>.tmp` in the same directory and `rename()`
-   it into place. vdirsyncer lists only `*.ics`, so it never sees the
-   temporary.
+2. **Atomic write.** `QSaveFile` writes a temporary in the same directory and
+   `rename()`s it into place on `commit()`, so vdirsyncer, which lists only
+   `*.ics`, never sees a partial file.
 3. Every edit sets `DTSTAMP` and `LAST-MODIFIED` and increments `SEQUENCE`.
 
 A **new** event is `<uuid>.ics` in `default_calendar` or the collection chosen
@@ -307,6 +307,14 @@ Edit and View holding every action; `Ctrl+N` New, `Ctrl+E` Edit, `Delete`,
 `Ctrl+Z` / `Ctrl+Shift+Z`, `PgUp` / `PgDn` for the month, `Home` for today,
 `Esc` to cancel an edit. Window shortcuts, not `KeyMap` entries.
 
+**Those that are not safe as window shortcuts are scoped to the views with
+`Qt::WidgetWithChildrenShortcut`.** A bare `Delete`, `Ctrl+Z`, `PgUp`/`PgDn` or
+`Home` would otherwise fire while the cursor is in the edit form's Title field,
+deleting the event or moving the month instead of editing text. `Delete`,
+`PgUp`/`PgDn` and `Home` sit on the stacked views; Undo and Redo sit there too;
+Escape is scoped to `EventPane`. `Ctrl+N`, `Ctrl+E` and `Ctrl+W` stay window
+shortcuts, since no text field wants them.
+
 **i18n.** Every string in `tr()`; the Italian `.ts` refreshed, `lrelease`
 reporting 0 unfinished.
 
@@ -316,7 +324,7 @@ All in `[general]`, read without the `general/` prefix per AGENTS.md:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `calendars_dir` | `~/.local/share/calendars/` | The vdir root, tilde-expanded like `contacts_dir`. Empty turns the feature off: no action, no error. |
+| `calendars_dir` | unset (off) | The vdir root, tilde-expanded like `contacts_dir`. Empty turns the feature off: no action, no error. |
 | `default_calendar` | first collection by name | Directory name of the collection new events go to. |
 | `calendar_sync_command` | `flock -w 60 /tmp/vdirsyncer.lock vdirsyncer sync calendars` | Run after writes. Empty disables. |
 | `calendar_sync_delay_ms` | `2000` | Debounce before the sync runs. |
@@ -336,7 +344,7 @@ addresses, never copied from the live vdir.
   yields only the window; `COUNT` and `UNTIL`; monthly `BYDAY=-1FR`; yearly
   `BYMONTH`+`BYDAY`. `RepeatRule` round-trips every row of the table, detects
   a custom rule, keeps `WKST`. `applyEdit` keeps `VALARM`, `ATTENDEE` and
-  `X-*` byte for byte, increments `SEQUENCE`, creates an override, adds an
+  `X-*` value for value, increments `SEQUENCE`, creates an override, adds an
   `EXDATE`. `newEvent` embeds its `VTIMEZONE`. `isEditable` for an organiser
   who is the user, someone else, nobody, and for a read-only collection.
 - **`test_calendarwriter`**, in a temporary directory: the atomic write; the

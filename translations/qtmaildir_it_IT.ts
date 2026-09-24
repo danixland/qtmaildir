@@ -2,6 +2,218 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="it_IT">
 <context>
+    <name>AgendaView</name>
+    <message>
+        <source>all day</source>
+        <translation>tutto il giorno</translation>
+    </message>
+    <message>
+        <source>%1 - %2</source>
+        <translation>%1 - %2</translation>
+    </message>
+</context>
+<context>
+    <name>CalendarWindow</name>
+    <message>
+        <source>Calendar</source>
+        <translation>Calendario</translation>
+    </message>
+    <message>
+        <source>Syncing calendars...</source>
+        <translation>Sincronizzazione calendari...</translation>
+    </message>
+    <message>
+        <source>Calendar sync failed</source>
+        <translation>Sincronizzazione calendari fallita</translation>
+    </message>
+    <message>
+        <source>Calendar sync failed.</source>
+        <translation>Sincronizzazione dei calendari fallita.</translation>
+    </message>
+    <message>
+        <source>Previous month</source>
+        <translation>Mese precedente</translation>
+    </message>
+    <message>
+        <source>Today</source>
+        <translation>Oggi</translation>
+    </message>
+    <message>
+        <source>Go to today</source>
+        <translation>Vai a oggi</translation>
+    </message>
+    <message>
+        <source>Next month</source>
+        <translation>Mese successivo</translation>
+    </message>
+    <message>
+        <source>Month</source>
+        <translation>Mese</translation>
+    </message>
+    <message>
+        <source>Agenda</source>
+        <translation>Agenda</translation>
+    </message>
+    <message>
+        <source>&amp;New event</source>
+        <translation>&amp;Nuovo evento</translation>
+    </message>
+    <message>
+        <source>&amp;Close</source>
+        <translation>&amp;Chiudi</translation>
+    </message>
+    <message>
+        <source>&amp;Edit event</source>
+        <translation>&amp;Modifica evento</translation>
+    </message>
+    <message>
+        <source>&amp;Delete event</source>
+        <translation>&amp;Elimina evento</translation>
+    </message>
+    <message>
+        <source>Cancel &amp;editing</source>
+        <translation>Annulla &amp;modifica</translation>
+    </message>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>&amp;Annulla</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>&amp;Ripeti</translation>
+    </message>
+    <message>
+        <source>&amp;Previous month</source>
+        <translation>Mese &amp;precedente</translation>
+    </message>
+    <message>
+        <source>&amp;Next month</source>
+        <translation>Mese &amp;successivo</translation>
+    </message>
+    <message>
+        <source>&amp;Today</source>
+        <translation>&amp;Oggi</translation>
+    </message>
+    <message>
+        <source>&amp;Month</source>
+        <translation>&amp;Mese</translation>
+    </message>
+    <message>
+        <source>&amp;Agenda</source>
+        <translation>&amp;Agenda</translation>
+    </message>
+    <message>
+        <source>&amp;File</source>
+        <translation>&amp;File</translation>
+    </message>
+    <message>
+        <source>&amp;Edit</source>
+        <translation>&amp;Modifica</translation>
+    </message>
+    <message>
+        <source>&amp;View</source>
+        <translation>&amp;Visualizza</translation>
+    </message>
+    <message>
+        <source>All calendars</source>
+        <translation>Tutti i calendari</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n file(s) could not be read</source>
+        <translation>
+            <numerusform>%n file non è stato letto</numerusform>
+            <numerusform>%n file non sono stati letti</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n event(s) in an unknown time zone, shown in local time</source>
+        <translation>
+            <numerusform>%n evento in un fuso orario sconosciuto, mostrato in ora locale</numerusform>
+            <numerusform>%n eventi in un fuso orario sconosciuto, mostrati in ora locale</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(no title)</source>
+        <translation>(nessun titolo)</translation>
+    </message>
+    <message>
+        <source>Save or cancel the event being edited first.</source>
+        <translation>Salva o annulla prima l&apos;evento in modifica.</translation>
+    </message>
+    <message>
+        <source>Edit a repeating event</source>
+        <translation>Modifica un evento ricorrente</translation>
+    </message>
+    <message>
+        <source>Edit only this occurrence, or every occurrence?</source>
+        <translation>Modificare solo questa occorrenza o tutte le occorrenze?</translation>
+    </message>
+    <message>
+        <source>This occurrence</source>
+        <translation>Questa occorrenza</translation>
+    </message>
+    <message>
+        <source>All occurrences</source>
+        <translation>Tutte le occorrenze</translation>
+    </message>
+    <message>
+        <source>Kept as set elsewhere</source>
+        <translation>Mantenuto come impostato altrove</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>Nessuno</translation>
+    </message>
+    <message>
+        <source>New event</source>
+        <translation>Nuovo evento</translation>
+    </message>
+    <message>
+        <source>Edit event</source>
+        <translation>Modifica evento</translation>
+    </message>
+    <message>
+        <source>Delete a repeating event</source>
+        <translation>Elimina un evento ricorrente</translation>
+    </message>
+    <message>
+        <source>Delete only this occurrence, or every occurrence?</source>
+        <translation>Eliminare solo questa occorrenza o tutte le occorrenze?</translation>
+    </message>
+    <message>
+        <source>Could not remove this occurrence.</source>
+        <translation>Impossibile rimuovere questa occorrenza.</translation>
+    </message>
+    <message>
+        <source>Delete event</source>
+        <translation>Elimina evento</translation>
+    </message>
+    <message>
+        <source>The event changed on disk, probably from a sync. Check it and try again.</source>
+        <translation>L&apos;evento è cambiato su disco, probabilmente per una sincronizzazione. Controllalo e riprova.</translation>
+    </message>
+    <message>
+        <source>Could not write the calendar: %1</source>
+        <translation>Impossibile scrivere nel calendario: %1</translation>
+    </message>
+    <message>
+        <source>Calendars synced.</source>
+        <translation>Calendari sincronizzati.</translation>
+    </message>
+    <message>
+        <source>The server kept a different version of: %1</source>
+        <translation>Il server ha mantenuto una versione diversa di: %1</translation>
+    </message>
+    <message>
+        <source>Unsaved event</source>
+        <translation>Evento non salvato</translation>
+    </message>
+    <message>
+        <source>Save the changes to this event?</source>
+        <translation>Salvare le modifiche a questo evento?</translation>
+    </message>
+</context>
+<context>
     <name>CardLayout</name>
     <message>
         <source>message</source>
@@ -249,6 +461,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>La directory dei contatti &apos;%1&apos; non esiste; il completamento dei contatti non troverà alcun contatto.</translation>
     </message>
     <message>
+        <source>Calendars directory &apos;%1&apos; does not exist; the calendar will be empty.</source>
+        <translation>La cartella dei calendari &apos;%1&apos; non esiste; il calendario sarà vuoto.</translation>
+    </message>
+    <message>
+        <source>Calendar sync delay &apos;%1&apos; is not a number; using the default.</source>
+        <translation>Il ritardo di sincronizzazione del calendario &apos;%1&apos; non è un numero; uso il valore predefinito.</translation>
+    </message>
+    <message>
         <source>Language &apos;%1&apos; is not a locale name; using the system language. Expected something like &apos;it&apos; or &apos;it_IT&apos;.</source>
         <translation>&apos;%1&apos; non è un nome di locale; verrà usata la lingua di sistema. Atteso qualcosa come &apos;it&apos; o &apos;it_IT&apos;.</translation>
     </message>
@@ -395,6 +615,201 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Spam</source>
         <translation>Spam</translation>
+    </message>
+</context>
+<context>
+    <name>EventPane</name>
+    <message>
+        <source>When</source>
+        <translation>Quando</translation>
+    </message>
+    <message>
+        <source>Repeats</source>
+        <translation>Ripete</translation>
+    </message>
+    <message>
+        <source>Calendar</source>
+        <translation>Calendario</translation>
+    </message>
+    <message>
+        <source>Location</source>
+        <translation>Luogo</translation>
+    </message>
+    <message>
+        <source>Notes</source>
+        <translation>Note</translation>
+    </message>
+    <message>
+        <source>Reminder</source>
+        <translation>Promemoria</translation>
+    </message>
+    <message>
+        <source>People</source>
+        <translation>Persone</translation>
+    </message>
+    <message>
+        <source>&amp;Edit</source>
+        <translation>&amp;Modifica</translation>
+    </message>
+    <message>
+        <source>&amp;Delete</source>
+        <translation>&amp;Elimina</translation>
+    </message>
+    <message>
+        <source>All day</source>
+        <translation>Tutto il giorno</translation>
+    </message>
+    <message>
+        <source>Title</source>
+        <translation>Titolo</translation>
+    </message>
+    <message>
+        <source>Starts</source>
+        <translation>Inizia</translation>
+    </message>
+    <message>
+        <source>Ends</source>
+        <translation>Finisce</translation>
+    </message>
+    <message>
+        <source>Repeat</source>
+        <translation>Ripetizione</translation>
+    </message>
+    <message>
+        <source>&amp;Save</source>
+        <translation>&amp;Salva</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Annulla</translation>
+    </message>
+    <message>
+        <source>Does not repeat</source>
+        <translation>Non si ripete</translation>
+    </message>
+    <message>
+        <source>Daily</source>
+        <translation>Giornaliero</translation>
+    </message>
+    <message>
+        <source>Weekly</source>
+        <translation>Settimanale</translation>
+    </message>
+    <message>
+        <source>Monthly</source>
+        <translation>Mensile</translation>
+    </message>
+    <message>
+        <source>Yearly</source>
+        <translation>Annuale</translation>
+    </message>
+    <message>
+        <source>every </source>
+        <translation>ogni </translation>
+    </message>
+    <message>
+        <source>on day</source>
+        <translation>il giorno</translation>
+    </message>
+    <message>
+        <source>on the</source>
+        <translation>il</translation>
+    </message>
+    <message>
+        <source>first</source>
+        <translation>primo</translation>
+    </message>
+    <message>
+        <source>second</source>
+        <translation>secondo</translation>
+    </message>
+    <message>
+        <source>third</source>
+        <translation>terzo</translation>
+    </message>
+    <message>
+        <source>fourth</source>
+        <translation>quarto</translation>
+    </message>
+    <message>
+        <source>last</source>
+        <translation>ultimo</translation>
+    </message>
+    <message>
+        <source>of %1</source>
+        <translation>di %1</translation>
+    </message>
+    <message>
+        <source>forever</source>
+        <translation>per sempre</translation>
+    </message>
+    <message>
+        <source>until</source>
+        <translation>fino al</translation>
+    </message>
+    <message>
+        <source>for</source>
+        <translation>per</translation>
+    </message>
+    <message>
+        <source> times</source>
+        <translation> volte</translation>
+    </message>
+    <message>
+        <source>Custom rule, kept as is</source>
+        <translation>Regola personalizzata, mantenuta com&apos;è</translation>
+    </message>
+    <message>
+        <source>Custom rule</source>
+        <translation>Regola personalizzata</translation>
+    </message>
+    <message>
+        <source>(no title)</source>
+        <translation>(nessun titolo)</translation>
+    </message>
+    <message>
+        <source>%1 to %2, all day</source>
+        <translation>%1 - %2, tutto il giorno</translation>
+    </message>
+    <message>
+        <source>%1, all day</source>
+        <translation>%1, tutto il giorno</translation>
+    </message>
+    <message>
+        <source>%1, %2 - %3</source>
+        <translation>%1, %2 - %3</translation>
+    </message>
+    <message>
+        <source>Yes, kept as set elsewhere</source>
+        <translation>Sì, mantenuto come impostato altrove</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>Nessuno</translation>
+    </message>
+    <message>
+        <source>Organiser: %1</source>
+        <translation>Organizzatore: %1</translation>
+    </message>
+    <message>
+        <source>%1 (%2)</source>
+        <translation>%1 (%2)</translation>
+    </message>
+    <message>
+        <source>no reply</source>
+        <translation>nessuna risposta</translation>
+    </message>
+    <message>
+        <source>Read-only calendar.</source>
+        <translation>Calendario in sola lettura.</translation>
+    </message>
+    <message>
+        <source>Organised by %1: read-only.</source>
+        <translation>Organizzato da %1: sola lettura.</translation>
+    </message>
+    <message>
+        <source>Attendees have not been notified of changes.</source>
+        <translation>I partecipanti non sono stati avvisati delle modifiche.</translation>
     </message>
 </context>
 <context>
@@ -904,6 +1319,10 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
         <translation>&amp;Regole di etichettatura...</translation>
     </message>
     <message>
+        <source>No calendar is configured: set calendars_dir under [general].</source>
+        <translation>Nessun calendario configurato: imposta calendars_dir in [general].</translation>
+    </message>
+    <message>
         <source>&amp;Check for stranded spam</source>
         <translation>Cerca spam &amp;fuori posto</translation>
     </message>
@@ -938,6 +1357,14 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>Edit the rules that tag mail as it arrives</source>
         <translation>Modifica le regole che etichettano la posta in arrivo</translation>
+    </message>
+    <message>
+        <source>&amp;Calendar</source>
+        <translation>&amp;Calendario</translation>
+    </message>
+    <message>
+        <source>Open the calendar</source>
+        <translation>Apri il calendario</translation>
     </message>
     <message>
         <source>&amp;Save query...</source>
@@ -1747,6 +2174,16 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     </message>
 </context>
 <context>
+    <name>MonthView</name>
+    <message numerus="yes">
+        <source>+%n more</source>
+        <translation>
+            <numerusform>+%n altro</numerusform>
+            <numerusform>+%n altri</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
     <name>PendingChangesDialog</name>
     <message>
         <source>Unsynced changes</source>
@@ -1884,6 +2321,93 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>also accepts free-form dates, e.g. 2026-01-15 or 15/01/2026..today</source>
         <translation>accetta anche date libere, ad es. 2026-01-15 o 15/01/2026..today</translation>
+    </message>
+</context>
+<context>
+    <name>RepeatRule</name>
+    <message>
+        <source>first</source>
+        <translation>il primo</translation>
+    </message>
+    <message>
+        <source>second</source>
+        <translation>il secondo</translation>
+    </message>
+    <message>
+        <source>third</source>
+        <translation>il terzo</translation>
+    </message>
+    <message>
+        <source>fourth</source>
+        <translation>il quarto</translation>
+    </message>
+    <message>
+        <source>last</source>
+        <translation>l&apos;ultimo</translation>
+    </message>
+    <message>
+        <source>Custom rule</source>
+        <translation>Regola personalizzata</translation>
+    </message>
+    <message>
+        <source>Does not repeat</source>
+        <translation>Non si ripete</translation>
+    </message>
+    <message>
+        <source>Daily</source>
+        <translation>Giornaliero</translation>
+    </message>
+    <message>
+        <source>Every %1 days</source>
+        <translation>Ogni %1 giorni</translation>
+    </message>
+    <message>
+        <source>Weekly</source>
+        <translation>Settimanale</translation>
+    </message>
+    <message>
+        <source>Every %1 weeks</source>
+        <translation>Ogni %1 settimane</translation>
+    </message>
+    <message>
+        <source>, on %1</source>
+        <translation>, il %1</translation>
+    </message>
+    <message>
+        <source>Monthly</source>
+        <translation>Mensile</translation>
+    </message>
+    <message>
+        <source>Every %1 months</source>
+        <translation>Ogni %1 mesi</translation>
+    </message>
+    <message>
+        <source>, on the %1 %2</source>
+        <translation>, %1 %2</translation>
+    </message>
+    <message>
+        <source>, on day %1</source>
+        <translation>, il giorno %1</translation>
+    </message>
+    <message>
+        <source>Yearly</source>
+        <translation>Annuale</translation>
+    </message>
+    <message>
+        <source>Every %1 years</source>
+        <translation>Ogni %1 anni</translation>
+    </message>
+    <message>
+        <source>, on the %1 %2 of %3</source>
+        <translation>, %1 %2 di %3</translation>
+    </message>
+    <message>
+        <source>, %1 times</source>
+        <translation>, %1 volte</translation>
+    </message>
+    <message>
+        <source>, until %1</source>
+        <translation>, fino al %1</translation>
     </message>
 </context>
 <context>

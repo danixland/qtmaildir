@@ -487,6 +487,59 @@ Omit the key and the feature is off, exactly as if it did not exist. A path
 that is set and missing is reported at startup, since there you asked for
 something and are not getting it.
 
+## Calendar
+
+**View > Calendar**, or the calendar button on the toolbar, opens the calendar
+in its own window. It is a month grid by default, with an **Agenda** view one
+toggle away, and a side pane that shows the selected event and becomes the edit
+form when you press **Edit** or **+ New**. Creating, editing and deleting are
+all undoable with `Ctrl+Z`, so a mistake costs a keystroke rather than a
+confirmation dialog. The grid and the agenda are read-only views over one list
+of events; every change is written from the side pane.
+
+The window reads and writes a **vdirsyncer vdir**, a directory of `.ics` files.
+It needs no khal: the same files khal reads are read here directly, so khal can
+be removed with nothing missing. vdirsyncer syncs that vdir against your CalDAV
+server; qtmaildir itself speaks no network protocol here any more than it does
+for mail, and it runs `calendar_sync_command` after a write the way it runs
+your mail sync command after a tag change.
+
+Names and colours are not configured here. Each collection's name comes from its
+own `displayname` file and its colour from its `color` file, falling back to the
+directory name and a colour derived from it when those are absent. Those files
+are what `vdirsyncer metasync` fills in when the calendar pair carries a
+`metadata` key:
+
+```ini
+[pair calendars]
+metadata = ["color", "displayname"]
+```
+
+**Events organised by someone else are read-only.** An invitation puts another
+person's address in `ORGANIZER`; Edit and Delete are absent for it and the pane
+says why. Events with no organiser, or organised by one of your own account
+addresses, are yours to change. Accepting and refusing invitations is not part
+of this yet.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `calendars_dir` | unset (off) | The vdir root, e.g. `~/.local/share/calendars/`. |
+| `default_calendar` | first collection | Directory name new events go to. |
+| `calendar_sync_command` | `flock -w 60 /tmp/vdirsyncer.lock vdirsyncer sync calendars` | Run after writes; empty disables. |
+| `calendar_sync_delay_ms` | `2000` | Delay before it runs. |
+
+With `calendars_dir` unset the feature is off: the View menu entry is not there
+and nothing is read. Point it at the vdir and the action appears.
+
+`calendar_sync_command` takes the same `flock` vdirsyncer uses, so a save here
+and a cron run cannot sync at once. If vdirsyncer already runs from cron,
+prefix that line with the same lock and append `&& vdirsyncer metasync`, or the
+two jobs race and the names and colours go stale:
+
+```cron
+*/30 * * * * flock -w 60 /tmp/vdirsyncer.lock vdirsyncer sync calendars && vdirsyncer metasync
+```
+
 ## The query bar
 
 The bar at the top takes a notmuch query and shows the matching threads.

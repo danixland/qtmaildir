@@ -417,6 +417,15 @@ public:
     /// is simply the feature being off rather than a misconfiguration.
     QString contactsDir() const { return m_contactsDir; }
 
+    /// The vdirsyncer calendar root (item 206). Empty: the calendar is off.
+    QString calendarsDir() const { return m_calendarsDir; }
+    /// Directory name of the collection new events go to; empty means the
+    /// first collection by display name.
+    QString defaultCalendar() const { return m_defaultCalendar; }
+    /// Run after calendar writes. Empty: no sync.
+    QString calendarSyncCommand() const { return m_calendarSyncCommand; }
+    int calendarSyncDelayMs() const { return m_calendarSyncDelayMs; }
+
     /// Matches every configured account's sent mail, or empty when no account
     /// configures one.
     ///
@@ -592,6 +601,11 @@ private:
     int m_toolbarIconSize = 24;
     QString m_notmuchConfig;
     QString m_contactsDir;
+    QString m_calendarsDir;
+    QString m_defaultCalendar;
+    QString m_calendarSyncCommand =
+        QStringLiteral("flock -w 60 /tmp/vdirsyncer.lock vdirsyncer sync calendars");
+    int m_calendarSyncDelayMs = 2000;
     QString m_dateFormat;
     QStringList m_forwardPrefixes;
     QString m_language;

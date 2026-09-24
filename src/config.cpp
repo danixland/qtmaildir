@@ -272,6 +272,42 @@ void Config::load(const QString &path)
         }
     }
 
+    // Item 206. The same shape as contacts_dir: absent or blank is the feature
+    // off, silently; set and missing is reported and kept, since a vdirsyncer
+    // target may not exist before its first run.
+    const QString calendarsDir =
+        settings.value(QStringLiteral("calendars_dir")).toString().trimmed();
+    if (!calendarsDir.isEmpty()) {
+        m_calendarsDir = expandTilde(calendarsDir);
+        if (!QFileInfo::exists(m_calendarsDir)) {
+            addProblem(tr("Calendars directory '%1' does not exist; the "
+                          "calendar will be empty.").arg(m_calendarsDir));
+        }
+    }
+    m_defaultCalendar =
+        settings.value(QStringLiteral("default_calendar")).toString().trimmed();
+
+    // An unquoted value holding a comma reaches here as a QStringList, whose
+    // toString() is empty; join it back rather than silently losing the
+    // command. Absent keeps the default; present and blank disables.
+    const QVariant calSync = settings.value(QStringLiteral("calendar_sync_command"));
+    if (calSync.isValid()) {
+        m_calendarSyncCommand = calSync.typeId() == QMetaType::QStringList
+            ? calSync.toStringList().join(QLatin1Char(','))
+            : calSync.toString();
+        m_calendarSyncCommand = m_calendarSyncCommand.trimmed();
+    }
+    const QVariant calDelay = settings.value(QStringLiteral("calendar_sync_delay_ms"));
+    if (calDelay.isValid()) {
+        bool ok = false;
+        const int value = calDelay.toString().toInt(&ok);
+        if (ok && value >= 0)
+            m_calendarSyncDelayMs = value;
+        else
+            addProblem(tr("Calendar sync delay '%1' is not a number; using the default.")
+                           .arg(calDelay.toString()));
+    }
+
     // Absent is fine and silent: the default is 1.0. Present but unparseable
     // is a problem, since the user asked for something and is not getting it.
     // The range is enforced by MessageView::clampZoom(), the one place that

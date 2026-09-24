@@ -149,6 +149,9 @@ private slots:
     void contactsDirIsActuallyRead();
     void contactsDirExpandsATilde();
     void contactsDirThatDoesNotExistIsReported();
+    void calendarKeysAreOffWithoutThem();
+    void calendarKeysAreRead();
+    void calendarSyncCommandSurvivesACommaAndDefaults();
 };
 
 static QString writeIni(const QTemporaryDir &dir, const QString &body)
@@ -2859,6 +2862,55 @@ void TestConfig::contactsDirThatDoesNotExistIsReported()
     QVERIFY2(joined.contains(missing),
              "the warning must name the path the user wrote");
     QCOMPARE(config.contactsDir(), missing);
+}
+
+void TestConfig::calendarKeysAreOffWithoutThem()
+{
+    // Plan ruling 1: absent is OFF, silently, as contacts_dir is.
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n")));
+    QVERIFY(config.calendarsDir().isEmpty());
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::calendarKeysAreRead()
+{
+    QTemporaryDir dir;
+    const QString cal = dir.filePath(QStringLiteral("calendars"));
+    QDir().mkpath(cal);
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "calendars_dir = %1\n"
+                                             "default_calendar = 52\n"
+                                             "calendar_sync_delay_ms = 500\n").arg(cal)));
+    QCOMPARE(config.calendarsDir(), cal);
+    QCOMPARE(config.defaultCalendar(), QStringLiteral("52"));
+    QCOMPARE(config.calendarSyncDelayMs(), 500);
+    QVERIFY(config.problems().isEmpty());
+}
+
+void TestConfig::calendarSyncCommandSurvivesACommaAndDefaults()
+{
+    QTemporaryDir dir;
+    Config config;
+    config.load(writeIni(dir, QStringLiteral("[general]\n")));
+    QCOMPARE(config.calendarSyncCommand(),
+             QStringLiteral("flock -w 60 /tmp/vdirsyncer.lock vdirsyncer sync calendars"));
+    QCOMPARE(config.calendarSyncDelayMs(), 2000);
+
+    // QSettings splits an unquoted value on commas into a QStringList, and
+    // toString() on a list is EMPTY: a command holding a comma would silently
+    // turn syncing off. The reader joins the list back.
+    Config commas;
+    commas.load(writeIni(dir, QStringLiteral("[general]\n"
+                                             "calendar_sync_command = mysync --only a,b\n")));
+    QCOMPARE(commas.calendarSyncCommand(), QStringLiteral("mysync --only a,b"));
+
+    // Written but empty disables, which is different from absent.
+    Config off;
+    off.load(writeIni(dir, QStringLiteral("[general]\ncalendar_sync_command = \n")));
+    QVERIFY(off.calendarSyncCommand().isEmpty());
 }
 
 QTEST_MAIN(TestConfig)

@@ -326,6 +326,7 @@ private slots:
     void anUnknownAccountSelectorLeavesTheDropdownAlone();
     void aThreadSelectorOpensThatThread();
     void aMessageSelectorOpensItsThread();
+    void aMessageSelectorRendersItsReplyWhateverTheKeyboardLastHeld();
     void aThreadSelectorThatIsNotHexIsRefused();
     void anEmptySelectorSetChangesNothing();
     void aBracketedMessageSelectorOpensThatMessage();
@@ -18008,6 +18009,109 @@ void TestMainWindow::aMessageSelectorOpensItsThread()
                                         == threadId,
                              15000);
     QCOMPARE(model->rowCount(QModelIndex()), 1);
+}
+
+void TestMainWindow::aMessageSelectorRendersItsReplyWhateverTheKeyboardLastHeld()
+{
+    // --message for a reply, handed to a window that is already in use. The
+    // list switched to the conversation and the reply row became current, and
+    // the pane stayed empty.
+    //
+    // A window in use has received keyboard input, and a fresh one has not.
+    // QAbstractItemView::setCurrentIndex() takes its selection command from
+    // QGuiApplication::keyboardModifiers() when there is no event, which is
+    // the modifier state of the LAST input event the application saw. With
+    // Control there, the programmatic selection became a Toggle: the row the
+    // recovery had just selected was deselected again, onThreadSelected()
+    // refused a current row that is not selected, and nothing loaded.
+    //
+    // Simulated with a Control press that is never released, which is what
+    // the application's state looks like when focus left it with Control
+    // held. Released on every exit, because the state is process-wide and
+    // would otherwise leak into every later test.
+    WorkerBackedWindow backed;
+    // Dates verified with `date -d <yyyy-mm-dd> +%A`: Qt::RFC2822Date
+    // validates the weekday against the date.
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("b1@example.org"),
+        QStringLiteral("Bravo opens"), QStringLiteral("c@example.org"),
+        QStringLiteral("Sun, 16 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Bravo one.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("b2@example.org"),
+        QStringLiteral("Bravo target reply"), QStringLiteral("d@example.org"),
+        QStringLiteral("Mon, 17 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Bravo two."), true,
+        QStringLiteral("b1@example.org")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("c1@example.org"),
+        QStringLiteral("Charlie alone"), QStringLiteral("e@example.org"),
+        QStringLiteral("Tue, 18 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Charlie one.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+    auto *header = pane->findChild<QLabel *>(QStringLiteral("messageHeader"));
+    QVERIFY(header);
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    // Put the window into use: another message on display.
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    emit queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2, 15000);
+    NotmuchWorker probe(backed.config().notmuchConfig());
+    const QString other =
+        probe.threadIdForTesting(QStringLiteral("id:c1@example.org"));
+    QVERIFY(!other.isEmpty());
+    QModelIndex otherRow;
+    for (int row = 0; row < model->rowCount(QModelIndex()); ++row) {
+        if (model->threadAt(row).threadId == other)
+            otherRow = model->index(row, 0, QModelIndex());
+    }
+    QVERIFY(otherRow.isValid());
+    view->selectionModel()->select(
+        otherRow, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(otherRow);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !pane->showingPlaceholder()
+            && header->text().contains(QStringLiteral("Charlie alone")),
+        15000);
+
+    QTest::keyPress(view, Qt::Key_Control, Qt::ControlModifier);
+    const auto release = qScopeGuard(
+        [view]() { QTest::keyRelease(view, Qt::Key_Control); });
+    // A guard proving the state under test is really there: without it the
+    // assertions below pass for the ordinary reason.
+    QCOMPARE(QGuiApplication::keyboardModifiers(), Qt::ControlModifier);
+
+    LaunchSelectors selectors;
+    selectors.messageId = QStringLiteral("b2@example.org");
+    window.applySelectors(selectors);
+
+    // The REPLY, not the root the recovery falls back to, current AND
+    // selected: a current row that is not selected is what the defect left.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->currentIndex().isValid()
+            && model->isMessageRow(view->currentIndex())
+            && model->messageAt(view->currentIndex()).messageId
+                   == QStringLiteral("b2@example.org"),
+        15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->selectionModel()->isSelected(view->currentIndex()), 15000);
+
+    // What the user sees is that message: not the placeholder, not the
+    // conversation's dashboard.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !pane->showingDashboard() && !pane->showingPlaceholder()
+            && header->text().contains(QStringLiteral("Bravo target reply")),
+        15000);
 }
 
 void TestMainWindow::aThreadSelectorThatIsNotHexIsRefused()

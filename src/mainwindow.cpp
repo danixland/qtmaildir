@@ -187,7 +187,19 @@ void MainWindow::selectRowAt(const QModelIndex &index)
 
     m_threadView->selectionModel()->select(
         index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-    m_threadView->setCurrentIndex(index);
+    // NoUpdate, through the selection model, and never the view's own
+    // setCurrentIndex(). That one asks selectionCommand() what to do with the
+    // selection, and with no event to read it answers from
+    // QGuiApplication::keyboardModifiers(): the modifiers of the LAST input
+    // event this application saw, not what the user is doing now. With
+    // Control there, the command is a Toggle, so the row selected just above
+    // was deselected again, onThreadSelected() refused a current row that is
+    // not selected, and the pane stayed empty. A fresh window has seen no
+    // input, which is why a launch into a new window worked and one handed
+    // to a window in use did not. The selection is already exactly what the
+    // caller asked for; only the current index moves here.
+    m_threadView->selectionModel()->setCurrentIndex(
+        index, QItemSelectionModel::NoUpdate);
 }
 
 /// Selects the top-level thread row at `row`.

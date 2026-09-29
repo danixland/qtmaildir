@@ -7455,11 +7455,15 @@ void TestMainWindow::aSuccessfulCronSyncDrainsTheEditedAccounts()
     const QString confPath = dir.filePath(QStringLiteral("qtmaildir.conf"));
     QFile conf(confPath);
     QVERIFY(conf.open(QIODevice::WriteOnly | QIODevice::Text));
-    conf.write(QStringLiteral("[sync]\nlog=%1\n\n"
+    // status= keeps Config off the real syncstatus.json, the leak
+    // noSyncTestReadsTheRealSyncState() records; this test missed it and
+    // failed whenever the developer's last cron run left a channel queued.
+    conf.write(QStringLiteral("[sync]\nlog=%1\nstatus=%2\n\n"
                               "[account.work]\n"
                               "maildir=work-mail\n"
                               "channel=work-channel\n")
-                   .arg(logPath).toUtf8());
+                   .arg(logPath, dir.filePath(QStringLiteral("no-status.json")))
+                   .toUtf8());
     conf.close();
 
     Config config;

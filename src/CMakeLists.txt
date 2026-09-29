@@ -66,7 +66,8 @@ if(TARGET qtmaildir_buildnumber)
 endif()
 
 target_link_libraries(qtmaildir_lib
-    PUBLIC Qt6::Widgets Qt6::Svg Qt6::WebEngineWidgets PkgConfig::GMIME
+    PUBLIC Qt6::Widgets Qt6::Svg Qt6::WebEngineWidgets Qt6::Network
+           PkgConfig::GMIME
            PkgConfig::LIBICAL ${NOTMUCH_LIBRARY} PkgConfig::CMARK_GFM
            ${CMARK_GFM_EXTENSIONS_LIBRARY})
 

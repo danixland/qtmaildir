@@ -17,7 +17,12 @@ option(QTMAILDIR_BUILD_TESTS "Build the test suite" ON)
 # SlackBuild builds from a tarball that carries no counter at all.
 option(QTMAILDIR_BUILD_NUMBER "Number each build of a dev tree" ON)
 
-set(QTMAILDIR_QT_COMPONENTS Widgets Svg WebEngineWidgets)
+# Network is for QLocalServer/QLocalSocket only, which is a unix domain socket
+# between two copies of this program (item 200). It is NOT network protocol
+# work: the rule in AGENTS.md is about IMAP and SMTP, and nothing here speaks
+# either. Slackware ships it inside the monolithic qt6 package, so this adds no
+# new build dependency.
+set(QTMAILDIR_QT_COMPONENTS Widgets Svg WebEngineWidgets Network)
 if(QTMAILDIR_BUILD_TESTS)
     list(APPEND QTMAILDIR_QT_COMPONENTS Test)
 endif()

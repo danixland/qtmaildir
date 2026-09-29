@@ -19,6 +19,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QIcon>
 #include <QLocale>
 #include <QMessageBox>
@@ -32,7 +33,9 @@
 #include <cstring>
 
 #include "config.h"
+#include "launchselectors.h"
 #include "mainwindow.h"
+#include "singleinstance.h"
 #include "version.h"
 
 int main(int argc, char *argv[])
@@ -48,18 +51,13 @@ int main(int argc, char *argv[])
         }
         if (std::strcmp(argv[i], "--help") == 0
             || std::strcmp(argv[i], "-h") == 0) {
-            std::printf(
-                "qtmaildir %s - a Qt6 mail client for notmuch-indexed Maildirs\n"
-                "\n"
-                "Usage: qtmaildir [options]\n"
-                "\n"
-                "  -h, --help     Show this help and exit\n"
-                "  -v, --version  Show the version and exit\n"
-                "\n"
-                "Configuration: ~/.config/qtmaildir/qtmaildir.conf\n"
-                "qtmaildir reads a notmuch-indexed Maildir. It does no network\n"
-                "protocol work: fetching and sending are external commands.\n",
-                QTMAILDIR_VERSION_DISPLAY);
+            // The text lives with the parser, so the options and their
+            // descriptions cannot drift apart.
+            std::printf("%s",
+                        LaunchSelectors::helpText(
+                            QStringLiteral(QTMAILDIR_VERSION_DISPLAY))
+                            .toLocal8Bit()
+                            .constData());
             return 0;
         }
     }
@@ -81,6 +79,40 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("qtmaildir"));
     app.setOrganizationName(QStringLiteral("qtmaildir"));
     app.setApplicationVersion(QStringLiteral(QTMAILDIR_VERSION));
+
+    // Parsed AFTER QApplication, from app.arguments() rather than argv: the
+    // constructor consumes Qt's own options (-platform, -style and the rest)
+    // and removes them, so parsing the raw argv would reject a standard Qt
+    // option as unknown. No window exists yet, so a bad option still exits
+    // before anything is shown.
+    QString selectorError;
+    const LaunchSelectors selectors =
+        LaunchSelectors::parse(app.arguments(), &selectorError);
+    if (!selectorError.isEmpty()) {
+        std::fprintf(stderr, "qtmaildir: %s\n",
+                     selectorError.toLocal8Bit().constData());
+        return 2;
+    }
+
+    // Connect first, become the server only if that fails. A live instance is
+    // handed the selectors and this process exits without ever opening a
+    // database: notmuch permits one handle per process, so two windows are two
+    // handles, which this avoids as a side effect of the feature.
+    //
+    // On main's stack, like the QTranslator below: it owns the socket for the
+    // life of the process and must outlive exec().
+    const QString socketPath = MainWindow::singleInstanceSocketPath();
+    // The state directory does not exist on a first run, and listen() cannot
+    // create a socket in a missing directory.
+    QDir().mkpath(QFileInfo(socketPath).absolutePath());
+    SingleInstance instance(socketPath);
+    if (!instance.tryBecomeServer()) {
+        if (instance.sendToRunningInstance(selectors))
+            return 0;
+        // No running instance answered and no socket could be created either.
+        // Carry on and open a window: losing single-instance behaviour is a
+        // degradation, and losing the mail client is not acceptable.
+    }
 
     // Compiled in rather than read from disk, so the icon is there whether or
     // not the app was installed. setDesktopFileName() is what lets a Wayland
@@ -137,6 +169,31 @@ int main(int argc, char *argv[])
 
     MainWindow window(config);
     window.show();
+
+    // What this launch asked for. After show(), so the window is up before a
+    // query starts running against it.
+    window.applySelectors(selectors);
+
+    // A later launch. The selectors arrive on the socket and go through the
+    // same applySelectors() this startup path just used.
+    QObject::connect(&instance, &SingleInstance::selectorsReceived, &window,
+                     [&window](const LaunchSelectors &arrived) {
+                         // Raised whatever the selectors say, an empty set
+                         // included: a bare launch against a running window
+                         // means "show me the window".
+                         //
+                         // Under Wayland this is a REQUEST, not a command. The
+                         // compositor may honour it as a focus hint or ignore
+                         // it by policy, which is its decision and not a defect
+                         // to work around: the selectors still apply and the
+                         // window still shows the right thing.
+                         window.setWindowState(window.windowState()
+                                               & ~Qt::WindowMinimized);
+                         window.show();
+                         window.raise();
+                         window.activateWindow();
+                         window.applySelectors(arrived);
+                     });
 
     // After show(), and out here rather than inside the constructor. A modal
     // raised from the constructor cannot be dismissed under the offscreen

@@ -113,3 +113,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/assets/icons/qtmaildir.svg
         DESTINATION share/icons/hicolor/scalable/apps)
 install(FILES ${CMAKE_SOURCE_DIR}/assets/qtmaildir.desktop
         DESTINATION share/applications)
+# bash-completion loads a command's file on demand from this directory, by name.
+install(FILES ${CMAKE_SOURCE_DIR}/assets/qtmaildir.bash-completion
+        DESTINATION share/bash-completion/completions
+        RENAME qtmaildir)

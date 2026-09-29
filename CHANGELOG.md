@@ -21,6 +21,9 @@ point at which they are stable.
   `--message` accepts a Message-ID with or without its angle brackets. A
   selector that matches nothing is named in the status bar and the window
   keeps the view it had.
+- Bash completion for the options, completing account keys from the config
+  after `--account`. Thread and message ids are not completed, since that
+  would query the whole index on every Tab.
 - A second launch now hands its selectors to the already-running window over a
   local socket and asks it to raise itself, rather than opening a second
   window. One process, and so one notmuch database handle.

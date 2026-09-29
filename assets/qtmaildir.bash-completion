@@ -1,0 +1,26 @@
+# bash completion for qtmaildir
+#
+# Copyright (C) 2026 Danilo M. <danix@danix.xyz>
+# Licensed under the GNU General Public License version 2.
+#
+# Completes the options, and account keys after --account, read from the
+# [account.<key>] sections of the config. Thread and message ids are NOT
+# completed: listing them means querying the whole notmuch index on every Tab.
+
+_qtmaildir()
+{
+    local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]}
+    local conf=${XDG_CONFIG_HOME:-$HOME/.config}/qtmaildir/qtmaildir.conf
+
+    case $prev in
+        --account)
+            [[ -r $conf ]] || return
+            COMPREPLY=($(compgen -W "$(sed -n 's/^\[account\.\(.*\)\][[:space:]]*$/\1/p' "$conf")" -- "$cur"))
+            return ;;
+        --thread|--message)
+            return ;;
+    esac
+
+    COMPREPLY=($(compgen -W '--account --thread --message --help --version' -- "$cur"))
+}
+complete -F _qtmaildir qtmaildir

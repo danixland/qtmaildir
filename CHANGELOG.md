@@ -11,6 +11,19 @@ point at which they are stable.
 
 ## [Unreleased]
 
+### Added
+
+- `--account`, `--thread` and `--message` on the command line, so another
+  program can open qtmaildir at a particular account's view, conversation or
+  message. The three combine, and Qt's own options are accepted beside them.
+- A second launch now hands its selectors to the already-running window over a
+  local socket and asks it to raise itself, rather than opening a second
+  window. One process, and so one notmuch database handle.
+
+### Changed
+
+- The status bar renders its messages as plain text.
+
 ## [0.30.0] - 2026-09-29
 
 A calendar window over the vdirsyncer vdir, with a month grid, an agenda and

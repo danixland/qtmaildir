@@ -42,6 +42,41 @@ Verified against these versions on Slackware -current:
 You also need a notmuch database that is already set up and working from the
 command line. qtmaildir does not create or configure one.
 
+## Usage
+
+```
+qtmaildir [options]
+
+  -h, --help         Show this help and exit
+  -v, --version      Show the version and exit
+  --account <key>    Open this account's view
+  --thread <id>      Open this thread
+  --message <id>     Open this message, inside its thread
+```
+
+The three selectors combine: `--account work --message '<abc@example.org>'`
+opens that message in the work account's view. `--thread` takes a notmuch
+thread id (hex digits only); anything else is reported as a miss in the status
+bar and never reaches notmuch. Qt's own options, such as `-platform` and
+`-style`, are accepted alongside them. An unknown option or a missing value
+prints `qtmaildir: <error>` on stderr and exits with status 2.
+
+**A second launch does not open a second window.** When qtmaildir is already
+running, a launch hands its selectors to the running window over a local socket
+(`~/.local/state/qtmaildir/qtmaildir.sock`), which un-minimizes, raises and
+applies them, and the second process exits 0. This is what lets another
+program, a notification or a script open a particular message in the client the
+user already has open. It also means one process, and so one notmuch database
+handle. If no socket can be created, the window opens normally.
+
+Under a Wayland compositor, raising a window is a request rather than a
+command: the compositor may honour it, or apply its own focus policy. The
+selectors are applied either way.
+
+A selector that matches nothing, a stale thread id or an account key that is
+not configured, leaves the window on its normal startup view and says what
+missed in the status bar. It is never a reason to refuse to start.
+
 ## Building
 
 ```bash

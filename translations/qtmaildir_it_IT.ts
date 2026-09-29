@@ -843,6 +843,75 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     </message>
 </context>
 <context>
+    <name>LaunchSelectors</name>
+    <message>
+        <source>Open this account&apos;s view.</source>
+        <translation>Apre la vista di questo account.</translation>
+    </message>
+    <message>
+        <source>Open this thread.</source>
+        <translation>Apre questa conversazione.</translation>
+    </message>
+    <message>
+        <source>Open this message, inside its thread.</source>
+        <translation>Apre questo messaggio, nella sua conversazione.</translation>
+    </message>
+    <message>
+        <source>Unknown option: %1</source>
+        <translation>Opzione sconosciuta: %1</translation>
+    </message>
+    <message>
+        <source>qtmaildir %1 - a Qt6 mail client for notmuch-indexed Maildirs
+
+Usage: qtmaildir [options]
+
+  -h, --help         Show this help and exit
+  -v, --version      Show the version and exit
+  --account &lt;key&gt;    Open this account&apos;s view
+  --thread &lt;id&gt;      Open this thread
+  --message &lt;id&gt;     Open this message, inside its thread
+
+The three selectors combine. When qtmaildir is already running,
+a second launch hands its selectors to that window and exits rather
+than opening a second one.
+
+Configuration: ~/.config/qtmaildir/qtmaildir.conf
+qtmaildir reads a notmuch-indexed Maildir. It does no network
+protocol work: fetching and sending are external commands.
+</source>
+        <translation>qtmaildir %1 - un client di posta Qt6 per Maildir indicizzate con notmuch
+
+Uso: qtmaildir [opzioni]
+
+  -h, --help         Mostra questo aiuto ed esce
+  -v, --version      Mostra la versione ed esce
+  --account &lt;key&gt;    Apre la vista di questo account
+  --thread &lt;id&gt;      Apre questa conversazione
+  --message &lt;id&gt;     Apre questo messaggio, nella sua conversazione
+
+I tre selettori si combinano. Se qtmaildir è già in esecuzione,
+un secondo avvio passa i selettori a quella finestra ed esce,
+invece di aprirne una seconda.
+
+Configurazione: ~/.config/qtmaildir/qtmaildir.conf
+qtmaildir legge una Maildir indicizzata con notmuch. Non usa alcun
+protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
+</translation>
+    </message>
+    <message>
+        <source>Launch payload too large</source>
+        <translation>Dati di avvio troppo grandi</translation>
+    </message>
+    <message>
+        <source>Unrecognised launch payload</source>
+        <translation>Dati di avvio non riconosciuti</translation>
+    </message>
+    <message>
+        <source>Truncated launch payload</source>
+        <translation>Dati di avvio troncati</translation>
+    </message>
+</context>
+<context>
     <name>MainWindow</name>
     <message>
         <source>Unsynced changes</source>
@@ -1894,6 +1963,18 @@ Il messaggio È stato inviato. Non inviarlo di nuovo.</translation>
     <message>
         <source>The sync failed (exit %1), so your changes are still unsynced. The window has been left open.</source>
         <translation>La sincronizzazione non è riuscita (uscita %1), quindi le tue modifiche non sono ancora sincronizzate. La finestra è stata lasciata aperta.</translation>
+    </message>
+    <message>
+        <source>No account named &apos;%1&apos;.</source>
+        <translation>Nessun account chiamato &apos;%1&apos;.</translation>
+    </message>
+    <message>
+        <source>No thread matched &apos;%1&apos;.</source>
+        <translation>Nessuna conversazione corrisponde a &apos;%1&apos;.</translation>
+    </message>
+    <message>
+        <source>No message matched &apos;%1&apos;.</source>
+        <translation>Nessun messaggio corrisponde a &apos;%1&apos;.</translation>
     </message>
     <message>
         <source>Background sync running...</source>

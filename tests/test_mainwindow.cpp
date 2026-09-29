@@ -49,6 +49,7 @@
 #include "calendarwindow.h"
 #include "config.h"
 #include "keymap.h"
+#include "launchselectors.h"
 #include "mainwindow.h"
 #include "pendingchangesdialog.h"
 #include "messageview.h"
@@ -311,6 +312,13 @@ private slots:
     void aStartupAccountScopesTheStartupQuery();
     void aStartupAccountAlsoScopesASavedStartupQuery();
     void aGeneratedStartupQueryActuallyRuns();
+    void theSocketPathIsUnderTheStateDirectory();
+    void anAccountSelectorMovesTheDropdown();
+    void anUnknownAccountSelectorLeavesTheDropdownAlone();
+    void aThreadSelectorOpensThatThread();
+    void aMessageSelectorOpensItsThread();
+    void aThreadSelectorThatIsNotHexIsRefused();
+    void anEmptySelectorSetChangesNothing();
     void everyBuiltinFilterButtonCarriesAnIconAndItsText();
     void theDraftsButtonIsAbsentWithoutADraftsFolder();
     void aQueryInTheMenuCanActuallyBeRun();
@@ -17810,6 +17818,250 @@ void TestMainWindow::notSpamThreadMovesEveryMessageHome()
     QTRY_VERIFY_WITH_TIMEOUT(
         notmuchCount(cfg, thread + QStringLiteral(" and tag:inbox")) == 3,
         15000);
+}
+
+void TestMainWindow::theSocketPathIsUnderTheStateDirectory()
+{
+    // Beside uistate.conf, and built the same way: GenericStateLocation, not
+    // StateLocation, because the latter appends both the organization and the
+    // application name and both are "qtmaildir".
+    const QString socket = MainWindow::singleInstanceSocketPath();
+    const QString state = MainWindow::uiStatePath();
+
+    QVERIFY(!socket.isEmpty());
+    QCOMPARE(QFileInfo(socket).absolutePath(),
+             QFileInfo(state).absolutePath());
+    QVERIFY2(!socket.endsWith(QStringLiteral("/qtmaildir/qtmaildir")),
+             "StateLocation was used: the path doubles the application name");
+}
+
+void TestMainWindow::anAccountSelectorMovesTheDropdown()
+{
+    // --account work, with the config's own startup account being something
+    // else. The selector wins, which is what "open this account's view" means.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QSettings s(path, QSettings::IniFormat);
+        // [general] keys are read WITHOUT the prefix: QSettings' INI backend
+        // treats a section literally named [general] as its own fallback.
+        s.setValue(QStringLiteral("startup_query"), QStringLiteral("Inbox"));
+        s.setValue(QStringLiteral("startup_account"),
+                   QStringLiteral("personal"));
+        s.beginGroup(QStringLiteral("account.work"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("work"));
+        s.endGroup();
+        s.beginGroup(QStringLiteral("account.personal"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("personal"));
+        s.endGroup();
+        s.sync();
+    }
+    Config config;
+    config.load(path);
+
+    MainWindow window(config);
+    QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("personal"));
+
+    LaunchSelectors selectors;
+    selectors.account = QStringLiteral("work");
+    window.applySelectors(selectors);
+
+    QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
+}
+
+void TestMainWindow::anUnknownAccountSelectorLeavesTheDropdownAlone()
+{
+    // The miss path. The window opens on its configured view and says so in
+    // the status bar; it does not clear the dropdown, and it does not refuse
+    // to start.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QSettings s(path, QSettings::IniFormat);
+        s.setValue(QStringLiteral("startup_account"), QStringLiteral("work"));
+        s.beginGroup(QStringLiteral("account.work"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("work"));
+        s.endGroup();
+        s.sync();
+    }
+    Config config;
+    config.load(path);
+
+    MainWindow window(config);
+
+    LaunchSelectors selectors;
+    selectors.account = QStringLiteral("nosuchaccount");
+    window.applySelectors(selectors);
+
+    QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
+
+    // "statusMessage" is the object name buildUi() gives the status label.
+    // There is no widget named "statusLabel", and findChild would return null
+    // and assert nothing.
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    QVERIFY2(status->text().contains(QStringLiteral("nosuchaccount")),
+             "the miss must name the value, so a stale caller can be debugged");
+}
+
+void TestMainWindow::aThreadSelectorOpensThatThread()
+{
+    // --thread, against a real database. The row the selector names is the row
+    // that ends up current.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("one@example.org"),
+        QStringLiteral("First subject"), QStringLiteral("a@example.org"),
+        // Friday, verified with `date -d 2026-08-14 +%A`. Qt::RFC2822Date
+        // validates the weekday against the date.
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body one.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("two@example.org"),
+        QStringLiteral("Second subject"), QStringLiteral("b@example.org"),
+        // Saturday, verified with `date -d 2026-08-15 +%A`.
+        QStringLiteral("Sat, 15 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body two.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    // The thread id is not knowable in advance, so it is read back from the
+    // index the same way the CLI's caller would have obtained it.
+    NotmuchWorker probe(backed.config().notmuchConfig());
+    const QString threadId =
+        probe.threadIdForTesting(QStringLiteral("id:two@example.org"));
+    QVERIFY(!threadId.isEmpty());
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    LaunchSelectors selectors;
+    selectors.threadId = threadId;
+    window.applySelectors(selectors);
+
+    // QTRY, never qWait: the worker is on another thread and a fixed sleep
+    // passes when the result never arrives at all.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+
+    // Asserted on the thread the row STANDS FOR, through threadFor(), never
+    // threadAt(index.row()): a tree numbers rows per parent.
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentIndex().isValid(), 15000);
+    QCOMPARE(model->threadFor(view->currentIndex()).threadId, threadId);
+}
+
+void TestMainWindow::aMessageSelectorOpensItsThread()
+{
+    // --message, through the worker's resolve and back. The resolved thread is
+    // the one that ends up current, which proves the reply signal is wired.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("one@example.org"),
+        QStringLiteral("First subject"), QStringLiteral("a@example.org"),
+        // Friday, verified with `date -d 2026-08-14 +%A`.
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body one.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("two@example.org"),
+        QStringLiteral("Second subject"), QStringLiteral("b@example.org"),
+        // Saturday, verified with `date -d 2026-08-15 +%A`.
+        QStringLiteral("Sat, 15 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body two.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    NotmuchWorker probe(backed.config().notmuchConfig());
+    const QString threadId =
+        probe.threadIdForTesting(QStringLiteral("id:two@example.org"));
+    QVERIFY(!threadId.isEmpty());
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    LaunchSelectors selectors;
+    selectors.messageId = QStringLiteral("two@example.org");
+    window.applySelectors(selectors);
+
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentIndex().isValid()
+                                 && model->threadFor(view->currentIndex())
+                                            .threadId
+                                        == threadId,
+                             15000);
+    QCOMPARE(model->rowCount(QModelIndex()), 1);
+}
+
+void TestMainWindow::aThreadSelectorThatIsNotHexIsRefused()
+{
+    // The thread id now comes from another program's command line or the
+    // socket, and recoverStaleThread() builds thread:<id> from it unquoted.
+    // notmuch thread ids are hex, so anything else is a miss and never reaches
+    // a query: "0000 or tag:inbox" would otherwise widen thread: into the
+    // whole inbox.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QSettings s(path, QSettings::IniFormat);
+        s.beginGroup(QStringLiteral("account.work"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("work"));
+        s.endGroup();
+        s.sync();
+    }
+    Config config;
+    config.load(path);
+
+    MainWindow window(config);
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:flagged"));
+
+    LaunchSelectors selectors;
+    selectors.threadId = QStringLiteral("0000 or tag:inbox");
+    window.applySelectors(selectors);
+
+    QCOMPARE(queryEdit->text(), QStringLiteral("tag:flagged"));
+
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+    QVERIFY2(status->text().contains(QStringLiteral("0000 or tag:inbox")),
+             "the refusal must be reported as a miss naming the value");
+}
+
+void TestMainWindow::anEmptySelectorSetChangesNothing()
+{
+    // A bare `qtmaildir` against a running window means "raise yourself". It
+    // must not re-run a query or move the selection: the user is looking at
+    // something, and a raise is not a navigation.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("qtmaildir.conf"));
+    {
+        QSettings s(path, QSettings::IniFormat);
+        s.setValue(QStringLiteral("startup_account"), QStringLiteral("work"));
+        s.beginGroup(QStringLiteral("account.work"));
+        s.setValue(QStringLiteral("maildir"), QStringLiteral("work"));
+        s.endGroup();
+        s.sync();
+    }
+    Config config;
+    config.load(path);
+
+    MainWindow window(config);
+    auto *queryEdit =
+        window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:flagged"));
+
+    window.applySelectors(LaunchSelectors());
+
+    QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
+    QCOMPARE(queryEdit->text(), QStringLiteral("tag:flagged"));
 }
 
 #include "test_mainwindow.moc"

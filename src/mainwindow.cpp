@@ -43,6 +43,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -99,6 +100,17 @@ QString MainWindow::uiStatePath()
     const QString base =
         QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation);
     return base + QStringLiteral("/qtmaildir/uistate.conf");
+}
+
+QString MainWindow::singleInstanceSocketPath()
+{
+    // Built exactly like uiStatePath(), including the GenericStateLocation
+    // choice and the reason for it. A socket is machine-written state, so it
+    // belongs beside the UI state and never in the hand-edited config
+    // directory.
+    const QString base =
+        QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation);
+    return base + QStringLiteral("/qtmaildir/qtmaildir.sock");
 }
 
 namespace {
@@ -2845,6 +2857,8 @@ void MainWindow::wireWorker()
             this, &MainWindow::onThreadTreeLoaded);
     connect(m_worker, &NotmuchWorker::messageLoaded,
             this, &MainWindow::onMessageLoaded);
+    connect(m_worker, &NotmuchWorker::threadForMessageResolved,
+            this, &MainWindow::onThreadForMessageResolved);
     connect(m_worker, &NotmuchWorker::threadDigestLoaded,
             this, &MainWindow::onThreadDigestLoaded);
     connect(m_worker, &NotmuchWorker::errorOccurred,
@@ -5207,6 +5221,93 @@ void MainWindow::updateStaleThreadNotice()
     }
 
     m_messageView->setStaleThread(threadId, messageId);
+}
+
+void MainWindow::applySelectors(const LaunchSelectors &selectors)
+{
+    // Nothing asked for. A bare launch against a running window means "raise
+    // yourself", which main() and the socket handler do around this call; from
+    // here there is nothing to change, and re-running a query would take the
+    // user off whatever they were reading.
+    if (selectors.isEmpty())
+        return;
+
+    // The account FIRST, and the order matters: a built-in filter composes
+    // with the dropdown, so a query run before the account moved would carry
+    // the old scope. This is the same ordering the startup path uses.
+    if (!selectors.account.isEmpty()) {
+        const int index = m_accountBox->findData(selectors.account);
+        if (index >= 0) {
+            m_accountBox->setCurrentIndex(index);
+        } else {
+            // Named, so a caller passing a stale key can be debugged from the
+            // client rather than from the caller.
+            showTransientStatus(
+                tr("No account named '%1'.").arg(selectors.account));
+        }
+    }
+
+    // A message id names a message INSIDE a conversation, so it has to be
+    // resolved to its thread before anything can be opened. Asked of the
+    // worker, which owns the only database handle; the answer arrives in
+    // onThreadForMessageResolved().
+    if (!selectors.messageId.isEmpty()) {
+        if (m_worker) {
+            QMetaObject::invokeMethod(
+                m_worker, "resolveThreadForMessage", Qt::QueuedConnection,
+                Q_ARG(QString, selectors.messageId));
+        }
+        // The thread selector, if any, is deliberately NOT also applied here:
+        // the message's own thread is what will open, and running a second
+        // query underneath it would race the one the resolve is about to
+        // start.
+        return;
+    }
+
+    if (!selectors.threadId.isEmpty()) {
+        // recoverStaleThread() builds thread:<id> UNQUOTED, which is safe for
+        // an id notmuch handed out and not for one from another program's
+        // command line: "0000 or tag:inbox" would widen the query to the whole
+        // inbox. notmuch thread ids are hex, so anything else is a miss and
+        // never reaches a query at all.
+        //
+        // anchoredPattern(), not ^...$: in PCRE a $ also matches before a
+        // trailing newline, so "0000\n" would pass a ^...$ check.
+        static const QRegularExpression hex(
+            QRegularExpression::anchoredPattern(QStringLiteral("[0-9a-fA-F]+")));
+        if (!hex.match(selectors.threadId).hasMatch()) {
+            showTransientStatus(
+                tr("No thread matched '%1'.").arg(selectors.threadId));
+            return;
+        }
+
+        // recoverStaleThread() is reused whole. It runs thread:<id>, remembers
+        // the target across the queued round trips the load takes, expands
+        // the thread when its row arrives and selects it. Item 91's
+        // double-click already reuses it; this is the third caller.
+        //
+        // The empty message id is meaningful to it: land on the ROOT row,
+        // which is the thread's first message.
+        recoverStaleThread(selectors.threadId, QString());
+    }
+}
+
+void MainWindow::onThreadForMessageResolved(const QString &messageId,
+                                            const QString &threadId)
+{
+    if (threadId.isEmpty()) {
+        // The miss path, and the window stays where it is. A message id from
+        // another program can be stale for every ordinary reason: the mail was
+        // deleted, moved by another client, or never indexed here.
+        showTransientStatus(tr("No message matched '%1'.").arg(messageId));
+        return;
+    }
+
+    // The THREAD, with that message selected. An id: query on the message
+    // alone would show one card out of its conversation, which item 91 settled
+    // is the wrong reading of "open this message". The thread id came from
+    // notmuch, so it is safe to hand on unquoted.
+    recoverStaleThread(threadId, messageId);
 }
 
 void MainWindow::recoverStaleThread(const QString &threadId,

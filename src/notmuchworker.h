@@ -143,8 +143,6 @@ private:
     /// threadIdForTesting() and resolveThreadForMessage().
     QString firstThreadIdMatching(const QString &query);
 
-public:
-
 public slots:
 
     /// Loads ONE message, for a message row selected in the list.

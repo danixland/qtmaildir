@@ -32,6 +32,7 @@
 #include "config.h"
 #include "htmlbuilder.h"
 #include "keymap.h"
+#include "launchselectors.h"
 // Included rather than forward-declared: SyncPhaseTracker is held by value, so
 // its size must be known here. MailSync itself stays a forward declaration.
 #include "mailsync.h"
@@ -131,6 +132,27 @@ public:
 
     QVector<PendingChange> pendingChangeSnapshot() const;
 
+    /// Applies what a launch asked for (item 200).
+    ///
+    /// ONE entry point, called both by main() at startup and by the socket
+    /// handler when a later launch arrives. Two paths through separate code
+    /// would drift, which is the lesson this file has already learned from
+    /// every other pair.
+    ///
+    /// An EMPTY selector set deliberately changes nothing: a bare launch
+    /// against a running window means "raise yourself", and a raise is not a
+    /// navigation. The user is looking at something.
+    ///
+    /// A selector that matches nothing leaves the window on its configured
+    /// view and names the miss in the status bar. Not an empty result, which
+    /// makes a stale link look like a broken client; not a refusal, which is
+    /// right for a script and wrong for a desktop launch.
+    ///
+    /// A thread id that is not hex is such a miss and never reaches notmuch:
+    /// recoverStaleThread() builds `thread:<id>` unquoted, which is safe for
+    /// ids notmuch handed out and not for ones from another program's argv.
+    void applySelectors(const LaunchSelectors &selectors);
+
     /// Opens the list behind the unsynced-changes count.
     ///
     /// Takes the snapshot, asks the worker to resolve its subjects, and shows
@@ -168,6 +190,13 @@ public:
     /// base64 geometry blob, nor be rewritten on exit (QSettings does not
     /// preserve comments or key order).
     static QString uiStatePath();
+
+    /// Path of the single-instance socket (item 200).
+    ///
+    /// Beside uiStatePath() and built the same way, so the two cannot drift.
+    /// GenericStateLocation, not StateLocation: the latter appends both the
+    /// organization and the application name, and both are "qtmaildir".
+    static QString singleInstanceSocketPath();
 
     /// Kernel lock table every MainWindow's SyncMonitor watches, "/proc/locks"
     /// unless a test overrides it.
@@ -627,6 +656,10 @@ private slots:
     /// sequencing above is only testable by driving it through the same entry
     /// point the button uses.
     void recoverStaleThread(const QString &threadId, const QString &messageId);
+
+    /// The worker's answer to a --message selector.
+    void onThreadForMessageResolved(const QString &messageId,
+                                    const QString &threadId);
 
     /// Drills into the double-clicked row: the whole thread, expanded, alone in
     /// the view, with that row's own message in the pane.

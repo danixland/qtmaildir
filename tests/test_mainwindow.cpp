@@ -330,6 +330,10 @@ private slots:
     void anEmptySelectorSetChangesNothing();
     void aBracketedMessageSelectorOpensThatMessage();
     void anAccountSelectorAloneShowsThatAccountsStartupView();
+    void aMessageSelectorFindsItsThreadInAnyAccount();
+    void aThreadSelectorFindsItsThreadInAnyAccount();
+    void aThreadOutsideTheGivenAccountIsAMissAndRestoresTheView();
+    void aThreadThatExistsNowhereIsAMissAndRestoresTheView();
     void everyBuiltinFilterButtonCarriesAnIconAndItsText();
     void theDraftsButtonIsAbsentWithoutADraftsFolder();
     void aQueryInTheMenuCanActuallyBeRun();
@@ -18199,6 +18203,156 @@ void TestMainWindow::anAccountSelectorAloneShowsThatAccountsStartupView()
 
     QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(QModelIndex()), 1, 15000);
     QCOMPARE(model->threadAt(0).subject, QStringLiteral("Work subject"));
+}
+
+void TestMainWindow::aMessageSelectorFindsItsThreadInAnyAccount()
+{
+    // The window is scoped to work and the message lives in personal. The
+    // recovery runs thread:<id> in the dropdown's scope, so without --account
+    // the conversation was searched for in work alone, came back empty, and
+    // the list went blank with nothing said. With no account asked for, the
+    // conversation is found wherever it lives.
+    WorkerBackedWindow backed;
+    QVERIFY2(buildTwoAccounts(backed), qPrintable(backed.error()));
+
+    NotmuchWorker probe(backed.config().notmuchConfig());
+    const QString threadId =
+        probe.threadIdForTesting(QStringLiteral("id:p1@example.org"));
+    QVERIFY(!threadId.isEmpty());
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    window.selectAccountForTesting(QStringLiteral("work"));
+    QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
+
+    LaunchSelectors selectors;
+    selectors.messageId = QStringLiteral("p1@example.org");
+    window.applySelectors(selectors);
+
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentIndex().isValid()
+                                 && model->threadFor(view->currentIndex())
+                                            .threadId
+                                        == threadId,
+                             15000);
+    // "All accounts" is the entry with no account key.
+    QCOMPARE(window.selectedAccountForTesting(), QString());
+}
+
+void TestMainWindow::aThreadSelectorFindsItsThreadInAnyAccount()
+{
+    // The --thread twin of the case above. A separate code path in
+    // applySelectors(), so it needs its own test: the message one passes with
+    // this path left scoped to work.
+    WorkerBackedWindow backed;
+    QVERIFY2(buildTwoAccounts(backed), qPrintable(backed.error()));
+
+    NotmuchWorker probe(backed.config().notmuchConfig());
+    const QString threadId =
+        probe.threadIdForTesting(QStringLiteral("id:p1@example.org"));
+    QVERIFY(!threadId.isEmpty());
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    window.selectAccountForTesting(QStringLiteral("work"));
+    QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
+
+    LaunchSelectors selectors;
+    selectors.threadId = threadId;
+    window.applySelectors(selectors);
+
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentIndex().isValid()
+                                 && model->threadFor(view->currentIndex())
+                                            .threadId
+                                        == threadId,
+                             15000);
+    QCOMPARE(window.selectedAccountForTesting(), QString());
+}
+
+/// Waits for the startup view to land and returns the query it ran, so a
+/// test can assert the same view came back after a miss.
+static QString settledStartupQuery(MainWindow &window, ThreadListModel *model)
+{
+    if (!QTest::qWaitFor([&]() { return model->rowCount(QModelIndex()) == 2; },
+                         15000))
+        return QString();
+    return window.lastRunQueryForTesting();
+}
+
+void TestMainWindow::aThreadOutsideTheGivenAccountIsAMissAndRestoresTheView()
+{
+    // --account work --thread <a personal thread>. The account was asked for,
+    // so the scope is kept and the thread is not found in it. That is a miss,
+    // and a miss names itself and leaves the user on the view they had rather
+    // than on an empty list.
+    WorkerBackedWindow backed;
+    QVERIFY2(buildTwoAccounts(backed), qPrintable(backed.error()));
+
+    NotmuchWorker probe(backed.config().notmuchConfig());
+    const QString threadId =
+        probe.threadIdForTesting(QStringLiteral("id:p1@example.org"));
+    QVERIFY(!threadId.isEmpty());
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    const QString before = settledStartupQuery(window, model);
+    QVERIFY(!before.isEmpty());
+    const quint64 generation = window.currentGenerationForTesting();
+
+    LaunchSelectors selectors;
+    selectors.account = QStringLiteral("work");
+    selectors.threadId = threadId;
+    window.applySelectors(selectors);
+
+    // The thread query DID run in the work scope, which is what makes this the
+    // out-of-scope case rather than one refused before reaching notmuch.
+    QVERIFY(window.currentGenerationForTesting() > generation);
+
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(threadId)
+                                 && window.lastRunQueryForTesting() == before
+                                 && model->rowCount(QModelIndex()) == 2,
+                             15000);
+    QCOMPARE(window.selectedAccountForTesting(), QString());
+}
+
+void TestMainWindow::aThreadThatExistsNowhereIsAMissAndRestoresTheView()
+{
+    // Well-formed hex, so it passes the syntax check and reaches notmuch, and
+    // matches nothing there. A stale link, which is the ordinary miss.
+    WorkerBackedWindow backed;
+    QVERIFY2(buildTwoAccounts(backed), qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(status);
+
+    const QString before = settledStartupQuery(window, model);
+    QVERIFY(!before.isEmpty());
+
+    const QString missing = QStringLiteral("0123456789abcdef");
+    LaunchSelectors selectors;
+    selectors.threadId = missing;
+    window.applySelectors(selectors);
+
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(missing)
+                                 && window.lastRunQueryForTesting() == before
+                                 && model->rowCount(QModelIndex()) == 2,
+                             15000);
+    // Still a miss a moment later: the restored query landing must not stamp
+    // its row count over the notice.
+    QTest::qWait(200);
+    QVERIFY(status->text().contains(missing));
 }
 
 #include "test_mainwindow.moc"

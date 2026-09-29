@@ -143,8 +143,8 @@ public:
     /// against a running window means "raise yourself", and a raise is not a
     /// navigation. The user is looking at something.
     ///
-    /// A selector that matches nothing leaves the window on its configured
-    /// view and names the miss in the status bar. Not an empty result, which
+    /// A selector that matches nothing leaves the window on the view it was
+    /// showing and names the miss in the status bar. Not an empty result, which
     /// makes a stale link look like a broken client; not a refusal, which is
     /// right for a script and wrong for a desktop launch.
     ///
@@ -757,6 +757,10 @@ private slots:
     /// count must persist while the selection does. A private slot so tests can
     /// drive it through the meta-object.
     void showTransientStatus(const QString &text);
+
+    /// Names a launch selector's miss and puts back the view m_launchView
+    /// recorded, re-running its query only when the list has since changed.
+    void reportLaunchMiss(const QString &text);
 
     /// Announces an action that has just been sent, saying so when a sync is
     /// holding it rather than claiming it landed.
@@ -1849,6 +1853,41 @@ private:
     /// they did not ask for would yank the view.
     QString m_recoverThreadId;
     QString m_recoverMessageId;
+
+    /// What was on screen before a launch's selectors started changing it, so
+    /// a miss can put it back (item 200: "the startup view stays and the miss
+    /// is named").
+    ///
+    /// The bar's text and the query the list was built from are BOTH kept:
+    /// the scope a re-run needs is read off whether they differ. Equal means
+    /// the text was already scoped (a filter, or All accounts); different
+    /// means runQuery() wrapped it in the dropdown's account.
+    struct LaunchView
+    {
+        int accountIndex = -1;
+        QString queryText;
+        QString lastQuery;
+        bool flat = false;
+    };
+    LaunchView m_launchView;
+
+    /// Whether the launch that set m_launchView named an account that exists.
+    /// Read when a --message resolve lands, which is after applySelectors()
+    /// has returned: without --account the conversation is looked for in
+    /// every account, with it the given scope is kept.
+    bool m_launchAccountGiven = false;
+
+    /// The miss to report if the selector's own thread:<id> query returns no
+    /// rows. Set AFTER recoverStaleThread(), for the reason the recovery target
+    /// is, and cleared by runQuery(), so only the selector's query is judged
+    /// by it and the stale-thread notice and double-click, which share the
+    /// recovery, keep their behaviour.
+    QString m_launchMiss;
+
+    /// A miss waiting for the restored view's query to land, since that
+    /// query's own row count is written to the status bar when it does and
+    /// would cover a notice shown any earlier.
+    QString m_launchMissNotice;
 
     /// The thread the pane's current MESSAGE belongs to.
     ///

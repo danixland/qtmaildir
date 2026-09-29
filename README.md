@@ -54,10 +54,15 @@ qtmaildir [options]
   --message <id>     Open this message, inside its thread
 ```
 
-The three selectors combine: `--account work --message '<abc@example.org>'`
-opens that message in the work account's view. `--thread` takes a notmuch
-thread id (hex digits only); anything else is reported as a miss in the status
-bar and never reaches notmuch. Qt's own options, such as `-platform` and
+`--account` on its own opens the startup view (`startup_query`) in that
+account. `--thread` and `--message` open the whole conversation with that
+message selected, and look for it in every account, switching the account
+selector to All accounts. The three selectors combine: `--account work
+--message '<abc@example.org>'` looks for that message in the work account only,
+and a message that lives elsewhere is a miss. `--message` takes a Message-ID
+with or without its angle brackets. `--thread` takes a notmuch thread id (hex
+digits only); anything else is reported as a miss in the status bar and never
+reaches notmuch. Qt's own options, such as `-platform` and
 `-style`, are accepted alongside them. An unknown option or a missing value
 prints `qtmaildir: <error>` on stderr and exits with status 2.
 
@@ -73,9 +78,10 @@ Under a Wayland compositor, raising a window is a request rather than a
 command: the compositor may honour it, or apply its own focus policy. The
 selectors are applied either way.
 
-A selector that matches nothing, a stale thread id or an account key that is
-not configured, leaves the window on its normal startup view and says what
-missed in the status bar. It is never a reason to refuse to start.
+A selector that matches nothing, a stale thread or message id, one outside
+the account given with `--account`, or an account key that is not configured,
+leaves the window on the view it was showing and says what missed in the status
+bar. It is never a reason to refuse to start.
 
 ## Building
 

@@ -3727,6 +3727,8 @@ void MainWindow::runQuery(FlatResult flat, AccountScope scope)
     // own query does not clear it.
     m_recoverThreadId.clear();
     m_recoverMessageId.clear();
+    m_launchMiss.clear();
+    m_launchMissNotice.clear();
 
     ++m_generation;
     m_model->clear();
@@ -3847,6 +3849,26 @@ void MainWindow::onQueryFinished(int total, quint64 generation)
     // a thing that can honestly be acted on.
     m_queryComplete = true;
     updateViewWideActions();
+
+    // A launch selector's thread:<id> coming back empty: the thread is not in
+    // the scope it was looked for in, or anywhere. Named, and the view the
+    // user had comes back, rather than leaving an empty list that makes a
+    // stale link look like a broken client.
+    if (!m_launchMiss.isEmpty()) {
+        const QString miss = m_launchMiss;
+        m_launchMiss.clear();
+        if (total == 0) {
+            reportLaunchMiss(miss);
+            return;
+        }
+    }
+
+    // The restored view has landed, so its row count is on the bar and the
+    // miss can go over it.
+    if (!m_launchMissNotice.isEmpty()) {
+        showTransientStatus(m_launchMissNotice);
+        m_launchMissNotice.clear();
+    }
 
     // A recovery's own thread:<id> query landing. The rows exist now, so the
     // thread can be expanded; the message inside it is selected once its
@@ -5265,6 +5287,12 @@ void MainWindow::applySelectors(const LaunchSelectors &requested)
             selectors.messageId.mid(1, selectors.messageId.size() - 2);
     }
 
+    // Recorded BEFORE anything moves, the dropdown included, so a miss can
+    // put back exactly what the user was looking at when the launch arrived.
+    m_launchView = { m_accountBox->currentIndex(), m_queryEdit->text(),
+                     m_lastQuery, m_sentView };
+    m_launchAccountGiven = false;
+
     // The account FIRST, and the order matters: a built-in filter composes
     // with the dropdown, so a query run before the account moved would carry
     // the old scope. This is the same ordering the startup path uses.
@@ -5272,6 +5300,7 @@ void MainWindow::applySelectors(const LaunchSelectors &requested)
         const int index = m_accountBox->findData(selectors.account);
         if (index >= 0) {
             m_accountBox->setCurrentIndex(index);
+            m_launchAccountGiven = true;
         } else {
             // Named, so a caller passing a stale key can be debugged from the
             // client rather than from the caller.
@@ -5323,10 +5352,18 @@ void MainWindow::applySelectors(const LaunchSelectors &requested)
         static const QRegularExpression hex(
             QRegularExpression::anchoredPattern(QStringLiteral("[0-9a-fA-F]+")));
         if (!hex.match(selectors.threadId).hasMatch()) {
-            showTransientStatus(
+            reportLaunchMiss(
                 tr("No thread matched '%1'.").arg(selectors.threadId));
             return;
         }
+
+        // Without --account the thread is looked for in EVERY account. The
+        // recovery runs in the dropdown's scope, so a window left on work
+        // searched work alone for a personal thread and blanked the list. With
+        // --account the caller chose the scope, and a thread outside it is a
+        // miss, reported below when the query comes back empty.
+        if (!m_launchAccountGiven)
+            m_accountBox->setCurrentIndex(m_accountBox->findData(QString()));
 
         // recoverStaleThread() is reused whole. It runs thread:<id>, remembers
         // the target across the queued round trips the load takes, expands
@@ -5336,6 +5373,8 @@ void MainWindow::applySelectors(const LaunchSelectors &requested)
         // The empty message id is meaningful to it: land on the ROOT row,
         // which is the thread's first message.
         recoverStaleThread(selectors.threadId, QString());
+        // After the query, which clears it: this is that query's own miss.
+        m_launchMiss = tr("No thread matched '%1'.").arg(selectors.threadId);
     }
 }
 
@@ -5346,15 +5385,44 @@ void MainWindow::onThreadForMessageResolved(const QString &messageId,
         // The miss path, and the window stays where it is. A message id from
         // another program can be stale for every ordinary reason: the mail was
         // deleted, moved by another client, or never indexed here.
-        showTransientStatus(tr("No message matched '%1'.").arg(messageId));
+        reportLaunchMiss(tr("No message matched '%1'.").arg(messageId));
         return;
     }
+
+    // Every account unless the launch named one, as for --thread.
+    if (!m_launchAccountGiven)
+        m_accountBox->setCurrentIndex(m_accountBox->findData(QString()));
 
     // The THREAD, with that message selected. An id: query on the message
     // alone would show one card out of its conversation, which item 91 settled
     // is the wrong reading of "open this message". The thread id came from
     // notmuch, so it is safe to hand on unquoted.
     recoverStaleThread(threadId, messageId);
+    // Named by the MESSAGE, which is what the caller asked for; the thread id
+    // is ours and would mean nothing to them.
+    m_launchMiss = tr("No message matched '%1'.").arg(messageId);
+}
+
+void MainWindow::reportLaunchMiss(const QString &text)
+{
+    const LaunchView view = m_launchView;
+    m_accountBox->setCurrentIndex(view.accountIndex);
+
+    // Nothing ran since the launch arrived, so the list is still the view the
+    // user had and a re-run would only flicker it. A refused thread id and a
+    // message that did not resolve both land here.
+    if (m_lastQuery == view.lastQuery || view.lastQuery.isEmpty()) {
+        showTransientStatus(text);
+        return;
+    }
+
+    m_queryEdit->setText(view.queryText);
+    runQuery(view.flat ? FlatResult::Yes : FlatResult::No,
+             view.queryText.trimmed() == view.lastQuery
+                 ? AccountScope::AlreadyScoped
+                 : AccountScope::Apply);
+    // After runQuery(), which clears it.
+    m_launchMissNotice = text;
 }
 
 void MainWindow::recoverStaleThread(const QString &threadId,

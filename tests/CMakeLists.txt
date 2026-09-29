@@ -93,6 +93,7 @@ add_qtmaildir_test(composewindow)
 add_qtmaildir_test(formattoolbar)
 add_qtmaildir_test(senddialog)
 add_qtmaildir_test(launchselectors)
+add_qtmaildir_test(singleinstance)
 add_qtmaildir_test(translations)
 # Asserts on the tracked .ts rather than the generated .qm: an untranslated
 # string is dropped by lrelease, so it is invisible in the .qm and shows up

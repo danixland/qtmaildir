@@ -5226,14 +5226,33 @@ void MainWindow::updateStaleThreadNotice()
     m_messageView->setStaleThread(threadId, messageId);
 }
 
-void MainWindow::applySelectors(const LaunchSelectors &selectors)
+void MainWindow::applySelectors(const LaunchSelectors &requested)
 {
     // Nothing asked for. A bare launch against a running window means "raise
     // yourself", which main() and the socket handler do around this call; from
     // here there is nothing to change, and re-running a query would take the
     // user off whatever they were reading.
-    if (selectors.isEmpty())
+    if (requested.isEmpty())
         return;
+
+    // A Message-ID is written <local@domain> in every header a caller copies
+    // it from, and notmuch stores it WITHOUT the angle brackets, so the
+    // bracketed form matched nothing. Stripped ONCE, here, so the resolve
+    // query and the recovery's selection target both see the bare id: fixing
+    // only the resolve would open the thread and then fail to find the
+    // message inside it. One enclosing pair only, as mimeparser.cpp does for a
+    // Content-Id; an id with brackets of its own inside is left as it is.
+    //
+    // No guard against `/.../`: notmuch reads a slashed value as a regex for
+    // `mid:` but NOT for `id:`, verified against notmuch 0.39, where
+    // id:"/.*/" counts 0 on an index where mid:"/.*/" counts every message.
+    LaunchSelectors selectors = requested;
+    selectors.messageId = selectors.messageId.trimmed();
+    if (selectors.messageId.startsWith(QLatin1Char('<'))
+        && selectors.messageId.endsWith(QLatin1Char('>'))) {
+        selectors.messageId =
+            selectors.messageId.mid(1, selectors.messageId.size() - 2);
+    }
 
     // The account FIRST, and the order matters: a built-in filter composes
     // with the dropdown, so a query run before the account moved would carry

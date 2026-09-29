@@ -319,6 +319,7 @@ private slots:
     void aMessageSelectorOpensItsThread();
     void aThreadSelectorThatIsNotHexIsRefused();
     void anEmptySelectorSetChangesNothing();
+    void aBracketedMessageSelectorOpensThatMessage();
     void everyBuiltinFilterButtonCarriesAnIconAndItsText();
     void theDraftsButtonIsAbsentWithoutADraftsFolder();
     void aQueryInTheMenuCanActuallyBeRun();
@@ -18064,6 +18065,52 @@ void TestMainWindow::anEmptySelectorSetChangesNothing()
 
     QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
     QCOMPARE(queryEdit->text(), QStringLiteral("tag:flagged"));
+}
+
+void TestMainWindow::aBracketedMessageSelectorOpensThatMessage()
+{
+    // A Message-ID is written <local@domain> in every header it appears in, so
+    // that is the form a caller copies. notmuch stores it WITHOUT the angle
+    // brackets, so the bracketed form matched nothing and the launch reported
+    // a miss for a message that was right there.
+    //
+    // The target is a REPLY, not the root. The recovery lands on the root
+    // whenever it cannot find the message it was given, so a root target
+    // would pass with the brackets stripped for the resolve and left on for
+    // the selection.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("one@example.org"),
+        QStringLiteral("First subject"), QStringLiteral("a@example.org"),
+        // Friday, verified with `date -d 2026-08-14 +%A`.
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body one.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("two@example.org"),
+        QStringLiteral("Re: First subject"), QStringLiteral("b@example.org"),
+        // Saturday, verified with `date -d 2026-08-15 +%A`.
+        QStringLiteral("Sat, 15 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body two."), true,
+        QStringLiteral("one@example.org")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    LaunchSelectors selectors;
+    // Surrounding whitespace too, which a shell quote or a copy picks up.
+    selectors.messageId = QStringLiteral(" <two@example.org> ");
+    window.applySelectors(selectors);
+
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentIndex().isValid()
+                                 && model->isMessageRow(view->currentIndex())
+                                 && model->messageAt(view->currentIndex())
+                                            .messageId
+                                        == QStringLiteral("two@example.org"),
+                             15000);
 }
 
 #include "test_mainwindow.moc"

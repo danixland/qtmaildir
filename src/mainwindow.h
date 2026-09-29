@@ -151,7 +151,7 @@ public:
     /// A thread id that is not hex is such a miss and never reaches notmuch:
     /// recoverStaleThread() builds `thread:<id>` unquoted, which is safe for
     /// ids notmuch handed out and not for ones from another program's argv.
-    void applySelectors(const LaunchSelectors &selectors);
+    void applySelectors(const LaunchSelectors &requested);
 
     /// Opens the list behind the unsynced-changes count.
     ///

@@ -11,6 +11,12 @@ point at which they are stable.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-09-29
+
+A calendar window over the vdirsyncer vdir, with a month grid, an agenda and
+undoable edits, and contact completion in the composer and the query bar. Both
+are off until their directory is configured.
+
 ### Added
 
 - **A calendar window.** **View > Calendar** opens a month grid, with an Agenda

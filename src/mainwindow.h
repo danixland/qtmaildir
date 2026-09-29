@@ -582,6 +582,13 @@ private:
     void runQuery(FlatResult flat,
                   AccountScope scope = AccountScope::Apply);
 
+    /// Runs the configured startup view in the dropdown's CURRENT account.
+    ///
+    /// The constructor's startup path and a lone --account selector share it,
+    /// so both resolve the view the same way: a generated filter is asked for
+    /// that account's own query, never has its all-accounts query wrapped.
+    void runStartupView();
+
     /// Builds the row of saved-query buttons, the overflow menu and Sent.
     ///
     /// Its own row since item 23: an unbounded list of buttons sharing the

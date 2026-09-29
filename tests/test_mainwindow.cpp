@@ -189,6 +189,8 @@ public:
             // went unnoticed as broken once already.
             out << "[general]\n"
                 << "notmuch_config=" << m_fixture.configPath() << "\n";
+            if (!m_startupQuery.isEmpty())
+                out << "startup_query=" << m_startupQuery << "\n";
             if (!accountKey.isEmpty()) {
                 // QSettings reads `/` in a section name as a group separator,
                 // so the section is [account.key], never [account/key].
@@ -239,6 +241,12 @@ public:
         return true;
     }
 
+    /// Writes `startup_query` into [general]. Call before build(). For a test
+    /// that needs a startup view whose per-account query is not simply the
+    /// all-accounts one wrapped in the account's path, which is what tells a
+    /// generated scope apart from a wrapped one.
+    void setStartupQuery(const QString &name) { m_startupQuery = name; }
+
     NotmuchFixture &fixture() { return m_fixture; }
     const Config &config() const { return m_config; }
     QString error() const { return m_error; }
@@ -250,6 +258,7 @@ private:
     QString m_error;
     QList<AccountSpec> m_accounts;
     QString m_composeKey;
+    QString m_startupQuery;
 };
 
 /// MainWindow is mostly wiring. Cases that need a real database opt into one
@@ -320,6 +329,7 @@ private slots:
     void aThreadSelectorThatIsNotHexIsRefused();
     void anEmptySelectorSetChangesNothing();
     void aBracketedMessageSelectorOpensThatMessage();
+    void anAccountSelectorAloneShowsThatAccountsStartupView();
     void everyBuiltinFilterButtonCarriesAnIconAndItsText();
     void theDraftsButtonIsAbsentWithoutADraftsFolder();
     void aQueryInTheMenuCanActuallyBeRun();
@@ -18060,11 +18070,16 @@ void TestMainWindow::anEmptySelectorSetChangesNothing()
         window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
     QVERIFY(queryEdit);
     queryEdit->setText(QStringLiteral("tag:flagged"));
+    const quint64 generation = window.currentGenerationForTesting();
 
     window.applySelectors(LaunchSelectors());
 
     QCOMPARE(window.selectedAccountForTesting(), QStringLiteral("work"));
     QCOMPARE(queryEdit->text(), QStringLiteral("tag:flagged"));
+    // The bar and the dropdown can both survive a query that re-ran them, so
+    // those two alone pass against a raise that navigates. Every query bumps
+    // the generation, whatever it runs.
+    QCOMPARE(window.currentGenerationForTesting(), generation);
 }
 
 void TestMainWindow::aBracketedMessageSelectorOpensThatMessage()
@@ -18111,6 +18126,79 @@ void TestMainWindow::aBracketedMessageSelectorOpensThatMessage()
                                             .messageId
                                         == QStringLiteral("two@example.org"),
                              15000);
+}
+
+/// Two accounts, one inbox message each, for the scope cases below. The two
+/// accounts hold DIFFERENT threads, so a query scoped to the wrong one shows a
+/// different row rather than accidentally the right one.
+static bool buildTwoAccounts(WorkerBackedWindow &backed,
+                             const QString &folder = QStringLiteral("inbox"))
+{
+    // Friday and Saturday, verified with `date -d 2026-08-14 +%A` and
+    // `date -d 2026-08-15 +%A`: Qt::RFC2822Date validates the weekday.
+    if (!backed.fixture().addMessage(
+            QStringLiteral("work/") + folder, QStringLiteral("w1@example.org"),
+            QStringLiteral("Work subject"), QStringLiteral("a@example.org"),
+            QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+            QStringLiteral("Work body.")))
+        return false;
+    if (!backed.fixture().addMessage(
+            QStringLiteral("personal/") + folder, QStringLiteral("p1@example.org"),
+            QStringLiteral("Personal subject"), QStringLiteral("b@example.org"),
+            QStringLiteral("Sat, 15 Aug 2026 10:00:00 +0200"),
+            QStringLiteral("Personal body.")))
+        return false;
+
+    WorkerBackedWindow::AccountSpec work;
+    work.key = QStringLiteral("work");
+    work.maildir = QStringLiteral("work");
+    work.trash = QStringLiteral("Trash");
+    WorkerBackedWindow::AccountSpec personal;
+    personal.key = QStringLiteral("personal");
+    personal.maildir = QStringLiteral("personal");
+    personal.trash = QStringLiteral("Trash");
+    return backed.buildWithAccounts({ work, personal });
+}
+
+void TestMainWindow::anAccountSelectorAloneShowsThatAccountsStartupView()
+{
+    // --account on its own moved the dropdown and nothing else, because the
+    // dropdown deliberately does not re-run the query: by hand the user picks
+    // a filter next. From another program there is no next click, so the
+    // launch changed nothing the user could see.
+    //
+    // The startup view is the TRASH, because its per-account query is the
+    // account's own trash path. Most filters are a tag, and for a tag the
+    // generated query and the wrapped one are the same string, so a test on
+    // one of those passes against the wrap it exists to rule out.
+    WorkerBackedWindow backed;
+    backed.setStartupQuery(QStringLiteral("trash"));
+    QVERIFY2(buildTwoAccounts(backed, QStringLiteral("Trash")),
+             qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+
+    // The startup view over All accounts shows both, so the assertion below
+    // measures a change rather than a view that was already one row.
+    QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(QModelIndex()), 2, 15000);
+
+    LaunchSelectors selectors;
+    selectors.account = QStringLiteral("work");
+    window.applySelectors(selectors);
+
+    // The GENERATED string for the work account, never the all-accounts query
+    // wrapped in the work scope: that wrap returns the right rows too, which
+    // is why a row count alone cannot tell the two apart.
+    const Config &config = backed.config();
+    const QString expected =
+        config.resolvedQuery(config.startupSavedQuery(), QStringLiteral("work"));
+    QVERIFY(!expected.isEmpty());
+    QCOMPARE(window.lastRunQueryForTesting(), expected);
+
+    QTRY_COMPARE_WITH_TIMEOUT(model->rowCount(QModelIndex()), 1, 15000);
+    QCOMPARE(model->threadAt(0).subject, QStringLiteral("Work subject"));
 }
 
 #include "test_mainwindow.moc"

@@ -654,13 +654,24 @@ MainWindow::MainWindow(const Config &config, QWidget *parent)
             m_accountBox->setCurrentIndex(index);
     }
 
+    runStartupView();
+}
+
+void MainWindow::runStartupView()
+{
+    // The dropdown's account, which the constructor has just set from
+    // startup_account and applySelectors() from --account. Read rather than
+    // passed, because the dropdown is what runQuery() scopes with below, and
+    // two sources for one scope is how they come to disagree.
+    const QString accountKey = m_accountBox->currentData().toString();
+
     // resolvedQuery(), not startup.query: a generated entry stores no query at
     // all, since its text is composed from the accounts at run time. Reading
     // the field directly meant a startup_query naming a built-in filter opened
     // an empty bar and ran nothing.
     const SavedQuery startup = m_config.startupSavedQuery();
     const QString startupQuery =
-        m_config.resolvedQuery(startup, startupAccount);
+        m_config.resolvedQuery(startup, accountKey);
     if (!startupQuery.isEmpty()) {
         m_queryEdit->setText(startupQuery);
 
@@ -5266,6 +5277,20 @@ void MainWindow::applySelectors(const LaunchSelectors &requested)
             // client rather than from the caller.
             showTransientStatus(
                 tr("No account named '%1'.").arg(selectors.account));
+        }
+
+        // The account on its own is a request for that account's VIEW, and
+        // moving the dropdown is not one: by design the dropdown only rescopes
+        // the filter buttons and leaves the list alone until the user clicks
+        // one, and a launch from another program has no next click. So the
+        // startup view runs again, resolved for the new account.
+        //
+        // Not when a thread or message was given, whose own query is about to
+        // replace the list; running this too would race it.
+        if (index >= 0 && selectors.threadId.isEmpty()
+            && selectors.messageId.isEmpty()) {
+            runStartupView();
+            return;
         }
     }
 

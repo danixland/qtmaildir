@@ -18031,6 +18031,8 @@ void TestMainWindow::aThreadSelectorThatIsNotHexIsRefused()
     QVERIFY(status);
     QVERIFY2(status->text().contains(QStringLiteral("0000 or tag:inbox")),
              "the refusal must be reported as a miss naming the value");
+    // The value came from another program, so the label must not interpret it.
+    QCOMPARE(status->textFormat(), Qt::PlainText);
 }
 
 void TestMainWindow::anEmptySelectorSetChangesNothing()

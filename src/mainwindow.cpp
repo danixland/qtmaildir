@@ -698,6 +698,9 @@ void MainWindow::buildUi()
     // it before the rest of the UI exists.
     m_statusLabel = new QLabel(this);
     m_statusLabel->setObjectName(QStringLiteral("statusMessage"));
+    // Plain text, stated rather than left to AutoText's guess: a launch
+    // selector from another program's command line is echoed here on a miss.
+    m_statusLabel->setTextFormat(Qt::PlainText);
     statusBar()->addWidget(m_statusLabel);
 
     // Transient messages describe an EVENT and go stale: "Sync complete" reads

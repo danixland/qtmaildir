@@ -764,6 +764,30 @@ void NotmuchWorker::loadThreadTree(const QString &threadId,
 
 QString NotmuchWorker::threadIdForTesting(const QString &query)
 {
+    return firstThreadIdMatching(query);
+}
+
+void NotmuchWorker::resolveThreadForMessage(const QString &messageId)
+{
+    if (messageId.isEmpty()) {
+        emit threadForMessageResolved(messageId, QString());
+        return;
+    }
+    // This id came off another program's command line, and notmuch reads
+    // unquoted query syntax AS syntax. Quoted here rather than through
+    // SearchTerm::quote(): that escapes an embedded quote with a backslash,
+    // which notmuch's (Xapian's) parser does not honour inside a phrase, so
+    // the quote closes the phrase and the rest is parsed as query. notmuch
+    // escapes a quote by DOUBLING it.
+    QString escaped = messageId;
+    escaped.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+    emit threadForMessageResolved(
+        messageId,
+        firstThreadIdMatching(QStringLiteral("id:\"%1\"").arg(escaped)));
+}
+
+QString NotmuchWorker::firstThreadIdMatching(const QString &query)
+{
     if (!openReadOnly())
         return QString();
 

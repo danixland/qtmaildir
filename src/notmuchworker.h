@@ -138,6 +138,13 @@ public:
     /// be reached across the thread boundary by accident.
     QString threadIdForTesting(const QString &query);
 
+private:
+    /// The first thread id matching \p query, or empty. Shared by
+    /// threadIdForTesting() and resolveThreadForMessage().
+    QString firstThreadIdMatching(const QString &query);
+
+public:
+
 public slots:
 
     /// Loads ONE message, for a message row selected in the list.
@@ -146,6 +153,21 @@ public slots:
     /// is an ordinary race after a reindex rather than an error worth
     /// reporting.
     void loadMessage(const QString &messageId, quint64 generation);
+
+    /// Answers which thread a Message-ID belongs to (item 200).
+    ///
+    /// For `--message`, which knows an id and needs the conversation: opening
+    /// a message means opening its thread with that message selected, never an
+    /// `id:` query showing one card out of a conversation (item 91).
+    ///
+    /// Answers with an EMPTY thread id when the message is unknown rather than
+    /// staying silent, since the window reports the miss and a slot that never
+    /// replies would leave it waiting forever.
+    ///
+    /// **The id is quoted before it reaches notmuch.** Unlike every other id in
+    /// this class, this one came from argv rather than from notmuch itself, and
+    /// notmuch parses garbage happily while matching nothing.
+    void resolveThreadForMessage(const QString &messageId);
 
     /// Applies tag changes. Opens the database read-write, applies, and closes
     /// immediately: notmuch's write lock is exclusive process-wide, so holding
@@ -345,6 +367,12 @@ signals:
     void threadTreeLoaded(const QVector<MessageNode> &nodes,
                           quint64 generation);
     void messageLoaded(const QVector<MessageRef> &messages, quint64 generation);
+
+    /// The answer to resolveThreadForMessage(). The message id is echoed back
+    /// so a caller can tell which request this answers; the thread id is empty
+    /// when nothing matched.
+    void threadForMessageResolved(const QString &messageId,
+                                  const QString &threadId);
 
     /// The dashboard's digest. `generation` is the dashboard's own counter,
     /// echoed back so a stale answer can be discarded.

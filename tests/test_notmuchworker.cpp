@@ -70,6 +70,9 @@ private slots:
 
     void loadMessageReturnsOnlyThatMessage();
     void loadMessageOnAnUnknownIdReturnsNothing();
+    void resolvingAMessageIdAnswersItsThreadId();
+    void resolvingAnUnknownMessageIdAnswersEmpty();
+    void resolvingAMessageIdQuotesTheId();
     void aQueryCarriesEachThreadsFirstMessageId();
     void aSentQueryCarriesTheMatchedMessageNotTheThreadsFirst();
     void queryCarriesTheFirstMessageSender();
@@ -456,6 +459,62 @@ void TestNotmuchWorker::loadMessageOnAnUnknownIdReturnsNothing()
 
     QCOMPARE(loaded.count(), 1);
     QVERIFY(loaded.first().at(0).value<QVector<MessageRef>>().isEmpty());
+    QCOMPARE(errors.count(), 0);
+}
+
+void TestNotmuchWorker::resolvingAMessageIdAnswersItsThreadId()
+{
+    // What --message needs (item 200): the CLI knows a Message-ID and the
+    // window needs the thread id, because opening the message means opening
+    // its conversation with that message selected.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy resolved(&worker, &NotmuchWorker::threadForMessageResolved);
+
+    worker.resolveThreadForMessage(QStringLiteral("a2@example.org"));
+
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.first().at(0).toString(), QStringLiteral("a2@example.org"));
+
+    // a2 is a REPLY, so its thread id is the thread's, not its own. It must
+    // agree with the thread a1 resolves to.
+    const QString threadId = resolved.first().at(1).toString();
+    QVERIFY(!threadId.isEmpty());
+    QCOMPARE(threadId,
+             worker.threadIdForTesting(QStringLiteral("id:a1@example.org")));
+}
+
+void TestNotmuchWorker::resolvingAnUnknownMessageIdAnswersEmpty()
+{
+    // Answers rather than staying silent: the window shows the miss in the
+    // status bar, and a slot that never replies would leave it waiting.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy resolved(&worker, &NotmuchWorker::threadForMessageResolved);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.resolveThreadForMessage(QStringLiteral("nonexistent@example.org"));
+
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.first().at(0).toString(),
+             QStringLiteral("nonexistent@example.org"));
+    QVERIFY(resolved.first().at(1).toString().isEmpty());
+    QCOMPARE(errors.count(), 0);
+}
+
+void TestNotmuchWorker::resolvingAMessageIdQuotesTheId()
+{
+    // The id comes from argv, not from notmuch, and notmuch's parser rejects
+    // almost nothing: an unquoted id carrying query syntax would be PARSED as
+    // syntax. It must stay a miss, with no error.
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy resolved(&worker, &NotmuchWorker::threadForMessageResolved);
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+
+    worker.resolveThreadForMessage(
+        QStringLiteral("a2@example.org\" or from:alice or \"x"));
+
+    QCOMPARE(resolved.count(), 1);
+    QVERIFY2(resolved.first().at(1).toString().isEmpty(),
+             "an id carrying query syntax resolved to a thread: it was not quoted");
     QCOMPARE(errors.count(), 0);
 }
 

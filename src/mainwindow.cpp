@@ -5382,8 +5382,9 @@ void MainWindow::applySelectors(const LaunchSelectors &requested)
         // the thread when its row arrives and selects it. Item 91's
         // double-click already reuses it; this is the third caller.
         //
-        // The empty message id is meaningful to it: land on the ROOT row,
-        // which is the thread's first message.
+        // The empty message id is meaningful to it: land on the thread's own
+        // row, the dashboard for a conversation and the message for a thread
+        // of one.
         recoverStaleThread(selectors.threadId, QString());
         // After the query, which clears it: this is that query's own miss.
         m_launchMiss = tr("No thread matched '%1'.").arg(selectors.threadId);
@@ -5492,10 +5493,16 @@ void MainWindow::onRowDoubleClicked(const QModelIndex &index)
         messageId = node.messageId;
     } else {
         threadId = m_model->data(index, ThreadListModel::ThreadIdRole).toString();
-        // The thread's first message, so the pane opens on it rather than on
-        // nothing. Empty is fine and means the same thing to the recovery: land
-        // on the root, which IS that message.
-        messageId = m_model->data(index, ThreadListModel::MessageIdRole).toString();
+        // A CONVERSATION row asks for the conversation, so no message is
+        // named and the recovery lands on the row itself, on the dashboard. A
+        // named message is always a message row to the recovery, which would
+        // open the root's own row instead.
+        //
+        // A thread of one is its message: named, so the pane opens on it.
+        // Empty is fine there too and means the same thing to the recovery.
+        if (!m_model->isConversationRow(index))
+            messageId =
+                m_model->data(index, ThreadListModel::MessageIdRole).toString();
     }
 
     if (threadId.isEmpty())
@@ -5600,18 +5607,31 @@ void MainWindow::applyPendingRecovery()
         // happen before any attempt to find one.
         m_threadView->expand(thread);
 
-        // The thread's first message IS the root card rather than a child row:
-        // setThreadMessages drops depth 0 because the root stands for it, so
-        // looking for it among the children finds nothing and the selection
-        // would silently land nowhere.
+        // A named message is ALWAYS a message row, never the conversation.
+        // The user's rule for --message: "we target ALWAYS the message. If
+        // that message is part of a thread we show it inside the thread, but
+        // still the message. If I want the thread there's --thread." The
+        // stale notice and a double-click on a message row mean the same.
+        //
+        // So the thread row answers for a message only when it is NOT a
+        // conversation: a thread of one is its message and has no child to
+        // select. A conversation carries its first message as child 0 since
+        // item 177 (setThreadMessages keeps it), so the root is found among
+        // the children below like any reply. Matching the conversation row on
+        // its own message id, as this did, landed on the dashboard.
+        //
+        // An empty id is the request for the thread itself: --thread, a
+        // double-click on a conversation row, a stale dashboard.
         //
         // selectRowAt(), not setCurrentIndex(): a current index without a
         // selection is what QTreeView sets by itself on focus, and
         // onThreadSelected() deliberately ignores that, so pointing at the row
         // renders nothing and leaves the pane blank.
         if (m_recoverMessageId.isEmpty()
-            || m_model->data(thread, ThreadListModel::MessageIdRole).toString()
-                   == m_recoverMessageId) {
+            || (!m_model->isConversationRow(thread)
+                && m_model->data(thread, ThreadListModel::MessageIdRole)
+                           .toString()
+                       == m_recoverMessageId)) {
             selectRowAt(thread);
             m_recoverThreadId.clear();
             m_recoverMessageId.clear();
@@ -5627,9 +5647,8 @@ void MainWindow::applyPendingRecovery()
         // (`src/threadlistmodel.cpp`), so the root check above cannot match yet
         // and returning here would leave the user looking at a collapsed thread
         // and a blank pane until the replies happen to arrive. Selecting the
-        // thread renders its first message immediately, which is the right
-        // answer outright when that is what they were reading, and is refined
-        // to the correct reply on the next pass when it is not.
+        // thread puts something on screen immediately, and it is refined to
+        // the named message's own row, the root's included, on the next pass.
         //
         // The target is deliberately NOT cleared: this pass is provisional.
         if (m_model->rowCount(thread) == 0) {

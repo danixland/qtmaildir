@@ -55,9 +55,10 @@ qtmaildir [options]
 ```
 
 `--account` on its own opens the startup view (`startup_query`) in that
-account. `--thread` and `--message` open the whole conversation with that
-message selected, and look for it in every account, switching the account
-selector to All accounts. The three selectors combine: `--account work
+account. `--thread` opens the whole conversation on its overview. `--message`
+opens the same conversation expanded, with that message selected and shown,
+including when it is the conversation's first message. Both look in every
+account, switching the account selector to All accounts. The three selectors combine: `--account work
 --message '<abc@example.org>'` looks for that message in the work account only,
 and a message that lives elsewhere is a miss. `--message` takes a Message-ID
 with or without its angle brackets. `--thread` takes a notmuch thread id (hex

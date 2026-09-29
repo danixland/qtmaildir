@@ -16,8 +16,11 @@ point at which they are stable.
 - `--account`, `--thread` and `--message` on the command line, so another
   program can open qtmaildir at a particular account's view, conversation or
   message. The three combine, and Qt's own options are accepted beside them.
-  `--account` alone opens the startup view in that account; `--thread` and
-  `--message` look in every account unless `--account` narrows them, and
+  `--account` alone opens the startup view in that account. `--thread` shows
+  the conversation's overview and `--message` always shows the message
+  itself inside its expanded conversation, the first message included.
+  `--thread` and `--message` look in every account unless `--account`
+  narrows them, and
   `--message` accepts a Message-ID with or without its angle brackets. A
   selector that matches nothing is named in the status bar and the window
   keeps the view it had.

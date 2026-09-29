@@ -327,6 +327,8 @@ private slots:
     void aThreadSelectorOpensThatThread();
     void aMessageSelectorOpensItsThread();
     void aMessageSelectorRendersItsReplyWhateverTheKeyboardLastHeld();
+    void aMessageSelectorForARootShowsTheMessageNotTheDashboard();
+    void doubleClickingAConversationStillLandsOnItsDashboard();
     void aThreadSelectorThatIsNotHexIsRefused();
     void anEmptySelectorSetChangesNothing();
     void aBracketedMessageSelectorOpensThatMessage();
@@ -387,7 +389,7 @@ private slots:
     void theStaleNoticeCarriesTheMessageBeingRead();
     void recoveringAStaleThreadQueriesTheWholeThread();
     void recoveryReselectsTheMessageThatWasBeingRead();
-    void recoveryOnTheFirstMessageSelectsTheThreadRow();
+    void recoveryOnTheFirstMessageSelectsItsOwnRow();
     void doubleClickingAThreadOpensThatThreadAlone();
     void doubleClickingAReplyOpensItsThreadNotTheReplyAlone();
     void doubleClickingDoesNotLeaveTheMarkReadTimerArmed();
@@ -3476,12 +3478,15 @@ void TestMainWindow::recoveryReselectsTheMessageThatWasBeingRead()
              QStringLiteral("m2@example.org"));
 }
 
-void TestMainWindow::recoveryOnTheFirstMessageSelectsTheThreadRow()
+void TestMainWindow::recoveryOnTheFirstMessageSelectsItsOwnRow()
 {
-    // The trap in the model: setThreadMessages DROPS the depth-0 message,
-    // because the root card is that message. So a reader recovering from the
-    // thread's first message must land on the ROOT row; looking for it among
-    // the children finds nothing and would leave the selection nowhere.
+    // A named message is always a MESSAGE row, the conversation's first
+    // included. This test asserted the opposite until the --message rule:
+    // "we target ALWAYS the message". Its premise had gone with item 177,
+    // which made setThreadMessages keep the depth-0 message as a
+    // conversation's child 0, so the root has a row of its own and landing
+    // on the conversation row showed the dashboard instead of the message.
+    // A thread of one still lands on its only row, which is its message.
     const Config config;
     MainWindow window(config);
 
@@ -3525,9 +3530,12 @@ void TestMainWindow::recoveryOnTheFirstMessageSelectsTheThreadRow()
 
     const QModelIndex current = view->currentIndex();
     QVERIFY2(current.isValid(), "recovery selected nothing");
-    QVERIFY2(!model->isMessageRow(current),
-             "the thread's first message is the ROOT row, not a child");
-    QCOMPARE(model->threadAt(current.row()).threadId, QStringLiteral("T1"));
+    QVERIFY2(model->isMessageRow(current),
+             "the first message landed on the conversation row, which shows "
+             "the dashboard rather than the message");
+    QCOMPARE(model->messageAt(current).messageId,
+             QStringLiteral("m0@example.org"));
+    QCOMPARE(model->threadFor(current).threadId, QStringLiteral("T1"));
 }
 
 void TestMainWindow::doubleClickingAThreadOpensThatThreadAlone()
@@ -18112,6 +18120,189 @@ void TestMainWindow::aMessageSelectorRendersItsReplyWhateverTheKeyboardLastHeld(
         !pane->showingDashboard() && !pane->showingPlaceholder()
             && header->text().contains(QStringLiteral("Bravo target reply")),
         15000);
+}
+
+void TestMainWindow::aMessageSelectorForARootShowsTheMessageNotTheDashboard()
+{
+    // --message naming a conversation's FIRST message. The user's rule:
+    // "When running with --message we target ALWAYS the message. If that
+    // message is part of a thread we show it inside the thread, but still the
+    // message. If I want the thread there's --thread."
+    //
+    // The conversation row's own message id IS the root's, so a recovery that
+    // matched it there selected the conversation and the pane showed the
+    // dashboard. Under item 177 the root has a child row of its own inside an
+    // expanded conversation, and that row is what must end up current.
+    WorkerBackedWindow backed;
+    // Dates verified with `date -d <yyyy-mm-dd> +%A`: Qt::RFC2822Date
+    // validates the weekday against the date.
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("b1@example.org"),
+        QStringLiteral("Bravo opens"), QStringLiteral("c@example.org"),
+        QStringLiteral("Sun, 16 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Bravo one.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("b2@example.org"),
+        QStringLiteral("Bravo later reply"), QStringLiteral("d@example.org"),
+        QStringLiteral("Mon, 17 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Bravo two."), true,
+        QStringLiteral("b1@example.org")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("c1@example.org"),
+        QStringLiteral("Charlie alone"), QStringLiteral("e@example.org"),
+        QStringLiteral("Tue, 18 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Charlie one.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    NotmuchWorker probe(backed.config().notmuchConfig());
+    const QString bravo =
+        probe.threadIdForTesting(QStringLiteral("id:b1@example.org"));
+    const QString other =
+        probe.threadIdForTesting(QStringLiteral("id:c1@example.org"));
+    QVERIFY(!bravo.isEmpty());
+    QVERIFY(!other.isEmpty());
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+    auto *header = pane->findChild<QLabel *>(QStringLiteral("messageHeader"));
+    QVERIFY(header);
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    // A different state first, asserted, so the checks after the selector
+    // mean something: another thread listed beside it, and another message on
+    // display.
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    emit queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2, 15000);
+    QModelIndex otherRow;
+    for (int row = 0; row < model->rowCount(QModelIndex()); ++row) {
+        if (model->threadAt(row).threadId == other)
+            otherRow = model->index(row, 0, QModelIndex());
+    }
+    QVERIFY(otherRow.isValid());
+    view->selectionModel()->select(
+        otherRow, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(otherRow);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !pane->showingPlaceholder() && !pane->showingDashboard()
+            && header->text().contains(QStringLiteral("Charlie alone")),
+        15000);
+
+    LaunchSelectors selectors;
+    selectors.messageId = QStringLiteral("b1@example.org");
+    window.applySelectors(selectors);
+
+    // The conversation alone is listed, and expanded.
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1
+                                 && model->threadAt(0).threadId == bravo,
+                             15000);
+    const QModelIndex conversation = model->index(0, 0, QModelIndex());
+    QTRY_VERIFY_WITH_TIMEOUT(view->isExpanded(conversation), 15000);
+
+    // The ROOT's own message row current and selected, never the
+    // conversation row that stands for the whole thread.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->currentIndex().isValid()
+            && model->isMessageRow(view->currentIndex())
+            && model->messageAt(view->currentIndex()).messageId
+                   == QStringLiteral("b1@example.org"),
+        15000);
+    QVERIFY(view->selectionModel()->isSelected(view->currentIndex()));
+    QCOMPARE(view->currentIndex().parent(), conversation);
+
+    // What the user sees: that message, not the dashboard and not the
+    // placeholder.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !pane->showingDashboard() && !pane->showingPlaceholder()
+            && header->text().contains(QStringLiteral("Bravo opens")),
+        15000);
+}
+
+void TestMainWindow::doubleClickingAConversationStillLandsOnItsDashboard()
+{
+    // The other side of --message's rule. A double-click on a CONVERSATION
+    // row asks for the conversation, and the recovery now treats any named
+    // message as a message row, so naming the root here would open the
+    // root's own row. The gesture names none, and lands on the dashboard.
+    WorkerBackedWindow backed;
+    // Dates verified with `date -d <yyyy-mm-dd> +%A`.
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("b1@example.org"),
+        QStringLiteral("Bravo opens"), QStringLiteral("c@example.org"),
+        QStringLiteral("Sun, 16 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Bravo one.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("b2@example.org"),
+        QStringLiteral("Bravo later reply"), QStringLiteral("d@example.org"),
+        QStringLiteral("Mon, 17 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Bravo two."), true,
+        QStringLiteral("b1@example.org")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("c1@example.org"),
+        QStringLiteral("Charlie alone"), QStringLiteral("e@example.org"),
+        QStringLiteral("Tue, 18 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Charlie one.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    NotmuchWorker probe(backed.config().notmuchConfig());
+    const QString bravo =
+        probe.threadIdForTesting(QStringLiteral("id:b1@example.org"));
+    const QString other =
+        probe.threadIdForTesting(QStringLiteral("id:c1@example.org"));
+    QVERIFY(!bravo.isEmpty());
+    QVERIFY(!other.isEmpty());
+
+    MainWindow window(backed.config());
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+    auto *pane = window.findChild<MessageView *>();
+    QVERIFY(pane);
+    auto *header = pane->findChild<QLabel *>(QStringLiteral("messageHeader"));
+    QVERIFY(header);
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    QVERIFY(queryEdit);
+
+    // A message on display first, so landing on the dashboard is a change.
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    emit queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 2, 15000);
+    QModelIndex otherRow;
+    QModelIndex bravoRow;
+    for (int row = 0; row < model->rowCount(QModelIndex()); ++row) {
+        if (model->threadAt(row).threadId == other)
+            otherRow = model->index(row, 0, QModelIndex());
+        if (model->threadAt(row).threadId == bravo)
+            bravoRow = model->index(row, 0, QModelIndex());
+    }
+    QVERIFY(otherRow.isValid());
+    QVERIFY(bravoRow.isValid());
+    view->selectionModel()->select(
+        otherRow, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view->setCurrentIndex(otherRow);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !pane->showingPlaceholder() && !pane->showingDashboard()
+            && header->text().contains(QStringLiteral("Charlie alone")),
+        15000);
+
+    emit view->doubleClicked(bravoRow);
+
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1
+                                 && model->threadAt(0).threadId == bravo,
+                             15000);
+    const QModelIndex conversation = model->index(0, 0, QModelIndex());
+    QTRY_VERIFY_WITH_TIMEOUT(view->isExpanded(conversation)
+                                 && !window.hasPendingRecoveryForTesting(),
+                             15000);
+    QCOMPARE(view->currentIndex(), conversation);
+    QTRY_VERIFY_WITH_TIMEOUT(pane->showingDashboard(), 15000);
 }
 
 void TestMainWindow::aThreadSelectorThatIsNotHexIsRefused()

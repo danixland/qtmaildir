@@ -390,6 +390,7 @@ private slots:
     void recoveringAStaleThreadQueriesTheWholeThread();
     void recoveryReselectsTheMessageThatWasBeingRead();
     void recoveryOnTheFirstMessageSelectsItsOwnRow();
+    void aDashboardEntryForTheFirstMessageSelectsItsOwnRow();
     void doubleClickingAThreadOpensThatThreadAlone();
     void doubleClickingAReplyOpensItsThreadNotTheReplyAlone();
     void doubleClickingDoesNotLeaveTheMarkReadTimerArmed();
@@ -3536,6 +3537,60 @@ void TestMainWindow::recoveryOnTheFirstMessageSelectsItsOwnRow()
     QCOMPARE(model->messageAt(current).messageId,
              QStringLiteral("m0@example.org"));
     QCOMPARE(model->threadFor(current).threadId, QStringLiteral("T1"));
+}
+
+void TestMainWindow::aDashboardEntryForTheFirstMessageSelectsItsOwnRow()
+{
+    // The dashboard's unread list can name the conversation's FIRST message.
+    // Since item 177 that message is child 0 with a row of its own, so the
+    // entry must land there. Matching the conversation row on the root's id
+    // reselected the row already current, and the click did nothing visible.
+    const Config config;
+    MainWindow window(config);
+
+    auto *queryEdit = window.findChild<QLineEdit *>();
+    QVERIFY(queryEdit);
+    queryEdit->setText(QStringLiteral("tag:unread"));
+    queryEdit->returnPressed();
+    const quint64 generation = window.currentGenerationForTesting();
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    ThreadSummary thread = makeThread(QStringLiteral("T1"), {});
+    thread.totalCount = 2;
+    const QVector<ThreadSummary> result{ thread };
+    QMetaObject::invokeMethod(&window, "onThreadsReady",
+                              Q_ARG(QVector<ThreadSummary>, result),
+                              Q_ARG(quint64, generation));
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+    QVERIFY(model->isConversationRow(view->currentIndex()));
+
+    QMetaObject::invokeMethod(&window, "selectMessageInCurrentThread",
+                              Q_ARG(QString, QStringLiteral("m0@example.org")));
+
+    MessageNode root;
+    root.messageId = QStringLiteral("m0@example.org");
+    root.threadId = QStringLiteral("T1");
+    root.depth = 0;
+    MessageNode reply;
+    reply.messageId = QStringLiteral("m1@example.org");
+    reply.threadId = QStringLiteral("T1");
+    reply.depth = 1;
+    const QVector<MessageNode> nodes{ root, reply };
+    QMetaObject::invokeMethod(&window, "onThreadTreeLoaded",
+                              Q_ARG(QVector<MessageNode>, nodes),
+                              Q_ARG(quint64, generation));
+
+    const QModelIndex current = view->currentIndex();
+    QVERIFY2(current.isValid(), "the entry selected nothing");
+    QVERIFY2(model->isMessageRow(current),
+             "the first message landed on the conversation row, which keeps "
+             "the dashboard on screen");
+    QCOMPARE(model->messageAt(current).messageId,
+             QStringLiteral("m0@example.org"));
 }
 
 void TestMainWindow::doubleClickingAThreadOpensThatThreadAlone()

@@ -40,6 +40,8 @@ point at which they are stable.
 - Searching on selected text containing a double quote no longer lets the rest
   of the selection escape the query. Quotes are now doubled, which is notmuch's
   own escape; the backslash form ended the quoted term early.
+- Clicking a conversation's first message in the overview's unread list now
+  opens that message, instead of doing nothing visible.
 
 ## [0.30.0] - 2026-09-29
 

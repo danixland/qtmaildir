@@ -5555,11 +5555,13 @@ void MainWindow::applyPendingDashboardSelection()
         if (m_model->threadAt(row).threadId != m_dashboardSelectThreadId)
             continue;
 
-        // The thread's first message is the ROOT row, not a child:
-        // setThreadMessages drops depth 0 because the root stands for it, so
-        // looking for it among the children finds nothing.
-        if (m_model->data(thread, ThreadListModel::MessageIdRole).toString()
-            == m_dashboardSelectMessageId) {
+        // Only a thread of one answers for its message on its own row. A
+        // CONVERSATION keeps its first message as child 0 since item 177, so
+        // matching the conversation row on the root's id reselected the row
+        // already showing the dashboard and the click did nothing visible.
+        if (!m_model->isConversationRow(thread)
+            && m_model->data(thread, ThreadListModel::MessageIdRole).toString()
+                   == m_dashboardSelectMessageId) {
             selectRowAt(thread);
             m_dashboardSelectMessageId.clear();
             m_dashboardSelectThreadId.clear();

@@ -625,9 +625,13 @@ symptom named only `markCurrentThreadRead` (which was in fact protected by an
 unrelated guard and could not fire). One bad accessor produced four defects with
 one symptom between them.
 
-**A thread's first message is NOT among its children, and two lookups forgot
-it.** `setThreadMessages` drops depth 0 because the root row stands for that
-message, so `children` never holds it. `applyMessageTagChange` and
+**A thread of one's message is NOT among its children, and two lookups forgot
+it.** Since item 177 `setThreadMessages` keeps a CONVERSATION's first message
+as child 0, so it has a row of its own, and a lookup or selection that names it
+must land there rather than on the conversation row (236ac86 and the dashboard
+selection both matched the root's id and opened the dashboard instead). A
+single-message thread still has no child, since its row IS the message.
+Before item 177 every thread dropped depth 0. `applyMessageTagChange` and
 `messageById` both search the root first now (item 109); before that, a
 message-scoped write to a root card repainted nothing, and the strip refresh set
 the pane's chips to the empty node the lookup returned, destroying a strip that

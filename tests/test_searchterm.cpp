@@ -56,9 +56,13 @@ void TestSearchTerm::escapesEmbeddedQuotes()
 {
     // A selection is arbitrary prose and can carry a quote. Unescaped, it ends
     // the quoted string early and the rest becomes stray query syntax, which
-    // notmuch accepts and matches nothing on.
+    // notmuch accepts and matches nothing on. notmuch DOUBLES a quote; a
+    // backslash-escaped one ends the term and lets the rest escape the query.
     QCOMPARE(SearchTerm::quote(QStringLiteral("say \"hello\" now")),
-             QStringLiteral("\"say \\\"hello\\\" now\""));
+             QStringLiteral("\"say \"\"hello\"\" now\""));
+    // A backslash is literal to notmuch and must reach it unchanged.
+    QCOMPARE(SearchTerm::quote(QStringLiteral("x \\\" or tag:inbox")),
+             QStringLiteral("\"x \\\"\" or tag:inbox\""));
 }
 
 void TestSearchTerm::collapsesWhitespaceAndNewlines()

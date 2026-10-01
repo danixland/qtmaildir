@@ -34,10 +34,13 @@ QString quote(const QString &value)
     if (cleaned.size() > kMaxValueLength)
         cleaned.truncate(kMaxValueLength);
 
-    // Backslashes first: escaping the quotes first would then escape the
-    // backslashes this step adds, doubling them.
-    cleaned.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-    cleaned.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    // notmuch escapes a quote inside a quoted term by DOUBLING it and has no
+    // backslash escape at all. A backslash-escaped quote ENDS the term, so
+    // `subject:"x \" or tag:inbox or id:"` let a selection walk out of the
+    // query it was meant to narrow: measured matching every message under a
+    // `tag:nomatch and` scope, where the doubled form matched none. A
+    // backslash is literal to notmuch and is left as it is.
+    cleaned.replace(QLatin1Char('"'), QStringLiteral("\"\""));
 
     return QLatin1Char('"') + cleaned + QLatin1Char('"');
 }

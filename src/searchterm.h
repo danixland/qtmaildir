@@ -59,8 +59,9 @@ enum class SearchMode {
 /// Quotes an arbitrary value for use as a notmuch term.
 ///
 /// Whitespace and newlines collapse to single spaces, embedded quotes are
-/// escaped, the value is capped at kMaxValueLength, and an empty or
-/// whitespace-only value yields an EMPTY STRING rather than `""`. Callers
+/// doubled (notmuch has no backslash escape), the value is capped at
+/// kMaxValueLength, and an empty or whitespace-only value yields an EMPTY
+/// STRING rather than `""`. Callers
 /// test for empty to decide whether to offer a menu entry at all.
 QString quote(const QString &value);
 

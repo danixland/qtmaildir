@@ -35,6 +35,12 @@ point at which they are stable.
 
 - The status bar renders its messages as plain text.
 
+### Fixed
+
+- Searching on selected text containing a double quote no longer lets the rest
+  of the selection escape the query. Quotes are now doubled, which is notmuch's
+  own escape; the backslash form ended the quoted term early.
+
 ## [0.30.0] - 2026-09-29
 
 A calendar window over the vdirsyncer vdir, with a month grid, an agenda and

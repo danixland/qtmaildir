@@ -472,9 +472,11 @@ labelled Sent that shows the whole Maildir.
 (`src/searchterm.h`), and that is what stops five surfaces growing five quoting
 rules.** It holds no widget, so the grammar is tested without a painter or a web
 engine. Two of its rules are load-bearing rather than cosmetic. `quote()`
-escapes backslashes BEFORE quotes, since the other order escapes the
-backslashes it just added; it truncates before escaping, so a cut cannot land
-mid-escape. And `extend()` parenthesises BOTH sides, because the query bar can
+DOUBLES an embedded quote, because notmuch has no backslash escape: a
+backslash-escaped quote ends the term, and a selection holding
+`x \" or tag:inbox or id:"` walked out of a `tag:nomatch and` scope and matched
+every message, measured, where the doubled form matched none. It truncates
+before doubling, so a cut cannot land mid-pair. And `extend()` parenthesises BOTH sides, because the query bar can
 hold a hand-written disjunction and `a or b AND c` binds as `a or (b AND c)`,
 which widens a search the user asked to narrow, reporting nothing. This is the
 same trap the `post-new` hook handles when it scopes a rule with `tag:new`.

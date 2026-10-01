@@ -409,6 +409,7 @@ private slots:
     void theStatusBarFollowsTheSyncPhase();
     void aSelectedReadThreadIsNotDimmedIntoTheHighlight();
     void childRowsAreIndentedUnderTheirThread();
+    void oneWheelNotchGlidesOneCard();
     void aThreadWithRepliesDrawsAVisibleExpander();
     void cardsNeverScrollSideways();
     void selectingAConversationArmsNoMarkRead();
@@ -1155,6 +1156,53 @@ static ThreadSummary makeThread(const QString &id, const QStringList &tags)
     // did not happen", which reads as a defect in the action.
     thread.firstMessageId = id + QStringLiteral("-first@example.org");
     return thread;
+}
+
+void TestMainWindow::oneWheelNotchGlidesOneCard()
+{
+    // The list scrolled per ITEM, Qt's default, so a notch jumped several
+    // whole cards and a touchpad's small deltas were quantised into card-sized
+    // jumps: the user lost track of how far the list had moved. Per PIXEL,
+    // one notch moves exactly one card.
+    const Config config;
+    MainWindow window(config);
+    window.resize(800, 600);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    auto *model = window.findChild<ThreadListModel *>();
+    QVERIFY(model);
+    auto *view = window.findChild<ThreadListView *>();
+    QVERIFY(view);
+
+    QVector<ThreadSummary> threads;
+    for (int i = 0; i < 50; ++i)
+        threads.append(makeThread(QStringLiteral("t%1").arg(i), {}));
+    model->appendBatch(threads);
+
+    QCOMPARE(view->verticalScrollMode(), QAbstractItemView::ScrollPerPixel);
+
+    QScrollBar *bar = view->verticalScrollBar();
+    // The range is laid out lazily after the rows arrive.
+    QTRY_VERIFY2(bar->maximum() > 0,
+                 "nothing to scroll, so the test measures nothing");
+    QCOMPARE(bar->value(), 0);
+
+    const QPoint centre = view->viewport()->rect().center();
+    QWheelEvent notch(centre, view->viewport()->mapToGlobal(centre), QPoint(),
+                      QPoint(0, -QWheelEvent::DefaultDeltasPerStep),
+                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(view->viewport(), &notch);
+
+    // A glide, not a jump: the first notch is still on its way.
+    const int card = CardLayout::heightFor(view->font());
+    QVERIFY2(bar->value() < card, "the notch jumped rather than glided");
+    QTRY_COMPARE(bar->value(), card);
+
+    // A second notch sent mid-glide lands on the NEXT card, not short of it.
+    QApplication::sendEvent(view->viewport(), &notch);
+    QApplication::sendEvent(view->viewport(), &notch);
+    QTRY_COMPARE(bar->value(), 3 * card);
 }
 
 void TestMainWindow::childRowsAreIndentedUnderTheirThread()

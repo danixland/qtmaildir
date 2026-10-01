@@ -20,6 +20,8 @@
 
 #include <QTreeView>
 
+class QPropertyAnimation;
+
 /// The thread list.
 ///
 /// It exists for ONE reason now: the expander is drawn by CardDelegate, and a
@@ -47,4 +49,15 @@ protected:
     /// indicator underneath, also removed the style's hit area, so an expander
     /// once painted correctly and did nothing at all.
     void mousePressEvent(QMouseEvent *event) override;
+
+    /// A mouse wheel notch GLIDES one scrollbar step instead of jumping, so
+    /// the eye can follow how far the list moved. Notches arriving mid-glide
+    /// add to its target rather than restarting from where it has got to. A
+    /// touchpad's pixel deltas are already continuous and pass straight
+    /// through, as does any wheel with a modifier held.
+    void wheelEvent(QWheelEvent *event) override;
+
+private:
+    /// Created on the first notch, owned by the view.
+    QPropertyAnimation *m_glide = nullptr;
 };

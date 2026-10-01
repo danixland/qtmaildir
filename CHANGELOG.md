@@ -34,6 +34,8 @@ point at which they are stable.
 ### Changed
 
 - The status bar renders its messages as plain text.
+- The thread list scrolls smoothly. A mouse wheel notch glides one card
+  instead of jumping several, and a touchpad moves the list continuously.
 
 ### Fixed
 

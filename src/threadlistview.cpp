@@ -22,6 +22,9 @@
 #include "threadlistmodel.h"
 
 #include <QMouseEvent>
+#include <QPropertyAnimation>
+#include <QScrollBar>
+#include <QWheelEvent>
 
 void ThreadListView::mousePressEvent(QMouseEvent *event)
 {
@@ -52,4 +55,34 @@ void ThreadListView::mousePressEvent(QMouseEvent *event)
     }
 
     QTreeView::mousePressEvent(event);
+}
+
+void ThreadListView::wheelEvent(QWheelEvent *event)
+{
+    const int notches = event->angleDelta().y() / QWheelEvent::DefaultDeltasPerStep;
+    if (!event->pixelDelta().isNull() || event->modifiers() != Qt::NoModifier
+        || notches == 0) {
+        // ponytail: a high-resolution wheel sending less than one notch per
+        // event falls through to the plain per-pixel scroll, unanimated.
+        QTreeView::wheelEvent(event);
+        return;
+    }
+
+    QScrollBar *bar = verticalScrollBar();
+    if (!m_glide) {
+        m_glide = new QPropertyAnimation(bar, "value", this);
+        m_glide->setDuration(160);
+        m_glide->setEasingCurve(QEasingCurve::OutCubic);
+    }
+
+    const bool gliding = m_glide->state() == QAbstractAnimation::Running;
+    const int from = gliding ? m_glide->endValue().toInt() : bar->value();
+    const int to = qBound(bar->minimum(), from - notches * bar->singleStep(),
+                          bar->maximum());
+
+    m_glide->stop();
+    m_glide->setStartValue(bar->value());
+    m_glide->setEndValue(to);
+    m_glide->start();
+    event->accept();
 }

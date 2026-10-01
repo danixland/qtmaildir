@@ -962,8 +962,13 @@ void MainWindow::buildUi()
     // the viewport and auto-scroll brought the clicked index fully into view.
     m_threadView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    // Scrolling a whole card at a time rather than a fraction of one, so a
-    // card is never left half above the top edge.
+    // Per PIXEL, so a touchpad moves the list continuously. Qt's default is
+    // per ITEM, which jumped several whole cards per wheel notch and quantised
+    // a touchpad's small deltas into card-sized jumps, so the eye lost track
+    // of how far the list had moved. The cost is that a card can rest half
+    // above the top edge. A wheel notch glides one step, which is one card;
+    // see ThreadListView::wheelEvent.
+    m_threadView->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     m_threadView->verticalScrollBar()->setSingleStep(
         CardLayout::heightFor(m_threadView->font()));
 

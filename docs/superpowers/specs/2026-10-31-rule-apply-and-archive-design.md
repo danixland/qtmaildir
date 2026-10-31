@@ -73,26 +73,54 @@ Then:
 
    > Apply rule "promo" to 1,234 messages?
    > Adds: promo. Removes: inbox.
-   > You can undo this from the main window.
+   > You can undo this until the next search.
+
+   (Changed during implementation from "from the main window": `runQuery()`
+   clears the undo stack, so the undo lasts until the next search.)
 
    Cancel is the default button. The count and the tag lists are the
    information the user cannot get from the list on screen, which is the
    whole reason this write gets a confirmation and others do not.
 
-4. **Write.** A new worker slot, `applyTagsToQuery(query, add, remove,
-   description)`, runs the same change query to collect message ids, then
-   calls the existing `applyTags()`. Everything downstream is inherited
-   unchanged:
-   - exact undo: `applyTags()` reports only the ids whose tags moved (item
-     176), and the undo entry is a `MessageTagCommand` armed with
-     `awaitTagConfirmation()` before the send, so Ctrl+Z reverts exactly
-     those;
-   - the pending-changes count and the auto sync, from `onTagsApplied()`;
-   - the "applying… / done" status from item 211's `announceAction()`;
-   - the write lock: if a sync holds it, the edit is held and replayed the
-     same way a list edit is.
+4. **Write.** A new worker slot, `applyRule(query, add, remove,
+   description)`, resolves the message ids ONCE with
+   `SearchTerm::changes(query, add, remove)`, then writes one tag operation
+   at a time over THAT FIXED id list, and always answers with one
+   `ruleApplied(description, changes, error)` carrying each operation's
+   effective ids. It never emits `tagsApplied` or `errorOccurred`.
+   (Changed during implementation; the planned `applyTagsToQuery` calling
+   `applyTags()` once is gone, for the three reasons below.)
 
-   After the confirmation arrives, the current query is refreshed, since the
+   **One tag at a time.** `applyTags()` reports which messages moved, not
+   which tags, so one `+promo -inbox` write would list a message that
+   already had `promo`, and undo would strip it. Each tag is its own write
+   and its own undo command, grouped in one undo macro.
+
+   **Ids resolved once.** Re-resolving per operation made a rule whose query
+   names its own tags apply only half of itself.
+
+   **Nothing armed in advance.** The planned `MessageTagCommand` armed with
+   `awaitTagConfirmation()` before the send was built and then removed: a
+   user gesture during a slow backfill cleared the confirmation queue, and
+   the user's own command took the backfill's ids (Ctrl+Z on Archive
+   re-inboxed thousands). `MainWindow::onRuleApplied()` instead records each
+   non-empty change through `recordConfirmedTagChange()`, which is the
+   bookkeeping of `onTagsApplied()` without crediting a queued command, and
+   pushes `MessageTagCommand`s built with the known ids in one undo macro.
+
+   What is inherited:
+   - exact undo: each command holds the ids its operation moved (item 176);
+   - the pending-changes count, from `recordConfirmedTagChange()`, and every
+     account marked edited, since a backfill reaches mail no row shows and
+     its accounts cannot be resolved through the model;
+   - the "applying… / done" status from item 211's `announceAction()`; a
+     failure goes to the status bar, and a partial write still gets its undo;
+   - the write lock: Apply during a sync is REFUSED with a status message,
+     checked before the count and again after the confirmation box.
+     Changed during planning: `HeldEdit` replays message or thread ids, and
+     a backfill has neither until the worker resolves its query.
+
+   After the answer arrives, the current query is refreshed, since the
    rows a backfill touches are mostly not in the model and cannot be updated
    optimistically.
 
@@ -101,16 +129,16 @@ Then:
    anything when cron runs a sync"; Apply has a human present who has just
    confirmed a named count.
 
-### The undo command needs its ids from the confirmation
+### The undo command's ids come from the worker's answer
 
 `MessageTagCommand` is constructed with the ids it acts on. For a backfill
-those ids are unknown until the worker has resolved the query. The command is
-constructed with an empty id list and filled from the confirmation, which
-`TagCommand::addChangedMessageIds()` already does for every command (item
-176). The plan must verify that redo and undo both read the EFFECTIVE set and
-never the constructor's list; if either reads the constructor's list, an
-empty one would redo nothing, and the plan fixes that rather than working
-around it.
+those ids are unknown until the worker has resolved the query, so the
+commands are built only when `ruleApplied` arrives, with the effective ids
+each operation reported, and `addChangedMessageIds()` fills what undo reads.
+(Changed during implementation from "constructed with an empty id list and
+filled from the confirmation", which needed the arming removed above.) The
+application has no Redo action; since the commands carry real ids, they
+would redo correctly if one is added.
 
 ### Rule change to CLAUDE.md
 
@@ -184,7 +212,7 @@ Measurable properties only, per `CLAUDE.md`.
 - **SearchTerm:** the change query for `+a -r` over a query containing ` or `
   is the exact expected string, with both sides parenthesised. Add-only and
   remove-only rules each produce the right half.
-- **Worker:** `applyTagsToQuery` against a throwaway index holding messages in
+- **Worker:** `applyRule` against a throwaway index holding messages in
   BOTH states (some already tagged, some not; the item 87 lesson) reports
   only the ones that changed, and leaves the rest alone.
 - **MainWindow, worker-backed:** Apply on a rule with N changeable messages

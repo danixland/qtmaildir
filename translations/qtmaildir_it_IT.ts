@@ -1683,6 +1683,53 @@ protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
         <translation>&lt;b&gt;%1&lt;/b&gt; messaggi in &lt;b&gt;%2&lt;/b&gt; conversazioni&lt;br&gt;&lt;b&gt;%3&lt;/b&gt; etichette</translation>
     </message>
     <message>
+        <source>A sync is running; apply the rule again when it finishes.</source>
+        <translation>Sincronizzazione in corso; applica di nuovo la regola al termine.</translation>
+    </message>
+    <message>
+        <source>Rule &quot;%1&quot; could not be counted, so nothing was applied.</source>
+        <translation>Impossibile contare la regola &quot;%1&quot;, quindi non è stato applicato nulla.</translation>
+    </message>
+    <message>
+        <source>Rule &quot;%1&quot; has nothing to change.</source>
+        <translation>La regola &quot;%1&quot; non ha nulla da cambiare.</translation>
+    </message>
+    <message>
+        <source>Adds: %1.</source>
+        <translation>Aggiunge: %1.</translation>
+    </message>
+    <message>
+        <source>Removes: %1.</source>
+        <translation>Rimuove: %1.</translation>
+    </message>
+    <message>
+        <source>Apply rule</source>
+        <translation>Applica regola</translation>
+    </message>
+    <message numerus="yes">
+        <source>Apply rule &quot;%1&quot; to %n message(s)?</source>
+        <translation>
+            <numerusform>Applicare la regola &quot;%1&quot; a %n messaggio?</numerusform>
+            <numerusform>Applicare la regola &quot;%1&quot; a %n messaggi?</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>You can undo this until the next search.</source>
+        <translation>Puoi annullare fino alla prossima ricerca.</translation>
+    </message>
+    <message>
+        <source>Apply rule &quot;%1&quot;</source>
+        <translation>Applica regola &quot;%1&quot;</translation>
+    </message>
+    <message>
+        <source>%1 failed: %2</source>
+        <translation>%1 non riuscito: %2</translation>
+    </message>
+    <message>
+        <source>%1: nothing to change.</source>
+        <translation>%1: nulla da cambiare.</translation>
+    </message>
+    <message>
         <source>About qtmaildir</source>
         <translation>Informazioni su qtmaildir</translation>
     </message>
@@ -2733,6 +2780,14 @@ protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
         <translation>Rimuovi etichette</translation>
     </message>
     <message>
+        <source>Archive matching mail on arrival (removes inbox)</source>
+        <translation>Archivia all&apos;arrivo la posta corrispondente (rimuove inbox)</translation>
+    </message>
+    <message>
+        <source>Without this, the sync hook skips a rule that removes inbox, since it runs unattended.</source>
+        <translation>Senza questa opzione, l&apos;hook di sincronizzazione salta una regola che rimuove inbox, perché agisce senza supervisione.</translation>
+    </message>
+    <message>
         <source>Match &amp;all</source>
         <translation>Corrispondono &amp;tutte</translation>
     </message>
@@ -2797,6 +2852,14 @@ protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
         <translation>Esegue la ricerca di questa regola nella finestra principale, per vedere quale posta raccoglie. Non etichetta nulla.</translation>
     </message>
     <message>
+        <source>&amp;Apply to existing mail</source>
+        <translation>&amp;Applica alla posta esistente</translation>
+    </message>
+    <message>
+        <source>Save, then apply this rule to mail already in the index. Asks first, naming how many messages would change. Undoable from the main window.</source>
+        <translation>Salva, poi applica questa regola alla posta già indicizzata. Chiede prima, indicando quanti messaggi cambierebbero. Annullabile dalla finestra principale.</translation>
+    </message>
+    <message>
         <source>Dismiss</source>
         <translation>Ignora</translation>
     </message>
@@ -2805,6 +2868,13 @@ protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
         <translation>
             <numerusform>%n regola nel file richiede attenzione: %1. Salva per riscriverla.</numerusform>
             <numerusform>%n regole nel file richiedono attenzione: %1. Salva per riscriverle.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>The sync hook skips %n rule(s), which remove inbox or unread on mail nobody has looked at: %1. Tick &quot;Archive matching mail on arrival&quot; to let a rule remove inbox; unread is never removed on arrival.</source>
+        <translation>
+            <numerusform>L&apos;hook di sincronizzazione salta %n regola, che rimuove inbox o unread su posta che nessuno ha visto: %1. Spunta &quot;Archivia all&apos;arrivo la posta corrispondente&quot; per permettere a una regola di rimuovere inbox; unread non viene mai rimosso all&apos;arrivo.</numerusform>
+            <numerusform>L&apos;hook di sincronizzazione salta %n regole, che rimuovono inbox o unread su posta che nessuno ha visto: %1. Spunta &quot;Archivia all&apos;arrivo la posta corrispondente&quot; per permettere a una regola di rimuovere inbox; unread non viene mai rimosso all&apos;arrivo.</numerusform>
         </translation>
     </message>
     <message>

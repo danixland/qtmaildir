@@ -290,7 +290,7 @@ A test for this needs a thread whose messages DISAGREE about the tag, for the
 same reason item 87 records: two messages in the same state answer identically
 whichever way the code resolves them.
 
-**There is exactly ONE exception, and its shape is the rule's own logic rather
+**There are two exceptions, and their shape is the rule's own logic rather
 than a hole in it.** `empty_trash` (item 118) destroys files and index entries,
 so it has no inverse to push, and the protection the rule actually provides —
 that a user never loses work to a keystroke — has to come from somewhere else.
@@ -298,7 +298,16 @@ It therefore asks, naming the count and the account, defaulting to Cancel, and
 it carries **no default shortcut** for the same reason. `NotmuchWorker::purgeMessages()`
 is a separate entry point from `moveMessages()` deliberately: the two look
 alike and only one of them can be undone. A second confirmation anywhere is a
-defect unless the action is likewise irreversible. All actions funnel through one `applyTags` path;
+defect unless the action is likewise irreversible, or is the second exception.
+
+The second is **a write scoped to the whole index rather than to rows on
+screen**: applying a tagging rule to existing mail (item 212). It IS undoable,
+through the same exact-undo path as every tag write, and it confirms anyway,
+naming the count, because the user cannot see what it will touch. The two
+exceptions have different reasons and must keep them: `empty_trash` confirms
+because it cannot be undone, Apply because it cannot be seen.
+
+All actions funnel through one `applyTags` path;
 multi-row selections go through `applyTagsToThreads`, which resolves every thread in ONE
 combined `thread:a or thread:b` query rather than one query per thread.
 
@@ -1311,7 +1320,8 @@ schema:
 
 **Two hook properties are safety-critical, and being ours now is not a reason to
 weaken them.**
-The hook refuses to remove `unread` or `inbox` (`maildir.synchronize_flags` is
+The hook refuses to remove `unread`, and `inbox` unless the rule sets
+`allow_archive`, item 213 (`maildir.synchronize_flags` is
 true, so removing `unread` rewrites Maildir filenames and reaches the server),
 and it does not consume the `tag:new` marker when the rules fail to load
 (clearing it while rules did not run orphans that mail permanently and
@@ -1319,6 +1329,35 @@ invisibly). A dialog here that offers to write such a rule would produce one the
 hook then refuses; that is the correct direction, but say so in the UI rather
 than letting it fail silently.
 
-Backfill, applying a rule to existing mail, is deliberately unbuilt. See
-`docs/superpowers/specs/2026-08-12-tagging-rules-design.md` for what it needs
-first, including the revision it forces to the no-confirmation rule above.
+Backfill exists since item 212 as the dialog's **Apply to existing mail**, and
+it runs in qtmaildir, attended and confirmed, never in the hook. Three of its
+properties are load-bearing, and each replaced a version that broke:
+
+- **The worker resolves the ids ONCE and writes one tag at a time over that
+  fixed list.** `MainWindow::confirmRuleApply()` sends
+  `NotmuchWorker::applyRule(query, add, remove, description)`, which resolves
+  `SearchTerm::changes(query, add, remove)` once. One tag per write, because
+  `applyTags()` reports which MESSAGES moved, not which tags: one `+promo
+  -inbox` write lists a message that already had `promo` (it lost `inbox`), and
+  its undo strips `promo` from it. Ids once, because re-resolving per operation
+  made a rule whose query names its own tags apply only half of itself.
+- **The worker always answers with ONE `ruleApplied(description, changes,
+  error)`**, one `TagChange` per operation carrying that operation's effective
+  ids, and never emits `tagsApplied` or `errorOccurred`. `onRuleApplied()`
+  records each non-empty change through `recordConfirmedTagChange()` (the
+  bookkeeping of `onTagsApplied()` without crediting a queued command), pushes
+  `MessageTagCommand`s built with the known ids in one undo macro, marks every
+  account edited so the next sync covers it, and re-queries. A partial write
+  still gets its undo, and the error goes to the status bar.
+- **Nothing is armed in advance.** An earlier version queued its commands on
+  `m_awaitingTagConfirmation` before the write; a user gesture during a slow
+  backfill cleared that queue, and the user's own command then took the
+  backfill's ids, so Ctrl+Z on an Archive re-inboxed thousands of messages.
+  Do not route a backfill through `awaitTagConfirmation()` again.
+
+Apply during a sync is REFUSED, checked before the count and again after the
+confirmation box, whose nested event loop a sync can start inside: `HeldEdit`
+replays ids, and a backfill has none until the worker resolves its query. The
+box says the write can be undone "until the next search", because `runQuery()`
+clears the undo stack. There is no Redo action; the backfill's commands carry
+real ids, so they would redo correctly if one is added.

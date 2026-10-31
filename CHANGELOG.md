@@ -30,6 +30,14 @@ point at which they are stable.
 - A second launch now hands its selectors to the already-running window over a
   local socket and asks it to raise itself, rather than opening a second
   window. One process, and so one notmuch database handle.
+- **Apply to existing mail** in the tagging rules dialog. It saves the
+  rules, counts the messages the selected rule would actually change, asks
+  with that count, and applies it. Undo reverts exactly what moved, until the
+  next search. It is refused while a sync is running.
+- **Archive matching mail on arrival**, a per-rule checkbox. A rule that
+  removes `inbox` used to be skipped whole by the sync hook; with the box
+  ticked it runs, and `inbox` is removed. `unread` is never removed on
+  arrival. The dialog now names every rule the hook will skip.
 
 ### Changed
 
@@ -49,6 +57,13 @@ point at which they are stable.
   own escape; the backslash form ended the quoted term early.
 - Clicking a conversation's first message in the overview's unread list now
   opens that message, instead of doing nothing visible.
+
+### Upgrading
+
+- A rule that removes `inbox` was never applied by the sync hook. Open the
+  rules dialog: such rules are named in the warning. Tick "Archive matching
+  mail on arrival" on each one you want to run, then use "Apply to existing
+  mail" to catch up on what arrived meanwhile.
 
 ## [0.30.0] - 2026-09-29
 

@@ -160,6 +160,13 @@ public:
     /// synthesising a click on a status-bar label.
     Q_INVOKABLE void showPendingChanges();
 
+    /// Item 212. Counts what `rule` would change across the whole index,
+    /// confirms with that count, then writes through the worker with exact
+    /// undo. The rule has already been saved by the dialog. Refused while a
+    /// sync holds the write lock, since a backfill has no ids to hold until
+    /// the worker resolves its query.
+    void applyRuleToExistingMail(const TagRule &rule);
+
     /// Whether the undo stack still holds anything. Exposed so a test can show
     /// that a rejected write did not take unrelated history down with it.
     bool canUndo() const { return m_undoStack.canUndo(); }
@@ -780,7 +787,13 @@ private slots:
     /// describes state lasting until the sync ends, and a message that expired
     /// would leave rows showing a tag the database has not got and no
     /// explanation of why.
-    void announceAction(const QString &text);
+    ///
+    /// `onDone`, when given, runs once the worker has reached the write: the
+    /// caller's follow-up (a refresh), not a label, so it runs whichever
+    /// announcement owns the label by then. Not run on the sync-held branch;
+    /// no caller passes one while a sync holds the lock.
+    void announceAction(const QString &text,
+                        const std::function<void()> &onDone = {});
 
     /// Reacts to a sync started outside this window, by cron or by hand.
     ///
@@ -845,6 +858,11 @@ private slots:
     void onRuleCountsReady(const QVector<int> &counts, quint64 generation);
 
 private:
+    /// The count for applyRuleToExistingMail() arrived: confirm, then write.
+    /// `counts` holds the whole rule's count first, then one per single-tag
+    /// operation in the order ruleOperations() lists them.
+    void confirmRuleApply(const QVector<int> &counts);
+
     void buildUi();
 
     /// Pushes the selected account's identity into the card delegate, so the
@@ -1824,6 +1842,12 @@ private:
     /// so they can never be confused for one another and need not share a
     /// counter.
     quint64 m_ruleCountGeneration = 0;
+
+    /// The rule awaiting its change count, and the generation that count
+    /// will carry. Shares m_ruleCountGeneration's sequence, so a pending
+    /// Apply and the dialog's Count matches can never be confused.
+    TagRule m_pendingApplyRule;
+    quint64 m_pendingApplyGeneration = 0;
 
     /// The generation of a REFRESH query, run after a sync to bring the list
     /// up to date without disturbing it.

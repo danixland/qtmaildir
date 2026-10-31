@@ -390,7 +390,7 @@ QByteArray NotmuchWorker::configPathArg() const
     return m_configPath.isEmpty() ? QByteArray() : m_configPath.toLocal8Bit();
 }
 
-bool NotmuchWorker::openReadOnly()
+bool NotmuchWorker::openReadOnly(QString *error)
 {
     if (m_db) {
         // A read-only handle is a Xapian SNAPSHOT taken when it was opened, so
@@ -407,7 +407,7 @@ bool NotmuchWorker::openReadOnly()
         // results beats refusing to answer at all.
         const notmuch_status_t status =
             notmuch_database_reopen(m_db, NOTMUCH_DATABASE_MODE_READ_ONLY);
-        if (status != NOTMUCH_STATUS_SUCCESS) {
+        if (status != NOTMUCH_STATUS_SUCCESS && !error) {
             emit errorOccurred(
                 QStringLiteral("Cannot refresh notmuch database: %1")
                     .arg(QString::fromUtf8(notmuch_status_to_string(status))));
@@ -416,19 +416,26 @@ bool NotmuchWorker::openReadOnly()
     }
 
     const QByteArray configPath = configPathArg();
-    char *error = nullptr;
+    char *openError = nullptr;
     const notmuch_status_t status = notmuch_database_open_with_config(
         nullptr,                                        // let config decide path
         NOTMUCH_DATABASE_MODE_READ_ONLY,
         configPath.isEmpty() ? nullptr : configPath.constData(),
         nullptr,
         &m_db,
-        &error);
+        &openError);
 
     if (status != NOTMUCH_STATUS_SUCCESS) {
-        emit errorOccurred(QStringLiteral("Cannot open notmuch database: %1")
-            .arg(QString::fromUtf8(error ? error : notmuch_status_to_string(status))));
-        free(error);
+        const QString message =
+            QStringLiteral("Cannot open notmuch database: %1")
+                .arg(QString::fromUtf8(openError
+                                           ? openError
+                                           : notmuch_status_to_string(status)));
+        if (error)
+            *error = message;
+        else
+            emit errorOccurred(message);
+        free(openError);
         m_db = nullptr;
         return false;
     }
@@ -1092,19 +1099,20 @@ void NotmuchWorker::applyTagsToThreads(const QStringList &threadIds,
 
 void NotmuchWorker::applyRule(const QString &query, const QStringList &add,
                               const QStringList &remove,
-                              const QString &description, quint64 token)
+                              const QString &description)
 {
     QVector<TagChange> changes;
-    if (!openReadOnly()) {
-        emit ruleApplied(token, changes);
+    QString error;
+    if (!openReadOnly(&error)) {
+        emit ruleApplied(description, changes, error);
         return;
     }
 
     QStringList messageIds;
     if (!collectMessageIds(m_db, SearchTerm::changes(query, add, remove),
                            &messageIds)) {
-        emit errorOccurred(QStringLiteral("Cannot resolve the rule's query"));
-        emit ruleApplied(token, changes);
+        emit ruleApplied(description, changes,
+                         QStringLiteral("Cannot resolve the rule's query"));
         return;
     }
 
@@ -1117,12 +1125,12 @@ void NotmuchWorker::applyRule(const QString &query, const QStringList &add,
     for (TagChange &op : ops) {
         QStringList changed;
         // An empty list writes nothing; writeTags() is not even asked to open.
-        if (!messageIds.isEmpty() && !writeTags(op, &changed))
-            break;   // errorOccurred() already emitted; report what landed
+        if (!messageIds.isEmpty() && !writeTags(op, &changed, &error))
+            break;   // report what landed before the failure, and the failure
         op.messageIds = changed;
         changes.append(op);
     }
-    emit ruleApplied(token, changes);
+    emit ruleApplied(description, changes, error);
 }
 
 void NotmuchWorker::applyTags(const TagChange &change)
@@ -1146,7 +1154,8 @@ void NotmuchWorker::applyTags(const TagChange &change)
                                 change.description });
 }
 
-bool NotmuchWorker::writeTags(const TagChange &change, QStringList *changedIds)
+bool NotmuchWorker::writeTags(const TagChange &change, QStringList *changedIds,
+                              QString *errorOut)
 {
 
     // The read-only handle must be closed first: notmuch allows only one open
@@ -1174,10 +1183,14 @@ bool NotmuchWorker::writeTags(const TagChange &change, QStringList *changedIds)
         //
         // The stall a running sync DOES cause is avoided upstream, in
         // MainWindow, by not sending the write at all while the lock is held.
-        emit errorOccurred(
+        const QString message =
             QStringLiteral("Cannot open database for writing: %1")
                 .arg(QString::fromUtf8(error ? error
-                                             : notmuch_status_to_string(status))));
+                                             : notmuch_status_to_string(status)));
+        if (errorOut)
+            *errorOut = message;
+        else
+            emit errorOccurred(message);
         free(error);
         return false;
     }

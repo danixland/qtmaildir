@@ -63,6 +63,7 @@ private slots:
     void applyRuleResolvesItsQueryOnceForEveryTag();
     void applyRuleThatChangesNothingStillAnswers();
     void applyRuleAnswersAcrossAQueuedConnection();
+    void applyRuleCarriesItsFailureInTheReply();
     void applyTagsToThreadsSpansMultipleThreads();
     void applyTagsToThreadsWithNoThreadsDoesNothing();
 
@@ -1318,11 +1319,12 @@ void TestNotmuchWorker::applyRuleWritesEachTagOnlyWhereItMoves()
     worker.applyRule(QStringLiteral("thread:%1").arg(threadId),
                      { QStringLiteral("ruleadd") },
                      { QStringLiteral("ruledrop") },
-                     QStringLiteral("Apply rule"), 7);
+                     QStringLiteral("Apply rule"));
 
     QCOMPARE(applied.size(), 0);
     QCOMPARE(ruled.size(), 1);
-    QCOMPARE(ruled.first().at(0).value<quint64>(), quint64(7));
+    QCOMPARE(ruled.first().at(0).toString(), QStringLiteral("Apply rule"));
+    QVERIFY(ruled.first().at(2).toString().isEmpty());
     const auto changes = ruled.first().at(1).value<QVector<TagChange>>();
     QCOMPARE(changes.size(), 2);
     QCOMPARE(changes.at(0).added, QStringList{ QStringLiteral("ruleadd") });
@@ -1364,7 +1366,7 @@ void TestNotmuchWorker::applyRuleResolvesItsQueryOnceForEveryTag()
     worker.applyRule(
         QStringLiteral("thread:%1 and tag:backfill-src").arg(threadId), {},
         { QStringLiteral("backfill-src"), QStringLiteral("backfill-other") },
-        QStringLiteral("Apply rule"), 1);
+        QStringLiteral("Apply rule"));
 
     QCOMPARE(ruled.size(), 1);
     const auto changes = ruled.first().at(1).value<QVector<TagChange>>();
@@ -1390,11 +1392,11 @@ void TestNotmuchWorker::applyRuleThatChangesNothingStillAnswers()
     QSignalSpy ruled(&worker, &NotmuchWorker::ruleApplied);
     worker.applyRule(QStringLiteral("thread:%1").arg(threadId), {},
                      { QStringLiteral("nobody-has-this") },
-                     QStringLiteral("Apply rule"), 3);
+                     QStringLiteral("Apply rule"));
 
     QCOMPARE(applied.size(), 0);
     QCOMPARE(ruled.size(), 1);
-    QCOMPARE(ruled.first().at(0).value<quint64>(), quint64(3));
+    QVERIFY(ruled.first().at(2).toString().isEmpty());
     const auto changes = ruled.first().at(1).value<QVector<TagChange>>();
     for (const TagChange &change : changes)
         QVERIFY(change.messageIds.isEmpty());
@@ -1417,7 +1419,8 @@ void TestNotmuchWorker::applyRuleAnswersAcrossAQueuedConnection()
     int answers = 0;
     QVector<TagChange> received;
     connect(&worker, &NotmuchWorker::ruleApplied, &receiver,
-            [&](quint64, const QVector<TagChange> &changes) {
+            [&](const QString &, const QVector<TagChange> &changes,
+                const QString &) {
                 ++answers;
                 received = changes;
             });
@@ -1426,8 +1429,7 @@ void TestNotmuchWorker::applyRuleAnswersAcrossAQueuedConnection()
         Q_ARG(QString, QStringLiteral("thread:%1").arg(threadId)),
         Q_ARG(QStringList, QStringList{ QStringLiteral("crossed") }),
         Q_ARG(QStringList, QStringList{}),
-        Q_ARG(QString, QStringLiteral("Apply rule")),
-        Q_ARG(quint64, 9)));
+        Q_ARG(QString, QStringLiteral("Apply rule"))));
 
     QTRY_COMPARE_WITH_TIMEOUT(answers, 1, 5000);
     QCOMPARE(received.size(), 1);
@@ -1440,6 +1442,29 @@ void TestNotmuchWorker::applyRuleAnswersAcrossAQueuedConnection()
     restore.applyTags(TagChange{ received.at(0).messageIds, {},
                                  { QStringLiteral("crossed") },
                                  QStringLiteral("restore") });
+}
+
+void TestNotmuchWorker::applyRuleCarriesItsFailureInTheReply()
+{
+    // A backfill's failure travels in its own reply. Through errorOccurred()
+    // the window would revert whatever unrelated user write was in flight,
+    // and its message would be overwritten by "nothing to change".
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    NotmuchWorker worker(dir.filePath(QStringLiteral("no-such-config")));
+    QSignalSpy errors(&worker, &NotmuchWorker::errorOccurred);
+    QSignalSpy ruled(&worker, &NotmuchWorker::ruleApplied);
+
+    worker.applyRule(QStringLiteral("tag:inbox"), { QStringLiteral("x") }, {},
+                     QStringLiteral("Apply rule \"x\""));
+
+    QCOMPARE(errors.size(), 0);
+    QCOMPARE(ruled.size(), 1);
+    QCOMPARE(ruled.first().at(0).toString(), QStringLiteral("Apply rule \"x\""));
+    QVERIFY(!ruled.first().at(2).toString().isEmpty());
+    const auto changes = ruled.first().at(1).value<QVector<TagChange>>();
+    for (const TagChange &change : changes)
+        QVERIFY(change.messageIds.isEmpty());
 }
 
 void TestNotmuchWorker::applyTagsToThreadsSpansMultipleThreads()

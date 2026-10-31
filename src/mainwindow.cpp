@@ -2827,10 +2827,8 @@ void MainWindow::onRuleCountsReady(const QVector<int> &counts,
     // Item 212. Apply's count first: it shares this signal and the generation
     // sequence, and needs no dialog, since the test and a closed dialog's
     // last Apply both arrive here without one.
-    if (m_pendingApplyGeneration != 0
-        && generation == m_pendingApplyGeneration) {
-        m_pendingApplyGeneration = 0;
-        confirmRuleApply(counts.value(0, -1));
+    if (m_pendingApplies.contains(generation)) {
+        confirmRuleApply(m_pendingApplies.take(generation), counts.value(0, -1));
         return;
     }
 
@@ -2863,12 +2861,12 @@ void MainWindow::applyRuleToExistingMail(const TagRule &rule)
     const QStringList queries{ SearchTerm::changes(rule.query, rule.add,
                                                    rule.remove) };
 
-    m_pendingApplyRule = rule;
-    m_pendingApplyGeneration = ++m_ruleCountGeneration;
+    const quint64 generation = ++m_ruleCountGeneration;
+    m_pendingApplies.insert(generation, rule);
     QMetaObject::invokeMethod(
         m_worker, "requestMessageCounts", Qt::QueuedConnection,
         Q_ARG(QStringList, queries),
-        Q_ARG(quint64, m_pendingApplyGeneration));
+        Q_ARG(quint64, generation));
 }
 
 TagCommand *MainWindow::armTagCommandForTesting(const QStringList &add,
@@ -2882,9 +2880,8 @@ TagCommand *MainWindow::armTagCommandForTesting(const QStringList &add,
     return command;
 }
 
-void MainWindow::confirmRuleApply(int count)
+void MainWindow::confirmRuleApply(const TagRule &rule, int count)
 {
-    const TagRule rule = m_pendingApplyRule;
     if (count < 0) {
         showTransientStatus(
             tr("Rule \"%1\" could not be counted, so nothing was applied.")
@@ -2929,22 +2926,18 @@ void MainWindow::confirmRuleApply(int count)
     }
 
     const QString description = tr("Apply rule \"%1\"").arg(rule.id);
-    m_pendingRuleToken = ++m_lastRuleToken;
     QMetaObject::invokeMethod(
         m_worker, "applyRule", Qt::QueuedConnection,
         Q_ARG(QString, rule.query), Q_ARG(QStringList, rule.add),
-        Q_ARG(QStringList, rule.remove), Q_ARG(QString, description),
-        Q_ARG(quint64, m_pendingRuleToken));
+        Q_ARG(QStringList, rule.remove), Q_ARG(QString, description));
 
     announceAction(tr("%1: %n message(s)", "", count).arg(description));
 }
 
-void MainWindow::onRuleApplied(quint64 token,
-                               const QVector<TagChange> &changes)
+void MainWindow::onRuleApplied(const QString &description,
+                               const QVector<TagChange> &changes,
+                               const QString &error)
 {
-    if (token == 0 || token != m_pendingRuleToken)
-        return;
-    m_pendingRuleToken = 0;
 
     // One undo entry for the whole rule, one command per operation, each
     // built from the ids that operation MOVED (item 176). The command's first
@@ -2967,15 +2960,22 @@ void MainWindow::onRuleApplied(quint64 token,
         m_undoStack.push(command);
     }
 
-    if (!anyMoved) {
-        // Another writer got there between the count and the write. The
-        // ticket bump stops announceAction() claiming "done" over this.
+    if (anyMoved)
+        m_undoStack.endMacro();
+
+    // The ticket bump stops announceAction() claiming "done" over either
+    // message below.
+    if (!error.isEmpty()) {
         ++m_announceTicket;
-        showTransientStatus(
-            tr("Rule \"%1\" has nothing to change.").arg(m_pendingApplyRule.id));
-        return;
+        // Not transient: a failed write is state the user has to read.
+        m_statusLabel->setText(tr("%1 failed: %2").arg(description, error));
+    } else if (!anyMoved) {
+        // Another writer got there between the count and the write.
+        ++m_announceTicket;
+        showTransientStatus(tr("%1: nothing to change.").arg(description));
     }
-    m_undoStack.endMacro();
+    if (!anyMoved)
+        return;
 
     // Every account, not the ones the model knows: a backfill reaches mail no
     // row shows, so its accounts cannot be resolved through the model the way

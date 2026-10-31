@@ -864,7 +864,14 @@ private slots:
     /// meanwhile clears that queue, and the backfill's confirmation was then
     /// credited to the user's command, whose undo inverted it over thousands
     /// of messages.
-    void onRuleApplied(quint64 token, const QVector<TagChange> &changes);
+    ///
+    /// Every answer is handled: there is no token to judge one stale by,
+    /// because a write's answer cannot be superseded. Two Applies in flight
+    /// both landed, and each needs its undo and its pending count. Messages
+    /// name the rule from `description`, which the reply carries. A non-empty
+    /// `error` is shown, and whatever landed before it is still recorded.
+    void onRuleApplied(const QString &description,
+                       const QVector<TagChange> &changes, const QString &error);
 
 private:
     /// What onTagsApplied() does for any confirmed write, apart from crediting
@@ -874,7 +881,7 @@ private:
 
     /// The count for applyRuleToExistingMail() arrived: confirm, then send
     /// the rule to the worker's applyRule().
-    void confirmRuleApply(int count);
+    void confirmRuleApply(const TagRule &rule, int count);
 
     void buildUi();
 
@@ -1856,16 +1863,12 @@ private:
     /// counter.
     quint64 m_ruleCountGeneration = 0;
 
-    /// The rule awaiting its change count, and the generation that count
-    /// will carry. Shares m_ruleCountGeneration's sequence, so a pending
-    /// Apply and the dialog's Count matches can never be confused.
-    TagRule m_pendingApplyRule;
-    quint64 m_pendingApplyGeneration = 0;
-
-    /// The token the outstanding applyRule() will answer with, 0 when none.
-    /// A reply carrying any other token is stale and dropped.
-    quint64 m_pendingRuleToken = 0;
-    quint64 m_lastRuleToken = 0;
+    /// The rules awaiting their change count, keyed by the generation each
+    /// count will carry. A map, not one slot: a second Apply before the first
+    /// count returns must not make the first look stale. Shares
+    /// m_ruleCountGeneration's sequence, so an Apply and the dialog's Count
+    /// matches can never be confused.
+    QHash<quint64, TagRule> m_pendingApplies;
 
     /// The generation of a REFRESH query, run after a sync to bring the list
     /// up to date without disturbing it.

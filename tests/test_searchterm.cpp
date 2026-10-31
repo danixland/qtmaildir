@@ -18,6 +18,7 @@
 
 #include <QtTest>
 
+#include "config.h"
 #include "searchterm.h"
 
 /// The query grammar of the right-click search actions.
@@ -30,6 +31,9 @@ class TestSearchTerm : public QObject
 {
     Q_OBJECT
 private slots:
+    void changesNarrowsToMessagesTheTagsWouldMove();
+    void changesKeepsADisjunctionInsideItsScope();
+    void changesWithNothingToDoMatchesNothing();
     void quotesAPlainValue();
     void escapesEmbeddedQuotes();
     void collapsesWhitespaceAndNewlines();
@@ -183,6 +187,46 @@ void TestSearchTerm::excludeWithNothingToExcludeLeavesTheQuery()
     QCOMPARE(SearchTerm::exclude(QStringLiteral("tag:inbox"), QString()),
              QStringLiteral("tag:inbox"));
     QVERIFY(SearchTerm::exclude(QString(), QString()).isEmpty());
+}
+
+void TestSearchTerm::changesNarrowsToMessagesTheTagsWouldMove()
+{
+    // Item 212. A message already carrying every added tag and none of the
+    // removed ones would not change, so it must not be counted or written.
+    QCOMPARE(SearchTerm::changes(QStringLiteral("from:a@example.org"),
+                                 { QStringLiteral("promo") },
+                                 { QStringLiteral("inbox") }),
+             QStringLiteral("(from:a@example.org) AND "
+                            "(not tag:promo or tag:inbox)"));
+    QCOMPARE(SearchTerm::changes(QStringLiteral("from:a@example.org"),
+                                 { QStringLiteral("x"), QStringLiteral("y") },
+                                 {}),
+             QStringLiteral("(from:a@example.org) AND "
+                            "(not tag:x or not tag:y)"));
+    QCOMPARE(SearchTerm::changes(QStringLiteral("from:a@example.org"), {},
+                                 { QStringLiteral("inbox") }),
+             QStringLiteral("(from:a@example.org) AND (tag:inbox)"));
+}
+
+void TestSearchTerm::changesKeepsADisjunctionInsideItsScope()
+{
+    // `a or b AND c` binds as `a or (b AND c)`, which would write to every
+    // message matching `a` whatever its tags. extend() parenthesises both.
+    QCOMPARE(SearchTerm::changes(QStringLiteral("from:a@example.org or "
+                                                "from:b@example.org"),
+                                 { QStringLiteral("promo") }, {}),
+             QStringLiteral("(from:a@example.org or from:b@example.org) AND "
+                            "(not tag:promo)"));
+}
+
+void TestSearchTerm::changesWithNothingToDoMatchesNothing()
+{
+    // notmuch reads an EMPTY query as "match everything". A caller writing
+    // through this must never be handed one.
+    QCOMPARE(SearchTerm::changes(QString(), { QStringLiteral("x") }, {}),
+             Config::matchNothingQuery());
+    QCOMPARE(SearchTerm::changes(QStringLiteral("from:a@example.org"), {}, {}),
+             Config::matchNothingQuery());
 }
 
 QTEST_MAIN(TestSearchTerm)

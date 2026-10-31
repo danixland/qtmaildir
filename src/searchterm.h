@@ -111,6 +111,20 @@ QString extend(const QString &existing, const QString &addition);
 /// An empty `addition` leaves `existing` untouched.
 QString exclude(const QString &existing, const QString &addition);
 
+/// The messages among `query` that `+add -remove` would actually change:
+/// `(query) AND (not tag:a1 or ... or tag:r1 ...)`.
+///
+/// Used to count and to write a rule applied to existing mail (item 212), so
+/// the number in the confirmation is the number of messages touched, not the
+/// number matched. Built on extend(), so a disjunction in the rule cannot
+/// escape the scope.
+///
+/// **Never empty.** An empty query or an empty change yields
+/// Config::matchNothingQuery(), because notmuch reads an empty query as
+/// "match everything" and this string is written to.
+QString changes(const QString &query, const QStringList &add,
+                const QStringList &remove);
+
 }  // namespace SearchTerm
 
 /// One entry a context menu can offer: a finished query and the text naming it.

@@ -167,6 +167,12 @@ public:
     /// the worker resolves its query.
     void applyRuleToExistingMail(const TagRule &rule);
 
+    /// Arms one MessageTagCommand on the confirmation queue as a user gesture
+    /// would, opening a new gesture, and pushes it. Returned, owned by the
+    /// undo stack, so a test can show a backfill leaves it alone.
+    TagCommand *armTagCommandForTesting(const QStringList &add,
+                                        const QStringList &remove);
+
     /// Whether the undo stack still holds anything. Exposed so a test can show
     /// that a rejected write did not take unrelated history down with it.
     bool canUndo() const { return m_undoStack.canUndo(); }
@@ -787,13 +793,7 @@ private slots:
     /// describes state lasting until the sync ends, and a message that expired
     /// would leave rows showing a tag the database has not got and no
     /// explanation of why.
-    ///
-    /// `onDone`, when given, runs once the worker has reached the write: the
-    /// caller's follow-up (a refresh), not a label, so it runs whichever
-    /// announcement owns the label by then. Not run on the sync-held branch;
-    /// no caller passes one while a sync holds the lock.
-    void announceAction(const QString &text,
-                        const std::function<void()> &onDone = {});
+    void announceAction(const QString &text);
 
     /// Reacts to a sync started outside this window, by cron or by hand.
     ///
@@ -857,11 +857,24 @@ private slots:
     /// request has superseded this one.
     void onRuleCountsReady(const QVector<int> &counts, quint64 generation);
 
+    /// The worker's answer to applyRule(), one change per single-tag
+    /// operation, each carrying the ids it actually moved. Builds the undo
+    /// entry from those KNOWN ids. A backfill never arms a command on the
+    /// shared confirmation queue: it can run for a long time, a gesture made
+    /// meanwhile clears that queue, and the backfill's confirmation was then
+    /// credited to the user's command, whose undo inverted it over thousands
+    /// of messages.
+    void onRuleApplied(quint64 token, const QVector<TagChange> &changes);
+
 private:
-    /// The count for applyRuleToExistingMail() arrived: confirm, then write.
-    /// `counts` holds the whole rule's count first, then one per single-tag
-    /// operation in the order ruleOperations() lists them.
-    void confirmRuleApply(const QVector<int> &counts);
+    /// What onTagsApplied() does for any confirmed write, apart from crediting
+    /// an armed undo command: pending edits, the indicator, the auto-sync,
+    /// the dashboard, and the known-tag list. Shared with onRuleApplied().
+    void recordConfirmedTagChange(const TagChange &change);
+
+    /// The count for applyRuleToExistingMail() arrived: confirm, then send
+    /// the rule to the worker's applyRule().
+    void confirmRuleApply(int count);
 
     void buildUi();
 
@@ -1848,6 +1861,11 @@ private:
     /// Apply and the dialog's Count matches can never be confused.
     TagRule m_pendingApplyRule;
     quint64 m_pendingApplyGeneration = 0;
+
+    /// The token the outstanding applyRule() will answer with, 0 when none.
+    /// A reply carrying any other token is stale and dropped.
+    quint64 m_pendingRuleToken = 0;
+    quint64 m_lastRuleToken = 0;
 
     /// The generation of a REFRESH query, run after a sync to bring the list
     /// up to date without disturbing it.

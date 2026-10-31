@@ -301,6 +301,7 @@ private slots:
     void applyingARuleConfirmsWithTheCountAndUndoesExactly();
     void applyingARuleWhoseQueryNamesItsOwnTagWritesAllOfIt();
     void aBackfillLeavesAnArmedUserCommandAlone();
+    void twoRulesAppliedBackToBackEachGetTheirUndo();
     void aPurgeTakesTheRowsOutOfTheViewWithoutARefresh();
     void theDashboardFollowsAWriteToTheConversationItShows();
     void anEditHeldByASyncSaysSoInsteadOfClaimingItLanded();
@@ -10159,6 +10160,56 @@ void TestMainWindow::aBackfillLeavesAnArmedUserCommandAlone()
                                       Q_ARG(TagChange, change)));
     QCOMPARE(user->changedMessageIds(),
              QStringList{ QStringLiteral("armed@example.org") });
+}
+
+void TestMainWindow::twoRulesAppliedBackToBackEachGetTheirUndo()
+{
+    // Item 212, from review. A second Apply while the first is in flight must
+    // not make the first's answer look stale: its writes landed, so it needs
+    // its undo entry and its pending count like any other write.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("one@example.org"),
+        QStringLiteral("One"), QStringLiteral("deals@example.net"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+    const QString cfg = backed.fixture().configPath();
+
+    MainWindow window(backed.config());
+    QCOMPARE(window.pendingEditCount(), 0);
+
+    TagRule first;
+    first.id = QStringLiteral("first");
+    first.query = QStringLiteral("from:deals@example.net");
+    first.add = { QStringLiteral("ruleone") };
+    TagRule second = first;
+    second.id = QStringLiteral("second");
+    second.add = { QStringLiteral("ruletwo") };
+
+    // Answer every box, however they nest.
+    QStringList asked;
+    QTimer poll;
+    poll.setInterval(20);
+    QObject::connect(&poll, &QTimer::timeout, [&asked]() {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!box)
+            return;
+        asked.append(box->text());
+        box->button(QMessageBox::Yes)->click();
+    });
+    poll.start();
+
+    window.applyRuleToExistingMail(first);
+    window.applyRuleToExistingMail(second);
+    QTRY_COMPARE_WITH_TIMEOUT(asked.size(), 2, 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(window.undoDepthForTesting(), 2, 15000);
+
+    QCOMPARE(fixtureNotmuch(cfg, { QStringLiteral("count"),
+                                   QStringLiteral("tag:ruleone and tag:ruletwo") }),
+             QStringLiteral("1"));
+    // One message, two (message, tag) edits outstanding.
+    QCOMPARE(window.pendingEditCount(), 2);
 }
 
 /// Item 181, from the user: "the thread dashboard doesn't update live with the

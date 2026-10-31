@@ -246,10 +246,11 @@ public slots:
     ///
     /// Answers with ruleApplied() ALWAYS, even when nothing moved, and never
     /// with tagsApplied(): the window builds the undo from the answer rather
-    /// than from the shared confirmation queue.
+    /// than from the shared confirmation queue. Never with errorOccurred()
+    /// either: that path reverts whatever unrelated user write is in flight,
+    /// so a failure travels in the reply.
     void applyRule(const QString &query, const QStringList &add,
-                   const QStringList &remove, const QString &description,
-                   quint64 token);
+                   const QStringList &remove, const QString &description);
 
     /// Resolves whole threads to the message ids and file paths they contain.
     ///
@@ -398,10 +399,12 @@ signals:
 
     /// applyRule()'s answer: one TagChange per single-tag operation, in the
     /// order applyRule() documents, each carrying the ids that operation
-    /// actually moved (possibly none). `token` is echoed from the request.
-    /// Emitted even after a write error, carrying what was written before it,
-    /// so the window can still offer undo for that part.
-    void ruleApplied(quint64 token, const QVector<TagChange> &changes);
+    /// actually moved (possibly none). `description` is echoed from the
+    /// request, so the window names the right rule. `error` is empty on
+    /// success; on a failure, `changes` holds what was written before it, so
+    /// the window can still offer undo for that part.
+    void ruleApplied(const QString &description,
+                     const QVector<TagChange> &changes, const QString &error);
 
     /// One file entered or left the index outside a query (item 192).
     ///
@@ -497,13 +500,18 @@ signals:
     void errorOccurred(const QString &message);
 
 private:
-    bool openReadOnly();
+    /// With `error` given, a failure is written there instead of emitted, and
+    /// the non-fatal reopen failure is ignored; applyRule() reports in its
+    /// own reply.
+    bool openReadOnly(QString *error = nullptr);
     void close();
 
     /// applyTags() without the signal: writes `change` and fills `changedIds`
-    /// with the messages whose tags really moved. False, with errorOccurred()
-    /// emitted, when the database could not be opened for writing.
-    bool writeTags(const TagChange &change, QStringList *changedIds);
+    /// with the messages whose tags really moved. False when the database
+    /// could not be opened for writing, with the reason in `error` when given
+    /// and through errorOccurred() otherwise.
+    bool writeTags(const TagChange &change, QStringList *changedIds,
+                   QString *error = nullptr);
 
     QByteArray configPathArg() const;
 

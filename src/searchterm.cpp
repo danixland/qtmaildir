@@ -18,6 +18,8 @@
 
 #include "searchterm.h"
 
+#include "config.h"
+
 #include <algorithm>
 
 namespace SearchTerm {
@@ -106,6 +108,25 @@ QString exclude(const QString &existing, const QString &addition)
         return QString();
 
     return QStringLiteral("(%1) AND NOT (%2)").arg(left, right);
+}
+
+QString changes(const QString &query, const QStringList &add,
+                const QStringList &remove)
+{
+    QStringList terms;
+    for (const QString &name : add) {
+        const QString term = tag(name);
+        if (!term.isEmpty())
+            terms.append(QStringLiteral("not ") + term);
+    }
+    for (const QString &name : remove) {
+        const QString term = tag(name);
+        if (!term.isEmpty())
+            terms.append(term);
+    }
+    if (query.trimmed().isEmpty() || terms.isEmpty())
+        return Config::matchNothingQuery();
+    return extend(query, terms.join(QStringLiteral(" or ")));
 }
 
 }  // namespace SearchTerm

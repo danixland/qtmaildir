@@ -2969,6 +2969,7 @@ void MainWindow::onRuleApplied(const QString &description,
         ++m_announceTicket;
         // Not transient: a failed write is state the user has to read.
         m_statusLabel->setText(tr("%1 failed: %2").arg(description, error));
+        m_statusTimer->stop();   // a pending transient must not clear it
     } else if (!anyMoved) {
         // Another writer got there between the count and the write.
         ++m_announceTicket;

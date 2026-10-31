@@ -872,6 +872,17 @@ message-scoped optimistic update would have left a FAILED message write showing
 its optimistic state for good. Both scopes revert now. Undo needs nothing extra:
 `MessageTagCommand` routes back through `sendMessageTagChange`.
 
+**A loop of optimistic writes goes through `batchModelWrites()`, and a
+model lookup by id is a hash, not a walk.** `MainWindow`'s `dataChanged`
+handler refreshes the action labels, and that refresh reads the whole
+selection. Run once per written row it made Select all + Archive on 10k rows
+cubic, about 10^12 string compares, and the window froze before the write ever
+reached the worker (item 211). `batchModelWrites()` holds the refresh and runs
+it once. `ThreadListModel::rowForThread()` / `rowForMessage()` answer from an
+index rebuilt lazily after any structural signal. A change to a node's ids
+that emits none (as `reconcile` and `setThreadMessages` do) must set
+`m_indexStale` by hand, which `idLookupsFollowEveryChangeToTheRows` guards.
+
 **Testing this needs two things that are easy to miss.** Put the reply under the
 SECOND thread, so the wrong answer is plausible rather than accidentally right,
 and give the two threads OPPOSITE states, since two threads in the same state

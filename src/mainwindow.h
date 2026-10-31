@@ -1179,6 +1179,10 @@ private:
     /// something, the same rule refreshUnreadAction() applies to the label.
     void refreshTrashActions();
 
+    /// Runs a loop of optimistic model writes with the dataChanged-driven
+    /// action refresh held, then refreshes once (item 211).
+    void batchModelWrites(const std::function<void()> &writes);
+
     /// Whether every selected row's file already sits in its account's trash
     /// folder. Empty selection answers false.
     ///
@@ -1209,6 +1213,8 @@ private:
     /// for exit has finished. Stops closeEvent asking a second time, and is
     /// what lets the deferred close through.
     bool m_closeApproved = false;
+    bool m_batchingModelWrites = false;   ///< see batchModelWrites()
+    quint64 m_announceTicket = 0;   ///< see announceAction()
 
     /// True while a sync started by the exit prompt is running. The window
     /// stays open until it finishes: killing the process mid-sync is exactly

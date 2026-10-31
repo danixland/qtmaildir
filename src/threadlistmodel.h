@@ -20,6 +20,7 @@
 
 #include <QAbstractItemModel>
 #include <QColor>
+#include <QHash>
 #include <QVector>
 
 #include "tagcolors.h"
@@ -450,7 +451,26 @@ private:
     /// than claiming the union as one message's.
     static ThreadNode nodeFor(const ThreadSummary &summary);
 
+    /// The top-level row holding a thread or a message, or -1.
+    ///
+    /// Answered from a hash rather than a walk, because a bulk action asks
+    /// once per message and a walk per message made archiving ten thousand
+    /// rows quadratic in the lookups alone (item 211). The FIRST row in list
+    /// order wins, which is the row every linear walk here used to stop at,
+    /// so the two are interchangeable; a flat view can hold one thread on
+    /// several rows and still answers with the first.
+    int rowForThread(const QString &threadId) const;
+    int rowForMessage(const QString &messageId) const;
+    void rebuildIndex() const;
+
     QVector<ThreadNode> m_threads;
+    // Rebuilt lazily on the next lookup after anything renumbers rows or
+    // changes which ids a node carries. Every structural change signals, and
+    // the two in-place id changes (reconcile, setThreadMessages) mark it by
+    // hand.
+    mutable QHash<QString, int> m_rowByThread;
+    mutable QHash<QString, int> m_rowByMessage;
+    mutable bool m_indexStale = true;
     const TagColors *m_tagColors = nullptr;
     QString m_dateFormat;
     QStringList m_forwardPrefixes;

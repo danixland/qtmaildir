@@ -44,6 +44,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -1011,6 +1012,11 @@ void MainWindow::buildUi()
     // the model rather than on each of the six call sites that apply an
     // optimistic update, so a new one cannot forget.
     connect(m_model, &QAbstractItemModel::dataChanged, this, [this]() {
+        // Inside batchModelWrites() the refresh runs ONCE at the end. Per
+        // row it is O(selection) for every row written, which made a bulk
+        // archive cubic and froze the window on ten thousand rows (item 211).
+        if (m_batchingModelWrites)
+            return;
         refreshUnreadAction();
         refreshTrashActions();
     });
@@ -4863,14 +4869,16 @@ void MainWindow::revertPendingTagChange()
 
     // Put the rows back the way they were. Only the model is touched: the
     // worker never applied the change, so there is nothing to undo there.
-    for (const QString &threadId : m_pendingThreadIds) {
-        m_model->applyTagChange(threadId, m_pendingChange.removed,
-                                m_pendingChange.added);
-    }
-    for (const QString &messageId : m_pendingChange.messageIds) {
-        m_model->applyMessageTagChange(messageId, m_pendingChange.removed,
-                                       m_pendingChange.added);
-    }
+    batchModelWrites([this] {
+        for (const QString &threadId : m_pendingThreadIds) {
+            m_model->applyTagChange(threadId, m_pendingChange.removed,
+                                    m_pendingChange.added);
+        }
+        for (const QString &messageId : m_pendingChange.messageIds) {
+            m_model->applyMessageTagChange(messageId, m_pendingChange.removed,
+                                           m_pendingChange.added);
+        }
+    });
 
     // The undo entry describes a change that never landed, so it would apply a
     // spurious inverse if the user pressed undo.
@@ -4894,6 +4902,9 @@ void MainWindow::revertPendingTagChange()
 
 void MainWindow::onWorkerError(const QString &message)
 {
+    // The error is what the user needs to read, not a "done" still in flight.
+    ++m_announceTicket;
+
     // Spec: the UI updates optimistically and reverts if the write fails.
     // Without this the list would keep showing a tag the database never got.
     //
@@ -4950,14 +4961,16 @@ void MainWindow::flushHeldEdits()
         // rows do not visibly flicker; without this the change is applied
         // twice and a later revert undoes only one of them, leaving a row
         // showing a tag the database never got.
-        for (const QString &threadId : edit.threadIds) {
-            m_model->applyTagChange(threadId, edit.change.removed,
-                                    edit.change.added);
-        }
-        for (const QString &messageId : edit.change.messageIds) {
-            m_model->applyMessageTagChange(messageId, edit.change.removed,
-                                           edit.change.added);
-        }
+        batchModelWrites([&] {
+            for (const QString &threadId : edit.threadIds) {
+                m_model->applyTagChange(threadId, edit.change.removed,
+                                        edit.change.added);
+            }
+            for (const QString &messageId : edit.change.messageIds) {
+                m_model->applyMessageTagChange(messageId, edit.change.removed,
+                                               edit.change.added);
+            }
+        });
 
         // By SCOPE. A held edit is one or the other, never both: a
         // message-scoped edit carries no thread ids, so sending it through
@@ -5867,7 +5880,32 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
 void MainWindow::announceAction(const QString &text)
 {
     if (!aSyncHoldsTheWriteLock()) {
-        showTransientStatus(text);
+        if (!m_worker) {
+            showTransientStatus(text);
+            return;
+        }
+
+        // Item 211. Held until the write has actually landed, then replaced
+        // by a transient "done": a bulk write can take a while, and a status
+        // that vanished on a timer left no way to tell whether it finished.
+        //
+        // A round trip through the worker's queue rather than a hook on
+        // tagsApplied(), which deliberately stays silent for a write that
+        // moved nothing, and a move reports through another signal anyway.
+        // The worker runs its queue in order, so this lambda runs after the
+        // write the caller just queued, and its reply is posted behind that
+        // write's confirmation. The destructor waits on the worker thread
+        // before `this` goes, so the reply cannot outlive the window.
+        m_statusTimer->stop();
+        m_statusLabel->setText(tr("%1, applying…").arg(text));
+        const quint64 ticket = ++m_announceTicket;
+        QMetaObject::invokeMethod(m_worker, [this, text, ticket]() {
+            QMetaObject::invokeMethod(this, [this, text, ticket]() {
+                // A newer announcement, or an error, owns the label now.
+                if (ticket == m_announceTicket)
+                    showTransientStatus(tr("%1, done").arg(text));
+            }, Qt::QueuedConnection);
+        }, Qt::QueuedConnection);
         return;
     }
 
@@ -6511,6 +6549,16 @@ void MainWindow::editTagsOnSelection()
     tagSelected(add, remove, tr("Edit tags"));
 }
 
+void MainWindow::batchModelWrites(const std::function<void()> &writes)
+{
+    {
+        const QScopedValueRollback<bool> guard(m_batchingModelWrites, true);
+        writes();
+    }
+    refreshUnreadAction();
+    refreshTrashActions();
+}
+
 void MainWindow::tagSelected(const QStringList &add, const QStringList &remove,
                              const QString &description)
 {
@@ -6582,8 +6630,10 @@ void MainWindow::sendMessageTagChange(const QStringList &messageIds,
     // this path had no optimistic update at all, and the cost was that Delete
     // and Toggle unread on a reply moved the pending count and changed nothing
     // the user could see. The reply's own row is where the feedback belongs.
-    for (const QString &messageId : messageIds)
-        m_model->applyMessageTagChange(messageId, add, remove);
+    batchModelWrites([&] {
+        for (const QString &messageId : messageIds)
+            m_model->applyMessageTagChange(messageId, add, remove);
+    });
 
     // The strip shows the tags of the message ON DISPLAY, so it has to follow
     // an edit to that message rather than waiting for the next selection. The
@@ -6624,6 +6674,7 @@ void MainWindow::sendMessageTagChange(const QStringList &messageIds,
     // wrong in both directions. A conversation leaves the view when a
     // THREAD-scoped write empties its union, which is the other call site.
     QStringList touchedThreads;
+    QSet<QString> seen;   // a list's contains() made this quadratic (item 211)
     bool aRowIsMissing = false;
     for (const QString &messageId : messageIds) {
         const QString threadId = m_model->threadIdForMessage(messageId);
@@ -6633,8 +6684,10 @@ void MainWindow::sendMessageTagChange(const QStringList &messageIds,
         }
         if (m_model->threadCountFor(threadId) > 1)
             continue;
-        if (!touchedThreads.contains(threadId))
+        if (!seen.contains(threadId)) {
+            seen.insert(threadId);
             touchedThreads.append(threadId);
+        }
     }
     syncViewMembership(touchedThreads, aRowIsMissing, add, remove);
 
@@ -6889,8 +6942,10 @@ void MainWindow::trashThreads(const QStringList &threadIds)
     // holding it back is what made a deleted thread sit unchanged until it was
     // clicked. It also keeps the toggle's direction readable immediately, so a
     // second press restores rather than deleting again.
-    for (const QString &threadId : threadIds)
-        m_model->applyTagChange(threadId, { QStringLiteral("deleted") }, {});
+    batchModelWrites([&] {
+        for (const QString &threadId : threadIds)
+            m_model->applyTagChange(threadId, { QStringLiteral("deleted") }, {});
+    });
 
     m_pendingThreadScope = threadIds;
     QMetaObject::invokeMethod(m_worker, "resolveThreadMessages",
@@ -6987,9 +7042,11 @@ void MainWindow::spamThreads(const QStringList &threadIds)
     // synchronously before it: the same shape as trashThreads(), for the same
     // two reasons. An unexpanded thread's reply ids and paths exist only in
     // the database; and the card must not wait for that round trip.
-    for (const QString &threadId : threadIds)
-        m_model->applyTagChange(threadId, { QStringLiteral("spam") },
-                                { QStringLiteral("inbox") });
+    batchModelWrites([&] {
+        for (const QString &threadId : threadIds)
+            m_model->applyTagChange(threadId, { QStringLiteral("spam") },
+                                    { QStringLiteral("inbox") });
+    });
 
     m_pendingThreadScope = threadIds;
     QMetaObject::invokeMethod(m_worker, "resolveThreadMessages",
@@ -7121,8 +7178,10 @@ void MainWindow::untrashThreads(const QStringList &threadIds)
         return;
 
     // Repainted synchronously, as the delete direction is.
-    for (const QString &threadId : threadIds)
-        m_model->applyTagChange(threadId, {}, { QStringLiteral("deleted") });
+    batchModelWrites([&] {
+        for (const QString &threadId : threadIds)
+            m_model->applyTagChange(threadId, {}, { QStringLiteral("deleted") });
+    });
 
     m_pendingThreadScope = threadIds;
     QMetaObject::invokeMethod(
@@ -7177,8 +7236,10 @@ void MainWindow::notSpamThreads(const QStringList &threadIds)
 
     // Repainted synchronously, as the mark-spam direction is: the card is what
     // the user watches, and it must not wait for the worker round trip.
-    for (const QString &threadId : threadIds)
-        m_model->applyTagChange(threadId, {}, { QStringLiteral("spam") });
+    batchModelWrites([&] {
+        for (const QString &threadId : threadIds)
+            m_model->applyTagChange(threadId, {}, { QStringLiteral("spam") });
+    });
 
     m_pendingThreadScope = threadIds;
     QMetaObject::invokeMethod(
@@ -7818,8 +7879,11 @@ void MainWindow::sendMove(const QStringList &messageIds,
     // while the latter deliberately leaves a multi-message thread's summary
     // alone because one message's edit does not describe the conversation.
     if (wholeThreadIds.isEmpty()) {
-        for (const QString &messageId : messageIds)
-            m_model->applyMessageTagChange(messageId, displayAdd, displayRemove);
+        batchModelWrites([&] {
+            for (const QString &messageId : messageIds)
+                m_model->applyMessageTagChange(messageId, displayAdd,
+                                               displayRemove);
+        });
     }
 
     // A row that no longer belongs in the view LEAVES it, rather than sitting
@@ -8136,8 +8200,10 @@ void MainWindow::sendThreadTagChange(const QStringList &threadIds,
 {
     // Optimistic: the rows change now, so a bulk archive of hundreds of threads
     // feels instant. Recorded so onWorkerError() can put them back.
-    for (const QString &threadId : threadIds)
-        m_model->applyTagChange(threadId, add, remove);
+    batchModelWrites([&] {
+        for (const QString &threadId : threadIds)
+            m_model->applyTagChange(threadId, add, remove);
+    });
 
     // Which accounts this touches, recorded HERE and not in onTagsApplied():
     // TagChange carries message ids, while the account is a property of the

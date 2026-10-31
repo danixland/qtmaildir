@@ -39,6 +39,11 @@ point at which they are stable.
 
 ### Fixed
 
+- Acting on thousands of selected rows at once no longer freezes the window.
+  Archiving a 10k-row selection spent its time refreshing the menu labels once
+  per row, against the whole selection each time. It now does that once.
+  The status bar says an action is applying until the write has landed, then
+  that it is done, rather than letting the message fade on a timer.
 - Searching on selected text containing a double quote no longer lets the rest
   of the selection escape the query. Quotes are now doubled, which is notmuch's
   own escape; the backslash form ended the quoted term early.

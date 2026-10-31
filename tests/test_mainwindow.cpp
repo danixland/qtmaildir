@@ -295,6 +295,7 @@ private slots:
     void narrowingAnEmptyQueryBarIsAPlainSearch();
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
+    void aWriteSaysItIsApplyingUntilTheWorkerHasRunIt();
     void aPurgeTakesTheRowsOutOfTheViewWithoutARefresh();
     void theDashboardFollowsAWriteToTheConversationItShows();
     void anEditHeldByASyncSaysSoInsteadOfClaimingItLanded();
@@ -9890,6 +9891,42 @@ void TestMainWindow::aWorkerBackedWindowReturnsRealThreads()
     // thread, so findChild() cannot see it. Observing the window's own state
     // is both the only route and the better assertion.
     QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+}
+
+void TestMainWindow::aWriteSaysItIsApplyingUntilTheWorkerHasRunIt()
+{
+    // Item 211, from the user: after archiving ten thousand rows, "how do I
+    // know if it worked? The UI doesn't give me a feedback". The announcement
+    // used to vanish on a timer whether or not the write had landed.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("root@example.org"),
+        QStringLiteral("A subject"), QStringLiteral("sender@example.org"),
+        // Friday, verified with `date -d 2026-08-14 +%A`.
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body text.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    MainWindow window(backed.config());
+    auto *queryEdit = window.findChild<QLineEdit *>(QStringLiteral("queryEdit"));
+    auto *model = window.findChild<ThreadListModel *>();
+    auto *view = window.findChild<ThreadListView *>();
+    auto *status = window.findChild<QLabel *>(QStringLiteral("statusMessage"));
+    QVERIFY(queryEdit && model && view && status);
+
+    queryEdit->setText(QStringLiteral("tag:inbox"));
+    queryEdit->returnPressed();
+    QTRY_VERIFY_WITH_TIMEOUT(model->rowCount(QModelIndex()) == 1, 15000);
+    view->setCurrentIndex(model->index(0, 0, QModelIndex()));
+
+    window.findChild<QAction *>(QStringLiteral("archive"))->trigger();
+
+    // Synchronous: the worker's reply is posted to this thread and cannot be
+    // delivered before the event loop runs, so this cannot race.
+    QVERIFY2(status->text().contains(QStringLiteral("applying")),
+             qPrintable(status->text()));
+    QTRY_VERIFY2_WITH_TIMEOUT(status->text().contains(QStringLiteral("done")),
+                              qPrintable(status->text()), 15000);
 }
 
 /// Item 181, from the user: "the thread dashboard doesn't update live with the

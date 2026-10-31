@@ -1981,6 +1981,14 @@ protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
         <translation>Sincronizzazione in corso in background...</translation>
     </message>
     <message>
+        <source>%1, applying…</source>
+        <translation>%1, in corso…</translation>
+    </message>
+    <message>
+        <source>%1, done</source>
+        <translation>%1, fatto</translation>
+    </message>
+    <message>
         <source>%1, waiting for the running sync to finish</source>
         <translation>%1, in attesa che termini la sincronizzazione in corso</translation>
     </message>

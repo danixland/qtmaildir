@@ -109,6 +109,7 @@ private slots:
     void aConversationListsItsFirstMessageAsAChild();
     void aMessageRowDoesNotListItselfBeneathItself();
     void aMixedSelectionCarriesBothScopes();
+    void idLookupsFollowEveryChangeToTheRows();
 };
 
 static ThreadSummary makeThread(const QString &id, const QString &subject)
@@ -2353,6 +2354,54 @@ void TestThreadListModel::aMixedSelectionCarriesBothScopes()
 
     QCOMPARE(scope.messageIds, QStringList{ QStringLiteral("m1") });
     QCOMPARE(scope.threadIds, QStringList{ QStringLiteral("t2") });
+}
+
+void TestThreadListModel::idLookupsFollowEveryChangeToTheRows()
+{
+    // Item 211. Lookups by id go through a lazily rebuilt hash rather than a
+    // walk, so every way the rows can change has to invalidate it. Each step
+    // asks a question whose answer moved, so a stale index answers wrongly.
+    const QString a = QStringLiteral("a@example.org");
+    const QString c = QStringLiteral("c@example.org");
+    const QString d = QStringLiteral("d@example.org");
+    const QString e = QStringLiteral("e@example.org");
+    const QString t1 = QStringLiteral("t1");
+    const QString t2 = QStringLiteral("t2");
+
+    ThreadListModel model;
+    ThreadSummary one = makeThread(t1, QStringLiteral("one"));
+    one.firstMessageId = a;
+    ThreadSummary two = makeThread(t2, QStringLiteral("two"));
+    two.firstMessageId = c;
+    model.appendBatch({ one, two });
+    QCOMPARE(model.threadIdForMessage(a), t1);   // builds the index
+
+    // Expansion adds ids the index has never seen.
+    MessageNode first = makeNode(c, 0);
+    first.threadId = t2;
+    MessageNode reply = makeNode(d, 1);
+    reply.threadId = t2;
+    model.setThreadMessages(t2, { first, reply });
+    QCOMPARE(model.threadIdForMessage(d), t2);
+
+    // A removal renumbers: t2 moves from row 1 to row 0.
+    model.applyTagChange(t1, {}, { QStringLiteral("inbox") });
+    model.removeThreadsWithoutTag({ t1 }, QStringLiteral("inbox"));
+    QVERIFY(!model.hasThread(t1));
+    QVERIFY(model.threadIdForMessage(a).isEmpty());
+    QCOMPARE(model.threadCountFor(t2), 2);
+    model.applyMessageTagChange(d, { QStringLiteral("x") }, {});
+    QVERIFY(model.messageById(d).tags.contains(QStringLiteral("x")));
+
+    // reconcile() replaces a summary IN PLACE, with no structural signal.
+    two.firstMessageId = e;
+    two.tags = QStringList{ QStringLiteral("inbox") };
+    model.reconcile({ two });
+    QCOMPARE(model.threadIdForMessage(e), t2);
+
+    model.clear();
+    QVERIFY(!model.hasThread(t2));
+    QVERIFY(model.messageById(d).messageId.isEmpty());
 }
 
 QTEST_MAIN(TestThreadListModel)

@@ -20,12 +20,11 @@
 
 #include "composecontext.h"
 
-#include <QSet>
-
 #include <QBrush>
 #include <QFont>
 #include <QGuiApplication>
 #include <QPalette>
+#include <QSet>
 #include <QFontDatabase>
 #include <QFontMetrics>
 
@@ -131,6 +130,49 @@ QColor ThreadListModel::readColour()
 ThreadListModel::ThreadListModel(QObject *parent)
     : QAbstractItemModel(parent)
 {
+    // Keyed on the model's own structural signals rather than on each call
+    // site that inserts or removes, so a new one cannot forget.
+    const auto stale = [this]() { m_indexStale = true; };
+    connect(this, &QAbstractItemModel::rowsInserted, this, stale);
+    connect(this, &QAbstractItemModel::rowsRemoved, this, stale);
+    connect(this, &QAbstractItemModel::rowsMoved, this, stale);
+    connect(this, &QAbstractItemModel::modelReset, this, stale);
+    connect(this, &QAbstractItemModel::layoutChanged, this, stale);
+}
+
+void ThreadListModel::rebuildIndex() const
+{
+    m_rowByThread.clear();
+    m_rowByMessage.clear();
+    // tryEmplace keeps the FIRST row for an id, matching the walks this
+    // replaces, which returned at the first hit.
+    for (int row = 0; row < m_threads.size(); ++row) {
+        const ThreadNode &node = m_threads.at(row);
+        m_rowByThread.tryEmplace(node.summary.threadId, row);
+        if (!node.summary.firstMessageId.isEmpty())
+            m_rowByMessage.tryEmplace(node.summary.firstMessageId, row);
+        if (!node.first.messageId.isEmpty())
+            m_rowByMessage.tryEmplace(node.first.messageId, row);
+        for (const MessageNode &child : node.children)
+            m_rowByMessage.tryEmplace(child.messageId, row);
+    }
+    m_indexStale = false;
+}
+
+int ThreadListModel::rowForThread(const QString &threadId) const
+{
+    if (m_indexStale)
+        rebuildIndex();
+    return m_rowByThread.value(threadId, -1);
+}
+
+int ThreadListModel::rowForMessage(const QString &messageId) const
+{
+    if (messageId.isEmpty())
+        return -1;
+    if (m_indexStale)
+        rebuildIndex();
+    return m_rowByMessage.value(messageId, -1);
 }
 
 QModelIndex ThreadListModel::index(int row, int column,
@@ -212,11 +254,15 @@ void ThreadListModel::removeThreadsWithoutTag(const QStringList &threadIds,
     if (tag.isEmpty() || threadIds.isEmpty())
         return;
 
+    // A set, because this runs over every row with every touched thread:
+    // a list made a bulk archive quadratic here too (item 211).
+    const QSet<QString> wanted(threadIds.cbegin(), threadIds.cend());
+
     // Backwards for the same reason the sweeping form below is: each removal
     // renumbers everything after it.
     for (int row = m_threads.size() - 1; row >= 0; --row) {
         const ThreadNode &node = m_threads.at(row);
-        if (!threadIds.contains(node.summary.threadId))
+        if (!wanted.contains(node.summary.threadId))
             continue;
 
         // The SUMMARY, which is notmuch's union over the conversation, and
@@ -933,6 +979,7 @@ void ThreadListModel::reconcile(const QVector<ThreadSummary> &threads)
             || m_threads.at(row).summary.totalCount != summary.totalCount
             || m_threads.at(row).summary.matchedCount != summary.matchedCount) {
             m_threads[row].summary = summary;
+            m_indexStale = true;   // firstMessageId may have moved
             emit dataChanged(index(row, 0), index(row, 0));
         }
     }
@@ -997,6 +1044,7 @@ void ThreadListModel::setThreadMessages(const QString &threadId,
         // Kept so the root card can render its own message. It is the card the
         // user clicks to read the thread's opening message.
         m_threads[row].first = nodes.isEmpty() ? MessageNode() : nodes.first();
+        m_indexStale = true;   // a thread of one inserts no rows to say so
 
         if (!children.isEmpty()) {
             beginInsertRows(parent, 0, children.size() - 1);
@@ -1057,7 +1105,11 @@ MessageNode ThreadListModel::messageAt(const QModelIndex &index) const
 
 QString ThreadListModel::threadIdForMessage(const QString &messageId) const
 {
-    for (const ThreadNode &node : m_threads) {
+    const int row = rowForMessage(messageId);
+    if (row < 0)
+        return {};
+    {
+        const ThreadNode &node = m_threads.at(row);
         // The ROOT first. A thread's first message is not among its children
         // (item 109: setThreadMessages drops depth 0 because the root row
         // stands for it), so a search over children alone answers "no thread"
@@ -1077,27 +1129,22 @@ QString ThreadListModel::threadIdForMessage(const QString &messageId) const
 
 bool ThreadListModel::hasThread(const QString &threadId) const
 {
-    return std::any_of(m_threads.cbegin(), m_threads.cend(),
-                       [&threadId](const ThreadNode &node) {
-                           return node.summary.threadId == threadId;
-                       });
+    return rowForThread(threadId) >= 0;
 }
 
 int ThreadListModel::threadCountFor(const QString &threadId) const
 {
-    for (const ThreadNode &node : m_threads) {
-        if (node.summary.threadId == threadId)
-            return node.summary.totalCount;
-    }
-    return 0;
+    const int row = rowForThread(threadId);
+    return row < 0 ? 0 : m_threads.at(row).summary.totalCount;
 }
 
 MessageNode ThreadListModel::messageById(const QString &messageId) const
 {
-    if (messageId.isEmpty())
+    const int row = rowForMessage(messageId);
+    if (row < 0)
         return {};
-
-    for (const ThreadNode &node : m_threads) {
+    {
+        const ThreadNode &node = m_threads.at(row);
         // The root's own message first, and it is not among the children:
         // setThreadMessages drops depth 0 because the root row stands for it.
         // Searching only the children returned a default-constructed node for
@@ -1199,18 +1246,15 @@ ThreadSummary ThreadListModel::threadFor(const QModelIndex &index) const
 QStringList ThreadListModel::accountKeysForThread(const QString &threadId) const
 {
     QStringList keys;
-    for (const ThreadNode &node : m_threads) {
-        const ThreadSummary &thread = node.summary;
-        if (thread.threadId != threadId)
+    const int row = rowForThread(threadId);
+    if (row < 0)
+        return keys;
+    for (const QString &tag : m_threads.at(row).summary.tags) {
+        if (!TagColors::isAccountTag(tag))
             continue;
-        for (const QString &tag : thread.tags) {
-            if (!TagColors::isAccountTag(tag))
-                continue;
-            const QString key = TagColors::accountKeyForTag(tag);
-            if (!key.isEmpty() && !keys.contains(key))
-                keys.append(key);
-        }
-        break;
+        const QString key = TagColors::accountKeyForTag(tag);
+        if (!key.isEmpty() && !keys.contains(key))
+            keys.append(key);
     }
     return keys;
 }
@@ -1219,10 +1263,10 @@ void ThreadListModel::applyTagChange(const QString &threadId,
                                      const QStringList &added,
                                      const QStringList &removed)
 {
-    for (int row = 0; row < m_threads.size(); ++row) {
-        if (m_threads.at(row).summary.threadId != threadId)
-            continue;
-
+    const int row = rowForThread(threadId);
+    if (row < 0)
+        return;
+    {
         QStringList &tags = m_threads[row].summary.tags;
         for (const QString &tag : removed)
             tags.removeAll(tag);
@@ -1285,7 +1329,10 @@ void ThreadListModel::applyMessageTagChange(const QString &messageId,
         }
     };
 
-    for (int row = 0; row < m_threads.size(); ++row) {
+    const int row = rowForMessage(messageId);
+    if (row < 0)
+        return;
+    {
         ThreadNode &node = m_threads[row];
         const QModelIndex threadIndex = index(row, 0, QModelIndex());
 

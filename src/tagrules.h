@@ -20,6 +20,7 @@
 
 #include <QJsonObject>
 #include <QList>
+#include <QMetaType>
 #include <QString>
 #include <QStringList>
 
@@ -119,3 +120,5 @@ private:
     QJsonObject m_unknown;   ///< Unrecognised top-level keys.
     bool m_missing = false;
 };
+
+Q_DECLARE_METATYPE(TagRule)

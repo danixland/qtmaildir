@@ -40,11 +40,10 @@ class QVBoxLayout;
 
 /// Views and edits the shared auto-tagging rules.
 ///
-/// Does NOT apply rules to existing mail. The counts are shown so a rule can be
-/// judged before it runs, but the only thing that tags mail is the notmuch
-/// post-new hook. Backfill is deliberately out of this version: a rule that is
-/// safe against arrivals is not automatically safe unscoped, and the
-/// confirmation story for a bulk write does not exist yet.
+/// Does not tag mail itself. The post-new hook applies rules to arriving mail;
+/// applying one to existing mail (item 212) is asked of the owner through
+/// applyRequested(), after the rule has been saved, and the owner confirms
+/// and performs the write.
 class TagRulesDialog : public QDialog
 {
     Q_OBJECT
@@ -95,6 +94,10 @@ public:
     void setRowValueForTest(int index, const QString &value);
     /// Runs the Save path without showing the dialog.
     void saveForTest() { onSave(); }
+    /// Runs the Apply path without a click.
+    void applyForTest() { onApply(); }
+    /// Ticks or clears the archive box, as a click would.
+    void setArchiveForTest(bool on);
 
     /// Types into the query field and toggles the mode, so the refusal path
     /// can be reached without a synthetic click. The refusal reports through
@@ -198,6 +201,11 @@ signals:
     /// since `tag:new` is set only on mail that has just arrived.
     void previewRequested(const QString &query);
 
+    /// Asks the owner to apply one SAVED rule to existing mail (item 212).
+    /// Emitted only after the dialog has written rules.json, so the rule
+    /// applied is exactly the rule the hook will run.
+    void applyRequested(const TagRule &rule);
+
 public slots:
     /// Corpus counts, positionally paired with countQueries().
     void setCounts(const QVector<int> &counts);
@@ -209,6 +217,7 @@ private slots:
     void onDeleteRule();
     void applyEditsToCurrentRule();
     void onSave();
+    void onApply();
 
 public slots:
     /// Saves the window's size and column widths on the way out. Overridden
@@ -221,6 +230,17 @@ private:
     void restoreUiState();
     void saveUiState();
     void showWarnings();
+
+    /// Validates and writes the working rules. False, with the reason shown,
+    /// when nothing was written. Shared by Save and Apply so neither can
+    /// write what the other would refuse.
+    bool saveRules();
+
+    /// Names every enabled rule the post-new hook will skip, or empty.
+    QString hookSkipWarning() const;
+
+    /// Enables Apply only for a rule worth applying.
+    void updateApplyButton();
 
     /// The only way the warning label is written. An empty string hides it.
     /// One route in so the icon and the red styling cannot drift between the
@@ -300,6 +320,14 @@ private:
     QCheckBox *m_enabled = nullptr;
     QLabel *m_warningLabel = nullptr;
     QPushButton *m_saveButton = nullptr;
+    /// Maps to TagRule::allowArchive; shown only while Remove tags holds inbox.
+    QCheckBox *m_archive = nullptr;
+    QPushButton *m_applyButton = nullptr;
+
+    /// The skip sentence last shown, so an edit re-renders the banner only
+    /// when that sentence changed and a dismissed banner is not resurrected
+    /// by every keystroke.
+    QString m_lastSkipWarning;
 
     QRadioButton *m_matchAll = nullptr;
     QRadioButton *m_matchAny = nullptr;

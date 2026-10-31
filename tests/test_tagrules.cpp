@@ -35,6 +35,10 @@ class TestTagRules : public QObject
     Q_OBJECT
 
 private slots:
+    void applySavesFirstAndEmitsTheSavedRule();
+    void applyEmitsNothingWhenTheSaveFails();
+    void theArchiveBoxMapsToAllowArchive();
+    void aRuleTheHookWillSkipIsNamedInTheWarning();
     void allowArchiveRoundTripsAndIsOmittedWhenFalse();
     void allowArchiveIsDroppedFromARuleThatKeepsInbox();
     void hookWouldSkipMirrorsThePostNewRefusal();
@@ -1576,6 +1580,102 @@ void TestTagRules::hookWouldSkipMirrorsThePostNewRefusal()
     rule.remove = { QStringLiteral("promo") };
     rule.allowArchive = false;
     QVERIFY(!TagRules::hookWouldSkip(rule));
+}
+
+static QString writeDialogRules(const QTemporaryDir &home, const QByteArray &json)
+{
+    QDir().mkpath(home.filePath(QStringLiteral("mailrules")));
+    const QString path = home.filePath(QStringLiteral("mailrules/rules.json"));
+    QFile out(path);
+    if (out.open(QIODevice::WriteOnly))
+        out.write(json);
+    return path;
+}
+
+void TestTagRules::applySavesFirstAndEmitsTheSavedRule()
+{
+    // Item 212, decided with the user: only what the hook would run is
+    // applied, so Apply writes the file before asking for anything.
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    qputenv("XDG_CONFIG_HOME", home.path().toUtf8());
+    const QString path = writeDialogRules(home, R"({"version": 1, "rules": [
+        {"id": "promo", "add": ["promo"], "query": "from:a@example.org"}]})");
+
+    TagRulesDialog dialog;
+    QSignalSpy spy(&dialog, &TagRulesDialog::applyRequested);
+    dialog.selectRuleForTest(0);
+    dialog.setTagsForTest(QStringLiteral("promo, sale"));   // unsaved edit
+    dialog.applyForTest();
+
+    QCOMPARE(spy.size(), 1);
+    const TagRule emitted = spy.first().at(0).value<TagRule>();
+    QCOMPARE(emitted.add, (QStringList{ QStringLiteral("promo"),
+                                        QStringLiteral("sale") }));
+
+    TagRules onDisk;
+    onDisk.load(path);
+    QCOMPARE(onDisk.rules().at(0).add, emitted.add);
+}
+
+void TestTagRules::applyEmitsNothingWhenTheSaveFails()
+{
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    qputenv("XDG_CONFIG_HOME", home.path().toUtf8());
+    writeDialogRules(home, R"({"version": 1, "rules": [
+        {"id": "promo", "add": ["promo"], "query": "from:a@example.org"}]})");
+
+    TagRulesDialog dialog;
+    QSignalSpy spy(&dialog, &TagRulesDialog::applyRequested);
+    dialog.selectRuleForTest(0);
+    dialog.setTagsForTest(QString());        // adds and removes nothing
+    dialog.applyForTest();
+
+    QVERIFY(spy.isEmpty());
+    QVERIFY(!dialog.warningTextForTest().isEmpty());
+}
+
+void TestTagRules::theArchiveBoxMapsToAllowArchive()
+{
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    qputenv("XDG_CONFIG_HOME", home.path().toUtf8());
+    const QString path = writeDialogRules(home, R"({"version": 1, "rules": [
+        {"id": "promo", "add": ["promo"], "remove": ["inbox"],
+         "query": "from:a@example.org"}]})");
+
+    {
+        TagRulesDialog dialog;
+        dialog.selectRuleForTest(0);
+        dialog.setArchiveForTest(true);
+        dialog.saveForTest();
+    }
+    TagRules onDisk;
+    onDisk.load(path);
+    QVERIFY(onDisk.rules().at(0).allowArchive);
+}
+
+void TestTagRules::aRuleTheHookWillSkipIsNamedInTheWarning()
+{
+    // CLAUDE.md: a rule the hook will refuse must be flagged in the UI.
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    qputenv("XDG_CONFIG_HOME", home.path().toUtf8());
+    writeDialogRules(home, R"({"version": 1, "rules": [
+        {"id": "promo", "add": ["promo"], "remove": ["inbox"],
+         "query": "from:a@example.org"},
+        {"id": "fine", "add": ["x"], "query": "from:b@example.org"}]})");
+
+    TagRulesDialog dialog;
+    QVERIFY2(dialog.warningTextForTest().contains(QStringLiteral("promo")),
+             qPrintable(dialog.warningTextForTest()));
+    QVERIFY(!dialog.warningTextForTest().contains(QStringLiteral("fine")));
+
+    dialog.selectRuleForTest(0);
+    dialog.setArchiveForTest(true);
+    QVERIFY2(!dialog.warningTextForTest().contains(QStringLiteral("promo")),
+             qPrintable(dialog.warningTextForTest()));
 }
 
 QTEST_MAIN(TestTagRules)

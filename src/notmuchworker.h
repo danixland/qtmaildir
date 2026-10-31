@@ -232,6 +232,15 @@ public slots:
                             const QStringList &remove,
                             const QString &description);
 
+    /// Applies `+add -remove` to every message the change would move within
+    /// `query` (item 212, a rule applied to existing mail). The query is
+    /// narrowed with SearchTerm::changes() so already-correct messages are
+    /// never written, then the ids go through applyTags(), which reports the
+    /// effective set for undo. Emits nothing when nothing would change.
+    void applyTagsToQuery(const QString &query, const QStringList &add,
+                          const QStringList &remove,
+                          const QString &description);
+
     /// Resolves whole threads to the message ids and file paths they contain.
     ///
     /// Delete thread MOVES every message, and a move needs message ids, which

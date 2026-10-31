@@ -41,6 +41,7 @@
 #include "maildirname.h"
 #include "mimeparser.h"
 #include "nmraii.h"
+#include "searchterm.h"
 
 namespace {
 
@@ -1079,6 +1080,27 @@ void NotmuchWorker::applyTagsToThreads(const QStringList &threadIds,
         return;
     }
 
+    applyTags(TagChange{ messageIds, add, remove, description });
+}
+
+void NotmuchWorker::applyTagsToQuery(const QString &query,
+                                     const QStringList &add,
+                                     const QStringList &remove,
+                                     const QString &description)
+{
+    if (!openReadOnly())
+        return;
+
+    QStringList messageIds;
+    if (!collectMessageIds(m_db, SearchTerm::changes(query, add, remove),
+                           &messageIds)) {
+        emit errorOccurred(QStringLiteral("Cannot resolve the rule's query"));
+        return;
+    }
+
+    // Empty is not an error: the rule has nothing left to do. applyTags()
+    // returns at once on an empty list, and stays silent, as it must
+    // (CLAUDE.md, item 176).
     applyTags(TagChange{ messageIds, add, remove, description });
 }
 

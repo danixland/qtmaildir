@@ -59,6 +59,7 @@ private slots:
     void aThreadCarriesItsCardMessagesOwnTags();
 
     void applyTagsToThreadsTagsEveryMessage();
+    void applyTagsToQueryWritesOnlyWhatWouldChange();
     void applyTagsToThreadsSpansMultipleThreads();
     void applyTagsToThreadsWithNoThreadsDoesNothing();
 
@@ -1288,6 +1289,39 @@ void TestNotmuchWorker::applyTagsToThreadsTagsEveryMessage()
 
     NotmuchWorker restore(m_fixture.configPath());
     restore.applyTags(emitted.inverted());
+}
+
+void TestNotmuchWorker::applyTagsToQueryWritesOnlyWhatWouldChange()
+{
+    // Item 212. Two messages in OPPOSITE states (item 87's lesson): a1
+    // already carries the tag, a2 does not. Only a2 may be reported, or the
+    // undo would strip the tag from a message that had it before.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    NotmuchWorker setup(m_fixture.configPath());
+    setup.applyTags(TagChange{ { QStringLiteral("a1@example.org") },
+                               { QStringLiteral("backfill") }, {},
+                               QStringLiteral("seed") });
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy applied(&worker, &NotmuchWorker::tagsApplied);
+    worker.applyTagsToQuery(QStringLiteral("thread:%1").arg(threadId),
+                            { QStringLiteral("backfill") }, {},
+                            QStringLiteral("Apply rule"));
+
+    QCOMPARE(applied.size(), 1);
+    const TagChange emitted = applied.first().at(0).value<TagChange>();
+    QCOMPARE(emitted.messageIds, QStringList{ QStringLiteral("a2@example.org") });
+    QCOMPARE(emitted.description, QStringLiteral("Apply rule"));
+    QVERIFY(tagsOf(QStringLiteral("a2@example.org"))
+                .contains(QStringLiteral("backfill")));
+
+    NotmuchWorker restore(m_fixture.configPath());
+    restore.applyTags(TagChange{ { QStringLiteral("a1@example.org"),
+                                   QStringLiteral("a2@example.org") },
+                                 {}, { QStringLiteral("backfill") },
+                                 QStringLiteral("restore") });
 }
 
 void TestNotmuchWorker::applyTagsToThreadsSpansMultipleThreads()

@@ -184,6 +184,13 @@ TagRulesDialog::TagRulesDialog(const TagRule &seed, QWidget *parent)
     form->addRow(tr("Add tags"), m_add);
     form->addRow(tr("Remove tags"), m_remove);
     form->addRow(tr("Move to"), m_move);
+    m_archive = new QCheckBox(
+        tr("Archive matching mail on arrival (removes inbox)"), this);
+    m_archive->setToolTip(
+        tr("Without this, the sync hook skips a rule that removes inbox, "
+           "since it runs unattended."));
+    m_archive->setVisible(false);
+    form->addRow(QString(), m_archive);
     m_builder = new QWidget(this);
     auto *builderLayout = new QVBoxLayout(m_builder);
     builderLayout->setContentsMargins(0, 0, 0, 0);
@@ -274,6 +281,13 @@ TagRulesDialog::TagRulesDialog(const TagRule &seed, QWidget *parent)
         tr("Run this rule's query in the main window, to see which mail it "
            "collects. This does not tag anything."));
     buttons->addWidget(m_previewButton);
+    m_applyButton = new QPushButton(tr("&Apply to existing mail"), this);
+    m_applyButton->setToolTip(
+        tr("Save, then apply this rule to mail already in the index. Asks "
+           "first, naming how many messages would change. Undoable from the "
+           "main window."));
+    m_applyButton->setEnabled(false);
+    buttons->addWidget(m_applyButton);
     buttons->addWidget(refreshButton);
     layout->addLayout(buttons);
 
@@ -370,6 +384,13 @@ TagRulesDialog::TagRulesDialog(const TagRule &seed, QWidget *parent)
     connect(m_stage, &QSpinBox::editingFinished,
             this, &TagRulesDialog::applyEditsToCurrentRule);
     connect(m_enabled, &QCheckBox::toggled,
+            this, &TagRulesDialog::applyEditsToCurrentRule);
+    connect(m_applyButton, &QPushButton::clicked,
+            this, &TagRulesDialog::onApply);
+    connect(m_remove, &QLineEdit::textChanged, this, [this](const QString &text) {
+        m_archive->setVisible(splitTags(text).contains(QStringLiteral("inbox")));
+    });
+    connect(m_archive, &QCheckBox::toggled,
             this, &TagRulesDialog::applyEditsToCurrentRule);
 
     // QPlainTextEdit has no editingFinished: it is a multi-line editor, where
@@ -558,18 +579,52 @@ void TagRulesDialog::setWarning(const QString &text)
 
 void TagRulesDialog::showWarnings()
 {
+    QStringList parts;
     const QStringList warnings = m_rules.warnings();
-    if (warnings.isEmpty()) {
-        setWarning(QString());
-        return;
-    }
     // Not "skipped" any more: a rule with a bad name is loaded repaired, and
     // saying it was skipped would send the user looking for something that is
     // in front of them. What is true of every warning here is that the file on
     // disk is not yet what the hook will run.
-    setWarning(tr("%n rule(s) in the file need attention: %1. Save to write "
-                  "them back.", "", warnings.size())
-                   .arg(warnings.join(QStringLiteral("; "))));
+    if (!warnings.isEmpty()) {
+        parts.append(tr("%n rule(s) in the file need attention: %1. Save to "
+                        "write them back.", "", warnings.size())
+                         .arg(warnings.join(QStringLiteral("; "))));
+    }
+    // One banner for both sources. The hook refusing a rule is the case
+    // CLAUDE.md asks the UI to say out loud rather than fail silently.
+    m_lastSkipWarning = hookSkipWarning();
+    if (!m_lastSkipWarning.isEmpty())
+        parts.append(m_lastSkipWarning);
+    setWarning(parts.join(QStringLiteral(" ")));
+}
+
+QString TagRulesDialog::hookSkipWarning() const
+{
+    QStringList skipped;
+    for (const TagRule &rule : m_working) {
+        if (rule.enabled && TagRules::hookWouldSkip(rule))
+            skipped.append(rule.id);
+    }
+    if (skipped.isEmpty())
+        return {};
+    return tr("The sync hook skips %n rule(s), which remove inbox or unread "
+              "on mail nobody has looked at: %1. Tick \"Archive matching "
+              "mail on arrival\" to let a rule remove inbox; unread is never "
+              "removed on arrival.", "", skipped.size())
+        .arg(skipped.join(QStringLiteral(", ")));
+}
+
+void TagRulesDialog::updateApplyButton()
+{
+    const int index = currentIndex();
+    if (index < 0 || index >= m_working.size()) {
+        m_applyButton->setEnabled(false);
+        return;
+    }
+    const TagRule &current = m_working.at(index);
+    m_applyButton->setEnabled(current.enabled && !current.query.isEmpty()
+                              && !(current.add.isEmpty()
+                                   && current.remove.isEmpty()));
 }
 
 void TagRulesDialog::fillItem(QTreeWidgetItem *item, const TagRule &rule) const
@@ -658,6 +713,8 @@ void TagRulesDialog::onSelectionChanged()
     m_add->setText(rule.add.join(QStringLiteral(", ")));
     m_remove->setText(rule.remove.join(QStringLiteral(", ")));
     m_move->setCurrentIndex(qMax(0, m_move->findData(rule.move)));
+    m_archive->setChecked(rule.allowArchive);
+    m_archive->setVisible(rule.remove.contains(QStringLiteral("inbox")));
     m_query->setText(rule.query);
     m_note->setPlainText(rule.note);
 
@@ -680,6 +737,7 @@ void TagRulesDialog::onSelectionChanged()
         rebuildRows(m_loadedQuery);
 
     m_reloading = wasReloading;
+    updateApplyButton();
 }
 
 void TagRulesDialog::applyEditsToCurrentRule()
@@ -715,6 +773,10 @@ void TagRulesDialog::applyEditsToCurrentRule()
     rule.add = splitTags(m_add->text());
     rule.remove = splitTags(m_remove->text());
     rule.move = m_move->currentData().toString();
+    // Cleared in the editor when inbox leaves the list, so a flag that does
+    // nothing never reaches the file (item 213).
+    rule.allowArchive = m_archive->isChecked()
+                        && rule.remove.contains(QStringLiteral("inbox"));
     if (m_textMode->isChecked()) {
         rule.query = m_query->text().trimmed();
     } else {
@@ -728,6 +790,10 @@ void TagRulesDialog::applyEditsToCurrentRule()
     rule.note = m_note->toPlainText();
 
     fillItem(m_list->topLevelItem(index), rule);
+    updateApplyButton();
+
+    if (hookSkipWarning() != m_lastSkipWarning)
+        showWarnings();
 }
 
 void TagRulesDialog::onAddRule()
@@ -823,7 +889,7 @@ void TagRulesDialog::setCounts(const QVector<int> &counts)
     }
 }
 
-void TagRulesDialog::onSave()
+bool TagRulesDialog::saveRules()
 {
     applyEditsToCurrentRule();
 
@@ -838,7 +904,7 @@ void TagRulesDialog::onSave()
         setWarning(tr("%n rule(s) cannot be saved as they are: %1", "",
                       problems.size())
                        .arg(problems.join(QStringLiteral("; "))));
-        return;
+        return false;
     }
 
     m_rules.setRules(m_working);
@@ -846,9 +912,33 @@ void TagRulesDialog::onSave()
         QMessageBox::warning(this, tr("Tagging rules"),
                              tr("Could not write %1.")
                                  .arg(TagRules::defaultPath()));
-        return;
+        return false;
     }
-    accept();
+    return true;
+}
+
+void TagRulesDialog::onSave()
+{
+    if (saveRules())
+        accept();
+}
+
+void TagRulesDialog::onApply()
+{
+    // Saved first, decided with the user (item 212): the rule applied is the
+    // rule the hook runs, and a failed save stops here exactly as OK does.
+    // The dialog stays open; only OK closes it.
+    if (!saveRules())
+        return;
+    const int index = currentIndex();
+    if (index < 0 || index >= m_working.size())
+        return;
+    emit applyRequested(m_working.at(index));
+}
+
+void TagRulesDialog::setArchiveForTest(bool on)
+{
+    m_archive->setChecked(on);   // toggled -> applyEditsToCurrentRule
 }
 
 QString TagRulesDialog::queryLineForTest() const

@@ -362,12 +362,19 @@ static const int kSenderCountsMetaType =
 static const int kThreadDigestMetaType =
     qRegisterMetaType<ThreadDigest>("ThreadDigest");
 
+/// And for applyRule()'s answer, which crosses the queued ruleApplied
+/// connection as a container. An unregistered one is dropped with only a
+/// warning, and the window would then never build the rule's undo entry.
+static const int kTagChangesMetaType =
+    qRegisterMetaType<QVector<TagChange>>("QVector<TagChange>");
+
 NotmuchWorker::NotmuchWorker(const QString &notmuchConfigPath, QObject *parent)
     : QObject(parent), m_configPath(notmuchConfigPath)
 {
     Q_UNUSED(kSortOrderMetaType);
     Q_UNUSED(kSenderCountsMetaType);
     Q_UNUSED(kThreadDigestMetaType);
+    Q_UNUSED(kTagChangesMetaType);
 }
 
 NotmuchWorker::~NotmuchWorker()
@@ -1083,31 +1090,64 @@ void NotmuchWorker::applyTagsToThreads(const QStringList &threadIds,
     applyTags(TagChange{ messageIds, add, remove, description });
 }
 
-void NotmuchWorker::applyTagsToQuery(const QString &query,
-                                     const QStringList &add,
-                                     const QStringList &remove,
-                                     const QString &description)
+void NotmuchWorker::applyRule(const QString &query, const QStringList &add,
+                              const QStringList &remove,
+                              const QString &description, quint64 token)
 {
-    if (!openReadOnly())
+    QVector<TagChange> changes;
+    if (!openReadOnly()) {
+        emit ruleApplied(token, changes);
         return;
+    }
 
     QStringList messageIds;
     if (!collectMessageIds(m_db, SearchTerm::changes(query, add, remove),
                            &messageIds)) {
         emit errorOccurred(QStringLiteral("Cannot resolve the rule's query"));
+        emit ruleApplied(token, changes);
         return;
     }
 
-    // Empty is not an error: the rule has nothing left to do. applyTags()
-    // returns at once on an empty list, and stays silent, as it must
-    // (CLAUDE.md, item 176).
-    applyTags(TagChange{ messageIds, add, remove, description });
+    QList<TagChange> ops;
+    for (const QString &tag : add)
+        ops.append(TagChange{ messageIds, { tag }, {}, description });
+    for (const QString &tag : remove)
+        ops.append(TagChange{ messageIds, {}, { tag }, description });
+
+    for (TagChange &op : ops) {
+        QStringList changed;
+        // An empty list writes nothing; writeTags() is not even asked to open.
+        if (!messageIds.isEmpty() && !writeTags(op, &changed))
+            break;   // errorOccurred() already emitted; report what landed
+        op.messageIds = changed;
+        changes.append(op);
+    }
+    emit ruleApplied(token, changes);
 }
 
 void NotmuchWorker::applyTags(const TagChange &change)
 {
     if (change.messageIds.isEmpty())
         return;
+
+    QStringList changedIds;
+    if (!writeTags(change, &changedIds))
+        return;
+
+    // Nothing moved, so there is nothing to record as pending, nothing to sync
+    // and nothing to undo. Emitting an empty change would push an undo entry
+    // whose inverse adds a tag no message ever carried, which is item 176 one
+    // step further along. The same silence as the empty-id early return above,
+    // for the same reason.
+    if (changedIds.isEmpty())
+        return;
+
+    emit tagsApplied(TagChange{ changedIds, change.added, change.removed,
+                                change.description });
+}
+
+bool NotmuchWorker::writeTags(const TagChange &change, QStringList *changedIds)
+{
 
     // The read-only handle must be closed first: notmuch allows only one open
     // handle per process.
@@ -1139,7 +1179,7 @@ void NotmuchWorker::applyTags(const TagChange &change)
                 .arg(QString::fromUtf8(error ? error
                                              : notmuch_status_to_string(status))));
         free(error);
-        return;
+        return false;
     }
 
     // Item 176. What the caller ASKED for is not what the write does: a
@@ -1149,8 +1189,8 @@ void NotmuchWorker::applyTags(const TagChange &change)
     // unread", measured on real mail as 2 unread becoming 43. With
     // maildir.synchronize_flags on, that rewrites filenames and reaches the
     // server.
-    QStringList changedIds;
-    changedIds.reserve(change.messageIds.size());
+    changedIds->clear();
+    changedIds->reserve(change.messageIds.size());
 
     for (const QString &id : change.messageIds) {
         notmuch_message_t *raw = nullptr;
@@ -1196,7 +1236,7 @@ void NotmuchWorker::applyTags(const TagChange &change)
             moves = moves || !before.contains(tag);
         moves = moves || !strippedOrigins.isEmpty();
         if (moves)
-            changedIds.append(id);
+            changedIds->append(id);
 
         notmuch_message_freeze(message.get());
         for (const QString &tag : change.removed)
@@ -1215,16 +1255,7 @@ void NotmuchWorker::applyTags(const TagChange &change)
     notmuch_database_close(db);
     notmuch_database_destroy(db);
 
-    // Nothing moved, so there is nothing to record as pending, nothing to sync
-    // and nothing to undo. Emitting an empty change would push an undo entry
-    // whose inverse adds a tag no message ever carried, which is item 176 one
-    // step further along. The same silence as the empty-id early return above,
-    // for the same reason.
-    if (changedIds.isEmpty())
-        return;
-
-    emit tagsApplied(TagChange{ changedIds, change.added, change.removed,
-                                change.description });
+    return true;
 }
 
 void NotmuchWorker::moveMessages(const QStringList &messageIds,

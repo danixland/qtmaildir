@@ -167,6 +167,12 @@ public:
     /// the worker resolves its query.
     void applyRuleToExistingMail(const TagRule &rule);
 
+    /// Arms one MessageTagCommand per (add, remove) pair inside one undo macro,
+    /// the way confirmRuleApply() does, without sending anything. Returns them,
+    /// owned by the undo stack, so a test can read what each was credited.
+    QList<const TagCommand *> armTagCommandsForTesting(
+        const QList<QPair<QStringList, QStringList>> &ops);
+
     /// Whether the undo stack still holds anything. Exposed so a test can show
     /// that a rejected write did not take unrelated history down with it.
     bool canUndo() const { return m_undoStack.canUndo(); }
@@ -1272,6 +1278,17 @@ private:
     /// case for every write that never goes on the stack (the automatic
     /// mark-read, a move's tags).
     ///
+    /// A confirmation goes to the first waiting command whose TAGS it names
+    /// (TagCommand::confirmedBy()), not blindly to the head of the queue, and
+    /// the commands ahead of that match are dropped. The worker stays silent
+    /// for a write that moved nothing, so a head-of-queue rule credited the
+    /// NEXT write's ids to the silent one: a rule applied one tag at a time
+    /// (item 212) whose `+x` found nothing to do took the `-y` confirmation,
+    /// and its undo stripped `x` from messages that only lost `y`, which is
+    /// item 176 through a race. A dropped command keeps no ids, so its undo is
+    /// the no-op it should be. Commands with equal tags (the two halves of a
+    /// mixed selection) still match in send order. No match credits nobody.
+    ///
     /// `first` says this command opens a new gesture, which discards anything
     /// a previous one stranded.
     void awaitTagConfirmation(TagCommand *command, bool first = true)
@@ -2144,8 +2161,8 @@ private:
     /// first. See awaitTagConfirmation().
     ///
     /// Raw pointers, and the undo stack owns them. Cleared whenever the stack
-    /// is, and drained in order by onTagsApplied(). An entry can be left
-    /// stranded by a write that never confirms (one held for a sync, or one
+    /// is, and drained by onTagsApplied(), matched on tags. An entry can be
+    /// left stranded by a write that never confirms (one held for a sync, or one
     /// the worker found nothing to change), so a gesture clears whatever is
     /// left before arming its own: crediting a fresh confirmation to a dead
     /// command would put the wrong ids on the wrong undo entry, which is the
@@ -2187,7 +2204,21 @@ private:
 class TagCommand : public QUndoCommand
 {
 public:
-    using QUndoCommand::QUndoCommand;
+    TagCommand(const QString &description, const QStringList &add,
+               const QStringList &remove)
+        : QUndoCommand(description), m_add(add), m_remove(remove) {}
+
+    /// Whether `change` is the confirmation of THIS command's write, judged
+    /// on the tags. As sets: the worker echoes the lists it was sent, and the
+    /// order of tags in one write means nothing.
+    bool confirmedBy(const TagChange &change) const
+    {
+        return QSet<QString>(m_add.cbegin(), m_add.cend())
+                   == QSet<QString>(change.added.cbegin(), change.added.cend())
+            && QSet<QString>(m_remove.cbegin(), m_remove.cend())
+                   == QSet<QString>(change.removed.cbegin(),
+                                    change.removed.cend());
+    }
 
     /// Records the messages whose tags the write really moved.
     ///
@@ -2209,6 +2240,9 @@ public:
     QStringList changedMessageIds() const { return m_changedMessageIds; }
 
 protected:
+    QStringList m_add;
+    QStringList m_remove;
+
     /// Cleared before each re-send, so a redo learns what IT moved rather than
     /// undoing the effect of the run before it.
     void forgetChangedMessageIds()
@@ -2235,8 +2269,8 @@ public:
     ThreadTagCommand(MainWindow *window, const QStringList &threadIds,
                      const QStringList &add, const QStringList &remove,
                      const QString &description)
-        : TagCommand(description), m_window(window), m_threadIds(threadIds),
-          m_add(add), m_remove(remove), m_description(description) {}
+        : TagCommand(description, add, remove), m_window(window),
+          m_threadIds(threadIds), m_description(description) {}
 
     /// The stack calls redo() when the command is pushed. The change has
     /// already been sent by that point, so the first call is skipped.
@@ -2273,8 +2307,6 @@ public:
 private:
     MainWindow *m_window;
     QStringList m_threadIds;
-    QStringList m_add;
-    QStringList m_remove;
     QString m_description;
     bool m_firstRedo = true;
 };
@@ -2291,9 +2323,8 @@ public:
     MessageTagCommand(MainWindow *window, const QStringList &messageIds,
                       const QStringList &add, const QStringList &remove,
                       const QString &description)
-        : TagCommand(description), m_window(window),
-          m_messageIds(messageIds), m_add(add), m_remove(remove),
-          m_description(description) {}
+        : TagCommand(description, add, remove), m_window(window),
+          m_messageIds(messageIds), m_description(description) {}
 
     /// The stack calls redo() when the command is pushed, by which point the
     /// change has already been sent, so the first call is skipped.
@@ -2325,8 +2356,6 @@ public:
 private:
     MainWindow *m_window;
     QStringList m_messageIds;
-    QStringList m_add;
-    QStringList m_remove;
     QString m_description;
     bool m_firstRedo = true;
 };

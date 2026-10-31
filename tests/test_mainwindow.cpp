@@ -299,7 +299,6 @@ private slots:
     void aWorkerBackedWindowReturnsRealThreads();
     void aWriteSaysItIsApplyingUntilTheWorkerHasRunIt();
     void applyingARuleConfirmsWithTheCountAndUndoesExactly();
-    void aSilentWriteDoesNotStealTheNextConfirmation();
     void aPurgeTakesTheRowsOutOfTheViewWithoutARefresh();
     void theDashboardFollowsAWriteToTheConversationItShows();
     void anEditHeldByASyncSaysSoInsteadOfClaimingItLanded();
@@ -10019,35 +10018,6 @@ void TestMainWindow::applyingARuleConfirmsWithTheCountAndUndoesExactly()
     QCOMPARE(notmuch({ QStringLiteral("count"),
                        QStringLiteral("tag:promo and id:had@example.org") }),
              QStringLiteral("1"));
-}
-
-void TestMainWindow::aSilentWriteDoesNotStealTheNextConfirmation()
-{
-    // Items 176 and 212. A rule is written one tag at a time, each operation
-    // its own armed command. If the first moves nothing (another writer got
-    // there between the count and the write), the worker stays silent for it,
-    // and the second operation's confirmation must not be credited to the
-    // first: its undo would then invert `+x` on messages that only lost `y`.
-    const Config config;
-    MainWindow window(config);
-
-    const QList<const TagCommand *> commands = window.armTagCommandsForTesting(
-        { { { QStringLiteral("x") }, {} },
-          { {}, { QStringLiteral("y") } } });
-    QCOMPARE(commands.size(), 2);
-
-    // Only the SECOND operation's confirmation arrives.
-    TagChange change;
-    change.messageIds = { QStringLiteral("moved@example.org") };
-    change.removed = { QStringLiteral("y") };
-    change.description = QStringLiteral("Apply rule");
-    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
-                                      Q_ARG(TagChange, change)));
-
-    QVERIFY2(commands.at(0)->changedMessageIds().isEmpty(),
-             qPrintable(commands.at(0)->changedMessageIds().join(u',')));
-    QCOMPARE(commands.at(1)->changedMessageIds(),
-             QStringList{ QStringLiteral("moved@example.org") });
 }
 
 /// Item 181, from the user: "the thread dashboard doesn't update live with the

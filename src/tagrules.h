@@ -39,6 +39,10 @@ struct TagRule
     QStringList remove;
     int stage = 50;   ///< Ascending. Account tags 10, topic rules 50.
     bool enabled = true;
+    /// Lets the post-new hook remove `inbox` from arriving mail for this rule
+    /// (item 213). Meaningless, and cleared on save, unless `remove` holds
+    /// `inbox`. `unread` stays refused regardless.
+    bool allowArchive = false;
 
     /// Fields this version of qtmaildir does not understand, kept verbatim and
     /// written back on save. Without this, one save from here silently strips
@@ -99,6 +103,11 @@ public:
     /// answers is that save() wrote anything and load() validated, so a rule
     /// could reach the file and never come back.
     static QStringList validate(const QList<TagRule> &rules);
+
+    /// Whether the post-new hook will skip this rule whole. Mirrors
+    /// PROTECTED_REMOVALS in assets/hooks/post-new: `unread` always, `inbox`
+    /// unless the rule opts in with allowArchive.
+    static bool hookWouldSkip(const TagRule &rule);
 
     /// No file yet, as distinct from a file that would not load. A fresh
     /// install is not an error and must not be reported as one.

@@ -266,6 +266,41 @@ def test_tag_arguments():
     assert mailrules.tag_arguments(rule) == ["+one", "+two", "-three"]
 
 
+def test_allow_archive_round_trips_and_is_omitted_when_false():
+    """Item 213. Known, so not carried as unknown; written only when true."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write_rules(tmp, {
+            "version": 1,
+            "rules": [
+                {"id": "promo", "add": ["promo"], "remove": ["inbox"],
+                 "query": "from:a@example.com", "allow_archive": True},
+                {"id": "plain", "add": ["x"], "query": "from:b@example.com"},
+            ],
+        })
+        store = mailrules.load(path)
+        assert store.rules[0].allow_archive is True
+        assert store.rules[1].allow_archive is False
+        assert "allow_archive" not in store.rules[0].unknown
+
+        mailrules.save(store, path)
+        raw = json.loads(path.read_text())
+        assert raw["rules"][0]["allow_archive"] is True
+        assert "allow_archive" not in raw["rules"][1]
+
+
+def test_allow_archive_on_a_rule_keeping_inbox_is_accepted_and_ignored():
+    """Never a reason to drop a rule: the hook runs unattended."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write_rules(tmp, {
+            "version": 1,
+            "rules": [{"id": "x", "add": ["x"], "query": "from:a@example.com",
+                       "allow_archive": True}],
+        })
+        store = mailrules.load(path)
+        assert len(store.rules) == 1
+        assert store.warnings == []
+
+
 def run_all():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -35,6 +35,9 @@ class TestTagRules : public QObject
     Q_OBJECT
 
 private slots:
+    void allowArchiveRoundTripsAndIsOmittedWhenFalse();
+    void allowArchiveIsDroppedFromARuleThatKeepsInbox();
+    void hookWouldSkipMirrorsThePostNewRefusal();
     void aRuleLoadsWithEveryField();
     void absentFieldsTakeTheirDefaults();
     void aMalformedRuleIsDroppedWithAWarning();
@@ -1503,6 +1506,76 @@ void TestTagRules::previewClearsTheAccountScope()
     QVERIFY2(window.selectedAccountForTesting().isEmpty(),
              "a preview must run unscoped, or an account-scoped rule query "
              "is wrapped twice and matches nothing");
+}
+
+void TestTagRules::allowArchiveRoundTripsAndIsOmittedWhenFalse()
+{
+    // Item 213. Optional, so a file with no archiving rule must save
+    // unchanged: no "allow_archive": false appears from nowhere.
+    const QString path = writeRules(R"({
+      "version": 1,
+      "rules": [
+        {"id": "promo", "add": ["promo"], "remove": ["inbox"],
+         "query": "from:a@example.org", "allow_archive": true},
+        {"id": "plain", "add": ["x"], "query": "from:b@example.org"}
+      ]
+    })");
+
+    TagRules rules;
+    rules.load(path);
+    QCOMPARE(rules.rules().size(), 2);
+    QVERIFY(rules.rules().at(0).allowArchive);
+    QVERIFY(!rules.rules().at(1).allowArchive);
+    // Known now, so it is not ALSO carried as an unknown field.
+    QVERIFY(!rules.rules().at(0).unknown.contains(QStringLiteral("allow_archive")));
+
+    QVERIFY(rules.save(path));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QJsonArray saved = QJsonDocument::fromJson(file.readAll())
+                                 .object().value(QStringLiteral("rules")).toArray();
+    QCOMPARE(saved.at(0).toObject().value(QStringLiteral("allow_archive")),
+             QJsonValue(true));
+    QVERIFY(!saved.at(1).toObject().contains(QStringLiteral("allow_archive")));
+}
+
+void TestTagRules::allowArchiveIsDroppedFromARuleThatKeepsInbox()
+{
+    // A flag that does nothing is cleared by the WRITER, never rejected by a
+    // reader: the hook must not drop a whole rule over a harmless flag.
+    TagRule rule;
+    rule.id = QStringLiteral("x");
+    rule.query = QStringLiteral("from:a@example.org");
+    rule.add = { QStringLiteral("x") };
+    rule.allowArchive = true;
+
+    TagRules rules;
+    rules.setRules({ rule });
+    QVERIFY(TagRules::validate(rules.rules()).isEmpty());
+    const QString path = m_dir.filePath(QStringLiteral("cleared.json"));
+    QVERIFY(rules.save(path));
+
+    TagRules reloaded;
+    reloaded.load(path);
+    QVERIFY(!reloaded.rules().at(0).allowArchive);
+}
+
+void TestTagRules::hookWouldSkipMirrorsThePostNewRefusal()
+{
+    // Mirrors PROTECTED_REMOVALS in assets/hooks/post-new, which the Python
+    // suite tests against the hook itself.
+    TagRule rule;
+    rule.remove = { QStringLiteral("inbox") };
+    QVERIFY(TagRules::hookWouldSkip(rule));
+    rule.allowArchive = true;
+    QVERIFY(!TagRules::hookWouldSkip(rule));
+
+    rule.remove = { QStringLiteral("unread") };
+    QVERIFY(TagRules::hookWouldSkip(rule));   // never opted out
+
+    rule.remove = { QStringLiteral("promo") };
+    rule.allowArchive = false;
+    QVERIFY(!TagRules::hookWouldSkip(rule));
 }
 
 QTEST_MAIN(TestTagRules)

@@ -29,6 +29,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QMenuBar>
 #include <QMenu>
 #include <QPushButton>
@@ -79,6 +80,7 @@
 #include "tagstrip.h"
 #include "threaddashboard.h"
 #include "threadlistmodel.h"
+#include "tagrules.h"
 #include "threadlistview.h"
 #include "notmuchfixture.h"
 
@@ -296,6 +298,7 @@ private slots:
     void aMalformedAccountIsReportedWithoutBlockingTheConstructor();
     void aWorkerBackedWindowReturnsRealThreads();
     void aWriteSaysItIsApplyingUntilTheWorkerHasRunIt();
+    void applyingARuleConfirmsWithTheCountAndUndoesExactly();
     void aPurgeTakesTheRowsOutOfTheViewWithoutARefresh();
     void theDashboardFollowsAWriteToTheConversationItShows();
     void anEditHeldByASyncSaysSoInsteadOfClaimingItLanded();
@@ -9927,6 +9930,94 @@ void TestMainWindow::aWriteSaysItIsApplyingUntilTheWorkerHasRunIt()
              qPrintable(status->text()));
     QTRY_VERIFY2_WITH_TIMEOUT(status->text().contains(QStringLiteral("done")),
                               qPrintable(status->text()), 15000);
+}
+
+void TestMainWindow::applyingARuleConfirmsWithTheCountAndUndoesExactly()
+{
+    // Items 212 and 176. Two matching messages in OPPOSITE states: `had`
+    // already carries promo, `lacked` does not. The confirmation must count
+    // what the whole rule moves, and undo must leave `had` tagged.
+    WorkerBackedWindow backed;
+    // Friday, verified with `date -d 2026-08-14 +%A`.
+    const QString date = QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200");
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("had@example.org"),
+        QStringLiteral("One"), QStringLiteral("deals@example.net"), date,
+        QStringLiteral("Body.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("lacked@example.org"),
+        QStringLiteral("Two"), QStringLiteral("deals@example.net"), date,
+        QStringLiteral("Body.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+
+    const auto notmuch = [&backed](const QStringList &args) {
+        QProcess p;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("NOTMUCH_CONFIG"),
+                   backed.fixture().configPath());
+        p.setProcessEnvironment(env);
+        p.start(QStringLiteral("notmuch"), args);
+        p.waitForFinished();
+        return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+    };
+    notmuch({ QStringLiteral("tag"), QStringLiteral("+promo"), QStringLiteral("--"),
+              QStringLiteral("id:had@example.org") });
+    // Guards: the fixture state the assertions below depend on.
+    QCOMPARE(notmuch({ QStringLiteral("count"), QStringLiteral("tag:inbox") }),
+             QStringLiteral("2"));
+    QCOMPARE(notmuch({ QStringLiteral("count"),
+                       QStringLiteral("tag:promo and id:had@example.org") }),
+             QStringLiteral("1"));
+
+    MainWindow window(backed.config());
+    auto *undo = window.findChild<QAction *>(QStringLiteral("undo"));
+    QVERIFY(undo);
+
+    TagRule rule;
+    rule.id = QStringLiteral("promo");
+    rule.query = QStringLiteral("from:deals@example.net");
+    rule.add = { QStringLiteral("promo") };
+    rule.remove = { QStringLiteral("inbox") };
+
+    // Answer the confirmation when it appears, recording what it said.
+    QString asked;
+    QTimer poll;
+    poll.setInterval(20);
+    QObject::connect(&poll, &QTimer::timeout, [&]() {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!box)
+            return;
+        asked = box->text();
+        poll.stop();
+        box->button(QMessageBox::Yes)->click();
+    });
+    poll.start();
+
+    window.applyRuleToExistingMail(rule);
+    QTRY_VERIFY_WITH_TIMEOUT(!asked.isEmpty(), 15000);
+    // The whole rule's count: both messages still carry inbox, so both
+    // would move, even though `had` already has promo.
+    QVERIFY2(asked.contains(QStringLiteral("2")), qPrintable(asked));
+
+    QTRY_COMPARE_WITH_TIMEOUT(
+        notmuch({ QStringLiteral("count"), QStringLiteral("tag:inbox") }),
+        QStringLiteral("0"), 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        notmuch({ QStringLiteral("count"), QStringLiteral("tag:promo") }),
+        QStringLiteral("2"), 15000);
+
+    undo->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        notmuch({ QStringLiteral("count"), QStringLiteral("tag:inbox") }),
+        QStringLiteral("2"), 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        notmuch({ QStringLiteral("count"),
+                  QStringLiteral("tag:promo and id:lacked@example.org") }),
+        QStringLiteral("0"), 15000);
+    // `had` carried promo before the backfill, so undo must not take it off.
+    QCOMPARE(notmuch({ QStringLiteral("count"),
+                       QStringLiteral("tag:promo and id:had@example.org") }),
+             QStringLiteral("1"));
 }
 
 /// Item 181, from the user: "the thread dashboard doesn't update live with the

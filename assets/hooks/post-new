@@ -20,11 +20,9 @@ Runs after every `notmuch new`. Reads ~/.config/mailrules/rules.json and
 applies each enabled rule scoped to `tag:new`, in stage order, then consumes
 the `tag:new` marker.
 
-Rules may add any tag and remove most, but this hook REFUSES to remove `unread`
-or `inbox` unattended and skips any rule that asks: see PROTECTED_REMOVALS
-below for why, and for the conditions under which that restriction should be
-lifted. It is expected to be relaxed once there is a story for confirming such
-a rule before it runs.
+Rules may add any tag and remove most, but this hook REFUSES to remove `unread`,
+and `inbox` unless the rule sets allow_archive, and skips any rule that asks:
+see PROTECTED_REMOVALS below for why.
 
 Requires `new` in [new] tags= in ~/.notmuch-config. Without it every scoped
 query matches nothing and this silently no-ops.
@@ -55,13 +53,10 @@ SCOPE = "tag:new"
 # Adding these tags is untouched, and so is removing anything else: a rule may
 # still strip `promo` or any tag of its own making.
 #
-# DELIBERATELY CONSERVATIVE, AND EXPECTED TO BE RELAXED. The rules in use today
-# only add tags, so this forbids nothing anyone is doing. It exists because the
-# hook runs unattended and a mistake here is expensive, not because removing
-# `unread` is wrong in principle: an "archive anything in notify/* older than
-# 90 days" rule is a reasonable thing to want and would need this list revised.
-# When that day comes, the question to answer first is what confirms the rule
-# before it runs, not whether the guard is annoying.
+# RELAXED ONCE, FOR INBOX ONLY (item 213). A rule may opt in with
+# `allow_archive`, set by a human in the rules dialog, and then this hook
+# removes `inbox` for it. That checkbox is the confirmation the old comment
+# here asked for before relaxing anything. `unread` has no opt-in.
 # NOT the same list as mailctl.py's PROTECTED_REMOVALS, and the two must not be
 # merged. That one is `{inbox}` and is a GATE: a human can override it with
 # --confirm-destructive. This one is `{unread, inbox}` and is a REFUSAL, because
@@ -228,8 +223,16 @@ def strip_inbox_from_non_arrivals(run):
 
 
 def protected_removals(rule):
-    """The protected tags this rule would remove, if any."""
-    return sorted(PROTECTED_REMOVALS.intersection(rule.remove))
+    """The protected tags this rule would remove, if any.
+
+    `inbox` is released by the rule's own `allow_archive` opt-in (item 213),
+    which a human set in the rules dialog. `unread` never is: removing it
+    rewrites Maildir filenames and reaches the server.
+    """
+    refused = set(PROTECTED_REMOVALS)
+    if rule.allow_archive:
+        refused.discard("inbox")
+    return sorted(refused.intersection(rule.remove))
 
 
 def count(query):
@@ -287,8 +290,10 @@ def main():
         # be consumed.
         refused = protected_removals(rule)
         if refused:
+            hint = (' (set "Archive on arrival" on the rule to allow it)'
+                    if refused == ["inbox"] else "")
             log(f"rule '{rule.id}' would remove {', '.join(refused)}; "
-                f"skipped, this hook does not remove those unattended")
+                f"skipped, this hook does not remove those unattended{hint}")
             continue
 
         query = mailrules.scoped_query(rule, SCOPE)

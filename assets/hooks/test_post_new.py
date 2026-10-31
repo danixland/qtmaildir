@@ -212,6 +212,57 @@ def test_a_protected_removal_is_skipped_whole_and_the_run_continues():
         assert count(env, "tag:new") == 0
 
 
+def test_an_opted_in_rule_archives_arriving_mail():
+    """Item 213: the promo rule removed inbox and was skipped on every sync,
+    so arrivals were never even tagged."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env = setup_database(tmp)
+        write_rules(env, [
+            {"id": "promo", "stage": 50, "add": ["promo"],
+             "remove": ["inbox"], "allow_archive": True,
+             "query": "from:promo@example.net"},
+        ])
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert count(env, "tag:promo") == 1
+        assert count(env, "tag:inbox and from:promo@example.net") == 0
+        # unread is untouched by an archive
+        assert count(env, "tag:unread and from:promo@example.net") == 1
+        assert count(env, "tag:inbox") == 2
+        assert count(env, "tag:new") == 0
+
+
+def test_without_the_flag_the_rule_is_skipped_and_the_log_says_how_to_allow_it():
+    with tempfile.TemporaryDirectory() as tmp:
+        env = setup_database(tmp)
+        write_rules(env, [
+            {"id": "promo", "stage": 50, "add": ["promo"],
+             "remove": ["inbox"], "query": "from:promo@example.net"},
+        ])
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert count(env, "tag:promo") == 0
+        assert "Archive on arrival" in result.stderr, result.stderr
+
+
+def test_the_flag_never_unlocks_unread():
+    with tempfile.TemporaryDirectory() as tmp:
+        env = setup_database(tmp)
+        write_rules(env, [
+            {"id": "greedy", "stage": 50, "add": ["seen"],
+             "remove": ["inbox", "unread"], "allow_archive": True,
+             "query": "from:promo@example.net"},
+        ])
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert count(env, "tag:seen") == 0
+        assert count(env, "tag:unread") == 3
+        assert count(env, "tag:inbox") == 3
+
+
 def setup_accounts(tmp, sent_config=True, split_index=False, with_spam=False):
     """A maildir laid out as qtmaildir configures it: two accounts, each with
     an Inbox and a Sent folder, one message in each.

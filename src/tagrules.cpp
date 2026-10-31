@@ -42,6 +42,7 @@ bool isKnownKey(const QString &key)
         QStringLiteral("enabled"), QStringLiteral("add"),
         QStringLiteral("remove"),  QStringLiteral("query"),
         QStringLiteral("note"),    QStringLiteral("move"),
+        QStringLiteral("allow_archive"),
     };
     return known.contains(key);
 }
@@ -285,6 +286,8 @@ void TagRules::load(const QString &path)
         rule.stage = object.value(QStringLiteral("stage")).toInt(kDefaultStage);
         rule.enabled = object.value(QStringLiteral("enabled")).toBool(true);
         rule.note = object.value(QStringLiteral("note")).toString();
+        rule.allowArchive =
+            object.value(QStringLiteral("allow_archive")).toBool(false);
 
         for (auto it = object.begin(); it != object.end(); ++it) {
             if (!isKnownKey(it.key()))
@@ -294,6 +297,13 @@ void TagRules::load(const QString &path)
         seen.append(rule.id);
         m_rules.append(rule);
     }
+}
+
+bool TagRules::hookWouldSkip(const TagRule &rule)
+{
+    if (rule.remove.contains(QStringLiteral("unread")))
+        return true;
+    return rule.remove.contains(QStringLiteral("inbox")) && !rule.allowArchive;
 }
 
 bool TagRules::save(const QString &path) const
@@ -317,6 +327,10 @@ bool TagRules::save(const QString &path) const
             object.insert(QStringLiteral("move"), rule.move);
         object.insert(QStringLiteral("query"), rule.query);
         object.insert(QStringLiteral("note"), rule.note);
+        // Written only where it does something, so a file without an
+        // archiving rule saves byte-identical (item 213).
+        if (rule.allowArchive && rule.remove.contains(QStringLiteral("inbox")))
+            object.insert(QStringLiteral("allow_archive"), true);
         for (auto it = rule.unknown.begin(); it != rule.unknown.end(); ++it) {
             // A bad move kept from load must not overwrite the role the user
             // has since chosen in the dialog.

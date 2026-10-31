@@ -42,7 +42,7 @@ DEFAULT_STAGE = 50
 # `unknown` and written back untouched, which is what makes the file neutral
 # rather than this tool's file that another program may read.
 KNOWN_KEYS = {"id", "stage", "enabled", "add", "remove", "query", "note",
-              "move"}
+              "move", "allow_archive"}
 
 # What `move` may say. Mirrors qtmaildirconf.MOVE_ROLES and the C++ reader;
 # see "Changing the rule format" in AGENTS.md.
@@ -63,6 +63,7 @@ class Rule:
     stage: int = DEFAULT_STAGE
     enabled: bool = True
     note: str = ""
+    allow_archive: bool = False
     unknown: dict = field(default_factory=dict)
 
 
@@ -203,6 +204,10 @@ def _rule_to_dict(rule):
     # Only when set, so a file with no moves is byte-identical after a save.
     if rule.move:
         out["move"] = rule.move
+    # Written only where it does something, matching src/tagrules.cpp, so a
+    # file without an archiving rule round-trips unchanged (item 213).
+    if rule.allow_archive and "inbox" in rule.remove:
+        out["allow_archive"] = True
     out.update(rule.unknown)
     return out
 
@@ -275,5 +280,6 @@ def _parse_rule(obj, index, seen, warnings):
         stage=stage,
         enabled=bool(obj.get("enabled", True)),
         note=obj.get("note", "") if isinstance(obj.get("note", ""), str) else "",
+        allow_archive=obj.get("allow_archive") is True,
         unknown={k: v for k, v in obj.items() if k not in KNOWN_KEYS},
     )

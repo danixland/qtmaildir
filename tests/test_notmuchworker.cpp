@@ -59,7 +59,10 @@ private slots:
     void aThreadCarriesItsCardMessagesOwnTags();
 
     void applyTagsToThreadsTagsEveryMessage();
-    void applyTagsToQueryWritesOnlyWhatWouldChange();
+    void applyRuleWritesEachTagOnlyWhereItMoves();
+    void applyRuleResolvesItsQueryOnceForEveryTag();
+    void applyRuleThatChangesNothingStillAnswers();
+    void applyRuleAnswersAcrossAQueuedConnection();
     void applyTagsToThreadsSpansMultipleThreads();
     void applyTagsToThreadsWithNoThreadsDoesNothing();
 
@@ -1291,36 +1294,151 @@ void TestNotmuchWorker::applyTagsToThreadsTagsEveryMessage()
     restore.applyTags(emitted.inverted());
 }
 
-void TestNotmuchWorker::applyTagsToQueryWritesOnlyWhatWouldChange()
+void TestNotmuchWorker::applyRuleWritesEachTagOnlyWhereItMoves()
 {
-    // Item 212. Two messages in OPPOSITE states (item 87's lesson): a1
-    // already carries the tag, a2 does not. Only a2 may be reported, or the
-    // undo would strip the tag from a message that had it before.
+    // Item 212. Two messages in OPPOSITE states (item 87's lesson): a1 already
+    // carries the added tag, a2 does not, and both carry the removed one. The
+    // effective set is per message, so a single `+add -drop` write would
+    // report a1 for both tags and its undo would strip `add` from a1. One
+    // operation per tag reports a1 only where it moved.
     const QString threadId = threadIdOf(QStringLiteral("Release notes"));
     QVERIFY(!threadId.isEmpty());
+    const QString a1 = QStringLiteral("a1@example.org");
+    const QString a2 = QStringLiteral("a2@example.org");
 
     NotmuchWorker setup(m_fixture.configPath());
-    setup.applyTags(TagChange{ { QStringLiteral("a1@example.org") },
-                               { QStringLiteral("backfill") }, {},
+    setup.applyTags(TagChange{ { a1 }, { QStringLiteral("ruleadd") }, {},
+                               QStringLiteral("seed") });
+    setup.applyTags(TagChange{ { a1, a2 }, { QStringLiteral("ruledrop") }, {},
                                QStringLiteral("seed") });
 
     NotmuchWorker worker(m_fixture.configPath());
     QSignalSpy applied(&worker, &NotmuchWorker::tagsApplied);
-    worker.applyTagsToQuery(QStringLiteral("thread:%1").arg(threadId),
-                            { QStringLiteral("backfill") }, {},
-                            QStringLiteral("Apply rule"));
+    QSignalSpy ruled(&worker, &NotmuchWorker::ruleApplied);
+    worker.applyRule(QStringLiteral("thread:%1").arg(threadId),
+                     { QStringLiteral("ruleadd") },
+                     { QStringLiteral("ruledrop") },
+                     QStringLiteral("Apply rule"), 7);
 
-    QCOMPARE(applied.size(), 1);
-    const TagChange emitted = applied.first().at(0).value<TagChange>();
-    QCOMPARE(emitted.messageIds, QStringList{ QStringLiteral("a2@example.org") });
-    QCOMPARE(emitted.description, QStringLiteral("Apply rule"));
-    QVERIFY(tagsOf(QStringLiteral("a2@example.org"))
-                .contains(QStringLiteral("backfill")));
+    QCOMPARE(applied.size(), 0);
+    QCOMPARE(ruled.size(), 1);
+    QCOMPARE(ruled.first().at(0).value<quint64>(), quint64(7));
+    const auto changes = ruled.first().at(1).value<QVector<TagChange>>();
+    QCOMPARE(changes.size(), 2);
+    QCOMPARE(changes.at(0).added, QStringList{ QStringLiteral("ruleadd") });
+    QVERIFY(changes.at(0).removed.isEmpty());
+    QCOMPARE(changes.at(0).messageIds, QStringList{ a2 });
+    QVERIFY(changes.at(1).added.isEmpty());
+    QCOMPARE(changes.at(1).removed, QStringList{ QStringLiteral("ruledrop") });
+    QCOMPARE(QSet<QString>(changes.at(1).messageIds.cbegin(),
+                           changes.at(1).messageIds.cend()),
+             (QSet<QString>{ a1, a2 }));
+    QCOMPARE(changes.at(0).description, QStringLiteral("Apply rule"));
+    QVERIFY(tagsOf(a2).contains(QStringLiteral("ruleadd")));
+    QVERIFY(!tagsOf(a1).contains(QStringLiteral("ruledrop")));
 
     NotmuchWorker restore(m_fixture.configPath());
-    restore.applyTags(TagChange{ { QStringLiteral("a1@example.org"),
-                                   QStringLiteral("a2@example.org") },
-                                 {}, { QStringLiteral("backfill") },
+    restore.applyTags(TagChange{ { a1, a2 }, {}, { QStringLiteral("ruleadd") },
+                                 QStringLiteral("restore") });
+}
+
+void TestNotmuchWorker::applyRuleResolvesItsQueryOnceForEveryTag()
+{
+    // A rule whose query names a tag it removes. Re-resolving the query per
+    // operation would let `-src` empty the match before `-other` ran, writing
+    // half the rule. The hook runs a rule once over one query, so the ids are
+    // resolved once.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+    const QString a1 = QStringLiteral("a1@example.org");
+    const QString a2 = QStringLiteral("a2@example.org");
+
+    NotmuchWorker setup(m_fixture.configPath());
+    setup.applyTags(TagChange{ { a1, a2 },
+                               { QStringLiteral("backfill-src"),
+                                 QStringLiteral("backfill-other") }, {},
+                               QStringLiteral("seed") });
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy ruled(&worker, &NotmuchWorker::ruleApplied);
+    worker.applyRule(
+        QStringLiteral("thread:%1 and tag:backfill-src").arg(threadId), {},
+        { QStringLiteral("backfill-src"), QStringLiteral("backfill-other") },
+        QStringLiteral("Apply rule"), 1);
+
+    QCOMPARE(ruled.size(), 1);
+    const auto changes = ruled.first().at(1).value<QVector<TagChange>>();
+    QCOMPARE(changes.size(), 2);
+    QCOMPARE(changes.at(0).messageIds.size(), 2);
+    QCOMPARE(changes.at(1).messageIds.size(), 2);
+    for (const QString &id : { a1, a2 }) {
+        QVERIFY(!tagsOf(id).contains(QStringLiteral("backfill-src")));
+        QVERIFY2(!tagsOf(id).contains(QStringLiteral("backfill-other")),
+                 qPrintable(id));
+    }
+}
+
+void TestNotmuchWorker::applyRuleThatChangesNothingStillAnswers()
+{
+    // Unlike applyTags(), which stays silent on an empty write, a rule always
+    // answers: the window is waiting on its token.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QSignalSpy applied(&worker, &NotmuchWorker::tagsApplied);
+    QSignalSpy ruled(&worker, &NotmuchWorker::ruleApplied);
+    worker.applyRule(QStringLiteral("thread:%1").arg(threadId), {},
+                     { QStringLiteral("nobody-has-this") },
+                     QStringLiteral("Apply rule"), 3);
+
+    QCOMPARE(applied.size(), 0);
+    QCOMPARE(ruled.size(), 1);
+    QCOMPARE(ruled.first().at(0).value<quint64>(), quint64(3));
+    const auto changes = ruled.first().at(1).value<QVector<TagChange>>();
+    for (const TagChange &change : changes)
+        QVERIFY(change.messageIds.isEmpty());
+}
+
+void TestNotmuchWorker::applyRuleAnswersAcrossAQueuedConnection()
+{
+    // QVector<TagChange> crosses from the worker thread to the UI, and an
+    // unregistered container is dropped there with only a warning. Received
+    // by a lambda living on THIS thread, so the delivery is genuinely queued.
+    const QString threadId = threadIdOf(QStringLiteral("Release notes"));
+    QVERIFY(!threadId.isEmpty());
+
+    NotmuchWorker worker(m_fixture.configPath());
+    QThread thread;
+    worker.moveToThread(&thread);
+    thread.start();
+
+    QObject receiver;
+    int answers = 0;
+    QVector<TagChange> received;
+    connect(&worker, &NotmuchWorker::ruleApplied, &receiver,
+            [&](quint64, const QVector<TagChange> &changes) {
+                ++answers;
+                received = changes;
+            });
+    QVERIFY(QMetaObject::invokeMethod(
+        &worker, "applyRule", Qt::QueuedConnection,
+        Q_ARG(QString, QStringLiteral("thread:%1").arg(threadId)),
+        Q_ARG(QStringList, QStringList{ QStringLiteral("crossed") }),
+        Q_ARG(QStringList, QStringList{}),
+        Q_ARG(QString, QStringLiteral("Apply rule")),
+        Q_ARG(quint64, 9)));
+
+    QTRY_COMPARE_WITH_TIMEOUT(answers, 1, 5000);
+    QCOMPARE(received.size(), 1);
+    QCOMPARE(received.at(0).messageIds.size(), 2);
+
+    thread.quit();
+    QVERIFY(thread.wait(5000));
+
+    NotmuchWorker restore(m_fixture.configPath());
+    restore.applyTags(TagChange{ received.at(0).messageIds, {},
+                                 { QStringLiteral("crossed") },
                                  QStringLiteral("restore") });
 }
 

@@ -232,14 +232,24 @@ public slots:
                             const QStringList &remove,
                             const QString &description);
 
-    /// Applies `+add -remove` to every message the change would move within
-    /// `query` (item 212, a rule applied to existing mail). The query is
-    /// narrowed with SearchTerm::changes() so already-correct messages are
-    /// never written, then the ids go through applyTags(), which reports the
-    /// effective set for undo. Emits nothing when nothing would change.
-    void applyTagsToQuery(const QString &query, const QStringList &add,
-                          const QStringList &remove,
-                          const QString &description);
+    /// Applies a tagging rule to existing mail (item 212). Resolves the
+    /// messages the WHOLE rule would move once, with SearchTerm::changes(),
+    /// then writes one tag at a time over that fixed list: `+a` for each add,
+    /// `-r` for each remove.
+    ///
+    /// One write per tag because the effective set is per MESSAGE: a single
+    /// `+promo -inbox` write reports a message that already had promo (it lost
+    /// inbox), and the undo built from it would strip promo. One resolution
+    /// because a query may name a tag the rule removes, and re-resolving after
+    /// the first write would match nothing for the rest, writing half the
+    /// rule where the hook writes all of it.
+    ///
+    /// Answers with ruleApplied() ALWAYS, even when nothing moved, and never
+    /// with tagsApplied(): the window builds the undo from the answer rather
+    /// than from the shared confirmation queue.
+    void applyRule(const QString &query, const QStringList &add,
+                   const QStringList &remove, const QString &description,
+                   quint64 token);
 
     /// Resolves whole threads to the message ids and file paths they contain.
     ///
@@ -386,6 +396,13 @@ signals:
     void threadDigestLoaded(const ThreadDigest &digest, quint64 generation);
     void tagsApplied(const TagChange &change);
 
+    /// applyRule()'s answer: one TagChange per single-tag operation, in the
+    /// order applyRule() documents, each carrying the ids that operation
+    /// actually moved (possibly none). `token` is echoed from the request.
+    /// Emitted even after a write error, carrying what was written before it,
+    /// so the window can still offer undo for that part.
+    void ruleApplied(quint64 token, const QVector<TagChange> &changes);
+
     /// One file entered or left the index outside a query (item 192).
     ///
     /// Emitted by indexDraftFile() and removeIndexedFile(), the two entry
@@ -482,6 +499,11 @@ signals:
 private:
     bool openReadOnly();
     void close();
+
+    /// applyTags() without the signal: writes `change` and fills `changedIds`
+    /// with the messages whose tags really moved. False, with errorOccurred()
+    /// emitted, when the database could not be opened for writing.
+    bool writeTags(const TagChange &change, QStringList *changedIds);
 
     QByteArray configPathArg() const;
 

@@ -2172,9 +2172,13 @@ public:
     /// redo of a batch arrives as more than one confirmation.
     void addChangedMessageIds(const QStringList &ids)
     {
+        // A set beside the list, so a 10k-message write is not quadratic
+        // here (items 211, 212). The list keeps the order for the undo.
         for (const QString &id : ids) {
-            if (!m_changedMessageIds.contains(id))
+            if (!m_seen.contains(id)) {
+                m_seen.insert(id);
                 m_changedMessageIds.append(id);
+            }
         }
     }
 
@@ -2183,10 +2187,15 @@ public:
 protected:
     /// Cleared before each re-send, so a redo learns what IT moved rather than
     /// undoing the effect of the run before it.
-    void forgetChangedMessageIds() { m_changedMessageIds.clear(); }
+    void forgetChangedMessageIds()
+    {
+        m_changedMessageIds.clear();
+        m_seen.clear();
+    }
 
 private:
     QStringList m_changedMessageIds;
+    QSet<QString> m_seen;
 };
 
 /// Undo entry for a tag change over a set of threads.

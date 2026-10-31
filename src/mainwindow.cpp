@@ -2889,23 +2889,6 @@ void MainWindow::applyRuleToExistingMail(const TagRule &rule)
         Q_ARG(quint64, m_pendingApplyGeneration));
 }
 
-QList<const TagCommand *> MainWindow::armTagCommandsForTesting(
-    const QList<QPair<QStringList, QStringList>> &ops)
-{
-    QList<const TagCommand *> commands;
-    m_undoStack.beginMacro(QStringLiteral("test"));
-    for (int i = 0; i < ops.size(); ++i) {
-        auto *command = new MessageTagCommand(this, {}, ops.at(i).first,
-                                              ops.at(i).second,
-                                              QStringLiteral("test"));
-        awaitTagConfirmation(command, i == 0);
-        m_undoStack.push(command);
-        commands.append(command);
-    }
-    m_undoStack.endMacro();
-    return commands;
-}
-
 void MainWindow::confirmRuleApply(const QVector<int> &counts)
 {
     const TagRule rule = m_pendingApplyRule;
@@ -5322,18 +5305,9 @@ void MainWindow::onTagsApplied(const TagChange &change)
     // instead turned the undo of "mark 44 read" into "mark 44 unread": 2
     // unread became 43, on real mail, and maildir.synchronize_flags carried it
     // into the filenames.
-    //
-    // Matched on the tags, and the commands ahead of the match dropped: they
-    // were writes the worker found nothing to do for, and crediting them this
-    // write's ids would make their undo invert the wrong tag on the wrong
-    // messages. See awaitTagConfirmation().
-    for (int i = 0; i < m_awaitingTagConfirmation.size(); ++i) {
-        TagCommand *command = m_awaitingTagConfirmation.at(i);
-        if (command->confirmedBy(change)) {
-            m_awaitingTagConfirmation.remove(0, i + 1);
-            command->addChangedMessageIds(change.messageIds);
-            break;
-        }
+    if (!m_awaitingTagConfirmation.isEmpty()) {
+        TagCommand *command = m_awaitingTagConfirmation.takeFirst();
+        command->addChangedMessageIds(change.messageIds);
     }
 
     // Recorded here, where a write is CONFIRMED, rather than where one is sent:

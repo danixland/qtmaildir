@@ -39,6 +39,9 @@ private slots:
     void applyEmitsNothingWhenTheSaveFails();
     void theArchiveBoxMapsToAllowArchive();
     void aRuleTheHookWillSkipIsNamedInTheWarning();
+    void aSuccessfulApplyClearsStaleBanners();
+    void deletingTheLastRuleDisablesApply();
+    void copyingAndDeletingRecheckTheSkipWarning();
     void allowArchiveRoundTripsAndIsOmittedWhenFalse();
     void allowArchiveIsDroppedFromARuleThatKeepsInbox();
     void hookWouldSkipMirrorsThePostNewRefusal();
@@ -1665,16 +1668,94 @@ void TestTagRules::aRuleTheHookWillSkipIsNamedInTheWarning()
     writeDialogRules(home, R"({"version": 1, "rules": [
         {"id": "promo", "add": ["promo"], "remove": ["inbox"],
          "query": "from:a@example.org"},
-        {"id": "fine", "add": ["x"], "query": "from:b@example.org"}]})");
+        {"id": "fine", "add": ["x"], "query": "from:b@example.org"},
+        {"id": "dormant", "add": ["y"], "remove": ["inbox"], "enabled": false,
+         "query": "from:c@example.org"}]})");
 
     TagRulesDialog dialog;
     QVERIFY2(dialog.warningTextForTest().contains(QStringLiteral("promo")),
              qPrintable(dialog.warningTextForTest()));
     QVERIFY(!dialog.warningTextForTest().contains(QStringLiteral("fine")));
+    // The hook never runs a disabled rule, so it skips nothing there.
+    QVERIFY2(!dialog.warningTextForTest().contains(QStringLiteral("dormant")),
+             qPrintable(dialog.warningTextForTest()));
 
     dialog.selectRuleForTest(0);
     dialog.setArchiveForTest(true);
     QVERIFY2(!dialog.warningTextForTest().contains(QStringLiteral("promo")),
+             qPrintable(dialog.warningTextForTest()));
+}
+
+void TestTagRules::aSuccessfulApplyClearsStaleBanners()
+{
+    // The dialog stays open after Apply, so a refusal from a failed attempt
+    // and a load warning about a file Apply has just rewritten would both
+    // outlive what they describe.
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    qputenv("XDG_CONFIG_HOME", home.path().toUtf8());
+    writeDialogRules(home, R"({"version": 1, "rules": [
+        {"id": "justeat orders", "add": ["promo"],
+         "query": "from:a@example.org"}]})");
+
+    TagRulesDialog dialog;
+    const QString needsAttention = QStringLiteral("need attention");
+    QVERIFY2(dialog.warningTextForTest().contains(needsAttention),
+             qPrintable(dialog.warningTextForTest()));
+
+    QSignalSpy spy(&dialog, &TagRulesDialog::applyRequested);
+    dialog.selectRuleForTest(0);
+    dialog.setTagsForTest(QString());
+    dialog.applyForTest();
+    QVERIFY(spy.isEmpty());
+    const QString refusal = QStringLiteral("cannot be saved");
+    QVERIFY2(dialog.warningTextForTest().contains(refusal),
+             qPrintable(dialog.warningTextForTest()));
+
+    dialog.setTagsForTest(QStringLiteral("promo"));
+    dialog.applyForTest();
+    QCOMPARE(spy.size(), 1);
+    QVERIFY2(!dialog.warningTextForTest().contains(refusal),
+             qPrintable(dialog.warningTextForTest()));
+    QVERIFY2(!dialog.warningTextForTest().contains(needsAttention),
+             qPrintable(dialog.warningTextForTest()));
+}
+
+void TestTagRules::deletingTheLastRuleDisablesApply()
+{
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    qputenv("XDG_CONFIG_HOME", home.path().toUtf8());
+    writeDialogRules(home, R"({"version": 1, "rules": [
+        {"id": "promo", "add": ["promo"], "query": "from:a@example.org"}]})");
+
+    TagRulesDialog dialog;
+    dialog.selectRuleForTest(0);
+    QVERIFY(dialog.applyEnabledForTest());
+    dialog.deleteRuleForTest();
+    QCOMPARE(dialog.ruleCountForTest(), 0);
+    QVERIFY(!dialog.applyEnabledForTest());
+}
+
+void TestTagRules::copyingAndDeletingRecheckTheSkipWarning()
+{
+    QTemporaryDir home;
+    QVERIFY(home.isValid());
+    qputenv("XDG_CONFIG_HOME", home.path().toUtf8());
+    writeDialogRules(home, R"({"version": 1, "rules": [
+        {"id": "promo", "add": ["promo"], "remove": ["inbox"],
+         "query": "from:a@example.org"}]})");
+
+    TagRulesDialog dialog;
+    dialog.selectRuleForTest(0);
+    dialog.copyRuleForTest();   // selects the copy
+    QVERIFY2(dialog.warningTextForTest().contains(QStringLiteral("promo-copy")),
+             qPrintable(dialog.warningTextForTest()));
+
+    dialog.deleteRuleForTest();
+    QVERIFY2(!dialog.warningTextForTest().contains(QStringLiteral("promo-copy")),
+             qPrintable(dialog.warningTextForTest()));
+    QVERIFY2(dialog.warningTextForTest().contains(QStringLiteral("promo")),
              qPrintable(dialog.warningTextForTest()));
 }
 

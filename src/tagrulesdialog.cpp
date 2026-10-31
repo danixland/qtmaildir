@@ -662,6 +662,9 @@ void TagRulesDialog::reloadList()
 
     if (!m_working.isEmpty())
         m_list->setCurrentItem(m_list->topLevelItem(0));
+    // Here as well as on selection: with no rule left, nothing is selected
+    // and onSelectionChanged() never runs to disable it.
+    updateApplyButton();
 }
 
 int TagRulesDialog::currentIndex() const
@@ -776,7 +779,11 @@ void TagRulesDialog::applyEditsToCurrentRule()
 
     fillItem(m_list->topLevelItem(index), rule);
     updateApplyButton();
+    refreshSkipWarning();
+}
 
+void TagRulesDialog::refreshSkipWarning()
+{
     if (hookSkipWarning() != m_lastSkipWarning)
         showWarnings();
 }
@@ -837,6 +844,7 @@ void TagRulesDialog::onCopyRule()
     m_working.insert(index + 1, copy);
     reloadList();
     m_list->setCurrentItem(m_list->topLevelItem(index + 1));
+    refreshSkipWarning();
 }
 
 void TagRulesDialog::onDeleteRule()
@@ -846,6 +854,7 @@ void TagRulesDialog::onDeleteRule()
         return;
     m_working.removeAt(index);
     reloadList();
+    refreshSkipWarning();
 }
 
 QStringList TagRulesDialog::countQueries() const
@@ -915,10 +924,20 @@ void TagRulesDialog::onApply()
     // The dialog stays open; only OK closes it.
     if (!saveRules())
         return;
+    // The dialog stays open, so the banner must stop describing a file that
+    // has just been rewritten: rereading it clears the load warnings, and
+    // showWarnings() replaces any refusal from an earlier attempt.
+    m_rules.load();
+    showWarnings();
     const int index = currentIndex();
     if (index < 0 || index >= m_working.size())
         return;
     emit applyRequested(m_working.at(index));
+}
+
+bool TagRulesDialog::applyEnabledForTest() const
+{
+    return m_applyButton->isEnabled();
 }
 
 void TagRulesDialog::setArchiveForTest(bool on)

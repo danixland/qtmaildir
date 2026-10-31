@@ -98,6 +98,9 @@ public:
     void applyForTest() { onApply(); }
     /// Ticks or clears the archive box, as a click would.
     void setArchiveForTest(bool on);
+    bool applyEnabledForTest() const;
+    void copyRuleForTest() { onCopyRule(); }
+    void deleteRuleForTest() { onDeleteRule(); }
 
     /// Types into the query field and toggles the mode, so the refusal path
     /// can be reached without a synthetic click. The refusal reports through
@@ -241,6 +244,10 @@ private:
 
     /// Enables Apply only for a rule worth applying.
     void updateApplyButton();
+
+    /// Re-renders the banner when the skip sentence changed. Not called from
+    /// reloadList(), which runs once before the constructor's showWarnings().
+    void refreshSkipWarning();
 
     /// The only way the warning label is written. An empty string hides it.
     /// One route in so the icon and the red styling cannot drift between the

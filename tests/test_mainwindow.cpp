@@ -299,6 +299,8 @@ private slots:
     void aWorkerBackedWindowReturnsRealThreads();
     void aWriteSaysItIsApplyingUntilTheWorkerHasRunIt();
     void applyingARuleConfirmsWithTheCountAndUndoesExactly();
+    void applyingARuleWhoseQueryNamesItsOwnTagWritesAllOfIt();
+    void aBackfillLeavesAnArmedUserCommandAlone();
     void aPurgeTakesTheRowsOutOfTheViewWithoutARefresh();
     void theDashboardFollowsAWriteToTheConversationItShows();
     void anEditHeldByASyncSaysSoInsteadOfClaimingItLanded();
@@ -10005,6 +10007,9 @@ void TestMainWindow::applyingARuleConfirmsWithTheCountAndUndoesExactly()
     QTRY_COMPARE_WITH_TIMEOUT(
         notmuch({ QStringLiteral("count"), QStringLiteral("tag:promo") }),
         QStringLiteral("2"), 15000);
+    // The undo entry is built from the worker's answer, which can trail the
+    // write it describes.
+    QTRY_COMPARE_WITH_TIMEOUT(window.undoDepthForTesting(), 1, 15000);
 
     undo->trigger();
     QTRY_COMPARE_WITH_TIMEOUT(
@@ -10018,6 +10023,142 @@ void TestMainWindow::applyingARuleConfirmsWithTheCountAndUndoesExactly()
     QCOMPARE(notmuch({ QStringLiteral("count"),
                        QStringLiteral("tag:promo and id:had@example.org") }),
              QStringLiteral("1"));
+}
+
+namespace {
+/// Runs the notmuch CLI against a test fixture's config, never the user's.
+QString fixtureNotmuch(const QString &configPath, const QStringList &args)
+{
+    QProcess p;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("NOTMUCH_CONFIG"), configPath);
+    p.setProcessEnvironment(env);
+    p.start(QStringLiteral("notmuch"), args);
+    p.waitForFinished();
+    return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+}
+
+/// Clicks Yes on the next QMessageBox, recording its text into `asked`.
+void answerNextBoxYes(QTimer &poll, QString &asked)
+{
+    poll.setInterval(20);
+    QObject::connect(&poll, &QTimer::timeout, [&poll, &asked]() {
+        auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!box)
+            return;
+        asked = box->text();
+        poll.stop();
+        box->button(QMessageBox::Yes)->click();
+    });
+    poll.start();
+}
+} // namespace
+
+void TestMainWindow::applyingARuleWhoseQueryNamesItsOwnTagWritesAllOfIt()
+{
+    // Item 212. The query names `inbox`, which the rule removes. Resolving
+    // the query again per tag would let `-inbox` empty the match before
+    // `-todo` ran. The hook applies a rule once over one query; Apply must
+    // too, and undo must put back both tags.
+    WorkerBackedWindow backed;
+    const QString date = QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200");
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("one@example.org"),
+        QStringLiteral("One"), QStringLiteral("deals@example.net"), date,
+        QStringLiteral("Body.")));
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("two@example.org"),
+        QStringLiteral("Two"), QStringLiteral("deals@example.net"), date,
+        QStringLiteral("Body.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+    const QString cfg = backed.fixture().configPath();
+    fixtureNotmuch(cfg, { QStringLiteral("tag"), QStringLiteral("+todo"),
+                          QStringLiteral("--"),
+                          QStringLiteral("from:deals@example.net") });
+    QCOMPARE(fixtureNotmuch(cfg, { QStringLiteral("count"),
+                                   QStringLiteral("tag:inbox and tag:todo") }),
+             QStringLiteral("2"));
+
+    MainWindow window(backed.config());
+    auto *undo = window.findChild<QAction *>(QStringLiteral("undo"));
+    QVERIFY(undo);
+
+    TagRule rule;
+    rule.id = QStringLiteral("deals");
+    rule.query = QStringLiteral("from:deals@example.net and tag:inbox");
+    rule.remove = { QStringLiteral("inbox"), QStringLiteral("todo") };
+
+    QString asked;
+    QTimer poll;
+    answerNextBoxYes(poll, asked);
+    window.applyRuleToExistingMail(rule);
+    QTRY_VERIFY_WITH_TIMEOUT(!asked.isEmpty(), 15000);
+
+    QTRY_COMPARE_WITH_TIMEOUT(window.undoDepthForTesting(), 1, 15000);
+    QCOMPARE(fixtureNotmuch(cfg, { QStringLiteral("count"),
+                                   QStringLiteral("tag:inbox") }),
+             QStringLiteral("0"));
+    QCOMPARE(fixtureNotmuch(cfg, { QStringLiteral("count"),
+                                   QStringLiteral("tag:todo") }),
+             QStringLiteral("0"));
+
+    undo->trigger();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        fixtureNotmuch(cfg, { QStringLiteral("count"),
+                              QStringLiteral("tag:inbox and tag:todo") }),
+        QStringLiteral("2"), 15000);
+}
+
+void TestMainWindow::aBackfillLeavesAnArmedUserCommandAlone()
+{
+    // Item 212, from review. A backfill can run for a long time. If it armed
+    // commands on the shared confirmation queue, a gesture made meanwhile
+    // would clear them and take the backfill's confirmation instead, and its
+    // undo would then invert the backfill over every message it touched. A
+    // backfill arms nothing, so a command already waiting stays waiting.
+    WorkerBackedWindow backed;
+    QVERIFY(backed.fixture().addMessage(
+        QStringLiteral("inbox"), QStringLiteral("one@example.org"),
+        QStringLiteral("One"), QStringLiteral("deals@example.net"),
+        QStringLiteral("Fri, 14 Aug 2026 10:00:00 +0200"),
+        QStringLiteral("Body.")));
+    QVERIFY2(backed.build(), qPrintable(backed.error()));
+    const QString cfg = backed.fixture().configPath();
+
+    MainWindow window(backed.config());
+    TagCommand *user = window.armTagCommandForTesting(
+        {}, { QStringLiteral("inbox") });
+    QVERIFY(user);
+    QCOMPARE(window.undoDepthForTesting(), 1);
+
+    TagRule rule;
+    rule.id = QStringLiteral("deals");
+    rule.query = QStringLiteral("from:deals@example.net");
+    rule.remove = { QStringLiteral("inbox") };
+
+    QString asked;
+    QTimer poll;
+    answerNextBoxYes(poll, asked);
+    window.applyRuleToExistingMail(rule);
+    QTRY_VERIFY_WITH_TIMEOUT(!asked.isEmpty(), 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(window.undoDepthForTesting(), 2, 15000);
+    QCOMPARE(fixtureNotmuch(cfg, { QStringLiteral("count"),
+                                   QStringLiteral("tag:inbox") }),
+             QStringLiteral("0"));
+
+    // The backfill's ids went nowhere near the user's command.
+    QVERIFY2(user->changedMessageIds().isEmpty(),
+             qPrintable(user->changedMessageIds().join(u',')));
+
+    // And it is still the one waiting: its own confirmation reaches it.
+    TagChange change;
+    change.messageIds = { QStringLiteral("armed@example.org") };
+    change.removed = { QStringLiteral("inbox") };
+    change.description = QStringLiteral("test");
+    QVERIFY(QMetaObject::invokeMethod(&window, "onTagsApplied",
+                                      Q_ARG(TagChange, change)));
+    QCOMPARE(user->changedMessageIds(),
+             QStringList{ QStringLiteral("armed@example.org") });
 }
 
 /// Item 181, from the user: "the thread dashboard doesn't update live with the

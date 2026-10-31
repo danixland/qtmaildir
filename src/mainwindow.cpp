@@ -118,21 +118,6 @@ namespace {
 /// Overridden only by setLocksPathForTesting(); "/proc/locks" in every real run.
 QString g_locksPath = QStringLiteral("/proc/locks");
 
-/// A rule as single-tag operations: `+a`, `+b`, `-c`, each as (add, remove).
-/// Item 212: the worker's effective set is per MESSAGE, not per tag, so one
-/// `+promo -inbox` write reports a message that already had promo (it lost
-/// inbox) and its undo would strip promo from it. One operation per tag makes
-/// each effective set, and therefore each undo, exact.
-QList<QPair<QStringList, QStringList>> ruleOperations(const TagRule &rule)
-{
-    QList<QPair<QStringList, QStringList>> ops;
-    for (const QString &tag : rule.add)
-        ops.append({ { tag }, {} });
-    for (const QString &tag : rule.remove)
-        ops.append({ {}, { tag } });
-    return ops;
-}
-
 } // namespace
 
 /// Doc comment on the declaration. Separators and control characters are
@@ -2845,7 +2830,7 @@ void MainWindow::onRuleCountsReady(const QVector<int> &counts,
     if (m_pendingApplyGeneration != 0
         && generation == m_pendingApplyGeneration) {
         m_pendingApplyGeneration = 0;
-        confirmRuleApply(counts);
+        confirmRuleApply(counts.value(0, -1));
         return;
     }
 
@@ -2873,13 +2858,10 @@ void MainWindow::applyRuleToExistingMail(const TagRule &rule)
         return;
     }
 
-    // One count for the whole rule (what the confirmation names), then one per
-    // single-tag operation, in the order ruleOperations() lists them. The
-    // per-operation counts decide which writes are sent at all; see
-    // confirmRuleApply() for why the rule is split.
-    QStringList queries{ SearchTerm::changes(rule.query, rule.add, rule.remove) };
-    for (const auto &op : ruleOperations(rule))
-        queries.append(SearchTerm::changes(rule.query, op.first, op.second));
+    // The whole rule's count, which is what the confirmation names. The
+    // worker resolves the ids again when it writes; see applyRule().
+    const QStringList queries{ SearchTerm::changes(rule.query, rule.add,
+                                                   rule.remove) };
 
     m_pendingApplyRule = rule;
     m_pendingApplyGeneration = ++m_ruleCountGeneration;
@@ -2889,11 +2871,27 @@ void MainWindow::applyRuleToExistingMail(const TagRule &rule)
         Q_ARG(quint64, m_pendingApplyGeneration));
 }
 
-void MainWindow::confirmRuleApply(const QVector<int> &counts)
+TagCommand *MainWindow::armTagCommandForTesting(const QStringList &add,
+                                                const QStringList &remove)
+{
+    auto *command = new MessageTagCommand(
+        this, { QStringLiteral("armed@example.org") }, add, remove,
+        QStringLiteral("test"));
+    awaitTagConfirmation(command);
+    m_undoStack.push(command);
+    return command;
+}
+
+void MainWindow::confirmRuleApply(int count)
 {
     const TagRule rule = m_pendingApplyRule;
-    const int count = counts.value(0, 0);
-    if (count <= 0) {
+    if (count < 0) {
+        showTransientStatus(
+            tr("Rule \"%1\" could not be counted, so nothing was applied.")
+                .arg(rule.id));
+        return;
+    }
+    if (count == 0) {
         showTransientStatus(
             tr("Rule \"%1\" has nothing to change.").arg(rule.id));
         return;
@@ -2913,9 +2911,10 @@ void MainWindow::confirmRuleApply(const QVector<int> &counts)
     box.setIcon(QMessageBox::Question);
     box.setWindowTitle(tr("Apply rule"));
     box.setText(tr("Apply rule \"%1\" to %n message(s)?", "", count).arg(rule.id));
+    // Until the next search, because runQuery() clears the undo stack.
     box.setInformativeText(what.join(QStringLiteral(" "))
                            + QStringLiteral("\n")
-                           + tr("You can undo this from the main window."));
+                           + tr("You can undo this until the next search."));
     box.setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
     box.setDefaultButton(QMessageBox::Cancel);
     if (box.exec() != QMessageBox::Yes)
@@ -2930,35 +2929,64 @@ void MainWindow::confirmRuleApply(const QVector<int> &counts)
     }
 
     const QString description = tr("Apply rule \"%1\"").arg(rule.id);
+    m_pendingRuleToken = ++m_lastRuleToken;
+    QMetaObject::invokeMethod(
+        m_worker, "applyRule", Qt::QueuedConnection,
+        Q_ARG(QString, rule.query), Q_ARG(QStringList, rule.add),
+        Q_ARG(QStringList, rule.remove), Q_ARG(QString, description),
+        Q_ARG(quint64, m_pendingRuleToken));
 
-    // One write per single-tag operation, grouped so one Ctrl+Z reverts the
-    // whole rule (see ruleOperations() for why it is split). An operation
-    // whose count was 0 is NOT sent: applyTags() stays silent on an empty
-    // write, and an armed command that never hears back would steal the next
-    // write's confirmation. Commands are built with no ids; the worker
-    // resolves them and the confirmation fills each one (item 176).
-    const auto ops = ruleOperations(rule);
-    m_undoStack.beginMacro(description);
-    bool first = true;
-    for (int i = 0; i < ops.size(); ++i) {
-        if (counts.value(i + 1, 0) <= 0)
+    announceAction(tr("%1: %n message(s)", "", count).arg(description));
+}
+
+void MainWindow::onRuleApplied(quint64 token,
+                               const QVector<TagChange> &changes)
+{
+    if (token == 0 || token != m_pendingRuleToken)
+        return;
+    m_pendingRuleToken = 0;
+
+    // One undo entry for the whole rule, one command per operation, each
+    // built from the ids that operation MOVED (item 176). The command's first
+    // redo, on push, is the no-op it always is; with the ids known, a later
+    // redo would also be correct.
+    bool anyMoved = false;
+    for (const TagChange &change : changes) {
+        if (change.messageIds.isEmpty())
             continue;
-        auto *command = new MessageTagCommand(this, {}, ops.at(i).first,
-                                              ops.at(i).second, description);
-        awaitTagConfirmation(command, first);
-        first = false;
-        QMetaObject::invokeMethod(
-            m_worker, "applyTagsToQuery", Qt::QueuedConnection,
-            Q_ARG(QString, rule.query), Q_ARG(QStringList, ops.at(i).first),
-            Q_ARG(QStringList, ops.at(i).second), Q_ARG(QString, description));
+        if (!anyMoved)
+            m_undoStack.beginMacro(change.description);
+        anyMoved = true;
+        recordConfirmedTagChange(change);
+        auto *command = new MessageTagCommand(this, change.messageIds,
+                                              change.added, change.removed,
+                                              change.description);
+        // What undo() reads: the ids this operation moved, which here are
+        // known up front rather than filled in by a later confirmation.
+        command->addChangedMessageIds(change.messageIds);
         m_undoStack.push(command);
+    }
+
+    if (!anyMoved) {
+        // Another writer got there between the count and the write. The
+        // ticket bump stops announceAction() claiming "done" over this.
+        ++m_announceTicket;
+        showTransientStatus(
+            tr("Rule \"%1\" has nothing to change.").arg(m_pendingApplyRule.id));
+        return;
     }
     m_undoStack.endMacro();
 
+    // Every account, not the ones the model knows: a backfill reaches mail no
+    // row shows, so its accounts cannot be resolved through the model the way
+    // sendMessageTagChange() does it. Missing one would let a narrowed sync
+    // clear the pending count without pushing that account's flag changes.
+    for (const Account &account : m_config.accounts())
+        m_editedAccounts.insert(account.key);
+
     // The rows a backfill touches are mostly not in the model, so the list is
-    // re-queried once the write has run rather than updated optimistically.
-    announceAction(tr("%1: %n message(s)", "", count).arg(description),
-                   [this]() { refreshCurrentQuery(); });
+    // re-queried rather than updated optimistically.
+    refreshCurrentQuery();
 }
 
 void MainWindow::showAbout()
@@ -3040,6 +3068,8 @@ void MainWindow::wireWorker()
             this, &MainWindow::onDatabaseStatsReady);
     connect(m_worker, &NotmuchWorker::messageCountsReady,
             this, &MainWindow::onRuleCountsReady);
+    connect(m_worker, &NotmuchWorker::ruleApplied,
+            this, &MainWindow::onRuleApplied);
 
     // Sender counts feed the business-senders candidate list after a sync.
     // The connection is queued, so the QHash argument must be a registered
@@ -5294,12 +5324,6 @@ void MainWindow::onTagsApplied(const TagChange &change)
     m_pendingChange = {};
     m_pendingThreadIds.clear();
 
-    // Item 181. HERE, where a write is CONFIRMED, and not where one is sent:
-    // the digest is rebuilt from the INDEX, so a refresh queued beside the
-    // write would race it and answer from the state before it. The dashboard
-    // covers every write for the same reason the indicator below does.
-    refreshDashboardDigest();
-
     // Item 176. The ids the worker reports are the ones whose tags really
     // moved, which is what the undo entry has to invert. Inverting the REQUEST
     // instead turned the undo of "mark 44 read" into "mark 44 unread": 2
@@ -5309,6 +5333,17 @@ void MainWindow::onTagsApplied(const TagChange &change)
         TagCommand *command = m_awaitingTagConfirmation.takeFirst();
         command->addChangedMessageIds(change.messageIds);
     }
+
+    recordConfirmedTagChange(change);
+}
+
+void MainWindow::recordConfirmedTagChange(const TagChange &change)
+{
+    // Item 181. HERE, where a write is CONFIRMED, and not where one is sent:
+    // the digest is rebuilt from the INDEX, so a refresh queued beside the
+    // write would race it and answer from the state before it. The dashboard
+    // covers every write for the same reason the indicator below does.
+    refreshDashboardDigest();
 
     // Recorded here, where a write is CONFIRMED, rather than where one is sent:
     // an optimistic update the worker later rejects must not leave the
@@ -6007,14 +6042,11 @@ void MainWindow::onExternalSyncStateChanged(SyncMonitor::State state)
 
 }
 
-void MainWindow::announceAction(const QString &text,
-                                const std::function<void()> &onDone)
+void MainWindow::announceAction(const QString &text)
 {
     if (!aSyncHoldsTheWriteLock()) {
         if (!m_worker) {
             showTransientStatus(text);
-            if (onDone)
-                onDone();
             return;
         }
 
@@ -6032,10 +6064,8 @@ void MainWindow::announceAction(const QString &text,
         m_statusTimer->stop();
         m_statusLabel->setText(tr("%1, applying…").arg(text));
         const quint64 ticket = ++m_announceTicket;
-        QMetaObject::invokeMethod(m_worker, [this, text, ticket, onDone]() {
-            QMetaObject::invokeMethod(this, [this, text, ticket, onDone]() {
-                if (onDone)
-                    onDone();
+        QMetaObject::invokeMethod(m_worker, [this, text, ticket]() {
+            QMetaObject::invokeMethod(this, [this, text, ticket]() {
                 // A newer announcement, or an error, owns the label now.
                 if (ticket == m_announceTicket)
                     showTransientStatus(tr("%1, done").arg(text));

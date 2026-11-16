@@ -162,6 +162,16 @@ TagRulesDialog::TagRulesDialog(const TagRule &seed, QWidget *parent)
     m_add->setPlaceholderText(tr("comma separated"));
     m_remove = new QLineEdit(this);
     m_remove->setPlaceholderText(tr("comma separated"));
+    // The stored value is the item DATA, the wire-format role. The label is
+    // translated, and nothing may match on it ("Translating a string that
+    // something MATCHES on" in AGENTS.md).
+    m_move = new QComboBox(this);
+    m_move->addItem(tr("Don't move"), QString());
+    m_move->addItem(tr("Spam folder"), QStringLiteral("spam"));
+    m_move->addItem(tr("Trash folder"), QStringLiteral("trash"));
+    m_move->setToolTip(tr("Moves matching new mail into the spam or trash "
+                          "folder of the account it arrived in, and takes it "
+                          "out of the inbox. It stays unread."));
     m_query = new QLineEdit(this);
     // Query syntax is wire format, never translated. Only the prose is.
     m_query->setPlaceholderText(QStringLiteral("from:sender@example.com"));
@@ -173,6 +183,7 @@ TagRulesDialog::TagRulesDialog(const TagRule &seed, QWidget *parent)
     form->addRow(QString(), m_enabled);
     form->addRow(tr("Add tags"), m_add);
     form->addRow(tr("Remove tags"), m_remove);
+    form->addRow(tr("Move to"), m_move);
     m_builder = new QWidget(this);
     auto *builderLayout = new QVBoxLayout(m_builder);
     builderLayout->setContentsMargins(0, 0, 0, 0);
@@ -351,6 +362,8 @@ TagRulesDialog::TagRulesDialog(const TagRule &seed, QWidget *parent)
     connect(m_add, &QLineEdit::editingFinished,
             this, &TagRulesDialog::applyEditsToCurrentRule);
     connect(m_remove, &QLineEdit::editingFinished,
+            this, &TagRulesDialog::applyEditsToCurrentRule);
+    connect(m_move, &QComboBox::currentIndexChanged,
             this, &TagRulesDialog::applyEditsToCurrentRule);
     connect(m_query, &QLineEdit::editingFinished,
             this, &TagRulesDialog::applyEditsToCurrentRule);
@@ -644,6 +657,7 @@ void TagRulesDialog::onSelectionChanged()
     m_enabled->setChecked(rule.enabled);
     m_add->setText(rule.add.join(QStringLiteral(", ")));
     m_remove->setText(rule.remove.join(QStringLiteral(", ")));
+    m_move->setCurrentIndex(qMax(0, m_move->findData(rule.move)));
     m_query->setText(rule.query);
     m_note->setPlainText(rule.note);
 
@@ -700,6 +714,7 @@ void TagRulesDialog::applyEditsToCurrentRule()
     rule.enabled = m_enabled->isChecked();
     rule.add = splitTags(m_add->text());
     rule.remove = splitTags(m_remove->text());
+    rule.move = m_move->currentData().toString();
     if (m_textMode->isChecked()) {
         rule.query = m_query->text().trimmed();
     } else {
@@ -920,6 +935,16 @@ void TagRulesDialog::setTagsForTest(const QString &tags)
 {
     m_add->setText(tags);
     emit m_add->editingFinished();
+}
+
+void TagRulesDialog::setMoveForTest(const QString &role)
+{
+    m_move->setCurrentIndex(m_move->findData(role));
+}
+
+QString TagRulesDialog::moveForTest() const
+{
+    return m_move->currentData().toString();
 }
 
 bool TagRulesDialog::textModeToggleIsReachableForTest() const

@@ -51,6 +51,9 @@ private slots:
     void aNameTypedWithSpacesIsSanitisedInTheField();
     void aRuleAddedAndNamedInTheDialogSurvivesAReopen();
     void unknownFieldsSurviveASave();
+    void aMoveRoleRoundTripsAndAMoveOnlyRuleIsValid();
+    void anUnknownMoveRoleIsRefused();
+    void theDialogWritesTheChosenMoveRole();
     void stageOrderPutsAccountsFirst();
     void aQueryWithQuotesRoundTrips();
     void aMissingFileIsEmptyNotAnError();
@@ -355,6 +358,136 @@ void TestTagRules::unknownFieldsSurviveASave()
     QCOMPARE(saved.value(QStringLiteral("future_field")).toArray().size(), 3);
     QCOMPARE(saved.value(QStringLiteral("id")).toString(),
              QStringLiteral("keeper"));
+}
+
+void TestTagRules::aMoveRoleRoundTripsAndAMoveOnlyRuleIsValid()
+{
+    const QString path = writeRules(R"({
+      "version": 1,
+      "rules": [
+        {"id": "junk", "query": "from:spammer@example.net", "move": "spam"},
+        {"id": "plain", "query": "from:a@example.com", "add": ["x"]}
+      ]
+    })");
+
+    TagRules rules;
+    rules.load(path);
+    QVERIFY2(rules.warnings().isEmpty(),
+             qPrintable(rules.warnings().join(QStringLiteral("; "))));
+    QCOMPARE(rules.rules().size(), 2);
+    QCOMPARE(rules.rules().at(0).move, QStringLiteral("spam"));
+    QVERIFY(!rules.rules().at(0).unknown.contains(QStringLiteral("move")));
+    QVERIFY(TagRules::validate(rules.rules()).isEmpty());
+
+    QVERIFY(rules.save(path));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QJsonArray saved = QJsonDocument::fromJson(file.readAll())
+                                 .object().value(QStringLiteral("rules"))
+                                 .toArray();
+    QCOMPARE(saved.at(0).toObject().value(QStringLiteral("move")).toString(),
+             QStringLiteral("spam"));
+    // Absent stays absent: an empty `move` on every rule would rewrite every
+    // file the dialog opens, a diff the hook's reader never asked for.
+    QVERIFY(!saved.at(1).toObject().contains(QStringLiteral("move")));
+}
+
+void TestTagRules::anUnknownMoveRoleIsRefused()
+{
+    TagRule rule;
+    rule.id = QStringLiteral("odd");
+    rule.query = QStringLiteral("from:a@example.com");
+    rule.move = QStringLiteral("Archive");
+    QCOMPARE(TagRules::validate({ rule }).size(), 1);
+
+    // Loaded, the move is not acted on and is not LOST either: the raw value
+    // rides in `unknown` so a save writes it back. Dropping it, or dropping a
+    // rule whose only action it was, is the writer-loses-data trap AGENTS.md
+    // records for rule ids: the rule vanished from the dialog and the next
+    // save deleted it from the file.
+    const QString path = writeRules(R"({
+      "version": 1,
+      "rules": [
+        {"id": "odd", "query": "from:a@example.com",
+         "add": ["x"], "move": "Archive"},
+        {"id": "only-move", "query": "from:b@example.com", "move": "Spam"},
+        {"id": "not-a-string", "query": "from:c@example.com",
+         "add": ["y"], "move": 5}
+      ]
+    })");
+    TagRules rules;
+    rules.load(path);
+    QCOMPARE(rules.rules().size(), 3);
+    QCOMPARE(rules.warnings().size(), 3);
+    for (const TagRule &loaded : rules.rules())
+        QVERIFY(loaded.move.isEmpty());
+
+    // Save is refused for the move-only one until the user fixes it, which is
+    // the dialog's existing route for a rule that would not load back.
+    QCOMPARE(TagRules::validate(rules.rules()).size(), 1);
+
+    QVERIFY(rules.save(path));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QJsonArray saved = QJsonDocument::fromJson(file.readAll())
+                                 .object().value(QStringLiteral("rules"))
+                                 .toArray();
+    QCOMPARE(saved.size(), 3);
+    QCOMPARE(saved.at(0).toObject().value(QStringLiteral("move")).toString(),
+             QStringLiteral("Archive"));
+    QCOMPARE(saved.at(1).toObject().value(QStringLiteral("move")).toString(),
+             QStringLiteral("Spam"));
+    QCOMPARE(saved.at(2).toObject().value(QStringLiteral("move")).toInt(), 5);
+
+    // Fixed in the dialog: the chosen role wins over the kept bad one.
+    QList<TagRule> fixed = rules.rules();
+    fixed[1].move = QStringLiteral("spam");
+    rules.setRules(fixed);
+    QVERIFY(TagRules::validate(rules.rules()).isEmpty());
+    QVERIFY(rules.save(path));
+    rules.load(path);
+    QVERIFY(rules.warnings().size() == 2);
+    QCOMPARE(rules.rules().at(1).move, QStringLiteral("spam"));
+}
+
+void TestTagRules::theDialogWritesTheChosenMoveRole()
+{
+    QTemporaryDir configHome;
+    QVERIFY(configHome.isValid());
+    qputenv("XDG_CONFIG_HOME", configHome.path().toUtf8());
+    QVERIFY(QDir().mkpath(configHome.filePath(QStringLiteral("mailrules"))));
+
+    const QString stored = configHome.filePath(
+        QStringLiteral("mailrules/rules.json"));
+    QFile out(stored);
+    QVERIFY(out.open(QIODevice::WriteOnly));
+    out.write(R"({
+      "version": 1,
+      "rules": [
+        {"id": "vendor", "query": "from:vendor.example.org",
+         "add": ["vendor"], "stage": 50, "enabled": true}
+      ]
+    })");
+    out.close();
+
+    {
+        TagRulesDialog dialog;
+        dialog.selectRuleForTest(0);
+        QCOMPARE(dialog.moveForTest(), QString());
+        dialog.setMoveForTest(QStringLiteral("spam"));
+        dialog.saveForTest();
+        QVERIFY(dialog.warningTextForTest().isEmpty());
+    }
+
+    TagRules reloaded;
+    reloaded.load(stored);
+    QCOMPARE(reloaded.rules().at(0).move, QStringLiteral("spam"));
+
+    // And back the other way: the stored role shows on reopen, so the next
+    // save cannot silently clear it.
+    TagRulesDialog reopened;
+    reopened.selectRuleForTest(0);
+    QCOMPARE(reopened.moveForTest(), QStringLiteral("spam"));
 }
 
 void TestTagRules::stageOrderPutsAccountsFirst()

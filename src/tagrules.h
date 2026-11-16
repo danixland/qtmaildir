@@ -37,6 +37,10 @@ struct TagRule
     QString note;     ///< Why the rule is shaped this way. Shown in the dialog.
     QStringList add;
     QStringList remove;
+    /// "spam" or "trash", or empty. An account ROLE, never a folder name: the
+    /// hook resolves it per message to that account's configured folder, so
+    /// a typo cannot create a folder on the server (item 103, item 214).
+    QString move;
     int stage = 50;   ///< Ascending. Account tags 10, topic rules 50.
     bool enabled = true;
 

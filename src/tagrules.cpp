@@ -41,7 +41,7 @@ bool isKnownKey(const QString &key)
         QStringLiteral("id"),      QStringLiteral("stage"),
         QStringLiteral("enabled"), QStringLiteral("add"),
         QStringLiteral("remove"),  QStringLiteral("query"),
-        QStringLiteral("note"),
+        QStringLiteral("note"),    QStringLiteral("move"),
     };
     return known.contains(key);
 }
@@ -56,6 +56,12 @@ QStringList stringsOf(const QJsonValue &value)
             out.append(text);
     }
     return out;
+}
+
+/// What `move` may say. mailrules.py and qtmaildirconf.py carry the same two.
+bool isMoveRole(const QString &role)
+{
+    return role == QStringLiteral("spam") || role == QStringLiteral("trash");
 }
 
 /// The id pattern, in one place. mailrules.py enforces the same one; see
@@ -141,8 +147,12 @@ QStringList TagRules::validate(const QList<TagRule> &rules)
 
         if (rule.query.trimmed().isEmpty())
             problems.append(QObject::tr("'%1': no query").arg(where));
-        if (rule.add.isEmpty() && rule.remove.isEmpty())
-            problems.append(QObject::tr("'%1': adds and removes nothing")
+        if (!rule.move.isEmpty() && !isMoveRole(rule.move)) {
+            problems.append(QObject::tr("'%1': move '%2' is not spam or trash")
+                                .arg(where, rule.move));
+        }
+        if (rule.add.isEmpty() && rule.remove.isEmpty() && rule.move.isEmpty())
+            problems.append(QObject::tr("'%1': adds, removes and moves nothing")
                                 .arg(where));
     }
     return problems;
@@ -247,8 +257,27 @@ void TagRules::load(const QString &path)
 
         rule.add = stringsOf(object.value(QStringLiteral("add")));
         rule.remove = stringsOf(object.value(QStringLiteral("remove")));
-        if (rule.add.isEmpty() && rule.remove.isEmpty()) {
-            m_warnings.append(QObject::tr("Rule '%1': adds and removes "
+        // A move this version cannot act on is kept, raw, in `unknown`, so a
+        // save writes it back rather than deleting it; and a rule whose only
+        // action it was still loads, so the dialog shows it and validate()
+        // refuses the save until it is fixed. Same reasoning as the repaired
+        // id above. A non-string value (`"move": 5`) is a bad move too.
+        const QJsonValue moveValue = object.value(QStringLiteral("move"));
+        const bool badMove = !moveValue.isUndefined()
+                             && moveValue != QJsonValue(QString())
+                             && !isMoveRole(moveValue.toString());
+        if (badMove) {
+            m_warnings.append(QObject::tr("Rule '%1': move '%2' is not spam "
+                                          "or trash; ignored")
+                                  .arg(rule.id,
+                                       moveValue.toVariant().toString()));
+            rule.unknown.insert(QStringLiteral("move"), moveValue);
+        } else {
+            rule.move = moveValue.toString();
+        }
+        if (!badMove && rule.add.isEmpty() && rule.remove.isEmpty()
+            && rule.move.isEmpty()) {
+            m_warnings.append(QObject::tr("Rule '%1': adds, removes and moves "
                                           "nothing; dropped").arg(rule.id));
             continue;
         }
@@ -283,10 +312,18 @@ bool TagRules::save(const QString &path) const
                       QJsonArray::fromStringList(rule.add));
         object.insert(QStringLiteral("remove"),
                       QJsonArray::fromStringList(rule.remove));
+        // Only when set: a file with no moves stays byte-identical on save.
+        if (!rule.move.isEmpty())
+            object.insert(QStringLiteral("move"), rule.move);
         object.insert(QStringLiteral("query"), rule.query);
         object.insert(QStringLiteral("note"), rule.note);
-        for (auto it = rule.unknown.begin(); it != rule.unknown.end(); ++it)
+        for (auto it = rule.unknown.begin(); it != rule.unknown.end(); ++it) {
+            // A bad move kept from load must not overwrite the role the user
+            // has since chosen in the dialog.
+            if (it.key() == QStringLiteral("move") && !rule.move.isEmpty())
+                continue;
             object.insert(it.key(), it.value());
+        }
         array.append(object);
     }
 

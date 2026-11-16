@@ -128,6 +128,8 @@ public:
     bool currentRuleEnabledForTest() const;
     void addRuleForTest() { onAddRule(); }
     void setTagsForTest(const QString &tags);
+    void setMoveForTest(const QString &role);
+    QString moveForTest() const;
 
     /// Whether the text-mode toggle would be on screen. A toggle that hides
     /// itself when switched on is a one-way trip, and asserting only on the
@@ -294,6 +296,7 @@ private:
     QLineEdit *m_id = nullptr;
     QLineEdit *m_add = nullptr;
     QLineEdit *m_remove = nullptr;
+    QComboBox *m_move = nullptr;
     QLineEdit *m_query = nullptr;
     QPlainTextEdit *m_note = nullptr;
     QSpinBox *m_stage = nullptr;

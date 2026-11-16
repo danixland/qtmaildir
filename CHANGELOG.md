@@ -13,6 +13,12 @@ point at which they are stable.
 
 ### Added
 
+- A tagging rule can move the mail it matches into the spam or trash
+  folder, through a new **Move to** field in the rules dialog. Each message
+  goes to the folder its own account configures (`spam` / `trash`), never to
+  a folder named in the rule, and leaves the inbox while staying unread. It
+  applies to mail as it arrives; Restore and Not spam work on it as on a
+  message moved by hand.
 - `--account`, `--thread` and `--message` on the command line, so another
   program can open qtmaildir at a particular account's view, conversation or
   message. The three combine, and Qt's own options are accepted beside them.

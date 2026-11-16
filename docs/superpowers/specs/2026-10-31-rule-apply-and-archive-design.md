@@ -215,3 +215,11 @@ the user looks at it.
 - **Relaxing `unread`.** Nothing asks for it.
 - **A dry-run list** of the affected messages. *Preview in list* already shows
   which mail a rule collects.
+
+## Addendum, 2026-11-16: rules that move (item 214)
+
+A rule may now carry `"move": "spam" | "trash"`. When Apply is built it must
+honour that field by sending the matched ids through
+`NotmuchWorker::moveMessages()` with the same tags Mark spam / Delete use
+(minus `unread`, matching the hook), so the move lands on the undo stack.
+The count in the confirmation names the move as well as the tag change.

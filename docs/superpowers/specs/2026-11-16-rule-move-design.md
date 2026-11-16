@@ -46,7 +46,10 @@ One optional field on a rule:
 - The "adds and removes nothing" check becomes "adds, removes and moves
   nothing": a move-only rule is valid.
 - An unknown value is an invalid rule in `TagRules::validate()` (the dialog
-  cannot write one). The Python reader logs it and ignores the `move` while
+  cannot write one). The C++ reader keeps a bad value from the file RAW in
+  `unknown` and still loads the rule, even when the move was its only action,
+  so a save writes it back rather than deleting it (the rule-id lesson in
+  `AGENTS.md`); a role chosen in the dialog replaces it. The Python reader logs it and ignores the `move` while
   still applying the rule's tags, since the tags are harmless and the hook must
   never guess a destination.
 

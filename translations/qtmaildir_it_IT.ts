@@ -2333,8 +2333,12 @@ protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
         <translation>&apos;%1&apos;: nessuna ricerca</translation>
     </message>
     <message>
-        <source>&apos;%1&apos;: adds and removes nothing</source>
-        <translation>&apos;%1&apos;: non aggiunge né rimuove nulla</translation>
+        <source>&apos;%1&apos;: move &apos;%2&apos; is not spam or trash</source>
+        <translation>&apos;%1&apos;: lo spostamento &apos;%2&apos; non è spam né cestino</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos;: adds, removes and moves nothing</source>
+        <translation>&apos;%1&apos;: non aggiunge, non rimuove e non sposta nulla</translation>
     </message>
     <message>
         <source>Cannot read %1: %2</source>
@@ -2361,8 +2365,12 @@ protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
         <translation>Regola &apos;%1&apos;: nessuna ricerca; scartata</translation>
     </message>
     <message>
-        <source>Rule &apos;%1&apos;: adds and removes nothing; dropped</source>
-        <translation>Regola &apos;%1&apos;: non aggiunge né rimuove nulla; scartata</translation>
+        <source>Rule &apos;%1&apos;: move &apos;%2&apos; is not spam or trash; ignored</source>
+        <translation>Regola &apos;%1&apos;: lo spostamento &apos;%2&apos; non è spam né cestino; ignorato</translation>
+    </message>
+    <message>
+        <source>Rule &apos;%1&apos;: adds, removes and moves nothing; dropped</source>
+        <translation>Regola &apos;%1&apos;: non aggiunge, non rimuove e non sposta nulla; scartata</translation>
     </message>
     <message>
         <source>The account %1 has no address configured, so no message can be sent from it.</source>
@@ -2721,6 +2729,22 @@ protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
         <translation>separate da virgole</translation>
     </message>
     <message>
+        <source>Don&apos;t move</source>
+        <translation>Non spostare</translation>
+    </message>
+    <message>
+        <source>Spam folder</source>
+        <translation>Cartella spam</translation>
+    </message>
+    <message>
+        <source>Trash folder</source>
+        <translation>Cestino</translation>
+    </message>
+    <message>
+        <source>Moves matching new mail into the spam or trash folder of the account it arrived in, and takes it out of the inbox. It stays unread.</source>
+        <translation>Sposta la posta nuova corrispondente nella cartella spam o nel cestino dell&apos;account in cui è arrivata, e la toglie dalla posta in arrivo. Resta da leggere.</translation>
+    </message>
+    <message>
         <source>Name</source>
         <translation>Nome</translation>
     </message>
@@ -2731,6 +2755,10 @@ protocollo di rete: il recupero e l&apos;invio sono comandi esterni.
     <message>
         <source>Remove tags</source>
         <translation>Rimuovi etichette</translation>
+    </message>
+    <message>
+        <source>Move to</source>
+        <translation>Sposta in</translation>
     </message>
     <message>
         <source>Match &amp;all</source>

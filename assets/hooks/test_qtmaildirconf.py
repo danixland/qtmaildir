@@ -190,6 +190,26 @@ def test_a_folder_containing_a_quote_cannot_break_out_of_the_query():
     assert "\\\"" in query or '""' in query
 
 
+def test_role_folders_pair_each_account_with_its_folder():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write_config(tmp,
+            "[account.one]\nmaildir = acct-one\nspam = Spam\ntrash = Trash\n"
+            "[account.two]\nmaildir = acct-two\nspam = [Provider]/Spam\n")
+        assert qtmaildirconf.role_folders("spam", path) == [
+            ("acct-one", "Spam"), ("acct-two", "[Provider]/Spam")]
+        # acct-two names no trash folder: it is still listed, with an empty
+        # folder, so a nested account resolves to ITSELF and is skipped rather
+        # than falling through to the enclosing account's folder.
+        assert qtmaildirconf.role_folders("trash", path) == [
+            ("acct-one", "Trash"), ("acct-two", "")]
+
+
+def test_role_folders_need_a_maildir():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write_config(tmp, "[account.one]\nspam = Spam\n")
+        assert qtmaildirconf.role_folders("spam", path) == []
+
+
 def main():
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]

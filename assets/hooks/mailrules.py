@@ -41,7 +41,12 @@ DEFAULT_STAGE = 50
 # Fields this version understands. Anything else in a rule object is kept in
 # `unknown` and written back untouched, which is what makes the file neutral
 # rather than this tool's file that another program may read.
-KNOWN_KEYS = {"id", "stage", "enabled", "add", "remove", "query", "note"}
+KNOWN_KEYS = {"id", "stage", "enabled", "add", "remove", "query", "note",
+              "move"}
+
+# What `move` may say. Mirrors qtmaildirconf.MOVE_ROLES and the C++ reader;
+# see "Changing the rule format" in AGENTS.md.
+MOVE_ROLES = ("spam", "trash")
 
 # An id is a handle, not a display name: a UI selects on it and a diff tracks
 # it. Tags may contain '/' and may be renamed; ids may not.
@@ -54,6 +59,7 @@ class Rule:
     query: str
     add: list = field(default_factory=list)
     remove: list = field(default_factory=list)
+    move: str = ""
     stage: int = DEFAULT_STAGE
     enabled: bool = True
     note: str = ""
@@ -194,6 +200,9 @@ def _rule_to_dict(rule):
         "query": rule.query,
         "note": rule.note,
     }
+    # Only when set, so a file with no moves is byte-identical after a save.
+    if rule.move:
+        out["move"] = rule.move
     out.update(rule.unknown)
     return out
 
@@ -236,9 +245,17 @@ def _parse_rule(obj, index, seen, warnings):
 
     add = [t for t in obj.get("add", []) if isinstance(t, str) and t.strip()]
     remove = [t for t in obj.get("remove", []) if isinstance(t, str) and t.strip()]
-    if not add and not remove:
+
+    move = obj.get("move", "")
+    if move and move not in MOVE_ROLES:
         warnings.append(
-            f"rule '{rule_id}': adds and removes nothing; dropped")
+            f"rule '{rule_id}': move '{move}' is not spam or trash; "
+            f"ignoring the move")
+        move = ""
+
+    if not add and not remove and not move:
+        warnings.append(
+            f"rule '{rule_id}': adds, removes and moves nothing; dropped")
         return None
 
     try:
@@ -254,6 +271,7 @@ def _parse_rule(obj, index, seen, warnings):
         query=query,
         add=add,
         remove=remove,
+        move=move,
         stage=stage,
         enabled=bool(obj.get("enabled", True)),
         note=obj.get("note", "") if isinstance(obj.get("note", ""), str) else "",

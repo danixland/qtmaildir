@@ -139,3 +139,32 @@ def _quote(value):
     reason.
     """
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+# The folders a rule may MOVE mail into, by role. A rule names a role, never a
+# folder: a folder name that does not exist is created by the move and reaches
+# the server (item 103), and a role resolves per account, so one rule serves
+# mail from every account.
+MOVE_ROLES = ("spam", "trash")
+
+
+def role_folders(role, path=None):
+    """Every account's (maildir, folder) pair for a move role.
+
+    Every account naming a maildir is listed, with an EMPTY folder when it
+    has none for the role. Leaving it out would let an account nested inside
+    another's directory resolve to the enclosing account and move its mail
+    into a folder that belongs to someone else. `spam` and `trash` are
+    mandatory to the application, which warns about a missing one; here a
+    missing one just means that account's mail is not moved.
+    """
+    if path is None:
+        path = default_path()
+
+    pairs = []
+    for _key, section in _accounts(path):
+        maildir = section.get("maildir", "").strip()
+        folder = section.get(role, "").strip()
+        if maildir:
+            pairs.append((maildir, folder))
+    return pairs

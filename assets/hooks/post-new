@@ -33,8 +33,12 @@ Install: copy to <database.path>/.notmuch/hooks/post-new, with mailrules.py
 importable (same directory, or on PYTHONPATH).
 """
 
+import itertools
+import os
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -74,8 +78,14 @@ def log(message):
 
 
 def _quote(value):
-    """Escape a Message-ID for a double-quoted notmuch term."""
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """A Message-ID as a double-quoted notmuch term.
+
+    The quote is DOUBLED. notmuch has no backslash escape inside a quoted
+    term, so the old backslash form matched nothing for an id holding a
+    quote, measured, and such a message was never moved or carved out. Same
+    rule as SearchTerm::quote() in the application.
+    """
+    return '"' + value.replace('"', '""') + '"'
 
 
 def not_arrival_only(query, folders):
@@ -255,6 +265,157 @@ def run_tag(arguments, query):
     return True
 
 
+_counter = itertools.count(1)
+
+
+def fresh_name(old_name):
+    """A fresh, unique Maildir filename keeping `old_name`'s flags suffix.
+
+    Port of MaildirName::fresh() in the application, and for its reason: the
+    `,U=<n>` infix mbsync writes is meaningful only within one folder, and
+    carrying it across a folder boundary produced `Maildir error: duplicate
+    UID` on real mail (item 162). A file coming from new/ has no `:2,` yet;
+    it gets an empty one, since it is going into cur/.
+    """
+    sep = old_name.find(":2,")
+    info = old_name[sep:] if sep >= 0 else ":2,"
+    host = (socket.gethostname() or "localhost").replace("/", "_") \
+        .replace(":", "_")
+    now = time.time()
+    return (f"{int(now)}.M{int(now * 1000) % 1000}P{os.getpid()}"
+            f"Q{next(_counter)}.{host}{info}")
+
+
+def account_of(path, root, pairs):
+    """The (maildir, folder) pair whose account holds `path`, or None.
+
+    Longest maildir wins, so an account nested inside another's directory
+    resolves to itself. Compared as paths, never with startswith.
+    """
+    best = None
+    for maildir, folder in pairs:
+        if _within(path, root / maildir) and (
+                best is None or len(maildir) > len(best[0])):
+            best = (maildir, folder)
+    return best
+
+
+def origin_of(path, root, maildir):
+    """The folder `path` sits in, relative to its ACCOUNT, without cur/new.
+
+    The format MainWindow::originTagFor() writes and Restore reads:
+    `acct/Inbox/new/x` is `Inbox`.
+    """
+    parts = path.parent.relative_to(root / maildir).parts
+    if parts and parts[-1] in ("cur", "new"):
+        parts = parts[:-1]
+    return "/".join(parts)
+
+
+def apply_moves(rules):
+    """Move what each move rule matches into its account's role folder.
+
+    True when done, including when there was nothing to do. False when a
+    notmuch step failed, so the caller leaves tag:new in place. A message
+    that cannot be moved (several files, no account, no folder for the role,
+    a failed rename) is logged and left where it is; that is not a failure.
+    """
+    claimed = {}
+    for rule in rules:
+        if not rule.move:
+            continue
+        ids = search(mailrules.scoped_query(rule, SCOPE), "messages")
+        if ids is None:
+            return False
+        for message_id in ids:
+            if message_id in claimed:
+                log(f"rule '{rule.id}': {message_id} already claimed by "
+                    f"rule '{claimed[message_id].id}'")
+                continue
+            claimed[message_id] = rule
+
+    if not claimed:
+        return True
+
+    root = mail_root()
+    if root is None:
+        log("no mail root; moving nothing")
+        return False
+
+    pairs = {role: qtmaildirconf.role_folders(role)
+             for role in qtmaildirconf.MOVE_ROLES}
+
+    to_tag = []
+    renamed = False
+    for message_id, rule in claimed.items():
+        paths = search(f"id:{_quote(message_id)}", "files")
+        if paths is None:
+            return False
+        if len(paths) != 1:
+            log(f"rule '{rule.id}': {message_id} has {len(paths)} files; "
+                f"not moved")
+            continue
+
+        source = Path(paths[0])
+        account = account_of(source, root, pairs[rule.move])
+        if account is None or not account[1]:
+            log(f"rule '{rule.id}': {message_id} is in no account with a "
+                f"{rule.move} folder; not moved")
+            continue
+
+        maildir, folder = account
+        target = root / maildir / folder
+        if _within(source, target):
+            to_tag.append((message_id, rule.move, ""))
+            continue
+
+        # The configured folder must already exist. Creating it is how a
+        # mistyped name reaches the server (item 103); cur/ inside a real
+        # folder is safe to create.
+        if not target.is_dir():
+            log(f"rule '{rule.id}': {target} does not exist; not moved")
+            continue
+
+        origin = origin_of(source, root, maildir)
+        try:
+            (target / "cur").mkdir(exist_ok=True)
+            os.rename(source, target / "cur" / fresh_name(source.name))
+        except OSError as exc:
+            log(f"rule '{rule.id}': cannot move {message_id}: {exc}")
+            continue
+        renamed = True
+        to_tag.append((message_id, rule.move, origin))
+
+    if renamed:
+        # Records each rename against the message id it already has, so the
+        # tags survive and no new.tags apply. --no-hooks, or this hook would
+        # run itself.
+        #
+        # ponytail: this also indexes any file that landed after the outer
+        # `notmuch new`, and the closing `-new` then consumes its marker
+        # unseen by the rules. Under mailsync.sh mbsync has finished and the
+        # lock is held, so nothing lands. If the hook ever runs beside a live
+        # mbsync, scope the closing `-new` to the ids seen before this call.
+        result = subprocess.run(["notmuch", "new", "--no-hooks", "--quiet"],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            log(f"notmuch new after moving failed: {result.stderr.strip()}")
+            return False
+
+    for message_id, role, origin in to_tag:
+        # What Mark spam and Delete add, minus `unread`: the hook still never
+        # removes that unattended (PROTECTED_REMOVALS).
+        arguments = ["+spam" if role == "spam" else "+deleted", "-inbox"]
+        if origin:
+            arguments.append(f"+moved-from:{origin}")
+        if not run_tag(arguments, f"id:{_quote(message_id)}"):
+            return False
+
+    log(f"moved {sum(1 for _, _, o in to_tag if o)} message(s), "
+        f"tagged {len(to_tag)}")
+    return True
+
+
 def main():
     store = mailrules.load()
 
@@ -278,7 +439,7 @@ def main():
     for warning in store.warnings:
         log(warning)
 
-    applied = 0
+    applied = []
     for rule in mailrules.ordered(store.rules):
         # Skip the rule, do not abort the run. A single over-reaching rule
         # must not cost the tagging every other rule would have done, and
@@ -291,11 +452,20 @@ def main():
                 f"skipped, this hook does not remove those unattended")
             continue
 
+        # A move-only rule has no tag operations, and `notmuch tag` with none
+        # is an error, so it skips straight to the moves below.
+        arguments = mailrules.tag_arguments(rule)
         query = mailrules.scoped_query(rule, SCOPE)
-        if not run_tag(mailrules.tag_arguments(rule), query):
+        if arguments and not run_tag(arguments, query):
             log(f"rule '{rule.id}' failed; leaving tag:new in place")
             return 1
-        applied += 1
+        applied.append(rule)
+
+    # After every tag stage, so a later rule still sees mail in its arrival
+    # folder; before the marker goes, because the marker scopes the moves.
+    if not apply_moves(applied):
+        log("moving failed; leaving tag:new in place")
+        return 1
 
     # AFTER the rules and BEFORE the marker is consumed. After, so a rule can
     # still see its own non-arrival mail with `inbox` on it and match the way
@@ -310,7 +480,7 @@ def main():
     if not run_tag(["-new"], SCOPE):
         return 1
 
-    log(f"applied {applied} rule(s)")
+    log(f"applied {len(applied)} rule(s)")
     return 0
 
 

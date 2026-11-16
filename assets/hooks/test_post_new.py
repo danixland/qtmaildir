@@ -31,6 +31,7 @@ Run: ./test_post_new.py    (requires notmuch on PATH)
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -495,6 +496,274 @@ def test_no_qtmaildir_config_leaves_every_tag_alone():
                                 text=True)
         assert result.returncode == 0, result.stderr
         assert count(env, "tag:inbox") == 4
+
+
+def setup_move(tmp):
+    """Two accounts with spam folders, one also with a trash folder, and
+    mail from a spammer in both inboxes beside one real message.
+
+    Account two names no trash folder on purpose: a trash rule must leave its
+    mail alone rather than invent one.
+    """
+    root = Path(tmp) / "Mail"
+    for sub in ("acct-one/Inbox", "acct-one/Spam", "acct-one/Trash",
+                "acct-two/Inbox", "acct-two/[Provider]/Spam"):
+        for part in ("new", "cur", "tmp"):
+            (root / sub / part).mkdir(parents=True)
+
+    make_message(root / "acct-one/Inbox", "junk-one",
+                 "spammer@example.net", "buy now")
+    make_message(root / "acct-one/Inbox", "keep-one",
+                 "friend@example.org", "hello")
+    make_message(root / "acct-two/Inbox", "junk-two",
+                 "spammer@example.net", "buy again")
+
+    config = Path(tmp) / "notmuch-config"
+    config.write_text(
+        f"[database]\npath={root}\n\n"
+        f"[new]\ntags=new;unread;inbox\n\n"
+        f"[user]\nname=Test\nprimary_email=you@example.org\n")
+
+    env = dict(os.environ)
+    env["NOTMUCH_CONFIG"] = str(config)
+    env["XDG_CONFIG_HOME"] = str(Path(tmp) / "config")
+
+    conf = Path(env["XDG_CONFIG_HOME"]) / "qtmaildir" / "qtmaildir.conf"
+    conf.parent.mkdir(parents=True)
+    conf.write_text(
+        "[account.one]\nmaildir = acct-one\nspam = Spam\ntrash = Trash\n"
+        "[account.two]\nmaildir = acct-two\nspam = [Provider]/Spam\n")
+
+    subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                   check=True)
+    return env, root
+
+
+SPAM_RULE = {"id": "junk", "query": "from:spammer@example.net",
+             "move": "spam"}
+
+
+def names(folder):
+    return sorted(p.name for p in folder.iterdir())
+
+
+def test_the_hook_can_move_when_notmuch_new_itself_runs_it():
+    """The design's one unverified assumption: that `notmuch new --no-hooks`
+    can run INSIDE post-new, because the outer `notmuch new` has released the
+    write lock by the time it calls the hook. Every other test runs the hook
+    directly and cannot see this. If it fails, stop: the fallback (moving from
+    mailsync.sh instead) is a design change for the user."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        write_rules(env, [SPAM_RULE])
+
+        hooks = root / ".notmuch" / "hooks"
+        hooks.mkdir(parents=True)
+        os.symlink(HOOK, hooks / "post-new")
+
+        make_message(root / "acct-one/Inbox", "junk-three",
+                     "spammer@example.net", "and again")
+        result = subprocess.run(["notmuch", "new"], env=env,
+                                capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+
+        assert count(env, "tag:spam") == 3, result.stderr
+        assert count(env, "tag:new") == 0
+        assert names(root / "acct-one/Inbox/new") == ["keep-one"]
+
+
+def test_a_move_rule_puts_spam_in_each_accounts_own_spam_folder():
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        write_rules(env, [SPAM_RULE])
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+
+        # The files moved, each into ITS account's folder, under fresh names
+        # in cur/ carrying a flags suffix.
+        assert names(root / "acct-one/Inbox/new") == ["keep-one"]
+        assert names(root / "acct-two/Inbox/new") == []
+        one = names(root / "acct-one/Spam/cur")
+        two = names(root / "acct-two/[Provider]/Spam/cur")
+        assert len(one) == 1 and len(two) == 1, (one, two)
+        assert one[0] != "junk-one" and one[0].endswith(":2,")
+
+        # notmuch followed the rename and kept the message, not a fresh copy.
+        assert files(env, 'path:"acct-one/Spam/**"') == 1
+        assert files(env, 'path:"acct-two/[Provider]/Spam/**"') == 1
+        assert files(env, 'path:"acct-one/Inbox/**"') == 1
+
+        assert count(env, "tag:spam") == 2
+        assert count(env, "tag:spam and tag:inbox") == 0
+        # unread is the protection that reaches the server; it stays.
+        assert count(env, "tag:spam and tag:unread") == 2
+        # Account-relative, the format Restore reads.
+        assert count(env, 'tag:"moved-from:Inbox"') == 2
+        assert count(env, "tag:new") == 0
+        assert count(env, "id:keep-one@example.org and tag:inbox") == 1
+
+
+def test_a_trash_rule_skips_an_account_with_no_trash_folder():
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        write_rules(env, [dict(SPAM_RULE, move="trash")])
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+
+        assert len(names(root / "acct-one/Trash/cur")) == 1
+        assert count(env, "id:junk-one@example.org and tag:deleted") == 1
+        assert count(env, "id:junk-one@example.org and tag:spam") == 0
+
+        assert names(root / "acct-two/Inbox/new") == ["junk-two"]
+        assert count(env, "id:junk-two@example.org and tag:inbox") == 1
+        assert count(env, "id:junk-two@example.org and tag:deleted") == 0
+        assert "not moved" in result.stderr
+
+
+def test_the_first_move_rule_in_stage_order_wins():
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        write_rules(env, [
+            dict(SPAM_RULE, id="late", stage=50),
+            dict(SPAM_RULE, id="early", stage=10, move="trash"),
+        ])
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+
+        assert len(names(root / "acct-one/Trash/cur")) == 1
+        assert names(root / "acct-one/Spam/cur") == []
+        assert "claimed" in result.stderr
+
+
+def test_a_message_with_two_files_is_not_moved():
+    """Item 166's shape: one Message-ID, a file in each account. One message
+    cannot carry two origins, so it is left where it is and logged."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        shutil.copy(root / "acct-one/Inbox/new/junk-one",
+                    root / "acct-two/Inbox/new/junk-one-copy")
+        subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                       check=True)
+        write_rules(env, [SPAM_RULE])
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+
+        assert "junk-one" in names(root / "acct-one/Inbox/new")
+        assert "junk-one-copy" in names(root / "acct-two/Inbox/new")
+        assert count(env, "id:junk-one@example.org and tag:spam") == 0
+        assert "2 files" in result.stderr
+
+
+def test_a_file_already_in_the_spam_folder_is_tagged_not_renamed():
+    """Mail a provider filed itself, and the retry after a run whose rename
+    succeeded and whose tagging failed. Tagged, with no origin to record."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        make_message(root / "acct-one/Spam", "already",
+                     "spammer@example.net", "filed by the provider")
+        subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                       check=True)
+        write_rules(env, [SPAM_RULE])
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+
+        assert names(root / "acct-one/Spam/new") == ["already"]
+        assert count(env, "id:already@example.org and tag:spam") == 1
+        assert count(env, "id:already@example.org and tag:inbox") == 0
+        tags = subprocess.run(
+            ["notmuch", "search", "--output=tags", "id:already@example.org"],
+            env=env, capture_output=True, text=True, check=True).stdout
+        assert "moved-from:" not in tags, tags
+
+
+def test_a_rule_skipped_for_a_protected_removal_moves_nothing():
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        write_rules(env, [dict(SPAM_RULE, remove=["unread"])])
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert names(root / "acct-one/Spam/cur") == []
+
+
+def test_a_nested_account_without_the_role_is_not_moved_into_its_parent():
+    """An account whose maildir sits inside another's must resolve to itself.
+    If it has no trash folder its mail stays put; falling through to the
+    enclosing account would move it into ANOTHER account's folder, which
+    mbsync then carries to that account's server."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        nested = root / "acct-one/lists/Inbox"
+        for part in ("new", "cur", "tmp"):
+            (nested / part).mkdir(parents=True)
+        make_message(nested, "junk-nested", "spammer@example.net", "list spam")
+        conf = Path(env["XDG_CONFIG_HOME"]) / "qtmaildir" / "qtmaildir.conf"
+        conf.write_text(conf.read_text()
+                        + "[account.lists]\nmaildir = acct-one/lists\n")
+        subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                       check=True)
+        write_rules(env, [dict(SPAM_RULE, move="trash")])
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert names(nested / "new") == ["junk-nested"]
+        assert count(env, "id:junk-nested@example.org and tag:deleted") == 0
+        # The enclosing account's own mail still moves.
+        assert len(names(root / "acct-one/Trash/cur")) == 1
+
+
+def test_a_moved_file_keeps_its_flags_and_loses_its_uid():
+    """mbsync delivers read mail into cur/ as `<name>,U=<n>:2,<flags>`. The
+    flags must survive (losing S marks it unread on the server) and the UID
+    must not (item 162's duplicate-UID error)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        (root / "acct-one/Inbox/cur/junk-read,U=7:2,FS").write_text(
+            "From: spammer@example.net\nTo: you@example.org\n"
+            "Subject: already read\nMessage-Id: <junk-read@example.org>\n"
+            "Date: Mon, 11 Aug 2026 10:00:00 +0000\n\nbody\n")
+        subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                       check=True)
+        write_rules(env, [SPAM_RULE])
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        moved = names(root / "acct-one/Spam/cur")
+        assert len(moved) == 2, moved
+        assert sum(1 for n in moved if n.endswith(":2,FS")) == 1, moved
+        assert not any(",U=" in n for n in moved), moved
+
+
+def test_a_message_id_holding_a_quote_still_moves():
+    """notmuch has no backslash escape inside a quoted term; a quote is
+    DOUBLED. A backslash-escaped id matches nothing, and the message was
+    logged as having 0 files and left in the inbox."""
+    with tempfile.TemporaryDirectory() as tmp:
+        env, root = setup_move(tmp)
+        make_message(root / "acct-one/Inbox", 'q"uote',
+                     "spammer@example.net", "quoted id")
+        subprocess.run(["notmuch", "new"], env=env, capture_output=True,
+                       check=True)
+        write_rules(env, [SPAM_RULE])
+
+        result = subprocess.run([str(HOOK)], env=env, capture_output=True,
+                                text=True)
+        assert result.returncode == 0, result.stderr
+        assert names(root / "acct-one/Inbox/new") == ["keep-one"], result.stderr
+        assert len(names(root / "acct-one/Spam/cur")) == 2
 
 
 def run_all():

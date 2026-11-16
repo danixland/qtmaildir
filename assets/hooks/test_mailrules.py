@@ -266,6 +266,53 @@ def test_tag_arguments():
     assert mailrules.tag_arguments(rule) == ["+one", "+two", "-three"]
 
 
+def test_a_move_rule_loads_and_round_trips():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write_rules(tmp, {"version": 1, "rules": [
+            {"id": "junk", "query": "from:spammer@example.net",
+             "move": "spam"}]})
+        store = mailrules.load(path)
+        assert store.warnings == [], store.warnings
+        # A move-only rule is a rule: it adds and removes nothing.
+        assert [r.id for r in store.rules] == ["junk"]
+        assert store.rules[0].move == "spam"
+        assert "move" not in store.rules[0].unknown
+        mailrules.save(store, path)
+        assert json.loads(path.read_text())["rules"][0]["move"] == "spam"
+
+
+def test_a_rule_without_a_move_writes_no_move_key():
+    """Absent stays absent. Writing `"move": ""` on every rule would rewrite
+    every file either reader saves, a diff nobody made."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write_rules(tmp, {"version": 1, "rules": [
+            {"id": "x", "add": ["x"], "query": "from:a@example.com"}]})
+        mailrules.save(mailrules.load(path), path)
+        assert "move" not in json.loads(path.read_text())["rules"][0]
+
+
+def test_an_unknown_move_role_is_ignored_and_the_tags_still_apply():
+    """The hook must never guess a destination, and must not lose the rule's
+    harmless tagging over it either."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write_rules(tmp, {"version": 1, "rules": [
+            {"id": "odd", "add": ["x"], "query": "from:a@example.com",
+             "move": "Archive"}]})
+        store = mailrules.load(path)
+        assert store.rules[0].move == ""
+        assert store.rules[0].add == ["x"]
+        assert len(store.warnings) == 1 and "Archive" in store.warnings[0]
+
+
+def test_a_rule_whose_only_action_is_a_bad_move_is_dropped():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write_rules(tmp, {"version": 1, "rules": [
+            {"id": "odd", "query": "from:a@example.com", "move": "archive"}]})
+        store = mailrules.load(path)
+        assert store.rules == []
+        assert len(store.warnings) == 2, store.warnings
+
+
 def run_all():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -57,20 +57,34 @@ After all tag stages have run, and BEFORE `tag:new` is consumed:
 1. For each enabled rule with a `move`, in stage order, collect message ids
    matching `tag:new and (<query>)`. A message claimed by an earlier rule is
    not reclaimed; the conflict is logged naming both rules.
-2. For each claimed message, resolve each of its files to an account by path
-   (the same prefix logic `qtmaildirconf` already uses) and that account's
+2. For each claimed message, resolve its file to an account by path (the
+   account whose `maildir` contains it, compared as paths) and that account's
    `spam` or `trash` key. `qtmaildirconf` gains a reader for those two keys.
-3. Skip, with a log line, a message whose account has no folder for the role,
-   and a file already in the destination folder. Never invent a folder.
+3. Skip, with a log line: a message with MORE THAN ONE file (mail sent to
+   another of the user's own accounts, item 166: two files, two accounts, and
+   one message cannot carry two origins); a file in no configured account; an
+   account with no folder for the role (`Config` already warns about that,
+   since both keys are mandatory); a file already in the destination folder.
+   Never invent a folder.
 4. Rename the file into `<mail_root>/<account maildir>/<folder>/cur/` under a
-   FRESH name (no `,U=` infix, item 162; port `MaildirName::fresh()`, keeping
-   the flags suffix). `cur/`, never `new/`. Record the origin folder before the
-   rename, as `moveMessages()` does.
+   FRESH name (no `,U=` infix, item 162; ported from `MaildirName::fresh()`,
+   keeping the `:2,` flags suffix and adding an empty `:2,` when the file
+   came from `new/` with none). `cur/`, never `new/`. Record the origin before
+   the rename.
 5. After all renames, run ONE `notmuch new --no-hooks` so notmuch records each
-   rename against the existing message id, keeping its tags.
-6. Then tag the relocated ids: `+moved-from:<origin>` (one per origin folder,
-   same tag format the app writes and Restore reads), `+spam` for the spam
-   role, and `-inbox`. Do not touch `unread`.
+   rename against the existing message id, keeping its tags. A renamed file
+   with a known id is not a new message and gets no `new.tags`.
+6. Then tag each relocated id: `+moved-from:<origin>`, where origin is the
+   folder relative to the ACCOUNT's maildir (`MainWindow::originTagFor()`'s
+   format, which Restore reads), `+spam` for the spam role or `+deleted` for
+   the trash role (what Mark spam and Delete add), and `-inbox`. Do not touch
+   `unread`. No existing `moved-from:` needs stripping: the message only just
+   arrived.
+
+The inner `notmuch new` also indexes any file that landed after the outer one,
+and the closing `-new` would then consume that file's marker without rules
+having seen it. Under `mailsync.sh` mbsync has finished and the lock is held,
+so nothing lands; the window is accepted and commented in the code.
 
 ### Failure
 
@@ -79,22 +93,27 @@ After all tag stages have run, and BEFORE `tag:new` is consumed:
   hook, so `tag:new` is NOT consumed (the existing safety rule). The next run
   sees the files already in the destination and only re-tags.
 
-### To verify first (plan task 1)
+A file already inside the destination folder is not renamed but IS tagged
+(without an origin): that covers mail a provider filed there itself, and a
+previous run whose rename succeeded and whose tagging failed.
+
+### To verify first (the hook task's first test)
 
 That `notmuch new --no-hooks` can run from inside `post-new`, i.e. the outer
 `notmuch new` has released the write lock when it calls the hook, and that a
-renamed file with a known id keeps its tags and gets no `new.tags`. Measure it
-on a throwaway database. If it fails, the fallback is to defer moves to a step
-in `assets/mailsync.sh` after `notmuch new` returns; the rest of this design is
-unchanged.
+renamed file with a known id keeps its tags and gets no `new.tags`. A test
+installs the hook in a throwaway database and runs a plain `notmuch new`. If
+it fails, the fallback is to defer moves to a step in `assets/mailsync.sh`
+after `notmuch new` returns; that is a design change and goes back to the
+user.
 
 ## Dialog
 
 A **Move to** combo under the remove field: *Don't move*, *Spam folder*, *Trash
-folder* (labels translated; the stored value is the wire-format role, per the
-"translating a string something matches on" rule). When an account in the
-config has no folder for the chosen role, a warning line under the combo names
-it, since the hook will skip that account's mail.
+folder* (labels translated; the stored value is the wire-format role, kept as
+item data, per the "translating a string something matches on" rule). No
+per-account warning: `spam` and `trash` are mandatory keys and `Config` already
+reports a missing one.
 
 ## Unchanged
 
@@ -105,9 +124,11 @@ it, since the hook will skip that account's mail.
 ## Tests
 
 - `assets/hooks/`: a real move over a throwaway Maildir: fresh name in `cur/`,
-  tags survive, `moved-from:` written, `-inbox`, `unread` kept, `+spam` only
-  for the spam role, missing role skipped, two rules claiming one message, a
-  file already in place left alone, and `tag:new` kept on a failing step.
+  tags survive, `moved-from:` written account-relative, `-inbox`, `unread`
+  kept, `+spam` / `+deleted` by role, missing role skipped, two rules claiming
+  one message, a multi-file message skipped, a file already in place left
+  alone. Plus one test that installs the hook in the throwaway database's
+  hook directory and runs a plain `notmuch new`, which is the nesting check.
 - `test_tagrules`: `move` round-trips, an unknown value fails `validate()`, a
   move-only rule is valid, and a file written by Python with `move` survives a
   C++ save.

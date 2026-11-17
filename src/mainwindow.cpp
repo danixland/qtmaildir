@@ -2198,11 +2198,16 @@ const QHash<QString, QPair<QString, QString>> kThemeIcons = {
     // NOT mail-mark-read, which mark_all_read below uses. The two shared it
     // in 0.12.0, and with the toolbar icon-only the icon is the whole
     // control: two buttons with different consequences looked identical.
-    { QStringLiteral("archive"), { QStringLiteral("mail-archive"), QString() } },
+    //
+    // Item 215: Breeze, Adwaita and candy-icons carry no `mail-archive`, so
+    // `archive-insert` (Breeze's box-with-arrow) is the second chance.
+    { QStringLiteral("archive"), { QStringLiteral("mail-archive"), QStringLiteral("archive-insert") } },
     { QStringLiteral("delete"),  { QStringLiteral("edit-delete"), QString() } },
     // The inverse of delete, and the theme's own name for it: the icon
     // every desktop uses for taking something back out of the wastebasket.
-    { QStringLiteral("restore"), { QStringLiteral("edit-undelete"), QString() } },
+    // Item 215: no installed theme carries it any more, so `document-revert`
+    // ("take it back") follows. NOT edit-undo, which undo uses.
+    { QStringLiteral("restore"), { QStringLiteral("edit-undelete"), QStringLiteral("document-revert") } },
     // A SEARCH, not a delete. The action reports what it finds and moves
     // nothing, so an icon from the delete family would promise the one
     // thing it deliberately does not do.
@@ -3317,10 +3322,12 @@ void MainWindow::buildSavedQueryRow(QWidget *parent, QVBoxLayout *layout)
         // label can be wrong for years without anyone noticing.
         //
         // mail-folder-sent, not mail-sent: the former is the folder shape every
-        // theme ships, the latter is the envelope-in-flight some do not.
+        // theme ships, the latter is the envelope-in-flight some do not. The
+        // inbox follows the same rule since item 215: Breeze ships
+        // `mail-inbox` only as a 16px symbolic, which QIcon does not find.
         static const QHash<QString, QString> filterIcons = {
             { QStringLiteral("unread"),  QStringLiteral("mail-mark-unread") },
-            { QStringLiteral("inbox"),   QStringLiteral("mail-inbox") },
+            { QStringLiteral("inbox"),   QStringLiteral("mail-folder-inbox") },
             { QStringLiteral("flagged"), QStringLiteral("starred") },
             { QStringLiteral("sent"),    QStringLiteral("mail-folder-sent") },
             { QStringLiteral("drafts"),  QStringLiteral("document-edit") },

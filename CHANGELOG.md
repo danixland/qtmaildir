@@ -45,6 +45,9 @@ point at which they are stable.
 
 ### Fixed
 
+- Archive, Restore and the Inbox filter show their icons again. The icon
+  names they asked for are no longer in Breeze or Adwaita, so each now falls
+  back to one that is.
 - Acting on thousands of selected rows at once no longer freezes the window.
   Archiving a 10k-row selection spent its time refreshing the menu labels once
   per row, against the whole selection each time. It now does that once.
